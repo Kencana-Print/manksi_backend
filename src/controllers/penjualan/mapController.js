@@ -1,0 +1,90 @@
+const mapService = require("../../services/penjualan/mapService");
+
+const getBrowseList = async (req, res) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      cabang: req.user.cabang, // Diambil dari JWT Token
+      isKaosan: req.user.cabKaos, // Diambil dari JWT Token jika ada
+    };
+
+    const data = await mapService.getBrowseList(filters);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteMap = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    await mapService.deleteMap(nomor, req.user);
+    res.status(200).json({ success: true, message: "Berhasil dihapus." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const toggleClose = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { isClose } = req.body; // 'Y' atau 'N'
+
+    await mapService.toggleClose(nomor, isClose);
+    res
+      .status(200)
+      .json({
+        success: true,
+        message: `Berhasil di-${isClose === "Y" ? "Close" : "Open"}.`,
+      });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const approveCmo = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+
+    // Validasi Hak Akses CMO (Sesuai role di token)
+    if (!req.user.isCmo) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Anda tidak memiliki hak CMO." });
+    }
+
+    await mapService.approveCmo(nomor, req.user.kode);
+    res.status(200).json({ success: true, message: "Berhasil di-approve." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const requestPin5 = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { alasan } = req.body;
+
+    if (!alasan || alasan.trim() === "") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Alasan harus diisi." });
+    }
+
+    await mapService.requestPin5(nomor, alasan, req.user.kode);
+    res
+      .status(200)
+      .json({ success: true, message: "Berhasil diajukan. Menunggu ACC." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getBrowseList,
+  deleteMap,
+  toggleClose,
+  approveCmo,
+  requestPin5,
+};

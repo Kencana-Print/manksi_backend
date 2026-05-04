@@ -1,0 +1,685 @@
+const db = require("../config/database");
+
+const searchSpk = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  // Query UNION sesuai standar Delphi Manksi
+  const baseQuery = `
+    FROM (
+      SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal, 
+             spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain, 
+             spk_finishing AS Finishing, spk_divisi AS Divisi, spk_cmo AS CMO, spk_aktif AS Aktif
+      FROM tspk
+      UNION ALL
+      SELECT mspk_nomor, mspk_nama, mspk_tanggal, 
+             mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing, mspk_divisi, mspk_cmo, "Y"
+      FROM tmemospk
+    ) a
+    WHERE Aktif = 'Y' AND Divisi IN (3,4,6) AND CMO <> ''
+  `;
+
+  let whereSearch = "";
+  if (keyword) {
+    whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total ${baseQuery} ${whereSearch}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let dataQuery = `SELECT * ${baseQuery} ${whereSearch} ORDER BY Tanggal DESC LIMIT ? OFFSET ?`;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(dataQuery, params);
+
+  return {
+    items: rows,
+    total: total,
+  };
+};
+
+const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+  let keywordCondition = "";
+
+  if (keyword && keyword.trim() !== "") {
+    keywordCondition = `WHERE a.Nomor LIKE ? OR a.Nama LIKE ?`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Subquery persis seperti logic Delphi:
+  // UNION antara tspk dan tmemospk dengan filter divisi IN (3,4,6)
+  const baseQuery = `
+    SELECT * FROM (
+      SELECT 
+        spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal, 
+        spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain, spk_finishing AS Finishing
+      FROM tspk 
+      WHERE spk_divisi IN (3,4,6) AND spk_aktif="Y"
+      
+      UNION
+      
+      SELECT 
+        mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_tanggal AS Tanggal, 
+        mspk_jumlah AS Jumlah, mspk_ukuran AS Ukuran, mspk_kain AS Kain, mspk_finishing AS Finishing
+      FROM tmemospk 
+      WHERE mspk_divisi IN (3,4,6)
+    ) a
+  `;
+
+  // Hitung Total Data
+  const countQuery = `SELECT COUNT(*) AS total FROM (${baseQuery}) a ${keywordCondition}`;
+  const [countResult] = await db.query(countQuery, params);
+  const total = countResult[0].total;
+
+  // Query Data
+  let query = `
+    ${baseQuery} 
+    ${keywordCondition} 
+    ORDER BY a.Nama ASC
+  `;
+
+  // --- TAMBAHKAN LOGIKA INI ---
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+  // ----------------------------
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: pageNum, limit: limitNum };
+};
+
+const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+
+  // Secara default hanya filter aktif (sesuai logika Delphi Minta Bahan)
+  let whereClause = `WHERE bhn_aktif = 0`;
+
+  // Jika mode adalah 'komponen', baru kita filter berdasarkan 'LL'
+  if (mode === "komponen") {
+    whereClause += ` AND bhn_jb_kode = 'LL'`;
+  }
+
+  if (isBordir === "true") {
+    whereClause += ` AND bhn_bordir <> 0`;
+  }
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (bhn_kode LIKE ? OR bhn_name LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Hitung total
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tbahan ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  // Query data
+  let query = `
+    SELECT bhn_kode AS Kode, bhn_name AS Nama, bhn_satuan AS Satuan 
+    FROM tbahan 
+    ${whereClause} 
+    ORDER BY bhn_name ASC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+
+  return {
+    items: rows,
+    total: total,
+    page: pageNum,
+    limit: limitNum,
+  };
+};
+
+const searchCustomer = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+  // Hanya cari customer yang aktif
+  let whereClause = `WHERE cus_aktif = 0 AND cus_iscabang = 0`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (cus_kode LIKE ? OR cus_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tcustomer ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT cus_kode AS Kode, cus_nama AS Nama, cus_alamat AS Alamat, 
+           cus_kota AS Kota, -- Tambahkan ini agar tidak kosong di frontend
+           cus_cp AS CP, cus_perfect AS cus_perfect
+    FROM tcustomer 
+    ${whereClause} 
+    ORDER BY cus_nama ASC
+  `;
+
+  // Fix Limit -1 (All)
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total: total, page: pageNum, limit: limitNum };
+};
+
+const getCabangPabrik = async (type) => {
+  // FIX: Tambahkan pab_nama AS Nama agar tidak kosong di frontend
+  let query = `SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik WHERE pab_nama NOT LIKE "%MITRA%"`;
+
+  // Jika parameter type dikirim sebagai 'po-internal', batasi hasilnya
+  if (type === "po-internal") {
+    query += ` AND pab_kode IN ('P01', 'P02', 'P03', 'P04', 'P05', 'HO-')`;
+  }
+
+  query += ` ORDER BY pab_kode`;
+
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+const searchBagianProduksi = async (cabang) => {
+  // Hanya divisi PRODUKSI dan 3 huruf depannya sesuai cabang (contoh 'HO-')
+  const [rows] = await db.query(
+    `
+    SELECT kb_kode AS Kode, kb_nama AS Nama 
+    FROM kpi.tbagian 
+    WHERE kb_divisi = "PRODUKSI" AND LEFT(kb_kode, 3) = ? 
+    ORDER BY kb_nama
+  `,
+    [cabang],
+  );
+  return rows;
+};
+
+const getSales = async () => {
+  // Hanya ambil sales yang aktif
+  const [rows] = await db.query(
+    `SELECT sal_kode, sal_nama, sal_alamat FROM tsales WHERE sal_aktif = "Y" ORDER BY sal_kode`,
+  );
+  return rows;
+};
+
+const getJenisKainMintaHarga = async (kodeModel) => {
+  // Sesuai query Delphi: SELECT distinct k.mhk_jeniskain Jeniskain, k.mhk_ktg Kategori ...
+  const [rows] = await db.query(
+    `
+    SELECT DISTINCT mhk_jeniskain AS Jeniskain, mhk_ktg AS Kategori 
+    FROM tmintaharga_kain 
+    WHERE mhk_kode = ? 
+    ORDER BY mhk_jeniskain
+  `,
+    [kodeModel],
+  );
+  return rows;
+};
+
+const getKomponenKain = async (model, jenisKain, warna) => {
+  // Query ini mereplika persis query di prosedur loadKomponen Delphi
+  const query = `
+    SELECT 
+      k.mhk_lengan AS lengan, 
+      k.mhk_komponen AS komponen, 
+      k.mhk_babaran AS babaran,
+      (
+        SELECT a.mhk_harga 
+        FROM tmintaharga_kain a 
+        WHERE a.mhk_warna = ? AND a.mhk_kode = k.mhk_kode AND a.mhk_jeniskain = k.mhk_jeniskain
+        LIMIT 1
+      ) AS harga
+    FROM tmintaharga_kain k
+    WHERE k.mhk_komponen <> "" AND k.mhk_kode = ? AND k.mhk_jeniskain = ?
+  `;
+
+  // Urutan parameter: [warna (untuk subquery), model, jenisKain]
+  const [rows] = await db.query(query, [warna, model, jenisKain]);
+  return rows;
+};
+
+const getCetakOptions = async () => {
+  const query = `
+    SELECT mhb_jenis, mhb_ket, mhb_biaya 
+    FROM tmintaharga_biaya 
+    WHERE mhb_biaya <> 0 AND mhb_jenis IN ("CETAK", "SUBLIM") 
+    ORDER BY mhb_jenis, mhb_ket
+  `;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+const getTambahanOptions = async () => {
+  const query = `
+    SELECT mht_ket, mht_lacost, mht_cotton, mht_pe 
+    FROM tmintaharga_tambahan 
+    ORDER BY mht_ket
+  `;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+const getPerusahaan = async () => {
+  // Sesuai query Delphi untuk pencarian perusahaan (F1 pada edtPerushKode)
+  const query = `
+    SELECT perush_kode, perush_nama, perush_alamat 
+    FROM tperusahaan 
+    ORDER BY perush_nama
+  `;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+const getRekeningPerusahaan = async (perushKode) => {
+  // Sesuai query Delphi (F1 pada edtAccount)
+  // Memilih rekening yang berkaitan dengan perusahaan yang aktif
+  const query = `
+    SELECT 
+      d.perushd_rekening AS Rekening, 
+      d.perushd_bank AS Bank, 
+      d.perushd_atasnama AS AtasNama, 
+      d.perushd_cabang AS Cabang 
+    FROM tperusahaan_dtl d
+    INNER JOIN tperusahaan p ON p.perush_kode = d.perushd_perush_kode 
+    WHERE d.perushd_perush_kode = ?
+  `;
+  const [rows] = await db.query(query, [perushKode]);
+  return rows;
+};
+
+const getDivisi = async () => {
+  // Ganti "nama" menjadi "divisi" sesuai struktur umum database Kencana Print
+  const query = `SELECT kode, divisi AS nama FROM tdivisi WHERE kode <> 0 ORDER BY kode`;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+const searchMintaHarga = async (keyword, custKode, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+  // Sesuai Delphi: status bukan BELUM
+  let whereClause = `WHERE m.mh_status <> "BELUM"`;
+
+  // Dinamis: Hanya filter customer JIKA custKode dikirim
+  if (custKode && custKode.trim() !== "") {
+    whereClause += ` AND m.mh_cus_kode = ?`;
+    params.push(custKode);
+  }
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (m.mh_nomor LIKE ? OR m.mh_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const countQuery = `SELECT COUNT(*) AS total FROM tmintaharga m ${whereClause}`;
+  const [countResult] = await db.query(countQuery, params);
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      m.mh_nomor AS Nomor, 
+      DATE_FORMAT(m.mh_tanggal, "%d-%m-%Y") AS Tanggal, 
+      v.divisi AS Divisi, 
+      s.sal_nama AS Sales,
+      m.mh_nama AS Nama, 
+      m.mh_jmlorder AS QtyOrder, 
+      m.mh_harga_kalkulasi AS Harga
+    FROM tmintaharga m
+    LEFT JOIN tsales s ON s.sal_kode = m.mh_sal_kode
+    LEFT JOIN tdivisi v ON v.kode = m.mh_divisi
+    ${whereClause}
+    ORDER BY m.mh_nomor DESC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: pageNum, limit: limitNum };
+};
+
+const searchJenisOrder = async (divisi) => {
+  let whereClause = "";
+  let params = [];
+
+  // Replikasi logika Delphi berdasarkan awalan kode Divisi
+  if (divisi) {
+    const divStr = String(divisi).charAt(0);
+    if (divStr === "3") {
+      whereClause = "WHERE jo_divisi IN (3, 4, 6)";
+    } else if (divStr === "4" || divStr === "6") {
+      whereClause = "WHERE jo_divisi = 4";
+    } else {
+      whereClause = "WHERE jo_divisi = ?";
+      params.push(divStr);
+    }
+  }
+
+  const query = `
+    SELECT jo_kode, jo_nama 
+    FROM tjenisorder 
+    ${whereClause} 
+    ORDER BY jo_kode ASC
+  `;
+
+  const [rows] = await db.query(query, params);
+
+  // Format dikembalikan dalam objek items agar seragam dengan standar modal
+  return { items: rows };
+};
+
+const searchPenawaran = async (keyword, custKode, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+  let whereClause = "WHERE 1=1";
+
+  // Filter opsional jika custKode dikirim dari frontend
+  if (custKode && custKode.trim() !== "") {
+    whereClause += " AND h.pen_cus_kode = ?";
+    params.push(custKode);
+  }
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += " AND (h.pen_nomor LIKE ? OR c.cus_nama LIKE ?)";
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total 
+     FROM tpenawaran_hdr h 
+     LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode 
+     ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      h.pen_nomor, 
+      DATE_FORMAT(h.pen_tanggal, "%d-%m-%Y") AS pen_tanggal, 
+      h.pen_cus_kode, 
+      c.cus_nama 
+    FROM tpenawaran_hdr h 
+    LEFT JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode 
+    ${whereClause} 
+    ORDER BY h.pen_tanggal DESC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: pageNum, limit: limitNum };
+};
+
+const searchPenawaranDetail = async (penawaranNomor) => {
+  const query = `
+    SELECT pend_id AS id, pend_nama_barang AS Nama, pend_bahan AS Bahan, 
+           pend_ukuran AS Ukuran, pend_satuan AS Satuan, pend_qty AS Qty, 
+           pend_harga AS Harga, (pend_qty * pend_harga) AS Total
+    FROM tpenawaran_dtl
+    WHERE pend_pen_nomor = ?
+    ORDER BY pend_id
+  `;
+  const [rows] = await db.query(query, [penawaranNomor]);
+  return { items: rows }; // Tanpa pagination karena datanya spesifik per Header
+};
+
+// --- FUNGSI UNTUK MODAL SEARCH MAP GARMEN ---
+const searchMapGarmen = async (keyword, cusKode, perushKode, divisi) => {
+  let params = [];
+  // Dasar: mspk_cmo dan mspk_close pake huruf kecil semua sesuai skema
+  let whereClause = `WHERE mspk_cmo <> "" AND mspk_close = 'N'`; // mspk_close di skema Anda default 'N'
+
+  if (divisi) {
+    whereClause += ` AND mspk_divisi = ?`;
+    params.push(divisi);
+  }
+  if (cusKode) {
+    whereClause += ` AND Mspk_cus_kode = ?`; // Mspk_cus_kode
+    params.push(cusKode);
+  }
+  if (perushKode) {
+    whereClause += ` AND mspk_perush_kode = ?`; // mspk_perush_kode
+    params.push(perushKode);
+  }
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (MSPK_Nomor LIKE ? OR Mspk_nama LIKE ?)`; // MSPK_Nomor & Mspk_nama
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const query = `
+    SELECT 
+      MSPK_Nomor AS Nomor, 
+      Mspk_nama AS Nama, 
+      DATE_FORMAT(Mspk_Tanggal, "%d-%m-%Y") AS Tanggal, 
+      Mspk_jumlah AS Jumlah, 
+      Mspk_ukuran AS Ukuran, 
+      Mspk_kain AS Bahan,
+      Mspk_jumlah_kirim AS JmlKirim, 
+      (Mspk_jumlah - Mspk_jumlah_kirim) AS Kurang
+    FROM tmemospk 
+    ${whereClause} 
+    ORDER BY Mspk_Tanggal DESC, MSPK_Nomor DESC
+  `;
+  const [rows] = await db.query(query, params);
+  return { items: rows };
+};
+// --- FUNGSI UNTUK VALIDASI KETIK LANGSUNG (edtkodeExit) ---
+const validateMapGarmen = async (nomor) => {
+  const query = `
+    SELECT mspk_nomor AS Nomor, mspk_nama AS Nama
+    FROM tmemospk 
+    WHERE mspk_divisi IN (3, 4, 6) AND mspk_nomor = ?
+  `;
+  const [rows] = await db.query(query, [nomor]);
+  if (rows.length === 0) return null; // Tidak ketemu
+  return rows[0]; // Ketemu
+};
+
+// --- GET PO INTERNAL UNTUK SURAT JALAN ---
+const searchPoInternal = async (cabangTujuan) => {
+  // Query Delphi: SELECT h.poi_nomor Nomor,h.poi_tanggal Tanggal,h.poi_cab AsalPO
+  // WHERE h.poi_close="N" AND h.poi_cab=...
+  const query = `
+    SELECT h.poi_nomor AS Nomor, h.poi_tanggal AS Tanggal, h.poi_cab AS AsalPO
+    FROM tpointernalmap_hdr h
+    WHERE h.poi_close = "N" AND h.poi_cab = ?
+    ORDER BY h.date_create DESC
+  `;
+  const [rows] = await db.query(query, [cabangTujuan]);
+  return { items: rows };
+};
+
+// --- GET ACCESORIES (Dari tgarmen_brg) ---
+const searchAccesories = async () => {
+  const query = `
+    SELECT 
+      brg_kode AS Kode, 
+      brg_nama AS Nama, 
+      brg_satuan AS Satuan, 
+      brg_note AS Note
+    FROM tgarmen_brg
+    WHERE brg_jenis = 'ACCESORIES'
+    ORDER BY brg_nama
+  `;
+  const [rows] = await db.query(query);
+  return { items: rows };
+};
+
+// --- GET KOMPONEN ---
+const getKomponen = async () => {
+  const [rows] = await db.query(`SELECT komponen FROM tkomponen ORDER BY no`);
+  return rows.map((r) => r.komponen); // Return array of string
+};
+
+// --- TAMBAHKAN FUNGSI INI ---
+const searchMintaBahan = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const pageNum = Number(page);
+  const offset = (pageNum - 1) * limitNum;
+
+  let params = [];
+  // Syarat: Belum close (min_close <> 1) dan sudah di-ACC (min_apv = 'Y')
+  let whereClause = `WHERE min_close <> 1`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (min_nomor LIKE ? OR min_spk_nomor LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const countQuery = `SELECT COUNT(*) AS total FROM tmintabahan_hdr ${whereClause}`;
+  const [countResult] = await db.query(countQuery, params);
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      min_nomor AS Nomor, 
+      min_tanggal AS Tanggal, 
+      min_spk_nomor AS SPK, 
+      min_ket AS Keterangan, 
+      min_apv AS Approve
+    FROM tmintabahan_hdr 
+    ${whereClause} 
+    ORDER BY min_tanggal DESC, min_nomor DESC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: pageNum, limit: limitNum };
+};
+
+// --- SEARCH HEADER REALISASI MINTA (Untuk kolom No. Realisasi Minta) ---
+const searchRealisasiMinta = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = "WHERE 1=1";
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.promin_nomor LIKE ? OR h.promin_spk_nomor LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tproduksiminta_hdr h ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  const query = `
+    SELECT 
+      h.promin_nomor AS Nomor, 
+      h.promin_tanggal AS Tanggal, 
+      h.promin_spk_nomor AS SPK,
+      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
+      h.promin_keterangan AS Keterangan
+    FROM tproduksiminta_hdr h
+    LEFT JOIN tspk s ON s.spk_nomor = h.promin_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.promin_spk_nomor
+    ${whereClause}
+    ORDER BY h.promin_tanggal DESC, h.promin_nomor DESC
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total };
+};
+
+// --- SEARCH DETAIL REALISASI MINTA (Berdasarkan Header yang dipilih) ---
+const searchRealisasiMintaDetail = async (nomorRealisasi, gdgProduksi) => {
+  const query = `
+    SELECT x.*, (x.Minta - x.LHK) AS Sisa FROM (
+      SELECT 
+        h.promin_nomor AS NoMinta, h.promin_spk_nomor AS SPK,
+        d.promind_bhn_kode AS Kode, b.Bhn_Name AS Nama, b.Bhn_satuan AS Satuan, 
+        d.promind_jumlah AS Minta,
+        -- TAMBAHKAN FIELD INI:
+        d.promind_sup_kode AS kdsup, 
+        IFNULL(u.Sup_nama, "") AS nmsup,
+        (SELECT IFNULL(SUM(u.proretd_Jumlah),0) FROM tproduksireturlog_dtl u 
+         WHERE u.proretd_nominta = h.promin_nomor AND u.proretd_bhn_kode = d.promind_bhn_kode) AS Sudah,
+        (SELECT IFNULL(SUM(k.mph_qty_berat),0) FROM tmutasiproduksi_hdr k
+         WHERE k.mph_nomaterial = h.promin_nomor AND k.mph_spk_nomor = h.promin_spk_nomor 
+         AND k.mph_bhn_kode = d.promind_bhn_kode AND k.mph_gdgasal = ?) AS LHK
+      FROM tproduksiminta_hdr h
+      INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
+      LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+      LEFT JOIN tsupplier u ON u.Sup_kode = d.promind_sup_kode
+      WHERE h.promin_nomor = ?
+    ) x
+  `;
+  const [rows] = await db.query(query, [gdgProduksi, nomorRealisasi]);
+  return { items: rows };
+};
+
+module.exports = {
+  searchSpk,
+  searchSpkProduksi,
+  searchBahan,
+  searchCustomer,
+  getCabangPabrik,
+  searchBagianProduksi,
+  getSales,
+  getJenisKainMintaHarga,
+  getKomponenKain,
+  getCetakOptions,
+  getTambahanOptions,
+  getPerusahaan,
+  getRekeningPerusahaan,
+  getDivisi,
+  searchMintaHarga,
+  searchJenisOrder,
+  searchPenawaran,
+  searchPenawaranDetail,
+  searchMapGarmen,
+  validateMapGarmen,
+  searchPoInternal,
+  searchAccesories,
+  getKomponen,
+  searchMintaBahan,
+  searchRealisasiMinta,
+  searchRealisasiMintaDetail,
+};
