@@ -84,10 +84,6 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Tangani preflight OPTIONS untuk semua route
-app.options("*", cors(corsOptions));
-
-// Terapkan CORS ke semua route
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
