@@ -66,16 +66,29 @@ const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 
 const app = express();
-app.use(
-  cors({
-    origin: [
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = [
       "http://103.94.238.252:91",
       "http://localhost:3000",
       "http://localhost:5173",
-    ], // Masukkan port frontend kamu
-    credentials: true,
-  }),
-);
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+// Tangani preflight OPTIONS untuk semua route
+app.options("*", cors(corsOptions));
+
+// Terapkan CORS ke semua route
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
 
