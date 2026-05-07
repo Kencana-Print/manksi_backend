@@ -68,7 +68,11 @@ const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 const app = express();
 app.use(
   cors({
-    origin: ["http://localhost:3000", "http://localhost:5173"], // Masukkan port frontend kamu
+    origin: [
+      "http://103.94.238.252:91",
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ], // Masukkan port frontend kamu
     credentials: true,
   }),
 );
