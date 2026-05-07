@@ -85,7 +85,9 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
 
   // Filter Role Base Access Data (Delphi Logic)
   const isManagerOrAdmin =
-    userInfo.jabatan.includes("MANAGER-CMO-MO") || userInfo.kode === "ADMIN";
+    userInfo.jabatan.includes("MANAGER-CMO-MO") ||
+    userInfo.kode === "ADMIN" ||
+    userInfo.bagian?.toUpperCase() === "AUDIT";
   if (!isManagerOrAdmin) {
     if (userInfo.jabatan === "CRM") {
       query += ` AND (h.mh_sal_kode = "019" OR h.user_create = ?)`;

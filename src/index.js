@@ -51,6 +51,10 @@ const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
 const approveSjRoutes = require("./routes/garmen/poInternalMapApproveRoutes");
 const bastRoutes = require("./routes/garmen/bastRoutes");
 
+// Pembelian Routes
+const mkbRoutes = require("./routes/pembelian/mkbRoutes");
+// const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
+
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
 const mppbFormRoutes = require("./routes/penjualan/mppbFormRoutes");
@@ -113,6 +117,9 @@ app.use("/api/master/sales", salesRoutes);
 app.use("/api/master/bap-produksi", bapProduksiRoutes);
 app.use("/api/master/bap-produksi-form", bapProduksiFormRoutes);
 
+app.use("/api/pembelian/mkb", mkbRoutes);
+// app.use("/api/pembelian/mkb/form", mkbFormRoutes);
+
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
 app.use(
@@ -150,7 +157,7 @@ app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
 
-const PORT = process.env.PORT || 3005;
+const PORT = process.env.PORT || 3088;
 app.listen(PORT, () => {
   console.log(`Server Manksi running on port ${PORT}`);
 });
