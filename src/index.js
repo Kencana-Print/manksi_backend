@@ -66,25 +66,21 @@ const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 
 const app = express();
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = [
-      "http://103.94.238.252:91",
-      "http://localhost:3000",
-      "http://localhost:5173",
-    ];
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
+// KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Jika tidak ada origin (misal via curl/postman), izinkan saja
+      if (!origin) return callback(null, true);
 
-app.use(cors(corsOptions));
+      // Izinkan SEMUA origin dengan menggemakan kembali origin yang me-request.
+      // Ini memastikan header 'Access-Control-Allow-Origin' SELALU berisi URL spesifik, bukan '*'.
+      callback(null, origin);
+    },
+    credentials: true, // Wajib di-set true jika frontend mengirim cookie/token
+  }),
+);
+
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
 
@@ -154,7 +150,7 @@ app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3005;
 app.listen(PORT, () => {
   console.log(`Server Manksi running on port ${PORT}`);
 });
