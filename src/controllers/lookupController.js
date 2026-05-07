@@ -341,6 +341,97 @@ const searchRealisasiMintaDetail = async (req, res) => {
   }
 };
 
+const searchGudangProduksi = async (req, res) => {
+  try {
+    const { q, cabang, page, limit } = req.query;
+    const data = await lookupService.searchGudangProduksi(
+      q,
+      cabang,
+      page,
+      limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchBarangGarmen = async (req, res) => {
+  try {
+    const { q, jenis, cabang, page, limit } = req.query;
+    // req.user.bagian didapat dari middleware verifyToken
+    const bagian = req.user.bagian ? req.user.bagian.toUpperCase() : "";
+
+    if (!jenis || !cabang) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter jenis dan cabang wajib dikirim.",
+      });
+    }
+
+    const data = await lookupService.searchBarangGarmen(
+      q,
+      jenis,
+      cabang,
+      bagian,
+      page,
+      limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchPermintaanBarangGarmen = async (req, res) => {
+  try {
+    const { q, jenis, page, limit } = req.query;
+    const cabang = req.user.cabang;
+    const bagian = req.user.bagian ? req.user.bagian.toUpperCase() : "";
+
+    if (!jenis) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter jenis wajib dikirim.",
+      });
+    }
+
+    const data = await lookupService.searchPermintaanBarangGarmen(
+      q,
+      jenis,
+      cabang,
+      bagian,
+      page,
+      limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchBarangInvProforma = async (req, res) => {
+  try {
+    const { perush, cus, q, page, limit } = req.query;
+    if (!perush || !cus)
+      return res.status(400).json({
+        success: false,
+        message: "Perusahaan & Customer wajib dipilih dulu.",
+      });
+
+    const data = await lookupService.searchBarangInvProforma(
+      perush,
+      cus,
+      q,
+      page,
+      limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -368,4 +459,8 @@ module.exports = {
   searchMintaBahan,
   searchRealisasiMinta,
   searchRealisasiMintaDetail,
+  searchGudangProduksi,
+  searchBarangGarmen,
+  searchPermintaanBarangGarmen,
+  searchBarangInvProforma,
 };

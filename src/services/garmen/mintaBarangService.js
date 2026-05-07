@@ -260,7 +260,13 @@ const ajukanPerubahan = async (payload, user) => {
  * Cek jika ada Permintaan Accesories yg realisasinya belum di-approve > 1 hari
  * Dipakai saat user klik tombol "Baru" di Frontend
  */
-const checkUnapprovedRealisasi = async (userKode) => {
+const checkUnapprovedRealisasi = async (userKode, cabangLogin) => {
+  // --- TAMBAHAN LOGIKA BYPASS ---
+  // Jika cabang login adalah P03 atau P04, langsung beri izin masuk form
+  if (cabangLogin === "P03" || cabangLogin === "P04") {
+    return false; // False = Tidak ada blokir = Boleh Insert
+  }
+
   const query = `
     SELECT IFNULL(COUNT(*), 0) AS blmApv
     FROM tgarmenrealisasi_hdr h

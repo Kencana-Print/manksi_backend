@@ -91,4 +91,24 @@ router.get(
   controller.searchRealisasiMintaDetail,
 );
 
+// Endpoint: /api/lookups/gudang-produksi
+// Digunakan di GudangProduksiSearchModal.vue (Menerima param ?cabang=)
+router.get("/gudang-produksi", verifyToken, controller.searchGudangProduksi);
+
+router.get("/barang-garmen", verifyToken, controller.searchBarangGarmen);
+
+// Endpoint: /api/lookups/permintaan-barang-garmen
+// Digunakan di PermintaanBarangSearchModal.vue (Menerima param ?jenis=)
+router.get(
+  "/permintaan-barang-garmen",
+  verifyToken,
+  controller.searchPermintaanBarangGarmen,
+);
+
+router.get(
+  "/barang-inv-proforma",
+  verifyToken,
+  controller.searchBarangInvProforma,
+);
+
 module.exports = router;

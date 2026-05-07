@@ -42,6 +42,9 @@ const approveReturBahanRoutes = require("./routes/garmen/approveReturBahanRoutes
 const approveReturBahanFormRoutes = require("./routes/garmen/approveReturBahanFormRoutes");
 
 const mintaBarangRoutes = require("./routes/garmen/mintaBarangRoutes");
+const mintaBarangFormRoutes = require("./routes/garmen/mintaBarangFormRoutes");
+const realisasiBarangRoutes = require("./routes/garmen/realisasiBarangRoutes");
+const realisasiBarangFormRoutes = require("./routes/garmen/realisasiBarangFormRoutes");
 
 const poInternalMapRoutes = require("./routes/garmen/poInternalMapRoutes");
 const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
@@ -49,10 +52,14 @@ const approveSjRoutes = require("./routes/garmen/poInternalMapApproveRoutes");
 const bastRoutes = require("./routes/garmen/bastRoutes");
 
 // Penjualan Routes
+const mppbRoutes = require("./routes/penjualan/mppbRoutes");
+const mppbFormRoutes = require("./routes/penjualan/mppbFormRoutes");
 const mintaHargaRoutes = require("./routes/penjualan/mintaHargaRoutes");
 const mintaHargaFormRoutes = require("./routes/penjualan/mintaHargaFormRoutes");
 const penawaranRoutes = require("./routes/penjualan/penawaranRoutes");
 const penawaranFormRoutes = require("./routes/penjualan/penawaranFormRoutes");
+const invoiceProformaRoutes = require("./routes/penjualan/invoiceProformaRoutes");
+const invoiceProformaFormRoutes = require("./routes/penjualan/invoiceProformaFormRoutes");
 const mapRoutes = require("./routes/penjualan/mapRoutes");
 const mapFormRoutes = require("./routes/penjualan/mapFormRoutes");
 const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
@@ -111,7 +118,12 @@ app.use(
   approveReturBahanFormRoutes,
 );
 
+app.use("/api/penjualan/mppb", mppbRoutes);
+app.use("/api/penjualan/mppb/form", mppbFormRoutes);
 app.use("/api/garmen/barang/permintaan", mintaBarangRoutes);
+app.use("/api/garmen/barang/permintaan/form", mintaBarangFormRoutes);
+app.use("/api/garmen/barang/realisasi", realisasiBarangRoutes);
+app.use("/api/garmen/barang/realisasi/form", realisasiBarangFormRoutes);
 
 app.use("/api/garmen/po-internal-map", poInternalMapRoutes);
 app.use("/api/garmen/po-internal-map/surat-jalan", poInternalMapSjRoutes);
@@ -122,6 +134,8 @@ app.use("/api/penjualan/minta-harga", mintaHargaRoutes);
 app.use("/api/penjualan/minta-harga-form", mintaHargaFormRoutes);
 app.use("/api/penjualan/penawaran", penawaranRoutes);
 app.use("/api/penjualan/penawaran-form", penawaranFormRoutes);
+app.use("/api/penjualan/invoice-proforma", invoiceProformaRoutes);
+app.use("/api/penjualan/invoice-proforma/form", invoiceProformaFormRoutes);
 app.use("/api/penjualan/map", mapRoutes);
 app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);

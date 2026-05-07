@@ -68,6 +68,7 @@ const checkBlockApprove = async (req, res) => {
   try {
     const isBlocked = await mintaBarangService.checkUnapprovedRealisasi(
       req.user.kode,
+      req.user.cabang, // <--- TAMBAHKAN INI AGAR BYPASS CABANG BERFUNGSI
     );
     res.status(200).json({ success: true, isBlocked });
   } catch (error) {

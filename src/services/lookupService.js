@@ -655,6 +655,243 @@ const searchRealisasiMintaDetail = async (nomorRealisasi, gdgProduksi) => {
   return { items: rows };
 };
 
+const searchGudangProduksi = async (keyword, cabang, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = "";
+
+  // Logika Filter Sesuai Delphi
+  if (cabang === "P03") {
+    whereClause = `WHERE gdgp_kode = "K0001"`;
+  } else if (cabang === "P05") {
+    whereClause = `WHERE gdgp_kode = "MMT01"`;
+  } else {
+    whereClause = `WHERE gdgp_aktif = 0 AND gdgp_jasa <> "" AND gdgp_nama NOT LIKE "%QC%"`;
+    if (cabang && cabang !== "ALL" && !cabang.startsWith("HO")) {
+      whereClause += ` AND gdgp_cab = ?`;
+      params.push(cabang);
+    }
+  }
+
+  // Filter Keyword Pencarian
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (gdgp_kode LIKE ? OR gdgp_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Hitung Total Data
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tgudangproduksi ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  // Ambil Data
+  let query = `
+    SELECT gdgp_kode AS Kode, gdgp_nama AS Nama
+    FROM tgudangproduksi
+    ${whereClause}
+    ORDER BY gdgp_nama ASC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+
+  return {
+    items: rows,
+    total: total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+const searchBarangGarmen = async (
+  keyword,
+  jenis,
+  cabang,
+  bagian,
+  page = 1,
+  limit = 50,
+) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+
+  // 1. Tentukan tabel stok berdasarkan jenis
+  let stockTable = "tmasterstok_atk"; // Default ATK/RTK
+  if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
+  else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
+  else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+
+  // 2. Siapkan kondisi dasar
+  let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
+  let whereParams = [jenis];
+
+  // 3. Filter khusus Sparepart berdasarkan Bagian User
+  if (jenis === "SPAREPART") {
+    if (bagian === "TEKNISI") whereClause += ` AND b.brg_ktg <> "IT"`;
+    else if (bagian === "IT") whereClause += ` AND b.brg_ktg = "IT"`;
+  }
+
+  // 4. Pencarian keyword
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ? OR b.brg_note LIKE ?)`;
+    whereParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Hitung total data
+  const [countRes] = await db.query(
+    `SELECT COUNT(*) AS total FROM tgarmen_brg b ${whereClause}`,
+    whereParams,
+  );
+  const total = countRes[0].total;
+
+  // 5. Query utama (termasuk subquery stok sesuai cabang)
+  const dataQuery = `
+    SELECT 
+      b.brg_kode AS Kode, 
+      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama, 
+      b.brg_satuan AS Satuan,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+        FROM ${stockTable} m 
+        WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=b.brg_kode
+      ), 0) AS Stok
+    FROM tgarmen_brg b
+    ${whereClause}
+    ORDER BY b.brg_nama ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  // Parameter: [cabang (utk stok), ...whereParams, limit, offset]
+  const dataParams = [cabang, ...whereParams, limitNum, offset];
+  const [rows] = await db.query(dataQuery, dataParams);
+
+  return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
+// --- SEARCH PERMINTAAN BARANG GARMEN (Untuk Realisasi) ---
+const searchPermintaanBarangGarmen = async (
+  keyword,
+  jenis,
+  cabang,
+  bagian,
+  page = 1,
+  limit = 50,
+) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  // Sesuai Delphi (edtMintaExit & F1 lookup):
+  // Filter status Buka(0) atau Proses(2), sesuai jenisnya
+  let whereClause = `WHERE min_close IN (0,2) AND min_jenis = ?`;
+  params.push(jenis);
+
+  // Jika jenis SPAREPART, batasi sesuai bagian user (TEKNISI / IT)
+  if (jenis === "SPAREPART" && (bagian === "TEKNISI" || bagian === "IT")) {
+    whereClause += ` AND min_bagian = ?`;
+    params.push(bagian);
+  }
+
+  // Filter Keyword Pencarian
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (min_nomor LIKE ? OR min_spk_nomor LIKE ? OR min_ket LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Hitung Total
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tgarmenminta_hdr ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  // Ambil Data
+  let query = `
+    SELECT 
+      min_nomor AS Nomor, 
+      DATE_FORMAT(min_tanggal, "%d-%m-%Y") AS Tanggal, 
+      min_cab AS CabMinta, 
+      user_create AS Peminta,
+      min_spk_nomor AS SPK,
+      IF(LEFT(min_gp,1)="K", gdgp_nama, RIGHT(gdgp_nama, LENGTH(gdgp_nama)-6)) AS GudangProduksi,
+      min_ket AS Keterangan
+    FROM tgarmenminta_hdr
+    LEFT JOIN tgudangproduksi ON gdgp_kode = min_gp
+    ${whereClause}
+    ORDER BY min_nomor DESC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+
+  return {
+    items: rows,
+    total: total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+const searchBarangInvProforma = async (
+  perushKode,
+  cusKode,
+  keyword,
+  page = 1,
+  limit = 50,
+) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  // Logika Delphi: Barang tanpa SPK ATAU SPK-nya punya perusahaan & customer yg sama
+  let whereClause = `
+    WHERE (s.spk_nomor IS NULL 
+       OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ?))
+  `;
+  params.push(perushKode, cusKode);
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tbarang b LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      b.brg_kode AS Kode, 
+      b.brg_name AS Nama, 
+      b.brg_ukuran AS Ukuran, 
+      b.brg_harga AS Harga
+    FROM tbarang b
+    LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor
+    ${whereClause}
+    ORDER BY b.brg_kode ASC
+  `;
+
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -682,4 +919,8 @@ module.exports = {
   searchMintaBahan,
   searchRealisasiMinta,
   searchRealisasiMintaDetail,
+  searchGudangProduksi,
+  searchBarangGarmen,
+  searchPermintaanBarangGarmen,
+  searchBarangInvProforma,
 };
