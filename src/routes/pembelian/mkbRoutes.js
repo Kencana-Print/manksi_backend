@@ -16,6 +16,14 @@ router.get(
   mkbController.getBrowse,
 );
 
+// --- ROUTE LOAD DETAIL DATA BARANG ---
+router.get(
+  "/:nomor/detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mkbController.getDetailData,
+);
+
 // --- ROUTE LOAD LINKED PO ---
 router.get(
   "/:nomor/po",

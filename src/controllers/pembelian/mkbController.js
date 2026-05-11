@@ -36,12 +36,10 @@ const deleteMkb = async (req, res) => {
     const { tglTransaksi } = req.body;
 
     if (!tglTransaksi) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Tanggal transaksi dibutuhkan untuk validasi tutup buku.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Tanggal transaksi dibutuhkan untuk validasi tutup buku.",
+      });
     }
 
     await mkbService.deleteMkb(nomor, tglTransaksi);
@@ -69,8 +67,19 @@ const requestPin = async (req, res) => {
   }
 };
 
+const getDetailData = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await mkbService.getDetailData(nomor);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
+  getDetailData,
   getLinkedPo,
   deleteMkb,
   requestPin,

@@ -108,6 +108,46 @@ const getBrowseMkb = async (startDate, endDate) => {
   return rows;
 };
 
+// --- DATA DETAIL MKB (Rincian Barang) ---
+const getDetailData = async (nomor) => {
+  const query = `
+    SELECT 
+      x.Nomor, x.Nopo, x.Komponen, x.Warna, x.Jenis, x.Babaran, x.Kode, 
+      x.NamaBahan, x.Satuan, x.Gramasi, x.Butuh, x.Ready, x.Akan_PO, 
+      (x.SudahPO1 + x.SudahPO2) AS SudahPO, 
+      (x.Terimapo + x.nonpo + x.linkpo) AS Terima, 
+      (x.Butuh - x.Ready - (x.Terimapo + x.nonpo + x.linkpo)) AS Kurang
+    FROM (
+      SELECT 
+        d.mkbd_mkb_nomor AS Nomor,
+        IFNULL((SELECT hh.po_nomor FROM tpo_hdr hh INNER JOIN tpo_dtl dd ON hh.po_nomor=dd.pod_po_nomor WHERE dd.pod_bhn_kode=d.mkbd_bhn_kode AND dd.pod_mkb_nomor=d.mkbd_mkb_nomor LIMIT 1), "") AS Nopo,
+        d.mkbd_komponen AS Komponen, 
+        d.mkbd_warna AS Warna, 
+        d.mkbd_jenis AS Jenis, 
+        d.mkbd_babaran AS Babaran,
+        d.mkbd_bhn_kode AS Kode,
+        b.bhn_name AS NamaBahan,
+        d.mkbd_bhn_satuan AS Satuan,
+        b.bhn_gramasi AS Gramasi,
+        d.mkbd_jumlah AS Butuh,
+        d.mkbd_jumlah_rs AS Ready,
+        d.mkbd_jumlah_po AS Akan_PO,
+        IFNULL((SELECT SUM(i.pod_jumlah) FROM tpo_dtl i WHERE i.pod_mkb_nomor = h.mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode), 0) AS SudahPO1,
+        IFNULL((SELECT SUM(i.mkbd2_qty) FROM tmkb_dtl2 i WHERE i.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND i.mkbd2_nourut = d.mkbd_nourut), 0) AS SudahPO2,
+        IFNULL((SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tpo_dtl p LEFT JOIN tbpb_dtl2 i ON i.bpbd2_po_nomor = p.pod_po_nomor AND i.bpbd2_nourut = p.pod_nourut WHERE p.pod_mkb_nomor = d.mkbd_mkb_nomor AND p.pod_bhn_kode = d.mkbd_bhn_kode GROUP BY p.pod_bhn_kode, p.pod_mkb_nomor), 0) AS Terimapo,
+        IFNULL((SELECT IF(k.mkbd2_qty <= SUM(p.bpbd2_jumlah), k.mkbd2_qty, SUM(p.bpbd2_jumlah)) FROM tbpb_dtl2 p INNER JOIN tmkb_dtl2 k ON k.mkbd2_po_nomor = p.bpbd2_po_nomor AND k.mkbd2_pourut = p.bpbd2_nourut WHERE k.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND k.mkbd2_nourut = d.mkbd_nourut), 0) AS linkpo,
+        IFNULL((SELECT SUM(i.bpbd_jumlah) FROM tbpb_dtl i WHERE i.bpbd_mkb = h.mkb_nomor AND i.bpbd_bhn_kode = d.mkbd_bhn_kode AND i.bpbd_nourut = d.mkbd_nourut), 0) AS nonpo
+      FROM tmkb_dtl d
+      LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+      LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+      WHERE d.mkbd_mkb_nomor = ?
+      ORDER BY d.mkbd_mkb_nomor, d.mkbd_nourut
+    ) x
+  `;
+  const [rows] = await db.query(query, [nomor]);
+  return rows;
+};
+
 // --- DATA PO TERKAIT (Sub-table) ---
 const getLinkedPo = async (nomor) => {
   const query = `
@@ -210,6 +250,7 @@ const requestPin = async (payload, user) => {
 
 module.exports = {
   getBrowseMkb,
+  getDetailData,
   getLinkedPo,
   deleteMkb,
   requestPin,

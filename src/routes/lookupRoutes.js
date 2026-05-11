@@ -111,4 +111,21 @@ router.get(
   controller.searchBarangInvProforma,
 );
 
+router.get("/workshop", verifyToken, controller.getWorkshops);
+
+router.get("/kepentingan-spk", verifyToken, controller.getKepentinganSpk);
+router.get("/ket-po", verifyToken, controller.getKetPo);
+router.get("/ket-komponen", verifyToken, controller.getKetKomponen);
+
+router.get("/cust-kaosan", verifyToken, controller.searchCustKaosan);
+router.get("/so-kaosan", verifyToken, controller.searchSoKaosan);
+router.get("/inv-dc", verifyToken, controller.searchInvDc);
+router.get("/sj-memo", verifyToken, controller.searchSjMemo);
+router.get("/memo", verifyToken, controller.searchMemo);
+router.get("/mppb", verifyToken, controller.searchMppb);
+
+router.get("/history-alokasi", verifyToken, controller.getHistoryAlokasi);
+
+router.get("/barang-kaosan", verifyToken, controller.searchBarangKaosan);
+
 module.exports = router;

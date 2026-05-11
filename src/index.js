@@ -53,7 +53,7 @@ const bastRoutes = require("./routes/garmen/bastRoutes");
 
 // Pembelian Routes
 const mkbRoutes = require("./routes/pembelian/mkbRoutes");
-// const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
+const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -62,6 +62,8 @@ const mintaHargaRoutes = require("./routes/penjualan/mintaHargaRoutes");
 const mintaHargaFormRoutes = require("./routes/penjualan/mintaHargaFormRoutes");
 const penawaranRoutes = require("./routes/penjualan/penawaranRoutes");
 const penawaranFormRoutes = require("./routes/penjualan/penawaranFormRoutes");
+const salesOrderRoutes = require("./routes/penjualan/salesOrderRoutes");
+const salesOrderFormRoutes = require("./routes/penjualan/salesOrderFormRoutes");
 const invoiceProformaRoutes = require("./routes/penjualan/invoiceProformaRoutes");
 const invoiceProformaFormRoutes = require("./routes/penjualan/invoiceProformaFormRoutes");
 const mapRoutes = require("./routes/penjualan/mapRoutes");
@@ -117,8 +119,8 @@ app.use("/api/master/sales", salesRoutes);
 app.use("/api/master/bap-produksi", bapProduksiRoutes);
 app.use("/api/master/bap-produksi-form", bapProduksiFormRoutes);
 
+app.use("/api/pembelian/mkb/form", mkbFormRoutes);
 app.use("/api/pembelian/mkb", mkbRoutes);
-// app.use("/api/pembelian/mkb/form", mkbFormRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
@@ -152,6 +154,8 @@ app.use("/api/penjualan/penawaran", penawaranRoutes);
 app.use("/api/penjualan/penawaran-form", penawaranFormRoutes);
 app.use("/api/penjualan/invoice-proforma", invoiceProformaRoutes);
 app.use("/api/penjualan/invoice-proforma/form", invoiceProformaFormRoutes);
+app.use("/api/penjualan/sales-order", salesOrderRoutes);
+app.use("/api/penjualan/sales-order/form", salesOrderFormRoutes);
 app.use("/api/penjualan/map", mapRoutes);
 app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);

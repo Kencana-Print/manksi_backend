@@ -132,10 +132,16 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
 
   // Query data
   let query = `
-    SELECT bhn_kode AS Kode, bhn_name AS Nama, bhn_satuan AS Satuan 
-    FROM tbahan 
+    SELECT 
+      b.bhn_kode AS Kode, 
+      b.bhn_name AS Nama, 
+      b.bhn_satuan AS Satuan,
+      IFNULL(g.bg_nama, "") AS Gramasi,
+      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_bahan m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=b.bhn_kode), 0) AS Stok
+    FROM tbahan b
+    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.bhn_kode, 6, 2)
     ${whereClause} 
-    ORDER BY bhn_name ASC
+    ORDER BY b.bhn_name ASC
   `;
 
   if (limitNum > 0) {
@@ -892,6 +898,274 @@ const searchBarangInvProforma = async (
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
+const getWorkshops = async () => {
+  // Sesuai logic FormCreate di Delphi: SELECT DISTINCT pab_kode FROM tpabrik
+  const [rows] = await db.query(
+    `SELECT DISTINCT pab_kode AS Workshop FROM tpabrik ORDER BY pab_kode`,
+  );
+  // Kembalikan dalam bentuk array string sederhana agar cocok dengan v-for di Vue
+  return rows.map((r) => r.Workshop);
+};
+
+// Dapatkan daftar status kepentingan
+const getKepentinganSpk = async () => {
+  const [rows] = await db.query(
+    `SELECT kepentingan FROM tspk_kepentingan ORDER BY kode`,
+  );
+  return rows.map((r) => r.kepentingan);
+};
+
+// Dapatkan daftar keterangan PO
+const getKetPo = async () => {
+  const [rows] = await db.query(`SELECT ket FROM tspk_ketpo`);
+  // Tambahkan string kosong di awal sesuai perilaku default combobox Delphi
+  return ["", ...rows.map((r) => r.ket)];
+};
+
+// Dapatkan keterangan komponen (untuk Tab Kaosan jika nanti butuh)
+const getKetKomponen = async () => {
+  const [rows] = await db.query(`SELECT * FROM tketkomponen ORDER BY kode`);
+  // Transformasikan sedikit untuk Vue
+  return rows.map((r) => ({
+    kode: r.kode,
+    nama: r.nama,
+    pakai: false,
+    ket: "",
+  }));
+};
+
+// --- GET CUST KAOSAN (Dari db retail) ---
+const searchCustKaosan = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE cus_aktif = 0`; // Sesuai Delphi
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (cus_kode LIKE ? OR cus_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM retail.tcustomer ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT cus_kode AS Kode, cus_nama AS Nama, cus_alamat AS Alamat 
+    FROM retail.tcustomer 
+    ${whereClause} 
+    ORDER BY cus_nama ASC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
+// --- GET SO KAOSAN (Sesuai F1 di edtpesanan Delphi) ---
+const searchSoKaosan = async (keyword, cabKaos, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [cabKaos]; // Filter dari frmMenu.CABKAOS
+
+  let whereClause = `WHERE LEFT(h.so_nomor, 3) = ?`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.so_nomor LIKE ? OR c.cus_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM retail.tso_hdr h LEFT JOIN retail.tcustomer c ON c.cus_kode = h.so_cus_kode ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      h.so_nomor AS Nomor, 
+      DATE_FORMAT(h.so_tanggal, "%d-%m-%Y") AS Tanggal, 
+      h.so_cus_kode AS KdCus, 
+      c.cus_nama AS Customer, 
+      c.cus_alamat AS Alamat 
+    FROM retail.tso_hdr h 
+    LEFT JOIN retail.tcustomer c ON c.cus_kode = h.so_cus_kode 
+    ${whereClause} 
+    ORDER BY h.so_nomor DESC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
+// --- GET INVOICE DC (Untuk Divisi selain 3) ---
+const searchInvDc = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  // Sesuai SQL Delphi (F1 edtinvdc)
+  let whereClause = `WHERE LEFT(h.inv_nomor, 3) = "KDC" AND h.inv_cus_kode = "K-00530"`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.inv_nomor LIKE ? OR h.inv_ket LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // Hitung total dengan DISTINCT/GROUP BY logic
+  const [countResult] = await db.query(
+    `SELECT COUNT(DISTINCT h.inv_nomor) AS total 
+     FROM retail.tinv_hdr h 
+     LEFT JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor 
+     ${whereClause}`,
+    params,
+  );
+  const total = countResult[0].total;
+
+  let query = `
+    SELECT 
+      h.inv_nomor AS Nomor, 
+      DATE_FORMAT(h.inv_tanggal, "%d-%m-%Y") AS Tanggal, 
+      SUM(d.invd_jumlah) AS Qty, 
+      h.inv_ket AS Keterangan
+    FROM retail.tinv_hdr h
+    LEFT JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+    ${whereClause}
+    GROUP BY h.inv_nomor
+    ORDER BY h.inv_nomor DESC
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
+// --- GET SJ MEMO ---
+const searchSjMemo = async (keyword, page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  let params = [];
+  let where = "WHERE 1=1";
+  if (keyword) {
+    where += " AND (sj_nomor LIKE ? OR c.cus_nama LIKE ?)";
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  const query = `
+    SELECT sj_nomor AS Nomor, DATE_FORMAT(sj_tanggal, "%d-%m-%Y") AS Tanggal, 
+           sj_cus_kode AS KdCus, c.cus_nama AS Customer 
+    FROM tsj_hdr_memo h LEFT JOIN tcustomer c ON h.sj_cus_kode = c.cus_kode 
+    ${where} ORDER BY h.sj_tanggal DESC LIMIT ? OFFSET ?`;
+  params.push(Number(limit), offset);
+  const [rows] = await db.query(query, params);
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tsj_hdr_memo h LEFT JOIN tcustomer c ON h.sj_cus_kode = c.cus_kode ${where}`,
+    params.slice(0, -2),
+  );
+  return { items: rows, total };
+};
+
+// --- GET MEMO (MAP) ---
+const searchMemo = async (keyword, page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  let params = [];
+  let where = "WHERE mspk_aktif='Y'";
+  if (keyword) {
+    where +=
+      " AND (mspk_nomor LIKE ? OR c.cus_nama LIKE ? OR mspk_nama LIKE ?)";
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+  const query = `
+    SELECT mspk_nomor AS Nomor, v.divisi AS Divisi, c.cus_nama AS Customer, 
+           mspk_nama AS Nama, mspk_ukuran AS Ukuran, mspk_kain AS Kain, mspk_finishing AS Finishing 
+    FROM tmemospk m LEFT JOIN tcustomer c ON m.mspk_cus_kode = c.cus_kode LEFT JOIN tdivisi v ON v.kode = m.mspk_divisi 
+    ${where} ORDER BY m.mspk_nomor DESC LIMIT ? OFFSET ?`;
+  params.push(Number(limit), offset);
+  const [rows] = await db.query(query, params);
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tmemospk m LEFT JOIN tcustomer c ON m.mspk_cus_kode = c.cus_kode ${where}`,
+    params.slice(0, -2),
+  );
+  return { items: rows, total };
+};
+
+// --- GET MPPB ---
+const searchMppb = async (keyword, page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  let params = [];
+  let where = `WHERE mpb_approve="Y" AND mpb_nomor NOT IN (SELECT spk_mppb FROM tspk WHERE spk_mppb<>"")`;
+  if (keyword) {
+    where += " AND (mpb_nomor LIKE ? OR mpb_nama LIKE ?)";
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  const query = `
+    SELECT mpb_nomor AS Nomor, DATE_FORMAT(mpb_tanggal, "%d-%m-%Y") AS Tanggal, 
+           mpb_nama AS NamaProduk, mpb_jmlorder AS Jumlah, mpb_ket AS Keterangan 
+    FROM tmpb ${where} ORDER BY mpb_nama LIMIT ? OFFSET ?`;
+  params.push(Number(limit), offset);
+  const [rows] = await db.query(query, params);
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tmpb ${where}`,
+    params.slice(0, -2),
+  );
+  return { items: rows, total };
+};
+
+// --- GET HISTORY ALOKASI BY CUSTOMER ---
+const getHistoryAlokasi = async (cusKode) => {
+  if (!cusKode) return [];
+  // Sama persis dengan query Delphi Anda
+  const query = `
+    SELECT DISTINCT a.alamat AS Alamat, a.kota AS Kota 
+    FROM talokasi a
+    INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
+    INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+    WHERE a.alamat <> "" AND c.cus_kode = ?
+    ORDER BY a.alamat
+  `;
+  const [rows] = await db.query(query, [cusKode]);
+  return rows;
+};
+
+// --- GET BARANG KAOSAN (DC) ---
+const searchBarangKaosan = async (keyword, page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  let params = [];
+
+  // Filter sesuai Delphi: aktif=0, logstok="Y", kelompok=""
+  let where = 'WHERE a.brg_aktif=0 AND a.brg_logstok="Y" AND a.brg_kelompok=""';
+
+  if (keyword) {
+    where += ` AND (b.brgd_barcode LIKE ? OR a.brg_kode LIKE ? OR CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM retail.tbarangdc a INNER JOIN retail.tbarangdc_dtl b ON b.brgd_kode=a.brg_kode ${where}`,
+    params,
+  );
+
+  // Menggunakan TRIM(CONCAT(...)) sesuai SI agar nama produk utuh
+  const query = `
+    SELECT b.brgd_barcode AS Barcode, a.brg_kode AS Kode,
+           TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS Nama,
+           b.brgd_ukuran AS Ukuran
+    FROM retail.tbarangdc a
+    INNER JOIN retail.tbarangdc_dtl b ON b.brgd_kode=a.brg_kode
+    ${where}
+    ORDER BY Nama, Barcode
+    LIMIT ? OFFSET ?
+  `;
+  params.push(Number(limit), offset);
+
+  const [rows] = await db.query(query, params);
+  return { items: rows, total: countResult[0].total };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -923,4 +1197,16 @@ module.exports = {
   searchBarangGarmen,
   searchPermintaanBarangGarmen,
   searchBarangInvProforma,
+  getWorkshops,
+  getKepentinganSpk,
+  getKetPo,
+  getKetKomponen,
+  searchCustKaosan,
+  searchSoKaosan,
+  searchInvDc,
+  searchSjMemo,
+  searchMemo,
+  searchMppb,
+  getHistoryAlokasi,
+  searchBarangKaosan,
 };

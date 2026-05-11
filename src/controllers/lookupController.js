@@ -432,6 +432,146 @@ const searchBarangInvProforma = async (req, res) => {
   }
 };
 
+const getWorkshops = async (req, res) => {
+  try {
+    const data = await lookupService.getWorkshops();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKepentinganSpk = async (req, res) => {
+  try {
+    const data = await lookupService.getKepentinganSpk();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKetPo = async (req, res) => {
+  try {
+    const data = await lookupService.getKetPo();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKetKomponen = async (req, res) => {
+  try {
+    const data = await lookupService.getKetKomponen();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchCustKaosan = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchCustKaosan(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchSoKaosan = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    // Mengambil cabang kaosan user dari token JWT (req.user)
+    const cabKaos = req.user.cabangKaos;
+
+    if (!cabKaos) {
+      return res.status(400).json({
+        success: false,
+        message: "User tidak memiliki akses Cabang Kaosan.",
+      });
+    }
+
+    const data = await lookupService.searchSoKaosan(q, cabKaos, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// --- GET INVOICE DC ---
+const searchInvDc = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchInvDc(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchSjMemo = async (req, res) => {
+  try {
+    const data = await lookupService.searchSjMemo(
+      req.query.q,
+      req.query.page,
+      req.query.limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchMemo = async (req, res) => {
+  try {
+    const data = await lookupService.searchMemo(
+      req.query.q,
+      req.query.page,
+      req.query.limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchMppb = async (req, res) => {
+  try {
+    const data = await lookupService.searchMppb(
+      req.query.q,
+      req.query.page,
+      req.query.limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getHistoryAlokasi = async (req, res) => {
+  try {
+    const { cusKode } = req.query;
+    // service.getHistoryAlokasi sudah kita buat di percakapan sebelumnya
+    const data = await lookupService.getHistoryAlokasi(cusKode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchBarangKaosan = async (req, res) => {
+  try {
+    const data = await lookupService.searchBarangKaosan(
+      req.query.q,
+      req.query.page,
+      req.query.limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -463,4 +603,16 @@ module.exports = {
   searchBarangGarmen,
   searchPermintaanBarangGarmen,
   searchBarangInvProforma,
+  getWorkshops,
+  getKepentinganSpk,
+  getKetPo,
+  getKetKomponen,
+  searchCustKaosan,
+  searchSoKaosan,
+  searchInvDc,
+  searchSjMemo,
+  searchMemo,
+  searchMppb,
+  getHistoryAlokasi,
+  searchBarangKaosan,
 };
