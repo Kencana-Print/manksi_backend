@@ -572,6 +572,56 @@ const searchBarangKaosan = async (req, res) => {
   }
 };
 
+const searchSupplier = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchSupplier(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchPoGreige = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchPoGreige(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchMkb = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchMkb(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchGudangBahan = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchGudangBahan(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchPoBahanBuka = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchPoBahanBuka(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -615,4 +665,9 @@ module.exports = {
   searchMppb,
   getHistoryAlokasi,
   searchBarangKaosan,
+  searchSupplier,
+  searchPoGreige,
+  searchMkb,
+  searchGudangBahan,
+  searchPoBahanBuka,
 };

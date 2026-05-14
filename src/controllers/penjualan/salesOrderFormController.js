@@ -56,4 +56,78 @@ const getMemoDetail = async (req, res) => {
   }
 };
 
-module.exports = { getDetail, save, validateField, getMemoDetail };
+// --- Fungsi Upload Gambar ---
+const uploadImage = async (req, res) => {
+  try {
+    if (!req.file) throw new Error("File gambar tidak ditemukan.");
+    const { spkNomor, cabang } = req.body;
+
+    if (!spkNomor || !cabang) {
+      throw new Error("Nomor SPK dan Cabang harus disertakan.");
+    }
+
+    const filename = await service.processImage(
+      req.file.path,
+      cabang,
+      spkNomor,
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Gambar berhasil diupload.", filename });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getDatelineLimits = async (req, res) => {
+  try {
+    // Tangkap parameter dari URL (query)
+    const { divisi, joKode, kepentingan } = req.query;
+
+    // Tangkap data cabang dari token user (disematkan oleh middleware)
+    const cabKaos = req.user?.cabangKaos || "";
+
+    if (!divisi || !kepentingan) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter divisi dan kepentingan harus dikirim.",
+      });
+    }
+
+    const data = await service.getDatelineLimits(
+      divisi,
+      joKode,
+      kepentingan,
+      cabKaos,
+    );
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const checkHakTopUrgent = async (req, res) => {
+  try {
+    const { cusKode, divisi } = req.query;
+    if (!cusKode)
+      return res
+        .status(400)
+        .json({ success: false, message: "cusKode diperlukan." });
+
+    const berhak = await service.checkHakTopUrgent(cusKode, divisi);
+    res.status(200).json({ success: true, berhak });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getDetail,
+  save,
+  validateField,
+  getMemoDetail,
+  uploadImage,
+  getDatelineLimits,
+  checkHakTopUrgent,
+};

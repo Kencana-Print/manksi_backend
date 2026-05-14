@@ -5,6 +5,7 @@ const {
   verifyToken,
   checkPermission,
 } = require("../../middleware/authMiddleware");
+const upload = require("../../middleware/uploadMiddleware");
 
 const MENU_ID = 172; // ID Menu SPK/Sales Order (PPIC/MO)
 
@@ -28,5 +29,13 @@ router.put(
   checkPermission(MENU_ID, "edit"),
   controller.save,
 ); // Menggunakan PUT untuk konsistensi Edit (Opsional, di service sudah handle isEdit via POST juga bisa)
+router.post(
+  "/upload-gambar",
+  verifyToken,
+  upload.single("gambar"),
+  controller.uploadImage,
+);
+router.get("/dateline-limits", verifyToken, controller.getDatelineLimits);
+router.get("/check-top-urgent", verifyToken, controller.checkHakTopUrgent);
 
 module.exports = router;

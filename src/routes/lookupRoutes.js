@@ -128,4 +128,11 @@ router.get("/history-alokasi", verifyToken, controller.getHistoryAlokasi);
 
 router.get("/barang-kaosan", verifyToken, controller.searchBarangKaosan);
 
+router.get("/supplier", verifyToken, controller.searchSupplier);
+router.get("/po-greige", verifyToken, controller.searchPoGreige);
+router.get("/mkb", verifyToken, controller.searchMkb);
+
+router.get("/gudang-bahan", verifyToken, controller.searchGudangBahan);
+router.get("/po-bahan-buka", verifyToken, controller.searchPoBahanBuka);
+
 module.exports = router;

@@ -52,13 +52,33 @@ const getTanggalTutupBuku = async () => {
 };
 
 /**
- * @description Untuk cek custom per modul (zClose dari getDateClose)
- * @param {string} modulNama
+ * @description Mengambil tanggal tutup buku manual dari database pengaturan
+ * @param {string} modulNama Nama modul (cid), contoh: 'MINTA BELI GARMEN'
+ * @returns {Promise<Date|null>} Tanggal closing manual atau null jika tidak ditemukan
  */
 const getManualTutupBuku = async (modulNama) => {
-  // Jika nanti Anda menemukan tabel untuk zclose manual (getDateClose),
-  // Anda bisa menambahkannya di sini. Untuk sementara kita fokus ke ztglclose.
-  return null;
+  try {
+    // Query disesuaikan dengan logika Delphi: DB pengaturan, cprogram MANKSI
+    const query = `
+      SELECT ctgl 
+      FROM pengaturan.tclose 
+      WHERE cprogram = "MANKSI" AND cid = ? 
+      LIMIT 1
+    `;
+    const [rows] = await db.query(query, [modulNama]);
+
+    if (rows.length > 0 && rows[0].ctgl) {
+      return new Date(rows[0].ctgl);
+    }
+
+    return null;
+  } catch (error) {
+    console.error(
+      `Gagal mengambil manual tutup buku (pengaturan.tclose) untuk ${modulNama}:`,
+      error,
+    );
+    return null;
+  }
 };
 
 module.exports = { getTanggalTutupBuku, getManualTutupBuku };

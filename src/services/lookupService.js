@@ -917,9 +917,11 @@ const getKepentinganSpk = async () => {
 
 // Dapatkan daftar keterangan PO
 const getKetPo = async () => {
-  const [rows] = await db.query(`SELECT ket FROM tspk_ketpo`);
-  // Tambahkan string kosong di awal sesuai perilaku default combobox Delphi
-  return ["", ...rows.map((r) => r.ket)];
+  // Tambahkan 'acc' pada SELECT
+  const [rows] = await db.query(`SELECT ket, acc FROM tspk_ketpo`);
+
+  // Kembalikan sebagai array of objects. Tambahkan opsi kosong di awal agar default combobox tidak error
+  return [{ ket: "", acc: "N" }, ...rows];
 };
 
 // Dapatkan keterangan komponen (untuk Tab Kaosan jika nanti butuh)
@@ -1166,6 +1168,202 @@ const searchBarangKaosan = async (keyword, page = 1, limit = 50) => {
   return { items: rows, total: countResult[0].total };
 };
 
+// --- GET SUPPLIER ---
+const searchSupplier = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  let whereClause = `WHERE sup_aktif = "Y"`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (sup_kode LIKE ? OR sup_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tsupplier ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota 
+    FROM tsupplier 
+    ${whereClause} 
+    ORDER BY sup_nama ASC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- GET PO GREIGE ---
+const searchPoGreige = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  let whereClause = `WHERE po_jenis = 1`; // 1 = PO Greige
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (po_nomor LIKE ? OR po_keterangan LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tpo_hdr ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT po_nomor AS Nomor, DATE_FORMAT(po_tanggal, "%d-%m-%Y") AS Tanggal, po_keterangan AS Keterangan 
+    FROM tpo_hdr 
+    ${whereClause} 
+    ORDER BY date_create DESC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- GET MKB (MEMO KEBUTUHAN BAHAN) ---
+const searchMkb = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  let whereClause = `WHERE 1=1`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.mkb_nomor LIKE ? OR h.mkb_spk_nomor LIKE ? OR s.spk_nama LIKE ? OR m.mspk_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `
+    SELECT COUNT(*) AS total 
+    FROM tmkb_hdr h
+    LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
+    ${whereClause}
+  `,
+    params,
+  );
+
+  let query = `
+    SELECT 
+      h.mkb_nomor AS Nomor, 
+      DATE_FORMAT(h.mkb_tanggal, "%d-%m-%Y") AS Tanggal, 
+      h.mkb_spk_nomor AS SPK_Nomor, 
+      IFNULL(s.spk_nama, m.mspk_nama) AS Nama
+    FROM tmkb_hdr h
+    LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
+    ${whereClause} 
+    ORDER BY h.mkb_nomor DESC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- GET GUDANG BAHAN (gdg_bahan = 4) ---
+const searchGudangBahan = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE gdg_bahan = 4`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (gdg_kode LIKE ? OR gdg_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tgudang ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT gdg_kode AS Kode, gdg_nama AS Nama 
+    FROM tgudang 
+    ${whereClause} 
+    ORDER BY gdg_nama 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- GET PO BAHAN BUKA (PO_CLOSE NOT IN 1,9 AND BUKAN GREIGE) ---
+const searchPoBahanBuka = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  let whereClause = `WHERE po_close NOT IN (1, 9) AND po_jenis <> 1`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (po_nomor LIKE ? OR po_keterangan LIKE ? OR s.sup_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tpo_hdr LEFT JOIN tsupplier s ON po_sup_kode = s.sup_kode ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT 
+      po_nomor AS Nomor, 
+      DATE_FORMAT(po_tanggal, "%d-%m-%Y") AS Tanggal, 
+      po_keterangan AS Keterangan, 
+      IFNULL(s.sup_nama, "") AS Supplier
+    FROM tpo_hdr 
+    LEFT JOIN tsupplier s ON po_sup_kode = s.sup_kode
+    ${whereClause} 
+    ORDER BY tpo_hdr.date_create DESC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1209,4 +1407,9 @@ module.exports = {
   searchMppb,
   getHistoryAlokasi,
   searchBarangKaosan,
+  searchSupplier,
+  searchPoGreige,
+  searchMkb,
+  searchGudangBahan,
+  searchPoBahanBuka,
 };

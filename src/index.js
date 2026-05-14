@@ -5,6 +5,9 @@ require("dotenv").config();
 const authRoutes = require("./routes/authRoute");
 const lookupRoutes = require("./routes/lookupRoutes");
 
+// ── Dashboard ──
+const dashboardRoutes = require("./routes/dashboard/dashboardRoutes");
+
 // Master Routes
 const bahanRoutes = require("./routes/master/bahanRoutes");
 const jenisBahanRoutes = require("./routes/master/jenisBahanRoutes");
@@ -40,11 +43,15 @@ const returBahanRoutes = require("./routes/garmen/returBahanRoutes");
 const returBahanFormRoutes = require("./routes/garmen/returBahanFormRoutes");
 const approveReturBahanRoutes = require("./routes/garmen/approveReturBahanRoutes");
 const approveReturBahanFormRoutes = require("./routes/garmen/approveReturBahanFormRoutes");
+const bpbBahanRoutes = require("./routes/garmen/bpbBahanRoutes");
+const bpbBahanFormRoutes = require("./routes/garmen/bpbBahanFormRoutes");
 
 const mintaBarangRoutes = require("./routes/garmen/mintaBarangRoutes");
 const mintaBarangFormRoutes = require("./routes/garmen/mintaBarangFormRoutes");
 const realisasiBarangRoutes = require("./routes/garmen/realisasiBarangRoutes");
 const realisasiBarangFormRoutes = require("./routes/garmen/realisasiBarangFormRoutes");
+const permintaanPembelianRoutes = require("./routes/garmen/permintaanPembelianRoutes");
+const permintaanPembelianFormRoutes = require("./routes/garmen/permintaanPembelianFormRoutes");
 
 const poInternalMapRoutes = require("./routes/garmen/poInternalMapRoutes");
 const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
@@ -54,6 +61,8 @@ const bastRoutes = require("./routes/garmen/bastRoutes");
 // Pembelian Routes
 const mkbRoutes = require("./routes/pembelian/mkbRoutes");
 const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
+const poBahanRoutes = require("./routes/pembelian/poBahanRoutes");
+const poBahanFormRoutes = require("./routes/pembelian/poBahanFormRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -70,6 +79,10 @@ const mapRoutes = require("./routes/penjualan/mapRoutes");
 const mapFormRoutes = require("./routes/penjualan/mapFormRoutes");
 const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
+
+//Laporan Routes
+const penawaranVsSpkRoutes = require("./routes/laporan/penawaranVsSpkRoutes");
+const realisasiPenawaranRoutes = require("./routes/laporan/realisasiPenawaranRoutes");
 
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
@@ -93,6 +106,8 @@ app.use("/file-gambar", express.static("/mnt/image"));
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/lookups", lookupRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+
 app.use("/api/master/bahan", bahanRoutes);
 app.use("/api/master/jenis-bahan", jenisBahanRoutes);
 app.use("/api/master/warna-bahan", warnaBahanRoutes);
@@ -121,6 +136,8 @@ app.use("/api/master/bap-produksi-form", bapProduksiFormRoutes);
 
 app.use("/api/pembelian/mkb/form", mkbFormRoutes);
 app.use("/api/pembelian/mkb", mkbRoutes);
+app.use("/api/pembelian/po-bahan", poBahanRoutes);
+app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
@@ -135,19 +152,26 @@ app.use(
   "/api/garmen/bahan-baku/approve-retur/form",
   approveReturBahanFormRoutes,
 );
+app.use("/api/garmen/bahan-baku/bpb-bahan", bpbBahanRoutes);
+app.use("/api/garmen/bahan-baku/bpb-bahan/form", bpbBahanFormRoutes);
 
-app.use("/api/penjualan/mppb", mppbRoutes);
-app.use("/api/penjualan/mppb/form", mppbFormRoutes);
 app.use("/api/garmen/barang/permintaan", mintaBarangRoutes);
 app.use("/api/garmen/barang/permintaan/form", mintaBarangFormRoutes);
 app.use("/api/garmen/barang/realisasi", realisasiBarangRoutes);
 app.use("/api/garmen/barang/realisasi/form", realisasiBarangFormRoutes);
+app.use("/api/garmen/barang/permintaan-pembelian", permintaanPembelianRoutes);
+app.use(
+  "/api/garmen/barang/permintaan-pembelian/form",
+  permintaanPembelianFormRoutes,
+);
 
 app.use("/api/garmen/po-internal-map", poInternalMapRoutes);
 app.use("/api/garmen/po-internal-map/surat-jalan", poInternalMapSjRoutes);
 app.use("/api/garmen/po-internal-map/approve", approveSjRoutes);
 app.use("/api/garmen/cetak-bast", bastRoutes);
 
+app.use("/api/penjualan/mppb", mppbRoutes);
+app.use("/api/penjualan/mppb/form", mppbFormRoutes);
 app.use("/api/penjualan/minta-harga", mintaHargaRoutes);
 app.use("/api/penjualan/minta-harga-form", mintaHargaFormRoutes);
 app.use("/api/penjualan/penawaran", penawaranRoutes);
@@ -160,6 +184,9 @@ app.use("/api/penjualan/map", mapRoutes);
 app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
+
+app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
+app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
 
 const PORT = process.env.PORT || 3088;
 app.listen(PORT, () => {
