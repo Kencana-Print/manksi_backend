@@ -574,8 +574,18 @@ const searchBarangKaosan = async (req, res) => {
 
 const searchSupplier = async (req, res) => {
   try {
-    const { q, page, limit } = req.query;
-    const data = await lookupService.searchSupplier(q, page, limit);
+    const page = req.query.page || 1;
+    const limit = req.query.limit || 50;
+    const keyword = req.query.q || "";
+    const jenis = req.query.jenis; // <-- TAMBAHKAN BARIS INI
+
+    // UPDATE PANGGILAN SERVICE DENGAN MENYISIPKAN VARIABEL JENIS
+    const data = await lookupService.searchSupplier(
+      keyword,
+      jenis,
+      page,
+      limit,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -616,6 +626,37 @@ const searchPoBahanBuka = async (req, res) => {
   try {
     const { q, page, limit } = req.query;
     const data = await lookupService.searchPoBahanBuka(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchPermintaanBeliGarmen = async (req, res) => {
+  try {
+    const { q, jenis } = req.query;
+    if (!jenis)
+      return res
+        .status(400)
+        .json({ success: false, message: "Parameter jenis wajib diisi." });
+    const data = await lookupService.searchPermintaanBeliGarmen(q, jenis);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchPoGarmenBuka = async (req, res) => {
+  try {
+    const { q, jenis, page, limit } = req.query;
+
+    if (!jenis) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Parameter jenis wajib diisi." });
+    }
+
+    const data = await lookupService.searchPoGarmenBuka(q, jenis, page, limit);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -670,4 +711,6 @@ module.exports = {
   searchMkb,
   searchGudangBahan,
   searchPoBahanBuka,
+  searchPermintaanBeliGarmen,
+  searchPoGarmenBuka,
 };

@@ -151,4 +151,24 @@ const loginUser = async (username, password) => {
   };
 };
 
-module.exports = { loginUser };
+const changePassword = async (userKode, oldPassword, newPassword) => {
+  // 1. Verifikasi password lama sesuai logika Delphi (Case Sensitive dengan BINARY)
+  const [rows] = await pool.query(
+    `SELECT user_kode FROM tuser WHERE UPPER(user_kode) = UPPER(?) AND BINARY user_password = ?`,
+    [userKode, oldPassword],
+  );
+
+  if (rows.length === 0) {
+    throw new Error("Password lama salah.");
+  }
+
+  // 2. Eksekusi update password baru
+  await pool.query(
+    `UPDATE tuser SET user_password = ?, date_modified = NOW(), user_modified = ? WHERE UPPER(user_kode) = UPPER(?)`,
+    [newPassword, userKode, userKode],
+  );
+
+  return true;
+};
+
+module.exports = { loginUser, changePassword };

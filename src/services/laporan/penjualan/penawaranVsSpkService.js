@@ -1,4 +1,4 @@
-const db = require("../../config/database");
+const db = require("../../../config/database");
 
 // --- 1. GET BROWSE HEADER (Master Penawaran) ---
 const getBrowse = async (query) => {

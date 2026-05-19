@@ -133,19 +133,38 @@ const getById = async (nomor, currentUser) => {
   };
 
   // --- CEK URL GAMBAR ---
-  const fs = require("fs");
-  const path = require("path");
-  const cabang = nomor.substring(0, 3);
-  const imagePathLocal = path.join(
-    process.cwd(),
-    "public",
-    "images",
-    cabang,
-    "mintaharga",
-    `${nomor}.jpg`,
-  );
-  data.imageUrl = fs.existsSync(imagePathLocal)
-    ? `/images/${cabang}/mintaharga/${nomor}.jpg`
+  // --- CEK URL GAMBAR (Perbaikan Scan Kategori Cabang Dinamis) ---
+  const cabangRecord = rowsMh[0].mh_cabkaos ? rowsMh[0].mh_cabkaos.trim() : "";
+  // Buat daftar fallback cabang untuk di-scan agar aman jika kolom mh_cabkaos kosong
+  const daftarCabang = [
+    cabangRecord,
+    currentUser?.cabang,
+    "HO-",
+    "P01",
+    "P02",
+    "P03",
+    "P04",
+    "P05",
+  ].filter(Boolean);
+
+  let cabangDitemukan = null;
+  for (const cab of daftarCabang) {
+    const checkPath = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      cab,
+      "mintaharga",
+      `${nomor}.jpg`,
+    );
+    if (fs.existsSync(checkPath)) {
+      cabangDitemukan = cab;
+      break;
+    }
+  }
+
+  data.imageUrl = cabangDitemukan
+    ? `/images/${cabangDitemukan}/mintaharga/${nomor}.jpg`
     : null;
 
   // Status PIN 5

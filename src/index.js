@@ -1,9 +1,11 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
+const path = require("path");
 
 const authRoutes = require("./routes/authRoute");
 const lookupRoutes = require("./routes/lookupRoutes");
+const userRoutes = require("./routes/tools/userRoutes");
 
 // ── Dashboard ──
 const dashboardRoutes = require("./routes/dashboard/dashboardRoutes");
@@ -52,6 +54,13 @@ const realisasiBarangRoutes = require("./routes/garmen/realisasiBarangRoutes");
 const realisasiBarangFormRoutes = require("./routes/garmen/realisasiBarangFormRoutes");
 const permintaanPembelianRoutes = require("./routes/garmen/permintaanPembelianRoutes");
 const permintaanPembelianFormRoutes = require("./routes/garmen/permintaanPembelianFormRoutes");
+const mutasiOutBarangRoutes = require("./routes/garmen/mutasiOutBarangRoutes");
+const mutasiOutBarangFormRoutes = require("./routes/garmen/mutasiOutBarangFormRoutes");
+const mutasiInBarangRoutes = require("./routes/garmen/mutasiInBarangRoutes");
+const poNonBahanRoutes = require("./routes/garmen/poNonBahanRoutes");
+const poNonBahanFormRoutes = require("./routes/garmen/poNonBahanFormRoutes");
+const bpbNonBahanRoutes = require("./routes/garmen/bpbNonBahanRoutes");
+const bpbNonBahanFormRoutes = require("./routes/garmen/bpbNonBahanFormRoutes");
 
 const poInternalMapRoutes = require("./routes/garmen/poInternalMapRoutes");
 const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
@@ -81,8 +90,11 @@ const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 
 //Laporan Routes
-const penawaranVsSpkRoutes = require("./routes/laporan/penawaranVsSpkRoutes");
-const realisasiPenawaranRoutes = require("./routes/laporan/realisasiPenawaranRoutes");
+const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
+const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
+
+const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
+const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
 
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
@@ -102,11 +114,13 @@ app.use(
 
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
+app.use("/images", express.static(path.join(process.cwd(), "public/images")));
 
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/tools/users", userRoutes);
 
 app.use("/api/master/bahan", bahanRoutes);
 app.use("/api/master/jenis-bahan", jenisBahanRoutes);
@@ -164,6 +178,13 @@ app.use(
   "/api/garmen/barang/permintaan-pembelian/form",
   permintaanPembelianFormRoutes,
 );
+app.use("/api/garmen/barang/mutasi-out", mutasiOutBarangRoutes);
+app.use("/api/garmen/barang/mutasi-out/form", mutasiOutBarangFormRoutes);
+app.use("/api/garmen/barang/mutasi-in", mutasiInBarangRoutes);
+app.use("/api/garmen/barang/po-nonbahan", poNonBahanRoutes);
+app.use("/api/garmen/barang/po-nonbahan-form", poNonBahanFormRoutes);
+app.use("/api/garmen/barang/bpb-nonbahan", bpbNonBahanRoutes);
+app.use("/api/garmen/barang/bpb-nonbahan/form", bpbNonBahanFormRoutes);
 
 app.use("/api/garmen/po-internal-map", poInternalMapRoutes);
 app.use("/api/garmen/po-internal-map/surat-jalan", poInternalMapSjRoutes);
@@ -185,6 +206,8 @@ app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
 
+app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
+app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
 

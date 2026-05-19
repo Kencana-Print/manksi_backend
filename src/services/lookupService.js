@@ -1169,12 +1169,23 @@ const searchBarangKaosan = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- GET SUPPLIER ---
-const searchSupplier = async (keyword, page = 1, limit = 50) => {
+const searchSupplier = async (keyword, jenis, page = 1, limit = 50) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   let params = [];
 
   let whereClause = `WHERE sup_aktif = "Y"`;
+
+  // ISI KOREKSI: Replikasi filter flag kualifikasi supplier sesuai F1 Delphi
+  if (jenis === "ACCESORIES") whereClause += ` AND sup_accesories = "Y"`;
+  else if (jenis === "OBAT") whereClause += ` AND sup_obat = "Y"`;
+  else if (jenis === "SPAREPART") whereClause += ` AND sup_sparepart = "Y"`;
+  else if (jenis === "ATK/RTK") whereClause += ` AND sup_atk = "Y"`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (sup_kode LIKE ? OR sup_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
 
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (sup_kode LIKE ? OR sup_nama LIKE ?)`;
@@ -1364,6 +1375,67 @@ const searchPoBahanBuka = async (keyword, page = 1, limit = 50) => {
   };
 };
 
+const searchPermintaanBeliGarmen = async (keyword, jenis) => {
+  let params = [jenis];
+  let whereClause = `WHERE h.mb_status NOT IN ("CLOSE", "DICLOSE") AND h.mb_jenis = ? AND h.mb_nomor NOT IN (SELECT DISTINCT IFNULL(po_mb_nomor, '') FROM tgarmenpo_hdr)`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.mb_nomor LIKE ? OR h.mb_ket LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const query = `
+    SELECT h.mb_nomor AS Nomor, DATE_FORMAT(h.mb_tanggal, "%Y-%m-%d") AS Tanggal, 
+           h.mb_jenis AS Jenis, h.mb_ket AS Keterangan, h.mb_cab AS Cab
+    FROM tgarmenmintabeli_hdr h
+    ${whereClause}
+    ORDER BY h.mb_nomor DESC
+  `;
+  const [rows] = await db.query(query, params);
+  return { items: rows };
+};
+
+// --- GET PO GARMEN (NON-BAHAN) BUKA ---
+const searchPoGarmenBuka = async (keyword, jenis, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [jenis];
+
+  // Logic Delphi: h.po_status<>"CLOSE" and h.po_status<>"DICLOSE" and po_jenis=...
+  let whereClause = `WHERE po_status <> "CLOSE" AND po_status <> "DICLOSE" AND po_jenis = ?`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (po_nomor LIKE ? OR po_ket LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tgarmenpo_hdr ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT 
+      po_nomor AS Nomor, 
+      DATE_FORMAT(po_tanggal, "%d-%m-%Y") AS Tanggal, 
+      po_mb_nomor AS NoMinta,
+      po_ket AS Keterangan
+    FROM tgarmenpo_hdr 
+    ${whereClause} 
+    ORDER BY po_nomor DESC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1412,4 +1484,6 @@ module.exports = {
   searchMkb,
   searchGudangBahan,
   searchPoBahanBuka,
+  searchPermintaanBeliGarmen,
+  searchPoGarmenBuka,
 };

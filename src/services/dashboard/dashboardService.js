@@ -149,9 +149,73 @@ const getSpkSummary = async (user) => {
   return rows[0];
 };
 
+// ── PO Bahan dengan sisa MKB (seminggu terakhir) ──
+const getPoBahanSisa = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  // Hanya untuk bagian yang relevan
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT COUNT(DISTINCT h.po_Nomor) AS TotalPO,
+           SUM(CASE WHEN sisa.ada_sisa = 1 THEN 1 ELSE 0 END) AS PoAdaSisa
+    FROM tpo_hdr h
+    LEFT JOIN (
+      SELECT d.pod_po_nomor,
+             MAX(CASE WHEN (d.pod_Jumlah - IFNULL(m1.jumlah,0) - IFNULL(m2.jumlah,0)) > 0
+                      THEN 1 ELSE 0 END) AS ada_sisa
+      FROM tpo_dtl d
+      LEFT JOIN (
+        SELECT mkbd_mkb_nomor, mkbd_bhn_kode, SUM(mkbd_jumlah_PO) AS jumlah
+        FROM tmkb_dtl GROUP BY mkbd_mkb_nomor, mkbd_bhn_kode
+      ) m1 ON m1.mkbd_mkb_nomor = d.pod_mkb_nomor
+           AND m1.mkbd_bhn_kode  = d.pod_bhn_kode
+      LEFT JOIN (
+        SELECT o.mkbd2_po_nomor, o.mkbd2_pourut, SUM(p.mkbd_jumlah_PO) AS jumlah
+        FROM tmkb_dtl2 o
+        LEFT JOIN tmkb_dtl p ON p.mkbd_mkb_nomor = o.mkbd2_mkb_nomor
+                             AND p.mkbd_nourut    = o.mkbd2_nourut
+        GROUP BY o.mkbd2_po_nomor, o.mkbd2_pourut
+      ) m2 ON m2.mkbd2_po_nomor = d.pod_po_nomor
+           AND m2.mkbd2_pourut   = d.pod_nourut
+      GROUP BY d.pod_po_nomor
+    ) sisa ON sisa.pod_po_nomor = h.po_Nomor
+    WHERE h.po_jenis <> 1
+      AND h.po_Tanggal >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      AND h.po_Tanggal <= CURDATE()
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
+// ── PO Bahan vs BPB summary (bulan berjalan) ──
+const getPoBahanVsBpbSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT
+      COUNT(*)                                                        AS TotalPO,
+      SUM(CASE WHEN h.po_close = 0 THEN 1 ELSE 0 END)               AS Open,
+      SUM(CASE WHEN h.po_close = 2 THEN 1 ELSE 0 END)               AS OnProses,
+      SUM(CASE WHEN h.po_close = 1 THEN 1 ELSE 0 END)               AS Close
+    FROM tpo_hdr h
+    WHERE h.po_jenis <> 1
+      AND h.po_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+      AND h.po_tanggal <= CURDATE()
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
+  getPoBahanSisa,
+  getPoBahanVsBpbSummary,
 };

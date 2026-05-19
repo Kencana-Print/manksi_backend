@@ -6,7 +6,7 @@ const getBrowse = async () => {
       sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota, 
       sup_fax AS Fax, sup_telp AS Telp, sup_cp AS Contact, sup_hp AS HP, 
       sup_targetmitra AS TargetMitra, sup_ket AS Keterangan, sup_aktif AS Aktif, 
-      user_create AS Usr, date_create AS Created
+      user_create AS Usr, DATE_FORMAT(date_create, '%d/%m/%Y %H:%i:%s') AS Created
     FROM tsupplier 
     ORDER BY sup_nama ASC
   `;

@@ -13,5 +13,11 @@ router.get(
   controller.getPenawaranBelumSpk,
 );
 router.get("/spk-summary", verifyToken, controller.getSpkSummary);
+router.get("/po-bahan-sisa", verifyToken, controller.getPoBahanSisa);
+router.get(
+  "/po-bahan-bpb-summary",
+  verifyToken,
+  controller.getPoBahanVsBpbSummary,
+);
 
 module.exports = router;

@@ -27,12 +27,15 @@ const getBrowse = async (jenis, cabang, bagian) => {
       ${selectNote}
       x.Buffer, x.Stok, 
       IF(x.Buffer = 0, 0, IF(x.Stok < x.Buffer, x.Buffer - x.Stok, 0)) AS Safety, 
-      x.Aktif
+      x.Aktif,
+      x.Usr,
+      x.Created
     FROM (
       SELECT 
         b.brg_jenis AS Jenis, b.brg_ktg AS Kategori, b.brg_kode AS Kode, 
         b.brg_nama AS Nama, b.brg_satuan AS Satuan, b.brg_buffer AS Buffer, 
         b.brg_note AS Note, b.brg_aktif AS Aktif,
+        b.user_create AS Usr, DATE_FORMAT(b.date_create, '%d/%m/%Y %H:%i:%s') AS Created,
         ${stokQuery}
       FROM tgarmen_brg b
       ${whereClause}

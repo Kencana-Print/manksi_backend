@@ -60,17 +60,33 @@ const checkPermission = (menuId, action) => {
         });
       }
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          message: "Gagal memvalidasi hak akses.",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Gagal memvalidasi hak akses.",
+        error: error.message,
+      });
     }
   };
+};
+
+const requireAdmin = (req, res, next) => {
+  if (!req.user || !req.user.kode) {
+    return res
+      .status(401)
+      .json({ message: "Akses ditolak. Token tidak valid." });
+  }
+
+  const kode = req.user.kode.toUpperCase();
+  if (kode === "ADMIN" || kode === "DEVELOPER") {
+    return next();
+  }
+
+  return res
+    .status(403)
+    .json({ message: "Akses ditolak. Modul ini hanya untuk Administrator." });
 };
 
 module.exports = {
   verifyToken,
   checkPermission,
+  requireAdmin,
 };

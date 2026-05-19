@@ -38,9 +38,35 @@ const getSpkSummary = async (req, res) => {
   }
 };
 
+const getPoBahanSisa = async (req, res) => {
+  try {
+    const data = await service.getPoBahanSisa(req.user);
+    // null = user tidak berhak, kembalikan empty
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { TotalPO: 0, PoAdaSisa: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPoBahanVsBpbSummary = async (req, res) => {
+  try {
+    const data = await service.getPoBahanVsBpbSummary(req.user);
+    res.status(200).json({
+      success: true,
+      data: data ?? { TotalPO: 0, Open: 0, OnProses: 0, Close: 0 },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
+  getPoBahanSisa,
+  getPoBahanVsBpbSummary,
 };

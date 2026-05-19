@@ -135,4 +135,13 @@ router.get("/mkb", verifyToken, controller.searchMkb);
 router.get("/gudang-bahan", verifyToken, controller.searchGudangBahan);
 router.get("/po-bahan-buka", verifyToken, controller.searchPoBahanBuka);
 
+router.get(
+  "/permintaan-beli-garmen",
+  verifyToken,
+  controller.searchPermintaanBeliGarmen,
+);
+
+// Endpoint: /api/lookups/po-garmen-buka
+router.get("/po-garmen-buka", verifyToken, controller.searchPoGarmenBuka);
+
 module.exports = router;

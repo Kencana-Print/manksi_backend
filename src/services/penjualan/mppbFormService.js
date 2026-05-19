@@ -49,6 +49,16 @@ const getDetailForm = async (nomor) => {
   const pinInfo = await checkPinStatus(nomor, db);
   header.pin_status = pinInfo.status;
 
+  // JALUR KOREKSI: Hitung isTutupBuku asli berdasarkan tanggal penutupan periode
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const tglDokumen = new Date(header.mpb_tanggal);
+  header.isTutupBuku = false;
+
+  // Jika tanggal di bawah tgl close dan tidak memegang status ACC PIN, maka dikunci
+  if (zdtClose && tglDokumen <= zdtClose && pinInfo.status !== "ACC") {
+    header.isTutupBuku = true;
+  }
+
   return header;
 };
 

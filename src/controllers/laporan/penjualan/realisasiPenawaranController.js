@@ -1,4 +1,4 @@
-const service = require("../../services/laporan/realisasiPenawaranService");
+const service = require("../../../services/laporan/penjualan/realisasiPenawaranService");
 
 const getBrowse = async (req, res) => {
   try {

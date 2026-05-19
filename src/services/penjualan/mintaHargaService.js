@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const tutupBukuService = require("../tutupBukuService");
 
 // 1. Dapatkan Daftar Divisi untuk Filter (Delphi: FormCreate)
 const getDivisiFilter = async (cabKaos, userCab) => {
@@ -119,29 +120,11 @@ const deleteData = async (nomor) => {
     if (rows.length === 0) throw new Error("Data tidak ditemukan.");
     const data = rows[0];
 
-    // B. Cek Closing (Logic Delphi: get tgl closing sistem)
-    const [tglCloseRow] = await conn.query(
-      "SELECT s_value FROM tsetup WHERE s_kode = 'TGLCLOSE'",
-    );
-    const tglCloseDay =
-      tglCloseRow.length > 0 ? parseInt(tglCloseRow[0].s_value, 10) : 5;
+    // B. Cek Closing menggunakan tutupBukuService (Konsistensi Arsitektur)
+    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+    const tglTransaksi = new Date(data.mh_tanggal);
 
-    const d = new Date(data.mh_tanggal);
-    let closeMonth = d.getMonth() + 1; // 0-indexed to 1-indexed (Jan = 1)
-    let closeYear = d.getFullYear();
-
-    if (closeMonth === 12) {
-      closeMonth = 1;
-      closeYear++;
-    } else {
-      closeMonth++;
-    }
-
-    // Tanggal limit = tglCloseDay bulan berikutnya
-    const limitDate = new Date(closeYear, closeMonth - 1, tglCloseDay);
-    const today = new Date();
-
-    if (today > limitDate) {
+    if (zdtClose && tglTransaksi < zdtClose) {
       throw new Error("Transaksi tersebut sudah close. Tidak bisa dihapus.");
     }
 

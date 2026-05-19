@@ -1,12 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const controller = require("../../controllers/laporan/penawaranVsSpkController");
+const controller = require("../../../controllers/laporan/gudang-garmen/poBahanVsMkbController");
 const {
   verifyToken,
   checkPermission,
-} = require("../../middleware/authMiddleware");
+} = require("../../../middleware/authMiddleware");
 
-const MENU_ID = 301;
+const MENU_ID = 511;
 
 // Browse Header
 router.get(
@@ -16,7 +16,7 @@ router.get(
   controller.getBrowse,
 );
 
-// Browse Detail (Expand baris)
+// Browse Detail (beserta riwayat MKB-nya)
 router.get(
   "/detail/:nomor",
   verifyToken,
