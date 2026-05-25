@@ -1291,7 +1291,7 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
     ${whereClause} 
-    ORDER BY date_create DESC
+    ORDER BY h.date_create DESC 
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
