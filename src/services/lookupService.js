@@ -106,40 +106,46 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
 
   let params = [];
 
-  // Secara default hanya filter aktif (sesuai logika Delphi Minta Bahan)
-  let whereClause = `WHERE bhn_aktif = 0`;
+  let whereClause = `WHERE b.bhn_aktif = 0`;
 
-  // Jika mode adalah 'komponen', baru kita filter berdasarkan 'LL'
   if (mode === "komponen") {
-    whereClause += ` AND bhn_jb_kode = 'LL'`;
+    whereClause += ` AND b.bhn_jb_kode = 'LL'`;
   }
 
   if (isBordir === "true") {
-    whereClause += ` AND bhn_bordir <> 0`;
+    whereClause += ` AND b.bhn_bordir <> 0`;
   }
 
   if (keyword && keyword.trim() !== "") {
-    whereClause += ` AND (bhn_kode LIKE ? OR bhn_name LIKE ?)`;
+    whereClause += ` AND (b.bhn_kode LIKE ? OR b.bhn_name LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
 
-  // Hitung total
+  // Hitung total (pakai alias b agar konsisten)
   const [countResult] = await db.query(
-    `SELECT COUNT(*) AS total FROM tbahan ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`,
     params,
   );
   const total = countResult[0].total;
 
-  // Query data
   let query = `
     SELECT 
       b.bhn_kode AS Kode, 
       b.bhn_name AS Nama, 
       b.bhn_satuan AS Satuan,
       IFNULL(g.bg_nama, "") AS Gramasi,
-      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_bahan m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=b.bhn_kode), 0) AS Stok
+      IFNULL(s.bs_nama, "") AS Setting,
+      IFNULL(j.bj_nama, "") AS Jenis,
+      b.bhn_hargabeli AS Harga,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
+        FROM tmasterstok_bahan m 
+        WHERE m.mst_aktif = "Y" AND m.mst_brg_kode = b.bhn_kode
+      ), 0) AS Stok
     FROM tbahan b
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.bhn_kode, 6, 2)
+    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.bhn_kode, 2)
+    LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(b.bhn_kode, 2)
     ${whereClause} 
     ORDER BY b.bhn_name ASC
   `;
@@ -153,7 +159,7 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
 
   return {
     items: rows,
-    total: total,
+    total,
     page: pageNum,
     limit: limitNum,
   };
@@ -1105,9 +1111,9 @@ const searchMppb = async (keyword, page = 1, limit = 50) => {
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
   const query = `
-    SELECT mpb_nomor AS Nomor, DATE_FORMAT(mpb_tanggal, "%d-%m-%Y") AS Tanggal, 
-           mpb_nama AS NamaProduk, mpb_jmlorder AS Jumlah, mpb_ket AS Keterangan 
-    FROM tmpb ${where} ORDER BY mpb_nama LIMIT ? OFFSET ?`;
+  SELECT mpb_nomor AS Nomor, DATE_FORMAT(mpb_tanggal, "%d-%m-%Y") AS Tanggal, 
+         mpb_nama AS NamaProduk, mpb_jmlorder AS Jumlah, mpb_ket AS Keterangan 
+  FROM tmpb ${where} ORDER BY mpb_nomor DESC LIMIT ? OFFSET ?`;
   params.push(Number(limit), offset);
   const [rows] = await db.query(query, params);
   const [[{ total }]] = await db.query(
@@ -1285,7 +1291,7 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
     ${whereClause} 
-    ORDER BY h.mkb_nomor DESC 
+    ORDER BY date_create DESC
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
@@ -1297,6 +1303,25 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
     page: Number(page),
     limit: limitNum,
   };
+};
+
+const getMkbDetail = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT 
+      d.mkbd_no AS No,
+      d.mkbd_bhn_kode AS Kode,
+      b.bhn_name AS Nama,
+      d.mkbd_bhn_satuan AS Satuan,
+      IFNULL(d.mkbd_komponen, "") AS Komponen,
+      SUM(d.mkbd_jumlah_po) AS Jumlah
+    FROM tmkb_dtl d
+    LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+    WHERE d.mkbd_mkb_nomor = ?
+    GROUP BY d.mkbd_bhn_kode, d.mkbd_no, b.bhn_name, d.mkbd_bhn_satuan, d.mkbd_komponen
+    ORDER BY d.mkbd_no ASC`,
+    [nomor],
+  );
+  return { items: rows };
 };
 
 // --- GET GUDANG BAHAN (gdg_bahan = 4) ---
@@ -1482,6 +1507,7 @@ module.exports = {
   searchSupplier,
   searchPoGreige,
   searchMkb,
+  getMkbDetail,
   searchGudangBahan,
   searchPoBahanBuka,
   searchPermintaanBeliGarmen,

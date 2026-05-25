@@ -663,6 +663,22 @@ const searchPoGarmenBuka = async (req, res) => {
   }
 };
 
+const getMkbDetail = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    if (!nomor) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor MKB wajib dikirim.",
+      });
+    }
+    const data = await lookupService.getMkbDetail(nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -713,4 +729,5 @@ module.exports = {
   searchPoBahanBuka,
   searchPermintaanBeliGarmen,
   searchPoGarmenBuka,
+  getMkbDetail,
 };

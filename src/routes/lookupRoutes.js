@@ -144,4 +144,8 @@ router.get(
 // Endpoint: /api/lookups/po-garmen-buka
 router.get("/po-garmen-buka", verifyToken, controller.searchPoGarmenBuka);
 
+// Endpoint: /api/lookups/mkb-detail
+// Digunakan di MkbDetailSearchModal.vue (Menerima param ?nomor=)
+router.get("/mkb-detail", verifyToken, controller.getMkbDetail);
+
 module.exports = router;

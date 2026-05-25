@@ -98,6 +98,7 @@ const save = async (req, res) => {
     const nomor = await mintaHargaFormService.save(
       data,
       req.user.kode,
+      req.user.cabang,
       isNewMode,
     );
 

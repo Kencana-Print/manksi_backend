@@ -73,8 +73,7 @@ const getDetail = async (nomor) => {
   let spk_aktif = header[0].spk_aktif;
 
   if (
-    pin_customer === "Y" ||
-    pin_customer === "TOLAK" ||
+    pin_customer === "TOLAK" || // ← hanya TOLAK yang paksa PASIF
     ketpo_acc === "MINTA ACC" ||
     ketpo_acc === "TOLAK" ||
     kepentingan_acc === "MINTA ACC" ||
@@ -82,12 +81,13 @@ const getDetail = async (nomor) => {
     pin_jo === "MINTA ACC" ||
     pin_jo === "TOLAK"
   ) {
-    spk_aktif = "N"; // Paksa PASIF jika ada yang belum clear
+    spk_aktif = "N";
   } else {
-    spk_aktif = "Y"; // AKTIF
+    spk_aktif = header[0].spk_aktif; // ← ambil dari DB, jangan override
   }
 
   // Masukkan ke object header agar terbaca di Frontend
+  header[0].isSalesOrder = header[0].spk_is_so === 1;
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
@@ -171,8 +171,16 @@ const getOmzet = async (cusKode, tahun, kurangTahun) => {
 
 // --- 3. SAVE DATA (INSERT & UPDATE) ---
 const saveData = async (payload, user) => {
-  const { header, alokasi, dtlKaosan, dtlSize, isEdit, xminta5, xurut5 } =
-    payload;
+  const {
+    header,
+    alokasi,
+    dtlKaosan,
+    dtlSize,
+    isEdit,
+    xminta5,
+    xurut5,
+    isSalesOrder,
+  } = payload;
   const conn = await db.getConnection();
 
   try {
@@ -276,26 +284,6 @@ const saveData = async (payload, user) => {
         );
     }
 
-    if (
-      ["3", "4", "6"].includes(divisiStr) &&
-      !["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some((sub) =>
-        header.spk_jo_kode.includes(sub),
-      )
-    ) {
-      const sumSize = dtlSize
-        ? dtlSize.reduce((acc, curr) => acc + Number(curr.qty || 0), 0)
-        : 0;
-
-      if (sumSize === 0)
-        throw new Error(
-          "Divisi Garmen/Kaosan: Qty Order di Detail Size harus diisi.",
-        );
-      if (sumSize !== qtyPesan)
-        throw new Error(
-          "Jumlah SPK vs Total Qty Order di Detail Size harus sama.",
-        );
-    }
-
     header.spk_cabkaos = user.cabangKaos || "";
 
     // ==========================================
@@ -303,30 +291,29 @@ const saveData = async (payload, user) => {
     // ==========================================
 
     // Cek piutang tahun ini atau tahun lalu (kurang 1 tahun)
+    // Cek piutang DULU sebelum INSERT/UPDATE
     const currentYear = new Date().getFullYear();
-    const piutang = await getOmzet(header.spk_cus_kode, currentYear, 0);
-
-    if (piutang > 100) {
-      // Jika ada piutang, paksa SPK menjadi PASIF
-      header.spk_aktif = "N";
-    }
+    const piutang = isSalesOrder
+      ? 0
+      : await getOmzet(header.spk_cus_kode, currentYear, 0);
 
     if (!isEdit) {
       nomor = await generateNomor(header.spk_perush_kode, header.spk_jo_kode);
       header.spk_nomor = nomor;
+      header.spk_is_so = nomor.startsWith("SO-") ? 1 : 0;
       header.user_create = user.kode;
       header.date_create = new Date();
-      header.spk_aktif = "Y";
-      if (header.spk_aktif !== "N") header.spk_aktif = "Y";
+      header.spk_aktif = piutang > 100 ? "N" : "Y";
       await conn.query(`INSERT INTO tspk SET ?`, [header]);
     } else {
       header.user_modified = user.kode;
       header.date_modified = new Date();
+      // Untuk edit, hanya paksa PASIF jika ada piutang — jangan override jika sudah di-set sebelumnya
+      if (piutang > 100) header.spk_aktif = "N";
       await conn.query(`UPDATE tspk SET ? WHERE spk_nomor = ?`, [
         header,
         nomor,
       ]);
-      // Bersihkan data lama untuk multi-table insert
       await conn.query(`DELETE FROM talokasi WHERE spk_nomor = ?`, [nomor]);
       await conn.query(`DELETE FROM tspk_dc WHERE spkd_nomor = ?`, [nomor]);
       await conn.query(`DELETE FROM tspk_size WHERE spks_nomor = ?`, [nomor]);
@@ -335,18 +322,18 @@ const saveData = async (payload, user) => {
       ]);
     }
 
+    const kodeCusUtama = String(header.spk_divisi).startsWith("3")
+      ? header.spk_cus_kaosan
+      : header.spk_cus_kode;
+
     if (piutang > 100) {
-      const kodeCusUtama = header.spk_divisi.startsWith("3")
-        ? header.spk_cus_kaosan
-        : header.spk_cus_kode;
       await conn.query(
         `INSERT INTO tcustomer_pin (cusp_kode, cusp_nomor, cusp_tgl_minta, cusp_user_minta) 
-         VALUES (?, ?, NOW(), ?) 
-         ON DUPLICATE KEY UPDATE cusp_tgl_minta=NOW(), cusp_user_minta=?`,
+     VALUES (?, ?, NOW(), ?) 
+     ON DUPLICATE KEY UPDATE cusp_tgl_minta=NOW(), cusp_user_minta=?`,
         [kodeCusUtama, nomor, user.kode, user.kode],
       );
     } else {
-      // Jika piutang sudah lunas, pastikan hapus pin-nya agar tidak menyangkut
       await conn.query(`DELETE FROM tcustomer_pin WHERE cusp_nomor = ?`, [
         nomor,
       ]);
@@ -356,7 +343,7 @@ const saveData = async (payload, user) => {
     await conn.query(`DELETE FROM tbarang WHERE brg_kode = ?`, [nomor]);
     await conn.query(
       `INSERT INTO tbarang (brg_kode, brg_name, brg_ukuran, brg_kain, brg_finishing, brg_harga, brg_divisi, user_create, date_create) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         nomor,
         header.spk_nama,

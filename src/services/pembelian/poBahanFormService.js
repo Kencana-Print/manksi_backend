@@ -70,7 +70,10 @@ const validateField = async (type, value) => {
   // B. Validasi & Load PO Greige (edtpoGreigeExit)
   if (type === "greige") {
     const [hdr] = await db.query(
-      `SELECT * FROM tpo_hdr WHERE po_jenis=1 AND po_nomor=?`,
+      `SELECT h.*, s.sup_nama, s.sup_alamat, s.sup_kota 
+       FROM tpo_hdr h
+       LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+       WHERE h.po_jenis = 1 AND h.po_nomor = ?`,
       [value],
     );
     if (hdr.length === 0)
@@ -439,37 +442,42 @@ const saveData = async (payload, userKode) => {
       );
     }
 
-    // G. SINKRONISASI STATUS PO GREIGE (INDUK)
+    await conn.commit();
+
+    // G. SINKRONISASI STATUS PO GREIGE — setelah commit agar data baru terbaca
     if (jpo === 2 && header.po_greige) {
-      const [greigePo] = await conn.query(
-        `SELECT IFNULL(SUM(pod_Jumlah),0) AS po FROM tpo_dtl WHERE pod_po_nomor=?`,
-        [header.po_greige],
-      );
-      const npo = greigePo[0]?.po || 0;
+      try {
+        const [greigePo] = await db.query(
+          `SELECT IFNULL(SUM(pod_Jumlah), 0) AS po FROM tpo_dtl WHERE pod_po_nomor = ?`,
+          [header.po_greige],
+        );
+        const npo = Number(greigePo[0]?.po) || 0;
 
-      const [greigeSj] = await conn.query(
-        `
-        SELECT IFNULL(SUM(d.pod_Jumlah),0) AS sj 
-        FROM tpo_dtl d INNER JOIN tpo_hdr h ON h.po_nomor=d.pod_po_nomor
-        WHERE h.po_greige=?
-      `,
-        [header.po_greige],
-      );
-      const nsj = greigeSj[0]?.sj || 0;
+        const [greigeSj] = await db.query(
+          `SELECT IFNULL(SUM(d.pod_Jumlah), 0) AS sj 
+       FROM tpo_dtl d 
+       INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
+       WHERE h.po_greige = ?`,
+          [header.po_greige],
+        );
+        const nsj = Number(greigeSj[0]?.sj) || 0;
 
-      let newStatus = 2; // ONPROSES
-      if (nsj >= npo)
-        newStatus = 1; // CLOSE
-      else if (nsj === 0) newStatus = 0; // OPEN
+        let newStatus = 2; // ONPROSES
+        if (nsj >= npo)
+          newStatus = 1; // CLOSE
+        else if (nsj === 0) newStatus = 0; // OPEN
 
-      await conn.query(`UPDATE tpo_hdr SET po_close=? WHERE po_nomor=?`, [
-        newStatus,
-        header.po_greige,
-      ]);
+        await db.query(`UPDATE tpo_hdr SET po_close = ? WHERE po_nomor = ?`, [
+          newStatus,
+          header.po_greige,
+        ]);
+      } catch (syncErr) {
+        console.error("Gagal sinkronisasi status PO Greige:", syncErr);
+        // Tidak throw — data PO Celup sudah tersimpan
+      }
     }
 
-    await conn.commit();
-    return { nomor: nomorPO, nomorBPB: nomorBPB };
+    return { nomor: nomorPO, nomorBPB };
   } catch (error) {
     await conn.rollback();
     throw error;

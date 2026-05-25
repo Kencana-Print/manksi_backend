@@ -88,7 +88,9 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
   const isManagerOrAdmin =
     userInfo.jabatan.includes("MANAGER-CMO-MO") ||
     userInfo.kode === "ADMIN" ||
-    userInfo.bagian?.toUpperCase() === "AUDIT";
+    userInfo.bagian?.toUpperCase() === "AUDIT" ||
+    userInfo.bagian?.toUpperCase() === "FINANCE";
+
   if (!isManagerOrAdmin) {
     if (userInfo.jabatan === "CRM") {
       query += ` AND (h.mh_sal_kode = "019" OR h.user_create = ?)`;

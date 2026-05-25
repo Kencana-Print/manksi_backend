@@ -98,7 +98,7 @@ const getDetailForm = async (nomor) => {
   );
   const [dtlPlan] = await db.query(
     `SELECT * FROM tplanningspk WHERE plan_datang <> 0 AND plan_spk = ? ORDER BY plan_tanggal`,
-    [header.mkb_spk_nomor],
+    [header.mkb_spk_nomor || header.MKB_SPK_NOMOR],
   );
   const [dtlMap] = await db.query(
     `SELECT * FROM tkesesuaianmap_size WHERE ks_nomor = ? ORDER BY ks_urut`,

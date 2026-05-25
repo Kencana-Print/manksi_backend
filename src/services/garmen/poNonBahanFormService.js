@@ -103,14 +103,9 @@ const getDetailForm = async (nomor, user) => {
 
     header.hasBpb = false;
     for (const d of dtlRows) {
-      d.sudah = await getQtySudah(
-        nomor,
-        header.po_mb_nomor,
-        d.pod_brg_kode,
-        conn,
-      );
+      d.sudah = await getQtySudah(nomor, header.po_mb_nomor, d.Kode, conn);
       d.belum = Number(d.minta || 0) - d.sudah;
-      d.bpb = await getQtyBpb(nomor, d.pod_brg_kode, conn);
+      d.bpb = await getQtyBpb(nomor, d.Kode, conn);
       d.Harga = user.flags?.lihatBeli ? d.pod_harga : 0;
       d.Total = user.flags?.lihatBeli ? d.pod_jumlah * d.pod_harga : 0;
       if (d.bpb > 0) header.hasBpb = true; // Kunci input supplier jika ada BPB

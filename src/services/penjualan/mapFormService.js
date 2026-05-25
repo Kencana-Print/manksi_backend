@@ -142,7 +142,7 @@ const getById = async (nomor) => {
     `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs = "MAP" AND pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
     [nomor],
   );
-  data.StatusEdit = "MINTA";
+  data.StatusEdit = "";
   data.UrutPin = 0;
   if (pinRows.length > 0) {
     const pin = pinRows[0];
@@ -339,6 +339,7 @@ const save = async (data, userKode, isNewMode) => {
       const updateQ = `
         UPDATE tmemospk SET 
           mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
+          mspk_jo_kode=?, 
           mspk_statuskerja=?, mspk_ukuran=?, mspk_gramasi=?, mspk_panjang=?, mspk_lebar=?, mspk_kain=?,
           mspk_finishing=?, mspk_sablon=?, mspk_bordir=?, mspk_sublim=?, mspk_jumlah=?, mspk_harga=?,
           mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
@@ -353,6 +354,7 @@ const save = async (data, userKode, isNewMode) => {
         data.Divisi,
         data.CustKode,
         data.SalesKode,
+        data.JoKode,
         data.StatusKerja,
         data.KetUkuran || "", // Memasukkan "Ket. Ukuran" ke kolom mspk_ukuran
         data.Gramasi,

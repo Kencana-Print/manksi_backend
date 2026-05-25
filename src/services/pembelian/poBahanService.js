@@ -82,7 +82,7 @@ const getBrowse = async (query) => {
     params.push(`%${search}%`, `%${search}%`);
   }
 
-  sql += ` ORDER BY h.po_nomor DESC`;
+  sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC`;
 
   const [rows] = await db.query(sql, params);
   return rows;
@@ -135,10 +135,12 @@ const getBrowseDetail = async (nomorPO) => {
 // --- 3. DELETE DATA ---
 const deleteData = async (nomor) => {
   const conn = await db.getConnection();
+  let deletedGreige = null; // simpan info greige sebelum commit
+  let deletedJenis = null;
+
   try {
     await conn.beginTransaction();
 
-    // 1. Ambil data Header
     const [headers] = await conn.query(
       `SELECT po_tanggal, po_close, po_jenis, po_greige FROM tpo_hdr WHERE po_nomor = ?`,
       [nomor],
@@ -146,7 +148,6 @@ const deleteData = async (nomor) => {
     if (headers.length === 0) throw new Error("Data tidak ditemukan.");
     const header = headers[0];
 
-    // 2. Cek Tutup Buku
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
     if (zdtClose && new Date(header.po_tanggal) < zdtClose) {
       throw new Error(
@@ -154,54 +155,61 @@ const deleteData = async (nomor) => {
       );
     }
 
-    // 3. Cek Status Close
     if (header.po_close === 1 || header.po_close === 9) {
       throw new Error("PO Sudah di-Close. Tidak bisa dihapus.");
     }
 
-    // 4. Eksekusi Delete
-    await conn.query(`DELETE FROM tpo_hdr WHERE po_nomor = ?`, [nomor]);
-    // Note: tpo_dtl idealnya terhapus via CASCADE FK di database. Jika tidak, tambahkan:
-    // await conn.query(`DELETE FROM tpo_dtl WHERE pod_po_nomor = ?`, [nomor]);
-
-    // 5. Update Status PO Greige (Jika yang dihapus adalah PO Celup)
+    // Simpan info untuk sinkronisasi setelah commit
     if (header.po_jenis === 2 && header.po_greige) {
-      const [greigePo] = await conn.query(
-        `SELECT IFNULL(SUM(pod_Jumlah),0) AS po FROM tpo_dtl WHERE pod_po_nomor = ?`,
-        [header.po_greige],
-      );
-      const npo = greigePo[0]?.po || 0;
-
-      const [greigeSj] = await conn.query(
-        `
-        SELECT IFNULL(SUM(d.pod_Jumlah),0) AS sj 
-        FROM tpo_dtl d
-        INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
-        WHERE h.po_greige = ?
-      `,
-        [header.po_greige],
-      );
-      const nsj = greigeSj[0]?.sj || 0;
-
-      let newStatus = 2; // ONPROSES
-      if (nsj >= npo)
-        newStatus = 1; // CLOSE
-      else if (nsj === 0) newStatus = 0; // OPEN
-
-      await conn.query(`UPDATE tpo_hdr SET po_close = ? WHERE po_nomor = ?`, [
-        newStatus,
-        header.po_greige,
-      ]);
+      deletedGreige = header.po_greige;
+      deletedJenis = header.po_jenis;
     }
 
+    await conn.query(`DELETE FROM tpo_hdr WHERE po_nomor = ?`, [nomor]);
+
     await conn.commit();
-    return true;
   } catch (error) {
     await conn.rollback();
     throw error;
   } finally {
     conn.release();
   }
+
+  // Sinkronisasi status PO Greige SETELAH commit & release koneksi
+  if (deletedGreige) {
+    try {
+      const [greigePo] = await db.query(
+        `SELECT IFNULL(SUM(pod_Jumlah), 0) AS po FROM tpo_dtl WHERE pod_po_nomor = ?`,
+        [deletedGreige],
+      );
+      const npo = Number(greigePo[0]?.po) || 0;
+
+      const [greigeSj] = await db.query(
+        `SELECT IFNULL(SUM(d.pod_Jumlah), 0) AS sj 
+         FROM tpo_dtl d
+         INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
+         WHERE h.po_greige = ?`,
+        [deletedGreige],
+      );
+      const nsj = Number(greigeSj[0]?.sj) || 0;
+
+      let newStatus = 2;
+      if (nsj >= npo) newStatus = 1;
+      else if (nsj === 0) newStatus = 0;
+
+      await db.query(`UPDATE tpo_hdr SET po_close = ? WHERE po_nomor = ?`, [
+        newStatus,
+        deletedGreige,
+      ]);
+    } catch (syncErr) {
+      console.error(
+        "Gagal sinkronisasi status PO Greige setelah hapus:",
+        syncErr,
+      );
+    }
+  }
+
+  return true;
 };
 
 // --- 4. TOGGLE CLOSE (MANUAL) ---

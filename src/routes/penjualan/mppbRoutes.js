@@ -33,7 +33,7 @@ router.post(
 // Pastikan user memiliki permission "approve" pada menu 150 ini di database role!
 router.put(
   "/:nomor/approve",
-  checkPermission(MENU_ID, "approve"),
+  checkPermission(MENU_ID, "edit"),
   controller.toggleApprove,
 );
 

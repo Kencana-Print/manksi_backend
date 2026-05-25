@@ -30,8 +30,8 @@ const getBastFormData = async (nomorMap, userCabang) => {
   if (checklist.length === 0) {
     [checklist] = await db.query(
       `SELECT kode_sesuai AS no, nama_sesuai AS kesesuaian, "N" AS status, "-" AS keterangan,
-              "ANA" AS user_create, NULL AS date_create, "" AS user_modify, NULL AS date_modify
-       FROM tkesesuaian ORDER BY kode_sesuai`,
+            "" AS user_create, NULL AS date_create, "" AS user_modify, NULL AS date_modify
+     FROM tkesesuaian ORDER BY kode_sesuai`,
     );
   }
 
