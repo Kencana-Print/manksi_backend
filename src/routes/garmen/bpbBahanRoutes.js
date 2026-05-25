@@ -26,7 +26,7 @@ router.get(
 
 // Delete Data
 router.delete(
-  "/:nomor",
+  "/delete/:nomor", // Menyamakan pola dengan "/detail/:nomor"
   verifyToken,
   checkPermission(MENU_ID, "delete"),
   bpbBahanController.deleteData,

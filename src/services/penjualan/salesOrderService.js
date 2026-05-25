@@ -9,8 +9,9 @@ const getBrowseList = async (filters) => {
   let params = [startDate, endDate];
   let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ? AND x.is_so = 1`;
 
-  if (workshop && workshop !== "ALL") {
-    whereClause += ` AND x.Workshop = ?`;
+  if (workshop && workshop !== "ALL" && workshop !== "") {
+    // Ganti x.Workshop menjadi x.Cab
+    whereClause += ` AND x.Cab = ?`;
     params.push(workshop);
   }
   if (customer) {
@@ -49,7 +50,7 @@ const getBrowseList = async (filters) => {
         s.spk_nomor AS Nomor, s.user_create AS MO, s.spk_cmo AS CMO, s.spk_tanggal AS Tanggal, 
         s.spk_dateline AS Dateline, s.spk_statuskerja AS Kepentingan, v.divisi AS Divisi,
         s.spk_cus_kode AS KodeCustomer, c.cus_nama AS Customer, s.spk_nama AS Nama,
-        s.spk_ukuran AS Ukuran, s.spk_cab AS Cab, s.spk_workshop AS Workshop,
+        s.spk_ukuran AS Ukuran, s.spk_cab AS Cab, TRIM(s.spk_workshop) AS Workshop,
         s.spk_pending AS Pending, s.spk_ketpending AS KetPending, s.spk_tipe AS Tipe,
         s.spk_panjang AS Panjang, s.spk_lebar AS Lebar, s.spk_gramasi AS Gramasi,
         s.spk_kain AS Kain, s.spk_finishing AS Finishing, s.spk_harga AS Harga,

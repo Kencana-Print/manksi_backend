@@ -33,9 +33,9 @@ const update = async (kode, data) => {
 };
 
 const remove = async (kode) => {
-  // Pengecekan relasi ke tabel taccesories (Sesuai dengan logika Delphi)
+  // Cek apakah sudah dipakai di master accesories
   const [check] = await db.query(
-    "SELECT acc_kode FROM taccesories WHERE LEFT(acc_kode, 2) = ? LIMIT 1",
+    "SELECT brg_kode FROM tgarmen_brg WHERE LEFT(brg_kode, 2) = ? LIMIT 1",
     [kode],
   );
 

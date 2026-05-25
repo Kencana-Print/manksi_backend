@@ -45,7 +45,10 @@ const getBrowseDetail = async (req, res) => {
 
 const deleteData = async (req, res) => {
   try {
-    const { nomor } = req.params;
+    // PENTING: Gunakan decodeURIComponent karena rute DELETE sering
+    // mengalami masalah jika ada karakter '/' pada parameter.
+    const nomor = decodeURIComponent(req.params.nomor);
+
     await bpbBahanService.deleteBpb(nomor);
 
     res.status(200).json({
@@ -54,7 +57,8 @@ const deleteData = async (req, res) => {
     });
   } catch (error) {
     console.error("Error Delete BPB Bahan:", error);
-    res.status(500).json({ success: false, message: error.message });
+    // Gunakan 400 jika error berasal dari validasi (tutup buku, dll)
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 

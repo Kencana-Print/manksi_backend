@@ -33,9 +33,15 @@ const update = async (kode, data) => {
 };
 
 const remove = async (kode) => {
-  // Pengecekan relasi ke tabel taccesories (Sesuai dengan logika Delphi)
+  // Cek apakah warna sudah dipakai di master accesories
   const [check] = await db.query(
-    "SELECT acc_kode FROM taccesories WHERE MID(acc_kode, 3, 3) = ? LIMIT 1",
+    `
+      SELECT brg_kode
+      FROM tgarmen_brg
+      WHERE brg_jenis = 'ACCESORIES'
+        AND MID(brg_kode, 3, 3) = ?
+      LIMIT 1
+    `,
     [kode],
   );
 

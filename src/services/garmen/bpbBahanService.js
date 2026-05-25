@@ -21,12 +21,16 @@ const getBrowse = async (startDate, endDate, isPo, gudang) => {
       IFNULL(s.sup_nama, "") AS Supplier,
       IF(h.bpb_status_inv = 1, "True", "False") AS Voucher_bayar,
       IF(h.bpb_bayar_realisasi = 1, "Lunas", "Belum") AS Lunas,
-      IF(? = 'PO', IFNULL(p.po_keterangan, ""), (
-        SELECT CAST(GROUP_CONCAT(DISTINCT IFNULL(k.spk_nama,"") SEPARATOR ", ") AS CHAR)
-        FROM tbpb_dtl i
-        LEFT JOIN tspk k ON k.spk_nomor = i.bpbd_spk_nomor
-        WHERE i.bpbd_bpb_nomor = h.bpb_nomor
-      )) AS Ket_PO,
+      IF(? = 'PO', 
+        IFNULL(p.po_keterangan, ""), 
+        (
+          SELECT CAST(GROUP_CONCAT(DISTINCT IFNULL(IFNULL(k.spk_nama, m.mspk_nama), "") SEPARATOR ", ") AS CHAR)
+          FROM tbpb_dtl i
+          LEFT JOIN tspk k ON k.spk_nomor = i.bpbd_spk_nomor
+          LEFT JOIN tmemospk m ON m.mspk_nomor = i.bpbd_spk_nomor
+          WHERE i.bpbd_bpb_nomor = h.bpb_nomor
+        )
+      ) AS Ket_PO,
       h.bpb_gdg_kode AS Gudang,
       h.user_create AS Usr,
       IFNULL((

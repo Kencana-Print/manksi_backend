@@ -34,17 +34,16 @@ const getBrowse = async (filterKorporasi) => {
 
 const getById = async (kode) => {
   const query = `
-    SELECT 
-      a.*, 
-      b.cus_nama AS namai, 
-      b.cus_alamat AS alamati, 
-      b.cus_kota AS kotai
+    SELECT a.*, 
+           b.Cus_nama AS namai, 
+           b.Cus_alamat AS alamati, 
+           b.Cus_kota AS kotai
     FROM tcustomer a
-    LEFT JOIN tcustomer b ON b.cus_kode = a.cus_kodei
+    LEFT JOIN tcustomer b ON b.cus_kode = a.Cus_kodei
     WHERE a.cus_kode = ?
   `;
   const [rows] = await db.query(query, [kode]);
-  return rows.length > 0 ? rows[0] : null;
+  return rows[0]; // Mengembalikan object data
 };
 
 const getJenisUsahaLookup = async () => {

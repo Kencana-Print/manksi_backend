@@ -1306,22 +1306,64 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
 };
 
 const getMkbDetail = async (nomor) => {
-  const [rows] = await db.query(
-    `SELECT 
-      d.mkbd_no AS No,
-      d.mkbd_bhn_kode AS Kode,
-      b.bhn_name AS Nama,
-      d.mkbd_bhn_satuan AS Satuan,
-      IFNULL(d.mkbd_komponen, "") AS Komponen,
-      SUM(d.mkbd_jumlah_po) AS Jumlah
-    FROM tmkb_dtl d
-    LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
-    WHERE d.mkbd_mkb_nomor = ?
-    GROUP BY d.mkbd_bhn_kode, d.mkbd_no, b.bhn_name, d.mkbd_bhn_satuan, d.mkbd_komponen
-    ORDER BY d.mkbd_no ASC`,
+  // 1. Validasi Pertama (Cek tmkb_dtl2)
+  const [cek1] = await db.query(
+    `SELECT mkbd2_po_nomor FROM tmkb_dtl2 WHERE mkbd2_mkb_nomor = ? LIMIT 1`,
     [nomor],
   );
-  return { items: rows };
+
+  // 2. Validasi Kedua (Cek tpo_dtl)
+  const [cek2] = await db.query(
+    `SELECT pod_po_nomor FROM tpo_dtl WHERE pod_mkb_nomor = ? LIMIT 1`,
+    [nomor],
+  );
+
+  let warning = null;
+  if (cek1.length > 0) {
+    warning = `MKB tsb sudah di link di MKB dengan No.PO: ${cek1[0].mkbd2_po_nomor}\nYakin akan dilanjutkan?`;
+  } else if (cek2.length > 0) {
+    warning = `MKB tsb sudah tambah No.PO: ${cek2[0].pod_po_nomor}\nYakin akan dilanjutkan?`;
+  }
+
+  // 3. Kueri Utama Detail MKB (1:1 dengan Delphi)
+  const query = `
+    SELECT 
+      d.mkbd_bhn_kode AS Kode,
+      b.bhn_name AS Nama,
+      b.bhn_name AS NamaExt,
+      d.mkbd_bhn_satuan AS Satuan,
+      IFNULL(j.bj_nama, "") AS Jenis,
+      b.bhn_hargabeli AS Harga,
+      IFNULL(g.bg_nama, "") AS Gramasi,
+      IFNULL(s.bs_nama, "") AS Seting,
+      SUM(d.mkbd_jumlah_po) AS Jumlah,
+      h.mkb_spk_nomor AS Spk,
+      IFNULL(spk.spk_nama, m.mspk_nama) AS NamaSpk,
+      ? AS Mkb
+    FROM tmkb_dtl d
+    INNER JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+    LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+    LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.mkbd_bhn_kode, 2)
+    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.mkbd_bhn_kode, 6, 2)
+    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mkbd_bhn_kode, 2)
+    LEFT JOIN tspk spk ON spk.spk_nomor = h.mkb_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
+    WHERE h.mkb_nomor = ?
+    GROUP BY d.mkbd_bhn_kode
+  `;
+
+  // Parameter diisi dua kali karena ada "? AS Mkb" di select dan "? di WHERE"
+  const [rows] = await db.query(query, [nomor, nomor]);
+
+  // Tambahkan kalkulasi Total secara on-the-fly untuk mempermudah frontend
+  const items = rows.map((r) => ({
+    ...r,
+    Diskon: 0,
+    Total: Number(r.Jumlah || 0) * Number(r.Harga || 0),
+  }));
+
+  // Kembalikan items beserta warning (jika ada) agar bisa di-handle konfirmasinya oleh Frontend Vue
+  return { items, warning };
 };
 
 // --- GET GUDANG BAHAN (gdg_bahan = 4) ---
