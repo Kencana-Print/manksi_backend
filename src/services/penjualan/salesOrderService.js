@@ -7,7 +7,8 @@ const getBrowseList = async (filters) => {
 
   // Gunakan alias kolom hasil subquery x
   let params = [startDate, endDate];
-  let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ? AND x.is_so = 1`;
+  // let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ? AND x.is_so = 1`;
+  let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ?`;
 
   if (workshop && workshop !== "ALL" && workshop !== "") {
     // Ganti x.Workshop menjadi x.Cab
