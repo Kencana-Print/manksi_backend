@@ -93,6 +93,9 @@ const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
 
+const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
+const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
+
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
 
@@ -208,6 +211,10 @@ app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
 
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
+
+app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
+app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
+
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
 

@@ -211,6 +211,118 @@ const getPoBahanVsBpbSummary = async (user) => {
   return rows[0];
 };
 
+// ── Penawaran Belum MAP (Marketing Dashboard) ──
+const MARKETING_BAGIAN = [
+  "MARKETING",
+  "EDP",
+  "DIREKSI",
+  "OWNER",
+  "IT",
+  "FINANCE",
+];
+
+const getPenawaranBelumMap = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const sql = `
+    SELECT
+      h.pen_nomor       AS Nomor,
+      h.pen_tanggal     AS Tanggal,
+      c.cus_nama        AS NamaCustomer,
+      h.pen_keterangan  AS Keterangan,
+      COUNT(d.pend_id)  AS JmlItem,
+      SUM(CASE WHEN d.pend_status = 'CLOSE' THEN 1 ELSE 0 END) AS ItemClose,
+      DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
+    FROM tpenawaran_hdr h
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+      AND h.pen_tanggal <= CURDATE()
+      AND NOT EXISTS (
+        SELECT 1 FROM tmemospk m
+        WHERE m.mspk_pen_nomor = h.pen_nomor AND m.mspk_aktif = 'Y'
+      )
+      ${whereExtra}
+    GROUP BY h.pen_nomor, h.pen_tanggal, c.cus_nama, h.pen_keterangan
+    HAVING ItemClose = 0
+    ORDER BY h.pen_tanggal ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+const getPenawaranMapSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) {
+    return { TotalPenawaran: 0, SudahMAP: 0, BelumMAP: 0, BelumMAPAdaClose: 0 };
+  }
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
+      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NOT NULL THEN h.pen_nomor END) AS SudahMAP,
+      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NULL THEN h.pen_nomor END) AS BelumMAP,
+      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NULL
+        AND EXISTS (
+          SELECT 1 FROM tpenawaran_dtl d2
+          WHERE d2.pend_pen_nomor = h.pen_nomor AND d2.pend_status = 'CLOSE'
+        ) THEN h.pen_nomor END) AS BelumMAPAdaClose
+    FROM tpenawaran_hdr h
+    LEFT JOIN tmemospk m ON m.mspk_pen_nomor = h.pen_nomor AND m.mspk_aktif = 'Y'
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
+const getKunjunganSalesSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["MARKETING", "EDP", "DIREKSI", "OWNER", "IT", "FINANCE"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT 
+      a.USER AS Nama_Sales,
+      SUM(CASE 
+        WHEN (a.Tanggal_Plan IS NOT NULL AND a.Tanggal_Plan != '0000-00-00')
+          AND (a.realisasi = 'Y' OR (a.tanggal IS NOT NULL AND a.tanggal != '0000-00-00'))
+        THEN 1 ELSE 0 END) AS Done,
+      SUM(CASE 
+        WHEN (a.Tanggal_Plan IS NOT NULL AND a.Tanggal_Plan != '0000-00-00')
+          AND (a.realisasi != 'Y' AND (a.tanggal IS NULL OR a.tanggal = '0000-00-00'))
+        THEN 1 ELSE 0 END) AS Failed,
+      SUM(CASE 
+        WHEN (a.Tanggal_Plan IS NULL OR a.Tanggal_Plan = '0000-00-00')
+          AND (a.realisasi = 'Y' OR (a.tanggal IS NOT NULL AND a.tanggal != '0000-00-00'))
+        THEN 1 ELSE 0 END) AS Unplan,
+      COUNT(*) AS Total
+    FROM marketing.tkunjungan a
+    WHERE DATE(a.Tanggal_Plan) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()
+       OR DATE(a.tanggal) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()
+    GROUP BY a.USER
+    ORDER BY Done DESC, a.USER ASC
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -218,4 +330,7 @@ module.exports = {
   getSpkSummary,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
+  getPenawaranBelumMap,
+  getPenawaranMapSummary,
+  getKunjunganSalesSummary,
 };

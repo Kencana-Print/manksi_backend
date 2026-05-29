@@ -19,5 +19,20 @@ router.get(
   verifyToken,
   controller.getPoBahanVsBpbSummary,
 );
+router.get(
+  "/penawaran-belum-map",
+  verifyToken,
+  controller.getPenawaranBelumMap,
+);
+router.get(
+  "/penawaran-map-summary",
+  verifyToken,
+  controller.getPenawaranMapSummary,
+);
+router.get(
+  "/kunjungan-sales-summary",
+  verifyToken,
+  controller.getKunjunganSalesSummary,
+);
 
 module.exports = router;

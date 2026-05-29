@@ -62,6 +62,35 @@ const getPoBahanVsBpbSummary = async (req, res) => {
   }
 };
 
+const getPenawaranBelumMap = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getPenawaranBelumMap(req.user, limit, offset);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPenawaranMapSummary = async (req, res) => {
+  try {
+    const data = await service.getPenawaranMapSummary(req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKunjunganSalesSummary = async (req, res) => {
+  try {
+    const data = await service.getKunjunganSalesSummary(req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -69,4 +98,7 @@ module.exports = {
   getSpkSummary,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
+  getPenawaranBelumMap,
+  getPenawaranMapSummary,
+  getKunjunganSalesSummary,
 };
