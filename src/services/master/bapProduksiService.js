@@ -5,7 +5,6 @@ const getBrowse = async (startDate, endDate, userCabang, isAccKor) => {
   let whereClause = `WHERE h.bap_tanggal >= ? AND h.bap_tanggal <= ?`;
   params.push(startDate, endDate);
 
-  // Filter cabang jika user bukan Acc Kor (Pusat/Supervisor)
   if (userCabang && !isAccKor) {
     whereClause += ` AND h.bap_cab = ?`;
     params.push(userCabang);
@@ -26,16 +25,24 @@ const getBrowse = async (startDate, endDate, userCabang, isAccKor) => {
       h.user_create AS Created, 
       h.bap_apv AS Approve,
       IFNULL((
-        SELECT 
-          IFNULL(
-            IF(pin_acc="" AND pin_dipakai="", "WAIT",
-              IF(pin_acc="Y" AND pin_dipakai="", "ACC",
-                IF(pin_acc="Y" AND pin_dipakai="Y", "",
-                  IF(pin_acc="N", "TOLAK", "")
-                )
+        SELECT GROUP_CONCAT(bapk_kategori ORDER BY bapk_id SEPARATOR ', ')
+        FROM tkpi_bap_kategori
+        WHERE bapk_bap_nomor = h.bap_nomor
+      ), "") AS Kategori,
+      IFNULL((
+        SELECT GROUP_CONCAT(CONCAT(bapkr_nik, ' - ', bapkr_nama) ORDER BY bapkr_id SEPARATOR '; ')
+        FROM tkpi_bap_karyawan
+        WHERE bapkr_bap_nomor = h.bap_nomor
+      ), "") AS Karyawan,
+      IFNULL((
+        SELECT IFNULL(
+          IF(pin_acc="" AND pin_dipakai="", "WAIT",
+            IF(pin_acc="Y" AND pin_dipakai="", "ACC",
+              IF(pin_acc="Y" AND pin_dipakai="Y", "",
+                IF(pin_acc="N", "TOLAK", "")
               )
-            ), 
-          "")
+            )
+          ), "")
         FROM tspk_pin5 
         WHERE pin_trs = "BAP PRODUKSI" AND pin_nomor = h.bap_nomor 
         ORDER BY pin_urut DESC LIMIT 1

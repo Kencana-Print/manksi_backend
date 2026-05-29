@@ -93,6 +93,20 @@ const getById = async (nomor) => {
     }
   }
 
+  // Load kategori
+  const [kategoriRows] = await db.query(
+    `SELECT bapk_kategori AS kategori FROM tkpi_bap_kategori WHERE bapk_bap_nomor = ?`,
+    [nomor],
+  );
+  data.Kategori = kategoriRows.map((r) => r.kategori);
+
+  // Load karyawan
+  const [karyawanRows] = await db.query(
+    `SELECT bapkr_nik AS nik, bapkr_nama AS nama FROM tkpi_bap_karyawan WHERE bapkr_bap_nomor = ?`,
+    [nomor],
+  );
+  data.Karyawan = karyawanRows;
+
   return data;
 };
 
@@ -171,6 +185,34 @@ const save = async (data, userKode, isNewMode) => {
         `,
           [nomor, data.UrutPin5],
         );
+      }
+    }
+    // Hapus & insert ulang kategori
+    await conn.query(`DELETE FROM tkpi_bap_kategori WHERE bapk_bap_nomor = ?`, [
+      nomor,
+    ]);
+    if (data.Kategori && data.Kategori.length > 0) {
+      for (const kat of data.Kategori) {
+        await conn.query(
+          `INSERT INTO tkpi_bap_kategori (bapk_bap_nomor, bapk_kategori) VALUES (?, ?)`,
+          [nomor, kat],
+        );
+      }
+    }
+
+    // Hapus & insert ulang karyawan
+    await conn.query(
+      `DELETE FROM tkpi_bap_karyawan WHERE bapkr_bap_nomor = ?`,
+      [nomor],
+    );
+    if (data.Karyawan && data.Karyawan.length > 0) {
+      for (const kar of data.Karyawan) {
+        if (kar.nik) {
+          await conn.query(
+            `INSERT INTO tkpi_bap_karyawan (bapkr_bap_nomor, bapkr_nik, bapkr_nama) VALUES (?, ?, ?)`,
+            [nomor, kar.nik, kar.nama],
+          );
+        }
       }
     }
 

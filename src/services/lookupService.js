@@ -44,58 +44,56 @@ const searchSpk = async (keyword, page = 1, limit = 50) => {
 };
 
 const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
+  console.log("=== searchSpkProduksi called ===", { keyword, page, limit });
+
   const limitNum = Number(limit);
   const pageNum = Number(page);
   const offset = (pageNum - 1) * limitNum;
-
   let params = [];
-  let keywordCondition = "";
 
+  const baseQuery = `
+    FROM (
+      SELECT 
+        spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
+        spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain,
+        spk_finishing AS Finishing, spk_aktif AS Aktif
+      FROM tspk
+      UNION ALL
+      SELECT 
+        mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_tanggal AS Tanggal,
+        mspk_jumlah AS Jumlah, mspk_ukuran AS Ukuran, mspk_kain AS Kain,
+        mspk_finishing AS Finishing, "Y" AS Aktif
+      FROM tmemospk
+    ) a
+    WHERE Aktif = 'Y'
+  `;
+
+  let whereSearch = "";
   if (keyword && keyword.trim() !== "") {
-    keywordCondition = `WHERE a.Nomor LIKE ? OR a.Nama LIKE ?`;
+    whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
 
-  // Subquery persis seperti logic Delphi:
-  // UNION antara tspk dan tmemospk dengan filter divisi IN (3,4,6)
-  const baseQuery = `
-    SELECT * FROM (
-      SELECT 
-        spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal, 
-        spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain, spk_finishing AS Finishing
-      FROM tspk 
-      WHERE spk_divisi IN (3,4,6) AND spk_aktif="Y"
-      
-      UNION
-      
-      SELECT 
-        mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_tanggal AS Tanggal, 
-        mspk_jumlah AS Jumlah, mspk_ukuran AS Ukuran, mspk_kain AS Kain, mspk_finishing AS Finishing
-      FROM tmemospk 
-      WHERE mspk_divisi IN (3,4,6)
-    ) a
-  `;
-
-  // Hitung Total Data
-  const countQuery = `SELECT COUNT(*) AS total FROM (${baseQuery}) a ${keywordCondition}`;
-  const [countResult] = await db.query(countQuery, params);
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total ${baseQuery} ${whereSearch}`,
+    params,
+  );
   const total = countResult[0].total;
 
-  // Query Data
-  let query = `
-    ${baseQuery} 
-    ${keywordCondition} 
-    ORDER BY a.Nama ASC
-  `;
+  const dataParams = [...params, limitNum, offset];
+  const [rows] = await db.query(
+    `SELECT * ${baseQuery} ${whereSearch} ORDER BY Nama ASC LIMIT ? OFFSET ?`,
+    dataParams,
+  );
 
-  // --- TAMBAHKAN LOGIKA INI ---
-  if (limitNum > 0) {
-    query += ` LIMIT ? OFFSET ?`;
-    params.push(limitNum, offset);
-  }
-  // ----------------------------
+  // Log sample hasil
+  console.log(
+    "Total:",
+    total,
+    "| Sample:",
+    rows.slice(0, 3).map((r) => r.Nomor),
+  );
 
-  const [rows] = await db.query(query, params);
   return { items: rows, total, page: pageNum, limit: limitNum };
 };
 
@@ -1503,6 +1501,33 @@ const searchPoGarmenBuka = async (keyword, jenis, page = 1, limit = 50) => {
   };
 };
 
+const searchKaryawan = async (keyword, page = 1, limit = 20) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  let where = `WHERE kar_status_aktif = 1`;
+  const params = [];
+
+  if (keyword) {
+    where += ` AND (kar_Nik LIKE ? OR kar_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM hrd2.tkaryawan ${where}`,
+    params,
+  );
+
+  params.push(Number(limit), offset);
+  const [rows] = await db.query(
+    `SELECT kar_Nik AS Nik, kar_nama AS Nama 
+     FROM hrd2.tkaryawan ${where} 
+     ORDER BY kar_nama ASC 
+     LIMIT ? OFFSET ?`,
+    params,
+  );
+
+  return { items: rows, total, page: Number(page), limit: Number(limit) };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1554,4 +1579,5 @@ module.exports = {
   searchPoBahanBuka,
   searchPermintaanBeliGarmen,
   searchPoGarmenBuka,
+  searchKaryawan,
 };

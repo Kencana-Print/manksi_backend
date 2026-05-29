@@ -148,4 +148,6 @@ router.get("/po-garmen-buka", verifyToken, controller.searchPoGarmenBuka);
 // Digunakan di MkbDetailSearchModal.vue (Menerima param ?nomor=)
 router.get("/mkb-detail", verifyToken, controller.getMkbDetail);
 
+router.get("/karyawan", verifyToken, controller.searchKaryawan);
+
 module.exports = router;
