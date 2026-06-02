@@ -78,6 +78,8 @@ const getPenawaranDetail = async (nomor) => {
   const query = `
     SELECT 
       pend_id AS ID,
+      pend_minta AS NoPermintaan,
+      pend_gambar AS Gambar,
       pend_nama_barang AS NamaBarang,
       pend_bahan AS Bahan,
       pend_ukuran AS Ukuran,
