@@ -159,6 +159,21 @@ const getPerusahaan = async (req, res) => {
   }
 };
 
+const getDigitalSign = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    if (!kode) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Kode perusahaan wajib diisi." });
+    }
+    const data = await lookupService.getDigitalSign(kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getRekening = async (req, res) => {
   try {
     // Kita butuh parameter perushKode karena rekening spesifik per perusahaan
@@ -702,6 +717,7 @@ module.exports = {
   getCetakOptions,
   getTambahanOptions,
   getPerusahaan,
+  getDigitalSign,
   getRekening,
   getDivisi,
   searchMintaHarga,

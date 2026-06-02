@@ -21,6 +21,7 @@ const getBrowseData = async (req, res) => {
       jabatan: req.user.jabatan || "",
       cabKaos: req.user.cabangKaos || "",
       bagian: req.user.bagian || "",
+      flags: req.user.flags || {},
     };
 
     const data = await mintaHargaService.getBrowseData(

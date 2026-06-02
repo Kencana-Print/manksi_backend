@@ -297,14 +297,25 @@ const getTambahanOptions = async () => {
 };
 
 const getPerusahaan = async () => {
-  // Sesuai query Delphi untuk pencarian perusahaan (F1 pada edtPerushKode)
   const query = `
-    SELECT perush_kode, perush_nama, perush_alamat 
-    FROM tperusahaan 
-    ORDER BY perush_nama
+    SELECT 
+      p.perush_kode, p.perush_nama, p.perush_alamat,
+      d.nama AS ttd_nama, d.jabatan AS ttd_jabatan
+    FROM tperusahaan p
+    LEFT JOIN tdigitalsign d ON d.kode = p.perush_kode
+    ORDER BY p.perush_nama
   `;
   const [rows] = await db.query(query);
   return rows;
+};
+
+// Tambah fungsi baru
+const getDigitalSign = async (kode) => {
+  const [rows] = await db.query(
+    "SELECT nama, jabatan FROM tdigitalsign WHERE kode = ?",
+    [kode],
+  );
+  return rows.length > 0 ? rows[0] : null;
 };
 
 const getRekeningPerusahaan = async (perushKode) => {
@@ -1541,6 +1552,7 @@ module.exports = {
   getCetakOptions,
   getTambahanOptions,
   getPerusahaan,
+  getDigitalSign,
   getRekeningPerusahaan,
   getDivisi,
   searchMintaHarga,

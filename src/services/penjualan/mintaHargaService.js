@@ -89,7 +89,10 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     userInfo.jabatan.includes("MANAGER-CMO-MO") ||
     userInfo.kode === "ADMIN" ||
     userInfo.bagian?.toUpperCase() === "AUDIT" ||
-    userInfo.bagian?.toUpperCase() === "FINANCE";
+    userInfo.bagian?.toUpperCase() === "FINANCE" ||
+    userInfo.flags?.cmo === 1 || // ← tambah ini
+    userInfo.flags?.cmo === "1" || // ← string juga
+    userInfo.flags?.cmo === "Y"; // ← atau Y
 
   if (!isManagerOrAdmin) {
     if (userInfo.jabatan === "CRM") {
