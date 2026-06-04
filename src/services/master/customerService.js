@@ -22,7 +22,9 @@ const getBrowse = async (filterKorporasi) => {
       cus_jenisusaha AS JenisUsaha,
       cus_npwp AS NPWP, 
       cus_kodei AS Induk, 
-      cus_prioritas AS Prioritas, 
+      cus_prioritas AS Prioritas,
+      cus_plafon AS Plafon,
+      cus_plafon_acc AS PlafonAcc, 
       IF(cus_aktif = 0, '', 'YA') AS Pasif
     FROM tcustomer 
     WHERE cus_iscabang = 0 ${korporasiClause}
@@ -66,14 +68,36 @@ const generateKode = async () => {
 
 const create = async (data, user) => {
   const kode = await generateKode();
+  const plafon = Number(data.Plafon) || 0;
+
+  // Tentukan status plafon dan aktif/pasif
+  let plafonAcc = "";
+  let aktif = 0; // 0 = aktif di DB
+  let plafonTglMinta = null;
+  let plafonUserMinta = "";
+
+  if (plafon > 0 && plafon <= 20_000_000) {
+    plafonAcc = "PENDING_MANAGER";
+    aktif = 1; // pasif dulu
+    plafonTglMinta = new Date();
+    plafonUserMinta = user;
+  } else if (plafon > 20_000_000) {
+    plafonAcc = "PENDING_DIREKSI";
+    aktif = 1; // pasif dulu
+    plafonTglMinta = new Date();
+    plafonUserMinta = user;
+  }
+  // plafon = 0 → tidak butuh approval, langsung aktif
 
   const query = `
     INSERT INTO tcustomer (
-      cus_kode, cus_kodei, cus_nama, cus_alamat, cus_kota, cus_telp, cus_telp2, cus_fax, cus_cp, cus_email, 
-      cus_korporasi, cus_jenisusaha, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp, 
-      cus_disc_persen, cus_top, cus_prioritas, cus_keramat, cus_spanduk, cus_garmen, cus_mmt, 
-      cus_perfect, user_create, date_create
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      cus_kode, cus_kodei, cus_nama, cus_alamat, cus_kota, cus_telp, cus_telp2, cus_fax, cus_cp, cus_email,
+      cus_korporasi, cus_jenisusaha, cus_npwp, cus_nama_npwp, cus_alamat_npwp, cus_kota_npwp,
+      cus_disc_persen, cus_top, cus_prioritas, cus_keramat, cus_spanduk, cus_garmen, cus_mmt,
+      cus_perfect, cus_aktif,
+      cus_plafon, cus_plafon_acc, cus_plafon_tgl_minta, cus_plafon_user_minta,
+      user_create, date_create
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
   `;
 
   await db.query(query, [
@@ -101,19 +125,76 @@ const create = async (data, user) => {
     data.Garmen ? "Y" : "N",
     data.Mmt ? "Y" : "N",
     data.Perfect || "",
+    aktif,
+    plafon,
+    plafonAcc,
+    plafonTglMinta,
+    plafonUserMinta,
     user,
   ]);
 
-  return kode;
+  return { kode, plafonAcc };
 };
 
 const update = async (kode, data, user) => {
+  const plafon = Number(data.Plafon) || 0;
+
+  // Ambil data lama dulu
+  const [[existing]] = await db.query(
+    `SELECT cus_plafon, cus_plafon_acc, cus_aktif FROM tcustomer WHERE cus_kode = ?`,
+    [kode],
+  );
+
+  const plafonLama = Number(existing?.cus_plafon) || 0;
+  const plafonBerubah = plafon !== plafonLama;
+
+  let plafonAcc = existing?.cus_plafon_acc || "";
+  let aktifClause = "";
+  let plafonFields = "";
+  const extraParams = [];
+
+  if (plafonBerubah && plafon > 0) {
+    if (plafon <= 20_000_000) {
+      plafonAcc = "PENDING_MANAGER";
+    } else {
+      plafonAcc = "PENDING_DIREKSI";
+    }
+    plafonFields = `
+      cus_plafon = ?,
+      cus_plafon_acc = ?,
+      cus_plafon_tgl_minta = NOW(),
+      cus_plafon_user_minta = ?,
+      cus_plafon_tgl_acc = NULL,
+      cus_plafon_user_acc = '',
+      cus_aktif = 1,
+    `;
+    extraParams.push(plafon, plafonAcc, user);
+  } else if (plafonBerubah && plafon === 0) {
+    // Plafon dihapus → reset
+    plafonFields = `
+      cus_plafon = 0,
+      cus_plafon_acc = '',
+      cus_plafon_tgl_minta = NULL,
+      cus_plafon_user_minta = '',
+      cus_plafon_tgl_acc = NULL,
+      cus_plafon_user_acc = '',
+    `;
+  } else {
+    plafonFields = `cus_plafon = ?,`;
+    extraParams.push(plafon);
+  }
+
   const query = `
-    UPDATE tcustomer SET 
-      cus_kodei = ?, cus_nama = ?, cus_alamat = ?, cus_kota = ?, cus_telp = ?, cus_telp2 = ?, cus_fax = ?, cus_cp = ?, cus_email = ?, 
-      cus_korporasi = ?, cus_jenisusaha = ?, cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?, 
-      cus_disc_persen = ?, cus_top = ?, cus_prioritas = ?, cus_keramat = ?, cus_spanduk = ?, cus_garmen = ?, cus_mmt = ?, 
-      cus_perfect = ?, user_modified = ?, date_modified = NOW()
+    UPDATE tcustomer SET
+      cus_kodei = ?, cus_nama = ?, cus_alamat = ?, cus_kota = ?,
+      cus_telp = ?, cus_telp2 = ?, cus_fax = ?, cus_cp = ?, cus_email = ?,
+      cus_korporasi = ?, cus_jenisusaha = ?,
+      cus_npwp = ?, cus_nama_npwp = ?, cus_alamat_npwp = ?, cus_kota_npwp = ?,
+      cus_disc_persen = ?, cus_top = ?,
+      cus_prioritas = ?, cus_keramat = ?, cus_spanduk = ?, cus_garmen = ?, cus_mmt = ?,
+      cus_perfect = ?,
+      ${plafonFields}
+      user_modified = ?, date_modified = NOW()
     WHERE cus_kode = ?
   `;
 
@@ -141,9 +222,12 @@ const update = async (kode, data, user) => {
     data.Garmen ? "Y" : "N",
     data.Mmt ? "Y" : "N",
     data.Perfect || "",
+    ...extraParams,
     user,
     kode,
   ]);
+
+  return { kode, plafonAcc };
 };
 
 const remove = async (kode) => {

@@ -35,10 +35,19 @@ const getJenisUsahaLookup = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const kode = await customerService.create(req.body, req.user.kode);
-    res
-      .status(201)
-      .json({ success: true, message: "Customer berhasil disimpan", kode });
+    const { kode, plafonAcc } = await customerService.create(
+      req.body,
+      req.user.kode,
+    );
+
+    let message = "Customer berhasil disimpan.";
+    if (plafonAcc === "PENDING_MANAGER") {
+      message += " Plafon menunggu ACC Manager.";
+    } else if (plafonAcc === "PENDING_DIREKSI") {
+      message += " Plafon > 20jt menunggu ACC Direksi.";
+    }
+
+    res.status(201).json({ success: true, message, data: { kode, plafonAcc } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -46,10 +55,20 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   try {
-    await customerService.update(req.params.kode, req.body, req.user.kode);
-    res
-      .status(200)
-      .json({ success: true, message: "Customer berhasil diperbarui" });
+    const { kode, plafonAcc } = await customerService.update(
+      req.params.kode,
+      req.body,
+      req.user.kode,
+    );
+
+    let message = "Customer berhasil diperbarui.";
+    if (plafonAcc === "PENDING_MANAGER") {
+      message += " Plafon berubah, menunggu ACC Manager.";
+    } else if (plafonAcc === "PENDING_DIREKSI") {
+      message += " Plafon berubah > 20jt, menunggu ACC Direksi.";
+    }
+
+    res.status(200).json({ success: true, message, data: { kode, plafonAcc } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

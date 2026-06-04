@@ -5,7 +5,6 @@ const path = require("path");
 
 const authRoutes = require("./routes/authRoute");
 const lookupRoutes = require("./routes/lookupRoutes");
-const userRoutes = require("./routes/tools/userRoutes");
 
 // ── Dashboard ──
 const dashboardRoutes = require("./routes/dashboard/dashboardRoutes");
@@ -110,6 +109,10 @@ const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesR
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
 
+// Tools Routes
+const userRoutes = require("./routes/tools/userRoutes");
+const approvalRoutes = require("./routes/tools/approvalRoutes");
+
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
 app.use(
@@ -134,7 +137,6 @@ app.use("/images", express.static(path.join(process.cwd(), "public/images")));
 app.use("/api/auth", authRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/tools/users", userRoutes);
 
 app.use("/api/master/bahan", bahanRoutes);
 app.use("/api/master/jenis-bahan", jenisBahanRoutes);
@@ -241,6 +243,9 @@ app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
+
+app.use("/api/tools/users", userRoutes);
+app.use("/api/tools/approval", approvalRoutes);
 
 const PORT = process.env.PORT || 3088;
 app.listen(PORT, () => {

@@ -1,0 +1,877 @@
+const db = require("../../config/database");
+
+// --- 1. GET DATA MASTER (CUSTOMER YANG MINTA ACC) ---
+const getApprovalPiutangMaster = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  // Filter khusus checkbox "Tampilkan yang belum acc saja"
+  const filterAcc =
+    belumAccSaja === "true" || belumAccSaja === true
+      ? ` AND i.cusp_acc = "" `
+      : "";
+
+  // Query UNION sesuai dengan yang ada di Delphi
+  const sql = `
+    SELECT c.Cus_kode AS Kode, c.Cus_nama AS Nama, c.Cus_alamat AS Alamat, "KP" AS Status
+    FROM tcustomer c
+    WHERE c.Cus_kode IN (
+      SELECT DISTINCT i.cusp_kode 
+      FROM tcustomer_pin i
+      WHERE DATE(cusp_tgl_minta) >= ? AND DATE(cusp_tgl_minta) <= ? ${filterAcc}
+    )
+    UNION ALL
+    SELECT k.Cus_kode AS Kode, k.Cus_nama AS Nama, k.Cus_alamat AS Alamat, "Kaosan" AS Status
+    FROM retail.tcustomer k
+    WHERE k.Cus_kode IN (
+      SELECT DISTINCT i.cusp_kode 
+      FROM tcustomer_pin i
+      WHERE DATE(cusp_tgl_minta) >= ? AND DATE(cusp_tgl_minta) <= ? ${filterAcc}
+    )
+    ORDER BY Nama ASC
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd, dStart, dEnd]);
+  return rows;
+};
+
+// --- 2. GET DAFTAR PENGAJUAN (HISTORY) PER CUSTOMER ---
+const getPengajuanByCustomer = async (cusKode, query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+  const filterAcc =
+    belumAccSaja === "true" || belumAccSaja === true
+      ? ` AND i.cusp_acc = "" `
+      : "";
+
+  const sql = `
+    SELECT 
+      i.cusp_kode AS Kode, 
+      i.cusp_nomor AS SPK, 
+      s.spk_divisi AS Divisi, 
+      DATE_FORMAT(i.cusp_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      i.cusp_user_minta AS Peminta, 
+      DATE_FORMAT(i.cusp_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
+      i.cusp_user_pin AS Otorisasi, 
+      i.cusp_acc AS Acc,
+      IF(i.cusp_user_pin <> "", "Sudah", "Belum") AS StatusPakai
+    FROM tcustomer_pin i
+    LEFT JOIN tspk s ON s.spk_nomor = i.cusp_nomor
+    WHERE i.cusp_kode = ? 
+      AND DATE(i.cusp_tgl_minta) >= ? 
+      AND DATE(i.cusp_tgl_minta) <= ? 
+      ${filterAcc}
+    ORDER BY i.cusp_tgl_minta DESC
+  `;
+
+  const [rows] = await db.query(sql, [cusKode, dStart, dEnd]);
+  return rows;
+};
+
+// --- 3. GET DETAIL INVOICE NUNGGAK (GRID BAWAH) ---
+const getInvoiceNunggak = async (cusKode, status, dStart) => {
+  let sql = "";
+
+  // Logic Pembedaan Piutang Umum (KP) dan Kaosan
+  if (status === "KP") {
+    sql = `
+      SELECT 
+        p.nota AS Invoice, 
+        DATE_FORMAT(p.Tanggal, "%d-%m-%Y") AS Tanggal, 
+        DATE_FORMAT(p.tanggal_tempo, "%d-%m-%Y") AS Tempo,
+        p.Debet, p.kredit AS Kredit, (p.Debet - p.kredit) AS Saldo,
+        DATEDIFF(CURDATE(), p.Tanggal) AS Umur
+      FROM piutang_debet p
+      WHERE p.flag = 0 
+        AND (p.debet - p.kredit) > 100
+        AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
+        AND p.tanggal >= "2021-01-01" 
+        AND p.tanggal <= ? 
+        AND p.customer = ?
+      ORDER BY p.Tanggal ASC
+    `;
+  } else {
+    sql = `
+      SELECT 
+        X.Invoice, 
+        X.Tanggal, 
+        X.Tempo, 
+        X.Debet, 
+        X.Kredit, 
+        (X.Debet - X.Kredit) AS Saldo, 
+        X.Umur
+      FROM (
+        SELECT 
+          h.ph_inv_nomor AS Invoice, 
+          DATE_FORMAT(h.ph_tanggal, "%d-%m-%Y") AS Tanggal, 
+          DATE_FORMAT(DATE_ADD(h.ph_tanggal, INTERVAL h.ph_top DAY), "%d-%m-%Y") AS Tempo,
+          h.ph_nominal AS Debet,
+          IFNULL((SELECT SUM(d.pd_kredit) FROM retail.tpiutang_dtl d WHERE d.pd_ph_nomor=h.ph_nomor),0) AS Kredit,
+          DATEDIFF(CURDATE(), h.ph_tanggal) AS Umur
+        FROM retail.tpiutang_hdr h
+        WHERE h.ph_cus_kode = ?
+      ) X
+      WHERE (X.Debet - X.Kredit) > 100
+      ORDER BY X.Tanggal ASC
+    `;
+  }
+
+  // Jika Kaosan, startdate tidak dipakai di kueri
+  const params = status === "KP" ? [dStart, cusKode] : [cusKode];
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+// --- 4. EKSEKUSI OTORISASI (ACC / TOLAK) ---
+const setOtorisasi = async (nomorSpk, statusAcc, userKode) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    // 1. Update status Acc di tabel customer_pin
+    await conn.query(
+      `UPDATE tcustomer_pin SET 
+        cusp_tgl_pin = NOW(),
+        cusp_user_pin = ?,
+        cusp_acc = ?
+       WHERE cusp_nomor = ?`,
+      [userKode, statusAcc, nomorSpk],
+    );
+
+    // 2. Sinkronisasi spk_aktif (sesuai cxButton5Click Delphi)
+    if (statusAcc === "Y") {
+      const [cekPinHarga] = await conn.query(
+        `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
+        [nomorSpk],
+      );
+
+      let amanUntukAktif = false;
+
+      if (cekPinHarga.length > 0) {
+        // tspk_pin ADA → aktifkan hanya jika pin harga sudah di-ACC
+        if (cekPinHarga[0].pin_acc === "Y") {
+          amanUntukAktif = true;
+        }
+        // pin_acc bukan Y → tidak aktifkan, masih nunggu approval harga 0
+      } else {
+        // tspk_pin TIDAK ADA (harga bukan 0) → cek pinjo
+        const [cekPinJo] = await conn.query(
+          `SELECT spk_pinjo FROM tspk WHERE spk_nomor = ?`,
+          [nomorSpk],
+        );
+        if (
+          cekPinJo.length > 0 &&
+          (cekPinJo[0].spk_pinjo === "MINTA" ||
+            cekPinJo[0].spk_pinjo === "TOLAK")
+        ) {
+          amanUntukAktif = false; // masih ada pin jo yang belum selesai
+        } else {
+          amanUntukAktif = true; // aman, aktifkan
+        }
+      }
+
+      if (amanUntukAktif) {
+        await conn.query(
+          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          [nomorSpk],
+        );
+      }
+    } else if (statusAcc === "N") {
+      // Jika ditolak, SPK langsung pasif
+      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
+        nomorSpk,
+      ]);
+    }
+
+    // 3. Ambil nama peminta untuk notifikasi frontend
+    const [userMinta] = await conn.query(
+      `SELECT cusp_user_minta FROM tcustomer_pin WHERE cusp_nomor = ? LIMIT 1`,
+      [nomorSpk],
+    );
+
+    await conn.commit();
+    return {
+      nomorSpk,
+      peminta: userMinta.length > 0 ? userMinta[0].cusp_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL SPK HARGA 0 (MENU_ID: 257)
+// =========================================================================
+
+// --- GET DAFTAR SPK HARGA 0 (BROWSE) ---
+const getHargaNolList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT 
+      p.pin_nomor AS Nomor, 
+      s.spk_nama AS NamaSPK, 
+      s.spk_divisi AS Divisi, 
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta, 
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
+      p.pin_user_pin AS Otorisasi, 
+      p.pin_acc AS Acc, 
+      s.spk_cus_kode AS KdCus, 
+      u.cus_nama AS Customer
+    FROM tspk_pin p
+    LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
+    LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
+    ${sqlCondition}
+    ORDER BY p.pin_nomor DESC
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- GET DETAIL INFO MODAL OTORISASI HARGA 0 ---
+const getHargaNolDetailInfo = async (nomor) => {
+  // Query untuk mendapatkan tanggal SPK baru vs Lama + Selisih harinya
+  const sql = `
+    SELECT 
+      x.spk_nomor AS NomorSPK,
+      DATE_FORMAT(x.spk_tanggal,"%d-%m-%Y") AS TglBaru, 
+      x.spk_ketpo AS KetPO, 
+      x.spk_lama AS SPKLama,
+      DATE_FORMAT(x.dtold,"%d-%m-%Y") AS TglLama, 
+      IF(x.dtold IS NOT null, DATEDIFF(x.spk_tanggal, x.dtold), 0) AS SelisihHari
+    FROM (
+      SELECT 
+        s.spk_nomor, 
+        s.spk_tanggal, 
+        s.spk_ketpo, 
+        s.spk_lama,
+        (SELECT i.spk_tanggal FROM tspk i WHERE i.spk_nomor = s.spk_lama LIMIT 1) AS dtold
+      FROM tspk s
+      WHERE s.spk_nomor = ?
+    ) x
+  `;
+
+  const [rows] = await db.query(sql, [nomor]);
+  if (rows.length === 0) throw new Error("Data detail SPK tidak ditemukan.");
+  return rows[0];
+};
+
+// --- EKSEKUSI OTORISASI HARGA 0 ---
+const submitHargaNolOtorisasi = async (nomor, statusAcc, userKode) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    // 1. Update status Acc di tabel tspk_pin
+    const updatePinSql = `
+      UPDATE tspk_pin SET 
+        pin_tgl_pin = NOW(),
+        pin_user_pin = ?,
+        pin_acc = ?
+      WHERE pin_nomor = ?
+    `;
+    await conn.query(updatePinSql, [userKode, statusAcc, nomor]);
+
+    // 2. Logic Sinkronisasi Status Aktif SPK (Sesuai Delphi)
+    if (statusAcc === "Y") {
+      const [cekPinCus] = await conn.query(
+        `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
+        [nomor],
+      );
+
+      let amanUntukAktif = false;
+
+      if (cekPinCus.length > 0) {
+        // tcustomer_pin ADA → aktifkan hanya jika piutang sudah di-ACC
+        if (cekPinCus[0].cusp_acc === "Y") {
+          amanUntukAktif = true;
+        }
+        // cusp_acc bukan Y → tidak aktifkan, masih nunggu approval piutang
+      } else {
+        // tcustomer_pin TIDAK ADA → tidak ada masalah piutang, langsung aktifkan
+        amanUntukAktif = true;
+      }
+
+      if (amanUntukAktif) {
+        await conn.query(
+          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          [nomor],
+        );
+      }
+    } else if (statusAcc === "N") {
+      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
+        nomor,
+      ]);
+    }
+
+    // Ambil nama peminta untuk di-return
+    const [userMinta] = await conn.query(
+      `SELECT pin_user_minta FROM tspk_pin WHERE pin_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL SPK KLIEN PRIORITAS (MENU_ID: 258)
+// =========================================================================
+
+// --- GET DAFTAR SPK PRIORITAS (BROWSE) ---
+const getPrioritasList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT 
+      p.pin_nomor AS Nomor, 
+      s.spk_nama AS NamaSPK, 
+      s.spk_divisi AS Divisi, 
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta, 
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
+      p.pin_user_pin AS Otorisasi, 
+      p.pin_acc AS Acc, 
+      s.spk_cus_kode AS KdCus, 
+      u.cus_nama AS Customer
+    FROM tspk_pin_prioritas p
+    LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
+    LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
+    ${sqlCondition}
+    ORDER BY p.pin_nomor DESC
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI PRIORITAS ---
+const submitPrioritasOtorisasi = async (nomor, statusAcc, userKode) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    // 1. Update status Acc di tabel tspk_pin_prioritas
+    const updatePinSql = `
+      UPDATE tspk_pin_prioritas SET 
+        pin_tgl_pin = NOW(),
+        pin_user_pin = ?,
+        pin_acc = ?
+      WHERE pin_nomor = ?
+    `;
+    await conn.query(updatePinSql, [userKode, statusAcc, nomor]);
+
+    // 2. Logic Sinkronisasi Status Aktif SPK (Sesuai Delphi)
+    if (statusAcc === "Y") {
+      // Cek apakah ada masalah piutang (> 90 hari)
+      const [cekPinCus] = await conn.query(
+        `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
+        [nomor],
+      );
+
+      let amanUntukAktif = true;
+
+      // Jika ada pengajuan pin customer tapi statusnya belum Y, jangan diaktifkan
+      if (cekPinCus.length > 0 && cekPinCus[0].cusp_acc !== "Y") {
+        amanUntukAktif = false;
+      }
+
+      // Jika aman, aktifkan SPK otomatis
+      if (amanUntukAktif) {
+        await conn.query(
+          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          [nomor],
+        );
+      }
+    } else if (statusAcc === "N") {
+      // Jika ditolak, SPK langsung pasif
+      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
+        nomor,
+      ]);
+    }
+
+    // Ambil nama peminta untuk di-return
+    const [userMinta] = await conn.query(
+      `SELECT pin_user_minta FROM tspk_pin_prioritas WHERE pin_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL INVOICE BELUM BUAT SJ (MENU_ID: 260)
+// =========================================================================
+
+// --- GET DAFTAR INVOICE (BROWSE) ---
+const getInvoiceBlmSjList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_jenis = "INVBLMSJ" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT 
+      p.pin_nomor AS Nomor, 
+      DATE_FORMAT(h.INV_tanggal, "%d-%m-%Y") AS TglInvoice, 
+      h.INV_cus_kode AS KdCus, 
+      u.cus_nama AS Customer,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta, 
+      p.pin_user_minta AS Peminta, 
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
+      p.pin_user_pin AS Otorisasi, 
+      p.pin_acc AS Acc
+    FROM tapprove p
+    INNER JOIN tinv_hdr h ON h.INV_nomor = p.pin_nomor
+    LEFT JOIN tcustomer u ON u.cus_kode = h.INV_cus_kode
+    ${sqlCondition}
+    ORDER BY p.pin_nomor DESC
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI INVOICE ---
+const submitInvoiceBlmSjOtorisasi = async (nomor, statusAcc, userKode) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    // 1. Update status Acc di tabel tapprove
+    const updateApproveSql = `
+      UPDATE tapprove SET 
+        pin_tgl_pin = NOW(),
+        pin_user_pin = ?,
+        pin_acc = ?
+      WHERE pin_jenis = "INVBLMSJ" AND pin_nomor = ?
+    `;
+    await conn.query(updateApproveSql, [userKode, statusAcc, nomor]);
+
+    // 2. Update status Inv & Piutang Sesuai Delphi
+    if (statusAcc === "Y") {
+      // Delphi menggunakan FormatDateTime('dd-mm-yyyy hh:nn:ss', Now)
+      // Karena ini Javascript, kita buat string sesuai format yang diminta Delphi
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const dtStr = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+      await conn.query(
+        `UPDATE tinv_hdr SET inv_flag = 0, inv_apvnosj = ? WHERE inv_nomor = ?`,
+        [dtStr, nomor],
+      );
+      await conn.query(`UPDATE piutang_debet SET flag = 0 WHERE nota = ?`, [
+        nomor,
+      ]);
+    } else if (statusAcc === "N") {
+      await conn.query(
+        `UPDATE tinv_hdr SET inv_apvnosj = "T" WHERE inv_nomor = ?`,
+        [nomor],
+      );
+    }
+
+    // Ambil nama peminta untuk alert
+    const [userMinta] = await conn.query(
+      `SELECT pin_user_minta FROM tapprove WHERE pin_jenis = "INVBLMSJ" AND pin_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL PERUBAHAN DATA (MENU_ID: 259)
+// =========================================================================
+
+// --- GET DAFTAR PERUBAHAN DATA (BROWSE) ---
+const getPerubahanDataList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_jenis = "UBAH" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT 
+      IF(p.pin_program = "", "MANKSI", p.pin_program) AS Program,
+      p.pin_trs AS Transaksi,
+      p.pin_nomor AS Nomor,
+      DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
+      p.pin_ket AS Keterangan,
+      p.pin_urut AS AjuanKe,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+      p.pin_user_pin AS Otorisasi,
+      p.pin_acc AS Acc,
+      p.pin_dipakai AS Dipakai,
+      p.pin_alasan AS Alasan
+    FROM tspk_pin5 p
+    ${sqlCondition}
+    ORDER BY p.pin_trs, p.pin_nomor
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI PERUBAHAN DATA ---
+const submitPerubahanDataOtorisasi = async (
+  nomor,
+  transaksi,
+  urut,
+  statusAcc,
+  userKode,
+) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    const updateSql = `
+      UPDATE tspk_pin5 SET 
+        pin_tgl_pin = NOW(),
+        pin_user_pin = ?,
+        pin_acc = ?
+      WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "UBAH"
+    `;
+    await conn.query(updateSql, [userKode, statusAcc, transaksi, nomor, urut]);
+
+    // Ambil nama peminta untuk alert
+    const [userMinta] = await conn.query(
+      `SELECT pin_user_minta FROM tspk_pin5 WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "UBAH" LIMIT 1`,
+      [transaksi, nomor, urut],
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      transaksi,
+      urut,
+      peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL HAPUS DATA (MENU_ID: 261)
+// =========================================================================
+
+// --- GET DAFTAR HAPUS DATA (BROWSE) ---
+const getHapusDataList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  // Filter jenis HAPUS
+  let sqlCondition = ` WHERE p.pin_jenis = "HAPUS" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT 
+      IF(p.pin_program = "", "MANKSI", p.pin_program) AS Program,
+      p.pin_trs AS Transaksi,
+      p.pin_nomor AS Nomor,
+      DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
+      p.pin_ket AS Keterangan,
+      p.pin_urut AS AjuanKe,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+      p.pin_user_pin AS Otorisasi,
+      p.pin_acc AS Acc,
+      p.pin_dipakai AS Dipakai,
+      p.pin_alasan AS Alasan
+    FROM tspk_pin5 p
+    ${sqlCondition}
+    ORDER BY p.pin_trs, p.pin_nomor
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI HAPUS DATA ---
+const submitHapusDataOtorisasi = async (
+  nomor,
+  transaksi,
+  urut,
+  statusAcc,
+  userKode,
+) => {
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+
+  try {
+    // 1. Update status Otorisasi di tspk_pin5
+    const updateSql = `
+      UPDATE tspk_pin5 SET 
+        pin_tgl_pin = NOW(),
+        pin_user_pin = ?,
+        pin_acc = ?
+      WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "HAPUS"
+    `;
+    await conn.query(updateSql, [userKode, statusAcc, transaksi, nomor, urut]);
+
+    // 2. EKSEKUSI PENGHAPUSAN FISIK DATA (Jika ACC = 'Y')
+    if (statusAcc === "Y") {
+      const trxType = String(transaksi).toUpperCase();
+
+      if (trxType === "HAPUS PO JASA") {
+        await conn.query(`DELETE FROM tpojasa_hdr WHERE pojh_nomor = ?`, [
+          nomor,
+        ]);
+      } else if (trxType === "HAPUS BPB JASA") {
+        await conn.query(`DELETE FROM tbpj_hdr WHERE bpj_Nomor = ?`, [nomor]);
+      } else if (trxType === "HAPUS MUTASI PRODUKSI") {
+        await conn.query(
+          `DELETE FROM tmutasiproduksi_hdr WHERE mph_nomor = ?`,
+          [nomor],
+        );
+      }
+      // Note: Bisa ditambahkan jenis penghapusan lain di masa depan ke dalam if-else ini
+    }
+
+    // Ambil nama peminta untuk alert frontend
+    const [userMinta] = await conn.query(
+      `SELECT pin_user_minta FROM tspk_pin5 WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "HAPUS" LIMIT 1`,
+      [transaksi, nomor, urut],
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      transaksi,
+      urut,
+      peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+    };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL PLAFON CUSTOMER (MENU_ID: 262 = Manager, 263 = Direksi)
+// =========================================================================
+
+// --- GET DAFTAR PLAFON PENDING (BROWSE) ---
+const getPlafonList = async (query) => {
+  const { startDate, endDate, belumAccSaja, jenis } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const jenisFilter = jenis || "PENDING_MANAGER";
+
+  // Tentukan range plafon berdasarkan jenis
+  // Manager = plafon <= 20jt, Direksi = plafon > 20jt
+  const plafonClause =
+    jenisFilter === "PENDING_MANAGER"
+      ? `AND c.cus_plafon <= 20000000`
+      : `AND c.cus_plafon > 20000000`;
+
+  let statusClause = "";
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    statusClause = `AND c.cus_plafon_acc = ?`;
+  } else {
+    // Tampilkan semua status tapi tetap filter by range plafon
+    statusClause = `AND c.cus_plafon_acc IN (?, 'ACC', 'TOLAK')`;
+  }
+
+  const sql = `
+    SELECT
+      c.Cus_kode AS KdCus,
+      c.Cus_nama AS Nama,
+      c.Cus_alamat AS Alamat,
+      c.Cus_kota AS Kota,
+      c.cus_plafon AS Plafon,
+      c.cus_plafon_acc AS PlafonAcc,
+      DATE_FORMAT(c.cus_plafon_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      c.cus_plafon_user_minta AS Peminta,
+      DATE_FORMAT(c.cus_plafon_tgl_acc, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+      c.cus_plafon_user_acc AS Otorisasi
+    FROM tcustomer c
+    WHERE DATE(c.cus_plafon_tgl_minta) >= ?
+      AND DATE(c.cus_plafon_tgl_minta) <= ?
+      AND c.cus_plafon > 0
+      ${plafonClause}
+      ${statusClause}
+    ORDER BY c.cus_plafon_tgl_minta DESC
+  `;
+
+  const [rows] = await db.query(sql, [dStart, dEnd, jenisFilter]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI PLAFON ---
+const approvalPlafon = async (cusKode, statusAcc, userKode, userBagian) => {
+  const [[cus]] = await db.query(
+    `SELECT cus_plafon, cus_plafon_acc FROM tcustomer WHERE Cus_kode = ?`,
+    [cusKode],
+  );
+  if (!cus) throw new Error("Customer tidak ditemukan.");
+
+  const bagianUpper = String(userBagian).toUpperCase();
+
+  // Validasi hak akses berdasarkan status pending
+  if (
+    cus.cus_plafon_acc === "PENDING_DIREKSI" &&
+    !["DIREKSI", "OWNER"].includes(bagianUpper)
+  ) {
+    throw new Error("Hanya Direksi/Owner yang bisa ACC plafon > 20 juta.");
+  }
+
+  const newPlafonAcc = statusAcc === "Y" ? "ACC" : "TOLAK";
+  const newAktif = statusAcc === "Y" ? 0 : 1; // 0 = aktif di DB Delphi
+
+  await db.query(
+    `UPDATE tcustomer SET
+       cus_plafon_acc = ?,
+       cus_plafon_tgl_acc = NOW(),
+       cus_plafon_user_acc = ?,
+       cus_aktif = ?
+     WHERE Cus_kode = ?`,
+    [newPlafonAcc, userKode, newAktif, cusKode],
+  );
+
+  // Ambil peminta untuk notifikasi frontend
+  const [[cusData]] = await db.query(
+    `SELECT cus_plafon_user_minta AS peminta FROM tcustomer WHERE Cus_kode = ?`,
+    [cusKode],
+  );
+
+  return {
+    cusKode,
+    plafonAcc: newPlafonAcc,
+    peminta: cusData?.peminta || "Unknown",
+  };
+};
+
+module.exports = {
+  getApprovalPiutangMaster,
+  getPengajuanByCustomer,
+  getInvoiceNunggak,
+  setOtorisasi,
+  getHargaNolList,
+  getHargaNolDetailInfo,
+  submitHargaNolOtorisasi,
+  getPrioritasList,
+  submitPrioritasOtorisasi,
+  getInvoiceBlmSjList,
+  submitInvoiceBlmSjOtorisasi,
+  getPerubahanDataList,
+  submitPerubahanDataOtorisasi,
+  getHapusDataList,
+  submitHapusDataOtorisasi,
+  getPlafonList,
+  approvalPlafon,
+};
