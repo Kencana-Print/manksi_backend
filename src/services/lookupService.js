@@ -136,9 +136,10 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
       IFNULL(j.bj_nama, "") AS Jenis,
       b.bhn_hargabeli AS Harga,
       IFNULL((
-        SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
-        FROM tmasterstok_bahan m 
-        WHERE m.mst_aktif = "Y" AND m.mst_brg_kode = b.bhn_kode
+        SELECT SUM(c.mst_stok_in - c.mst_stok_out) 
+        FROM tmasterstok_barcode c
+        WHERE c.mst_aktif = 'Y' 
+          AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) = b.Bhn_kode
       ), 0) AS Stok
     FROM tbahan b
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.bhn_kode, 6, 2)
@@ -1539,6 +1540,93 @@ const searchKaryawan = async (keyword, page = 1, limit = 20) => {
   return { items: rows, total, page: Number(page), limit: Number(limit) };
 };
 
+// --- GET ALL ACCOUNTS (T-REKENING) ---
+const searchAccount = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+
+  // Mengikuti kondisi Delphi: rek_rekening <> ""
+  let whereClause = `WHERE rek_rekening <> ""`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (rek_kode LIKE ? OR rek_nama LIKE ? OR rek_rekening LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM finance.trekening ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT 
+      rek_nama AS Nama, 
+      rek_kode AS Kode, 
+      rek_rekening AS Rekening 
+    FROM finance.trekening 
+    ${whereClause} 
+    ORDER BY rek_nama ASC 
+    LIMIT ? OFFSET ?
+  `;
+  params.push(limitNum, offset);
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- LOOKUP SETORAN PEMBAYARAN (GIRO/CASH/TRANSFER/POTONGAN) UNTUK SO ---
+const getSetoranPembayaranLookup = async (
+  cus_kode,
+  tipe,
+  q,
+  page = 1,
+  limit = 50,
+) => {
+  if (!cus_kode) throw new Error("Customer harus dipilih terlebih dahulu.");
+
+  const offset = (page - 1) * limit;
+  let queryParams = [cus_kode];
+  let sqlCondition = "WHERE REPLACE(customer, ';', '') = ? ";
+
+  if (tipe && tipe !== "ALL") {
+    sqlCondition += " AND kode LIKE ? ";
+    queryParams.push(`%${tipe}%`);
+  } else {
+    sqlCondition +=
+      " AND (kode LIKE '%BG%' OR kode LIKE '%CS%' OR kode LIKE '%BT%' OR kode LIKE '%PT%') ";
+  }
+
+  if (q) {
+    sqlCondition += " AND (nomor LIKE ? OR notes LIKE ?) ";
+    queryParams.push(`%${q}%`, `%${q}%`);
+  }
+
+  const sqlCount = `SELECT COUNT(*) AS total FROM terima_bayar_debet ${sqlCondition}`;
+  const [[{ total }]] = await db.query(sqlCount, queryParams);
+
+  const sql = `
+  SELECT 
+    nomor                    AS Nomor, 
+    kode                     AS KodeBayar,
+    tanggal                  AS Tanggal, 
+    debet                    AS Nominal, 
+    notes                    AS Notes
+  FROM terima_bayar_debet
+  ${sqlCondition}
+  ORDER BY tanggal DESC
+  LIMIT ? OFFSET ?
+`;
+
+  const [rows] = await db.query(sql, [...queryParams, limit, offset]);
+  return { rows, total };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1592,4 +1680,6 @@ module.exports = {
   searchPermintaanBeliGarmen,
   searchPoGarmenBuka,
   searchKaryawan,
+  searchAccount,
+  getSetoranPembayaranLookup,
 };

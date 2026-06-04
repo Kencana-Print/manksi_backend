@@ -10,7 +10,8 @@ const isSuperViewer = (user) => {
     kode === "ADMIN" ||
     bagian === "ADMIN" ||
     bagian === "DIR" ||
-    bagian === "DIREKSI"
+    bagian === "DIREKSI" ||
+    bagian === "AUDIT"
   );
 };
 
@@ -293,7 +294,15 @@ const getPenawaranMapSummary = async (user) => {
 
 const getKunjunganSalesSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["MARKETING", "EDP", "DIREKSI", "OWNER", "IT", "FINANCE"];
+  const allowed = [
+    "MARKETING",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "FINANCE",
+    "AUDIT",
+  ];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
 
   const sql = `
@@ -311,7 +320,30 @@ const getKunjunganSalesSummary = async (user) => {
         WHEN (a.Tanggal_Plan IS NULL OR a.Tanggal_Plan = '0000-00-00')
           AND (a.realisasi = 'Y' OR (a.tanggal IS NOT NULL AND a.tanggal != '0000-00-00'))
         THEN 1 ELSE 0 END) AS Unplan,
-      COUNT(*) AS Total
+      COUNT(*) AS Total,
+
+      /* ── Nominal Penawaran yang terbit setelah kunjungan ── */
+      IFNULL((
+        SELECT SUM(d.pend_qty * d.pend_harga)
+        FROM tpenawaran_hdr ph
+        INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = ph.pen_nomor
+        WHERE ph.pen_sal_kode = (
+          SELECT sal_kode FROM tsales WHERE sal_nama = a.USER LIMIT 1
+        )
+        AND ph.pen_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+        AND ph.pen_tanggal <= CURDATE()
+      ), 0) AS NominalPenawaran,
+
+      IFNULL((
+        SELECT SUM(mh.mh_harga_kalkulasi * mh.mh_jmlorder)
+        FROM tmintaharga mh
+        WHERE mh.mh_sal_kode = (
+          SELECT sal_kode FROM tsales WHERE sal_nama = a.USER LIMIT 1
+        )
+        AND mh.mh_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+        AND mh.mh_tanggal <= CURDATE()
+      ), 0) AS NominalMintaHarga
+
     FROM marketing.tkunjungan a
     WHERE DATE(a.Tanggal_Plan) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()
        OR DATE(a.tanggal) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()

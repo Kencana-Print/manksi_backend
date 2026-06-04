@@ -166,9 +166,28 @@ const saveData = async (payload, user) => {
     // 4. Insert Rincian Bahan (tmkb_dtl) & SPK Babaran
     for (let i = 0; i < dtlBahan.length; i++) {
       const d = dtlBahan[i];
+      // Deteksi baris kosong (Auto Trailing Row) agar tidak ikut tersimpan
+      if (
+        !d.komponen &&
+        !d.kode &&
+        !d.namaBahan &&
+        parseFloat(d.jumlah || 0) === 0
+      ) {
+        continue; // Skip baris kosong
+      }
+
+      // Format allowance agar mengirim null jika kosong
+      const allowanceVal =
+        d.allowance !== "" && d.allowance !== null && d.allowance !== undefined
+          ? parseFloat(d.allowance)
+          : null;
+
       await conn.query(
-        `INSERT INTO tmkb_dtl (mkbd_mkb_nomor, mkbd_komponen, mkbd_ketk, mkbd_warna, mkbd_jenis, mkbd_bhn_kode, mkbd_bhn_satuan, mkbd_jumlah, mkbd_jumlah_rs, mkbd_jumlah_po, mkbd_nourut, mkbd_babaran, mkbd_tglbeli, mkbd_keterangan) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ROUND(?, 2), ?, ROUND(?, 2), ?, ?, ?, ?)`,
+        `INSERT INTO tmkb_dtl (
+          mkbd_mkb_nomor, mkbd_komponen, mkbd_ketk, mkbd_warna, mkbd_jenis, 
+          mkbd_bhn_kode, mkbd_bhn_satuan, mkbd_jumlah, mkbd_allowance, mkbd_jumlah_rs, 
+          mkbd_jumlah_po, mkbd_nourut, mkbd_babaran, mkbd_tglbeli, mkbd_keterangan
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ROUND(?, 2), ?, ?, ROUND(?, 2), ?, ?, ?, ?)`,
         [
           nomor,
           d.komponen || "",
@@ -178,6 +197,7 @@ const saveData = async (payload, user) => {
           d.kode || "",
           d.satuan || "",
           parseFloat(d.jumlah || 0),
+          allowanceVal, // <-- Kolom Allowance (Bisa NULL)
           parseFloat(d.ready || 0),
           parseFloat(d.po || 0),
           d.no || i + 1,

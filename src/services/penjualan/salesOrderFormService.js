@@ -61,37 +61,55 @@ const getDetail = async (nomor) => {
   );
   const ketpo_acc = pinHarga.length > 0 ? pinHarga[0].acc : "";
 
-  // 3. PIN Prioritas (Kepentingan Top Urgent)
+  // 3. PIN Prioritas
   const [pinPrio] = await db.query(
-    `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc FROM tspk_pin_prioritas WHERE pin_nomor=?`,
+    `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc 
+   FROM tspk_pin_prioritas WHERE pin_nomor=?`,
     [nomor],
   );
-  const kepentingan_acc = pinPrio.length > 0 ? pinPrio[0].acc : "";
+  let kepentingan_acc = pinPrio.length > 0 ? pinPrio[0].acc : "";
 
-  // Penentuan Status Aktif/Pasif berdasar PIN (Sesuai Timer1Timer Delphi)
+  // Jika TOP URGENT tapi belum ada pin sama sekali → cek ulang kelayakan
+  // Lakukan INI DULU sebelum hitung spk_aktif
+  if (
+    header[0].spk_statuskerja === "TOP URGENT" &&
+    kepentingan_acc === "" &&
+    String(header[0].spk_divisi).charAt(0) !== "3" &&
+    header[0].spk_jo_kode !== "KS"
+  ) {
+    const berhak = await checkHakTopUrgent(
+      header[0].spk_cus_kode,
+      header[0].spk_divisi,
+    );
+    if (!berhak) {
+      kepentingan_acc = "MINTA ACC"; // ← update variable, bukan header langsung
+    }
+  }
+
+  // Baru hitung spk_aktif pakai kepentingan_acc yang sudah final
   const pin_jo = header[0].spk_pinjo || "";
   let spk_aktif = header[0].spk_aktif;
 
   if (
-    pin_customer === "TOLAK" || // ← hanya TOLAK yang paksa PASIF
+    pin_customer === "TOLAK" ||
     ketpo_acc === "MINTA ACC" ||
     ketpo_acc === "TOLAK" ||
-    kepentingan_acc === "MINTA ACC" ||
+    kepentingan_acc === "MINTA ACC" || // ← sekarang pakai nilai yang sudah dikoreksi
     kepentingan_acc === "TOLAK" ||
     pin_jo === "MINTA ACC" ||
     pin_jo === "TOLAK"
   ) {
     spk_aktif = "N";
   } else {
-    spk_aktif = header[0].spk_aktif; // ← ambil dari DB, jangan override
+    spk_aktif = header[0].spk_aktif;
   }
 
-  // Masukkan ke object header agar terbaca di Frontend
+  // Assign semua ke header[0] — satu tempat, urutan jelas
   header[0].isSalesOrder = header[0].spk_is_so === 1;
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
-  header[0].kepentingan_acc = kepentingan_acc;
-  header[0].spk_aktif = spk_aktif;
+  header[0].kepentingan_acc = kepentingan_acc; // ← ini yang hilang sebelumnya
+  header[0].spk_aktif = spk_aktif; // ← ini yang menimpa sebelumnya
 
   // B. Detail Alokasi
   const [alokasi] = await db.query(
@@ -167,6 +185,32 @@ const getOmzet = async (cusKode, tahun, kurangTahun) => {
   );
 
   return rows[0].nominal;
+};
+
+const HEADER_EXTRA_FIELDS = [
+  "kepentingan_acc",
+  "ketpo_acc",
+  "pin_customer",
+  "Customer",
+  "Sales",
+  "JenisOrder",
+  "NamaPerusahaan",
+  "CustKaosanNama",
+  "isCmoChecked",
+  "jmlmppb",
+  "jmlinvdc",
+  "mkb",
+  "dtmkb",
+  "spk_iscetak",
+  "spk_isupdate",
+  "MainImageBlob",
+  "MainImageName",
+  "isSalesOrder",
+];
+const cleanHeader = (h) => {
+  const result = { ...h };
+  HEADER_EXTRA_FIELDS.forEach((f) => delete result[f]);
+  return result;
 };
 
 // --- 3. SAVE DATA (INSERT & UPDATE) ---
@@ -304,14 +348,42 @@ const saveData = async (payload, user) => {
       header.user_create = user.kode;
       header.date_create = new Date();
       header.spk_aktif = piutang > 100 ? "N" : "Y";
-      await conn.query(`INSERT INTO tspk SET ?`, [header]);
+      await conn.query(`INSERT INTO tspk SET ?`, [cleanHeader(header)]);
     } else {
       header.user_modified = user.kode;
       header.date_modified = new Date();
       // Untuk edit, hanya paksa PASIF jika ada piutang — jangan override jika sudah di-set sebelumnya
       if (piutang > 100) header.spk_aktif = "N";
+      // Tambah: jika kepentingan_acc MINTA ACC → paksa PASIF
+      if (
+        header.kepentingan_acc === "MINTA ACC" ||
+        header.kepentingan_acc === "TOLAK"
+      ) {
+        header.spk_aktif = "N";
+      }
+      if (header.ketpo_acc === "MINTA ACC" || header.ketpo_acc === "TOLAK") {
+        header.spk_aktif = "N";
+      }
+      if (header.spk_pinjo === "MINTA ACC" || header.spk_pinjo === "TOLAK") {
+        header.spk_aktif = "N";
+      }
+
+      // Simpan ke tspk_pin_prioritas jika MINTA ACC
+      if (header.kepentingan_acc === "MINTA ACC") {
+        await conn.query(
+          `INSERT INTO tspk_pin_prioritas (pin_nomor, pin_tgl_minta, pin_user_minta)
+     VALUES (?, NOW(), ?)
+     ON DUPLICATE KEY UPDATE pin_tgl_minta=NOW(), pin_user_minta=?`,
+          [nomor, user.kode, user.kode],
+        );
+      } else if (!header.kepentingan_acc) {
+        // Kalau kosong (sudah tidak TOP URGENT atau sudah berhak), hapus pin
+        await conn.query(`DELETE FROM tspk_pin_prioritas WHERE pin_nomor=?`, [
+          nomor,
+        ]);
+      }
       await conn.query(`UPDATE tspk SET ? WHERE spk_nomor = ?`, [
-        header,
+        cleanHeader(header),
         nomor,
       ]);
       await conn.query(`DELETE FROM talokasi WHERE spk_nomor = ?`, [nomor]);
@@ -794,32 +866,34 @@ const getDatelineLimits = async (divisi, joKode, kepentingan, cabKaos) => {
 // --- SERVICE: CEK KELAYAKAN TOP URGENT ---
 const checkHakTopUrgent = async (cusKode, divisi) => {
   const divStr = String(divisi).charAt(0);
-
-  // 1. Cek Omzet (Tahun ini > 250jt ATAU Tahun lalu > 100jt)
   const currentYear = new Date().getFullYear();
+
+  // 1. Cek Omzet
   const omzetTahunIni = await getOmzet(cusKode, currentYear, 0);
   const omzetTahunLalu = await getOmzet(cusKode, currentYear, 1);
 
-  if (omzetTahunIni > 250000000 || omzetTahunLalu > 100000000) {
-    return true; // Berhak!
+  if (omzetTahunIni > 250_000_000 || omzetTahunLalu > 100_000_000) {
+    return true;
   }
 
-  // 2. Cek Prioritas Khusus Divisi di tcustomer_prioritas
-  const [prioritas] = await db.query(
-    `SELECT prioritas, spanduk, garmen, mmt FROM tcustomer_prioritas WHERE cus_kode = ?`,
+  // 2. Cek flag prioritas langsung dari tcustomer
+  const [rows] = await db.query(
+    `SELECT cus_prioritas, cus_spanduk, cus_garmen, cus_mmt 
+     FROM tcustomer WHERE Cus_kode = ?`,
     [cusKode],
   );
 
-  if (prioritas.length > 0) {
-    const p = prioritas[0];
-    if (p.prioritas === "Y") {
-      if (divStr === "1" && p.spanduk === "Y") return true;
-      if (divStr === "5" && p.mmt === "Y") return true;
-      if ((divStr === "4" || divStr === "6") && p.garmen === "Y") return true;
+  if (rows.length > 0) {
+    const c = rows[0];
+    if (c.cus_prioritas === "Y") {
+      if (divStr === "1" && c.cus_spanduk === "Y") return true;
+      if (divStr === "5" && c.cus_mmt === "Y") return true;
+      if ((divStr === "4" || divStr === "6") && c.cus_garmen === "Y")
+        return true;
     }
   }
 
-  return false; // Tidak Berhak (Harus ACC)
+  return false;
 };
 
 module.exports = {

@@ -152,4 +152,15 @@ router.get("/mkb-detail", verifyToken, controller.getMkbDetail);
 
 router.get("/karyawan", verifyToken, controller.searchKaryawan);
 
+// Endpoint: /api/lookups/account
+// Digunakan di AccountSearchModal.vue
+router.get("/account", verifyToken, controller.searchAccount);
+
+// Endpoint: /api/lookups/setoran-pembayaran
+router.get(
+  "/setoran-pembayaran",
+  verifyToken,
+  controller.getSetoranPembayaranLookup,
+);
+
 module.exports = router;

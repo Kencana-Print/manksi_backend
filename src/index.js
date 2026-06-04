@@ -89,7 +89,18 @@ const mapFormRoutes = require("./routes/penjualan/mapFormRoutes");
 const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
 
+//Piutang Routes
+const giroRoutes = require("./routes/piutang/penerimaan/giroRoutes");
+const giroFormRoutes = require("./routes/piutang/penerimaan/giroFormRoutes");
+const cashRoutes = require("./routes/piutang/penerimaan/cashRoutes");
+const cashFormRoutes = require("./routes/piutang/penerimaan/cashFormRoutes");
+const transferRoutes = require("./routes/piutang/penerimaan/transferRoutes");
+const transferFormRoutes = require("./routes/piutang/penerimaan/transferFormRoutes");
+const potonganRoutes = require("./routes/piutang/penerimaan/potonganRoutes");
+const potonganFormRoutes = require("./routes/piutang/penerimaan/potonganFormRoutes");
+
 //Laporan Routes
+const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
 
@@ -209,6 +220,19 @@ app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
 
+app.use("/api/piutang/penerimaan/giro", giroRoutes);
+app.use("/api/piutang/penerimaan/giro-form", giroFormRoutes);
+app.use("/api/piutang/penerimaan/cash", cashRoutes);
+app.use("/api/piutang/penerimaan/cash-form", cashFormRoutes);
+app.use("/api/piutang/penerimaan/transfer", transferRoutes);
+app.use("/api/piutang/penerimaan/transfer-form", transferFormRoutes);
+app.use("/api/piutang/penerimaan/potongan", potonganRoutes);
+app.use("/api/piutang/penerimaan/potongan-form", potonganFormRoutes);
+
+app.use(
+  "/api/laporan/gudang-garmen/stok-bahan-barcode",
+  lapStokBahanBarcodeRoutes,
+);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
 

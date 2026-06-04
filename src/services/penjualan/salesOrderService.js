@@ -66,7 +66,7 @@ const getBrowseList = async (filters) => {
         s.spk_pinjo AS AccJO, s.spk_accpending AS AccPending, s.spk_mppb AS MPPB,
         s.spk_newdesign AS Design_Baru, s.spk_designdone AS Design_Done,
         s.spk_keterangan AS Keterangan, s.spk_invdc AS 'Pesanan/Invoice',
-        s.spk_is_so AS is_so,
+        -- s.spk_is_so AS is_so,
         -- Subqueries Kalkulasi (Sesuai Delphi)
         IFNULL((SELECT COUNT(*) FROM tproofgarmen_hdr h left join tproofgarmen_dtl d ON d.pfd_nomor=h.pf_nomor WHERE h.pf_lini="BORDIR" and h.pf_spk_nomor=if(s.spk_memo<>"",s.spk_memo,s.spk_nomor)),0) as titik,
         IFNULL((SELECT SUM(mpd_jumlah) FROM tmutasiproduksi_dtl WHERE mpd_bhn_kode="LL-000400" and mpd_spk=s.spk_nomor AND mpd_gdgp_asal IN ("GP015","GP001")),0) as Potong0,

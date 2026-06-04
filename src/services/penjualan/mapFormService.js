@@ -316,7 +316,7 @@ const save = async (data, userKode, isNewMode) => {
         data.PerushKode,
         rencanaOrder,
         userKode,
-        data.IsRevisi || "N",
+        "N",
         data.TipeRevisi || 1,
         data.RevisiNo || 0,
         data.Referensi || "",

@@ -704,6 +704,37 @@ const searchKaryawan = async (req, res) => {
   }
 };
 
+const searchAccount = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchAccount(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getSetoranPembayaranLookup = async (req, res) => {
+  try {
+    const { cus_kode, tipe, q, page = 1, limit = 50 } = req.query;
+    const data = await lookupService.getSetoranPembayaranLookup(
+      cus_kode,
+      tipe,
+      q,
+      Number(page),
+      Number(limit),
+    );
+    res.status(200).json({
+      success: true,
+      data: data.rows,
+      total: data.total,
+    });
+  } catch (error) {
+    const statusCode = error.message.includes("Customer") ? 400 : 500;
+    res.status(statusCode).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -757,4 +788,6 @@ module.exports = {
   searchPoGarmenBuka,
   getMkbDetail,
   searchKaryawan,
+  searchAccount,
+  getSetoranPembayaranLookup,
 };

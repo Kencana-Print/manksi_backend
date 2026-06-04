@@ -17,8 +17,8 @@ const getSjMapDetails = async (nomorSj) => {
 
   const [detailRows] = await db.query(
     `SELECT d.*, m.mspk_nama, m.mspk_kain,
-      (m.mspk_jumlah_kirim - d.sjd_jumlah) as jml_kirim_lama,
-      (m.mspk_jumlah - (m.mspk_jumlah_kirim - d.sjd_jumlah)) as sisa_order
+      (m.mspk_jumlah_kirim - d.sjd_jumlah) AS jml_kirim_lama,
+      (m.mspk_jumlah - m.mspk_jumlah_kirim + d.sjd_jumlah) AS sisa_order
      FROM tsj_dtl_memo d
      LEFT JOIN tmemospk m ON d.sjd_mspk_nomor = m.mspk_nomor
      WHERE d.sjd_sj_nomor = ?`,
