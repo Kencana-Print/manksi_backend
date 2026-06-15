@@ -159,6 +159,15 @@ const getPerusahaan = async (req, res) => {
   }
 };
 
+const getPerusahaanByKode = async (req, res) => {
+  try {
+    const data = await lookupService.getPerusahaanByKode(req.params.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
 const getDigitalSign = async (req, res) => {
   try {
     const { kode } = req.params;
@@ -748,6 +757,7 @@ module.exports = {
   getCetakOptions,
   getTambahanOptions,
   getPerusahaan,
+  getPerusahaanByKode,
   getDigitalSign,
   getRekening,
   getDivisi,

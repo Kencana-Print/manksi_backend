@@ -34,5 +34,7 @@ router.get(
   verifyToken,
   controller.getKunjunganSalesSummary,
 );
+router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
+router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
 
 module.exports = router;

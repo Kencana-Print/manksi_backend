@@ -9,6 +9,12 @@ const {
 const menuId = 66;
 
 router.get(
+  "/supplier/:kode",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  poNonBahanFormController.getSupplierByKode,
+);
+router.get(
   "/detail/:nomor",
   verifyToken,
   checkPermission(menuId, "view"),

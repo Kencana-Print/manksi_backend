@@ -265,4 +265,33 @@ const saveRealisasi = async (nomor, kode, items) => {
   }
 };
 
-module.exports = { getDetail, saveData, saveRealisasi };
+const getBarangByKode = async (kode, jenis, cabang, bagian) => {
+  // Filter aktif dan jenis — sesuai searchBarangGarmen di lookupService
+  let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ? AND b.brg_kode = ?`;
+  let params = [jenis, kode];
+
+  // Filter khusus Sparepart berdasarkan bagian user — sesuai lookupService
+  if (jenis === "SPAREPART") {
+    if (bagian === "TEKNISI") {
+      whereClause += ` AND b.brg_ktg <> "IT"`;
+    } else if (bagian === "IT") {
+      whereClause += ` AND b.brg_ktg = "IT"`;
+    }
+  }
+
+  const [rows] = await db.query(
+    `SELECT 
+       b.brg_kode AS Kode,
+       IF(b.brg_note = "", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
+       b.brg_satuan AS Satuan
+     FROM tgarmen_brg b
+     ${whereClause}
+     LIMIT 1`,
+    params,
+  );
+
+  if (rows.length === 0) throw new Error("Kode barang tidak ditemukan.");
+  return rows[0];
+};
+
+module.exports = { getDetail, saveData, saveRealisasi, getBarangByKode };

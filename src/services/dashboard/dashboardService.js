@@ -77,8 +77,7 @@ const getPenawaranSummary = async (user) => {
     FROM tpenawaran_hdr h
     LEFT JOIN tspk s ON s.spk_pen_nomor = h.pen_nomor 
                      AND s.spk_aktif = 'Y'
-    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
-      AND h.pen_tanggal <= CURDATE()
+    WHERE 1=1
       ${whereExtra}
   `;
 
@@ -108,13 +107,12 @@ const getPenawaranBelumSpk = async (user, limit = 20, offset = 0) => {
     LEFT  JOIN tdivisi v   ON v.kode = h.pen_divisi
     LEFT  JOIN tspk s      ON s.spk_pen_nomor = h.pen_nomor 
                             AND s.spk_aktif = 'Y'
-    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
-        AND h.pen_tanggal <= CURDATE()
-        AND s.spk_nomor IS NULL   -- penawaran yang tidak punya SPK
-        ${whereExtra}
+    WHERE s.spk_nomor IS NULL
+      ${whereExtra}
     ORDER BY h.pen_tanggal ASC
     LIMIT ? OFFSET ?
-    `;
+  `;
+
   const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
@@ -355,6 +353,134 @@ const getKunjunganSalesSummary = async (user) => {
   return rows;
 };
 
+// ── Dashboard Piutang (AR) ──
+const getPiutangDashboard = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian)) return null;
+
+  // 1. Summary Angka
+  const sqlSummary = `
+    SELECT 
+      (SELECT SUM(debet) 
+      FROM piutang_debet 
+      WHERE flag = 0) AS TotalDebet,
+      
+      (SELECT SUM(d.kredit) 
+      FROM piutang_kredit_detail d
+      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+      INNER JOIN piutang_debet p ON p.nota = d.nota AND p.flag = 0
+      ) AS TotalKredit,
+      
+      (SELECT SUM(debet) - SUM(
+          IFNULL((
+            SELECT SUM(kredit) FROM piutang_kredit_detail d 
+            INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
+            WHERE d.nota = p.nota
+          ), 0)
+      ) FROM piutang_debet p WHERE p.flag = 0) AS TotalOutstanding,
+      
+      (SELECT SUM(debet) FROM piutang_debet 
+      WHERE flag = 0 
+      AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+      ) AS InvoiceBulanIni,
+      
+      (SELECT SUM(d.kredit) 
+      FROM piutang_kredit_detail d 
+      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
+      WHERE DATE_FORMAT(h.tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+      ) AS TerimaBulanIni
+  `;
+
+  // 2. Top 5 Piutang Terbesar
+  const sqlTop5 = `
+    SELECT 
+      c.cus_nama AS Customer,
+      SUM(p.debet) - SUM(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail d INNER JOIN piutang_kredit_header h ON h.nomor=d.nomor WHERE d.nota=p.nota), 0)) AS Saldo
+    FROM piutang_debet p
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag=0
+    GROUP BY p.customer
+    HAVING Saldo > 0
+    ORDER BY Saldo DESC
+    LIMIT 10
+  `;
+
+  // 3. Invoice Jatuh Tempo (Overdue)
+  const sqlOverdue = `
+    SELECT 
+      p.nota AS Invoice,
+      c.cus_nama AS Customer,
+      DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+      DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+      (p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail d INNER JOIN piutang_kredit_header h ON h.nomor=d.nomor WHERE d.nota=p.nota), 0)) AS SisaTagihan
+    FROM piutang_debet p
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag=0 
+      AND p.tanggal_tempo < CURDATE()
+    HAVING SisaTagihan > 0
+    ORDER BY TerlambatHari DESC
+    LIMIT 20
+  `;
+
+  const sqlOverdueCount = `
+    SELECT COUNT(*) AS Total
+    FROM (
+      SELECT p.nota,
+        (p.debet - IFNULL((
+          SELECT SUM(kredit) FROM piutang_kredit_detail d 
+          INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
+          WHERE d.nota = p.nota
+        ), 0)) AS SisaTagihan
+      FROM piutang_debet p
+      WHERE p.flag = 0 AND p.tanggal_tempo < CURDATE()
+      HAVING SisaTagihan > 0
+    ) x
+  `;
+
+  const [[summary], [top5], [overdue], [overdueCount]] = await Promise.all([
+    db.query(sqlSummary),
+    db.query(sqlTop5),
+    db.query(sqlOverdue),
+    db.query(sqlOverdueCount),
+  ]);
+
+  return {
+    summary: { ...summary[0], overdueTotal: overdueCount[0]?.Total || 0 },
+    top5,
+    overdue,
+  };
+};
+
+const getPiutangOverdue = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian)) return [];
+
+  const sql = `
+    SELECT 
+      p.nota AS Invoice,
+      c.cus_nama AS Customer,
+      DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+      DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+      (p.debet - IFNULL((
+        SELECT SUM(kredit) FROM piutang_kredit_detail d 
+        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
+        WHERE d.nota = p.nota
+      ), 0)) AS SisaTagihan
+    FROM piutang_debet p
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag = 0 
+      AND p.tanggal_tempo < CURDATE()
+    HAVING SisaTagihan > 0
+    ORDER BY TerlambatHari DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -365,4 +491,6 @@ module.exports = {
   getPenawaranBelumMap,
   getPenawaranMapSummary,
   getKunjunganSalesSummary,
+  getPiutangDashboard,
+  getPiutangOverdue,
 };

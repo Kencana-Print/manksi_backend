@@ -9,6 +9,18 @@ const {
 const menuId = 67; // BPB Non Bahan
 
 router.get(
+  "/supplier/:kode",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getSupplierByKode,
+);
+router.get(
+  "/spk/:nomor",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getSpkByNomor,
+);
+router.get(
   "/detail/:nomor",
   verifyToken,
   checkPermission(menuId, "view"),

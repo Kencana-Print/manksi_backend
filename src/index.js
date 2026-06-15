@@ -99,15 +99,24 @@ const potonganRoutes = require("./routes/piutang/penerimaan/potonganRoutes");
 const potonganFormRoutes = require("./routes/piutang/penerimaan/potonganFormRoutes");
 
 //Laporan Routes
+//Laporan Gudang Garmen
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
+const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
 
+// Laporan Penjualan
 const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
 const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
 
+// Laporan Marketing
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
+
+// Laporan Piutang
+const detailPiutangRoutes = require("./routes/laporan/piutang/detailPiutangRoutes");
+const rekapPiutangRoutes = require("./routes/laporan/piutang/rekapPiutangRoutes");
+const kartuPiutangRoutes = require("./routes/laporan/piutang/kartuPiutangRoutes");
 
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
@@ -235,6 +244,7 @@ app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
   lapStokBahanBarcodeRoutes,
 );
+app.use("/api/laporan/gudang-garmen/kartu-stok-barang", kartuStokBarangRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
 
@@ -243,6 +253,10 @@ app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
+
+app.use("/api/laporan/piutang/detail-piutang", detailPiutangRoutes);
+app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);
+app.use("/api/laporan/piutang/kartu-piutang", kartuPiutangRoutes);
 
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/approval", approvalRoutes);

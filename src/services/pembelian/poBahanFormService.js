@@ -532,9 +532,21 @@ const getDetailMkbForPo = async (mkbNomor) => {
   return { warnings, items };
 };
 
+const getSupplierByKode = async (kode) => {
+  const [rows] = await db.query(
+    `SELECT sup_kode AS Kode, sup_nama AS Nama, 
+            sup_alamat AS Alamat, sup_kota AS Kota
+     FROM tsupplier WHERE sup_kode = ? LIMIT 1`,
+    [kode],
+  );
+  if (rows.length === 0) throw new Error("Supplier tidak ditemukan.");
+  return rows[0];
+};
+
 module.exports = {
   validateField,
   getDetail,
   saveData,
   getDetailMkbForPo,
+  getSupplierByKode,
 };

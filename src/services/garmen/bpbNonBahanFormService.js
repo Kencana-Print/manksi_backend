@@ -412,4 +412,49 @@ const saveData = async (payload, user) => {
   }
 };
 
-module.exports = { getDetailForm, getPermintaanDetail, getPoDetail, saveData };
+const getSupplierByKode = async (kode, jenis) => {
+  let whereClause = `WHERE sup_aktif = "Y" AND sup_kode = ?`;
+  const params = [kode];
+
+  // Filter sesuai jenis — sama dengan lookupService searchSupplier
+  if (jenis === "ACCESORIES") whereClause += ` AND sup_accesories = "Y"`;
+  else if (jenis === "OBAT") whereClause += ` AND sup_obat = "Y"`;
+  else if (jenis === "SPAREPART") whereClause += ` AND sup_sparepart = "Y"`;
+  else if (jenis === "ATK/RTK") whereClause += ` AND sup_atk = "Y"`;
+
+  const [rows] = await db.query(
+    `SELECT sup_kode AS Kode, sup_nama AS Nama,
+            sup_alamat AS Alamat, sup_kota AS Kota
+     FROM tsupplier ${whereClause} LIMIT 1`,
+    params,
+  );
+  if (rows.length === 0) throw new Error("Supplier tidak ditemukan.");
+  return rows[0];
+};
+
+const getSpkByNomor = async (nomor) => {
+  // Sesuai searchSpk di lookupService — cek tspk dan tmemospk
+  const [rows] = await db.query(
+    `SELECT Nomor, Nama FROM (
+       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_aktif AS Aktif
+       FROM tspk
+       UNION ALL
+       SELECT mspk_nomor, mspk_nama, "Y"
+       FROM tmemospk
+     ) a
+     WHERE Aktif = "Y" AND Nomor = ?
+     LIMIT 1`,
+    [nomor],
+  );
+  if (rows.length === 0) throw new Error("Nomor SPK tidak ditemukan.");
+  return rows[0];
+};
+
+module.exports = {
+  getDetailForm,
+  getPermintaanDetail,
+  getPoDetail,
+  saveData,
+  getSupplierByKode,
+  getSpkByNomor,
+};

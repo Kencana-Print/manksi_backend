@@ -33,4 +33,18 @@ const saveData = async (req, res) => {
   }
 };
 
-module.exports = { getDetailForm, getPermintaanDetail, saveData };
+const getSupplierByKode = async (req, res) => {
+  try {
+    const data = await poNonBahanFormService.getSupplierByKode(req.params.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getDetailForm,
+  getPermintaanDetail,
+  saveData,
+  getSupplierByKode,
+};

@@ -6,11 +6,29 @@ const {
   checkPermission,
 } = require("../../middleware/authMiddleware");
 
-const MENU_ID = "60"; // Menu Minta Barang Garmen
+const MENU_ID = "60";
 
+// Validate SPK
 router.get("/validate-spk/:spk", verifyToken, controller.validateSpk);
 
+// Lookup Gudang by Kode
+router.get(
+  "/gudang/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getGudangByKode,
+);
+
+// Lookup Barang by Kode
+router.get(
+  "/barang/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getBarangByKode,
+);
+
 // Get Detail untuk Edit Form
+// ⚠️ Route dinamis :nomor harus di bawah semua route statis
 router.get(
   "/:nomor",
   verifyToken,
@@ -18,11 +36,11 @@ router.get(
   controller.getDetail,
 );
 
-// Save Data (Insert / Update otomatis dihandle di Service berdasarkan payload.nomor)
+// Save Data
 router.post(
   "/",
   verifyToken,
-  checkPermission(MENU_ID, "insert"), // Akses insert/edit akan divalidasi juga di BaseForm Frontend
+  checkPermission(MENU_ID, "insert"),
   controller.save,
 );
 

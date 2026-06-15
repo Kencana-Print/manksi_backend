@@ -43,4 +43,35 @@ const saveData = async (req, res) => {
   }
 };
 
-module.exports = { getDetailForm, getPermintaanDetail, getPoDetail, saveData };
+const getSupplierByKode = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    const { jenis } = req.query;
+    const data = await bpbNonBahanFormService.getSupplierByKode(
+      kode,
+      jenis || "ACCESORIES",
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+const getSpkByNomor = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await bpbNonBahanFormService.getSpkByNomor(nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getDetailForm,
+  getPermintaanDetail,
+  getPoDetail,
+  saveData,
+  getSupplierByKode,
+  getSpkByNomor,
+};

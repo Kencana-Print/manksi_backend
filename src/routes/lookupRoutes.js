@@ -35,6 +35,8 @@ router.get("/tambahan", verifyToken, controller.getTambahanOptions);
 
 router.get("/perusahaan", verifyToken, controller.getPerusahaan);
 
+router.get("/perusahaan/:kode", verifyToken, controller.getPerusahaanByKode);
+
 router.get("/digital-sign/:kode", verifyToken, controller.getDigitalSign);
 
 router.get("/rekening", verifyToken, controller.getRekening);

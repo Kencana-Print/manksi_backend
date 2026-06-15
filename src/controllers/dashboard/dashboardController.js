@@ -91,6 +91,30 @@ const getKunjunganSalesSummary = async (req, res) => {
   }
 };
 
+const getPiutangDashboard = async (req, res) => {
+  try {
+    const data = await service.getPiutangDashboard(req.user);
+    console.log("=== PIUTANG SUMMARY ===", JSON.stringify(data?.summary));
+    res.status(200).json({
+      success: true,
+      data: data || { summary: {}, top5: [], overdue: [] },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPiutangOverdue = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getPiutangOverdue(req.user, limit, offset);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -101,4 +125,6 @@ module.exports = {
   getPenawaranBelumMap,
   getPenawaranMapSummary,
   getKunjunganSalesSummary,
+  getPiutangDashboard,
+  getPiutangOverdue,
 };

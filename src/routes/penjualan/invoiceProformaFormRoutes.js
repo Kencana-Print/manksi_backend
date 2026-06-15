@@ -10,6 +10,27 @@ const MENU_ID = "157"; // Menu Invoice Proforma
 
 router.use(verifyToken);
 
+router.get(
+  "/perusahaan/:kode",
+  checkPermission(MENU_ID, "view"),
+  controller.getPerusahaanByKode,
+);
+router.get(
+  "/customer/:kode",
+  checkPermission(MENU_ID, "view"),
+  controller.getCustomerByKode,
+);
+router.get(
+  "/rekening/:rekening",
+  checkPermission(MENU_ID, "view"),
+  controller.getRekeningByNomor,
+);
+router.get(
+  "/barang/:kode",
+  checkPermission(MENU_ID, "view"),
+  controller.getBarangByKode,
+);
+
 // Mendapatkan detail uang muka (untuk Form saat ganti nomor)
 router.get(
   "/uang-muka/:nomor",

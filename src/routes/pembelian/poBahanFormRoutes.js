@@ -11,6 +11,13 @@ const MENU_ID = 52; // Sesuai dengan Browse
 router.get("/validate", verifyToken, poBahanFormController.validateField);
 
 router.get(
+  "/supplier/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  poBahanFormController.getSupplierByKode,
+);
+
+router.get(
   "/detail/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),

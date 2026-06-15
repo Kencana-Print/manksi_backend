@@ -37,4 +37,20 @@ const saveRealisasi = async (req, res) => {
   }
 };
 
-module.exports = { getDetail, saveData, saveRealisasi };
+const getBarangByKode = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    const { jenis, cabang, bagian } = req.query;
+    const data = await service.getBarangByKode(
+      kode,
+      jenis || "ACCESORIES",
+      cabang || "HO-",
+      bagian || "",
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { getDetail, saveData, saveRealisasi, getBarangByKode };

@@ -421,4 +421,83 @@ const saveData = async (payload, user) => {
   }
 };
 
-module.exports = { validateSpkAndMka, getDetailForm, saveData };
+const getGudangByKode = async (kode, cabang) => {
+  // Replikasi logika filter dari searchGudangProduksi di lookupService
+  let whereClause = "";
+  let params = [];
+
+  if (cabang === "P03") {
+    whereClause = `WHERE gdgp_kode = "K0001" AND gdgp_kode = ?`;
+    params = [kode];
+  } else if (cabang === "P05") {
+    whereClause = `WHERE gdgp_kode = "MMT01" AND gdgp_kode = ?`;
+    params = [kode];
+  } else {
+    whereClause = `WHERE gdgp_aktif = 0 AND gdgp_jasa <> "" AND gdgp_nama NOT LIKE "%QC%" AND gdgp_kode = ?`;
+    params = [kode];
+
+    // Tambah filter cabang jika bukan HO
+    if (cabang && cabang !== "ALL" && !cabang.startsWith("HO")) {
+      whereClause += ` AND gdgp_cab = ?`;
+      params.push(cabang);
+    }
+  }
+
+  const [rows] = await db.query(
+    `SELECT gdgp_kode AS Kode, gdgp_nama AS Nama
+     FROM tgudangproduksi
+     ${whereClause}
+     LIMIT 1`,
+    params,
+  );
+
+  if (rows.length === 0) throw new Error("Kode gudang tidak ditemukan.");
+  return rows[0];
+};
+
+const getBarangByKode = async (kode, jenis, cabang, bagian) => {
+  let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ? AND b.brg_kode = ?`;
+  let params = [jenis, kode];
+
+  // Replikasi filter sparepart dari searchBarangGarmen
+  if (jenis === "SPAREPART") {
+    if (bagian === "TEKNISI") {
+      whereClause += ` AND b.brg_ktg <> "IT"`;
+    } else if (bagian === "IT") {
+      whereClause += ` AND b.brg_ktg = "IT"`;
+    }
+  }
+
+  // Tentukan tabel stok sesuai jenis
+  let stockTable = "tmasterstok_atk";
+  if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
+  else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
+  else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+
+  const [rows] = await db.query(
+    `SELECT 
+       b.brg_kode AS Kode,
+       IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
+       b.brg_satuan AS Satuan,
+       IFNULL((
+         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+         FROM ${stockTable} m
+         WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = b.brg_kode
+       ), 0) AS Stok
+     FROM tgarmen_brg b
+     ${whereClause}
+     LIMIT 1`,
+    [cabang, ...params],
+  );
+
+  if (rows.length === 0) throw new Error("Kode barang tidak ditemukan.");
+  return rows[0];
+};
+
+module.exports = {
+  validateSpkAndMka,
+  getDetailForm,
+  saveData,
+  getGudangByKode,
+  getBarangByKode,
+};

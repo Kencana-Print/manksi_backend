@@ -52,6 +52,75 @@ const getUangMuka = async (nomor) => {
   return rows.length > 0 ? parseFloat(rows[0].kredit) : 0;
 };
 
+// ── Lookup Perusahaan by Kode ──
+// Sesuai getPerusahaan di lookupService — tabel tperusahaan
+const getPerusahaanByKode = async (kode) => {
+  const [rows] = await db.query(
+    `SELECT perush_kode, perush_nama
+     FROM tperusahaan
+     WHERE perush_kode = ?
+     LIMIT 1`,
+    [kode],
+  );
+  if (rows.length === 0) throw new Error("Perusahaan tidak ditemukan.");
+  return rows[0];
+};
+
+// ── Lookup Customer by Kode ──
+// Sesuai searchCustomer di lookupService — cus_aktif = 0, cus_iscabang = 0
+const getCustomerByKode = async (kode) => {
+  const [rows] = await db.query(
+    `SELECT cus_kode AS Kode, cus_nama AS Nama,
+            cus_alamat AS Alamat, cus_kota AS Kota
+     FROM tcustomer
+     WHERE cus_kode = ? AND cus_aktif = 0 AND cus_iscabang = 0
+     LIMIT 1`,
+    [kode],
+  );
+  if (rows.length === 0) throw new Error("Customer tidak ditemukan.");
+  return rows[0];
+};
+
+// ── Lookup Rekening by Nomor & Perusahaan ──
+// Sesuai getRekeningPerusahaan di lookupService — tabel tperusahaan_dtl
+const getRekeningByNomor = async (rekening, perushKode) => {
+  if (!perushKode) throw new Error("Pilih Perusahaan terlebih dahulu.");
+
+  const [rows] = await db.query(
+    `SELECT perushd_rekening AS Rekening,
+            perushd_bank     AS Bank,
+            perushd_atasnama AS AtasNama,
+            perushd_cabang   AS Cabang
+     FROM tperusahaan_dtl
+     WHERE perushd_rekening = ? AND perushd_perush_kode = ?
+     LIMIT 1`,
+    [rekening, perushKode],
+  );
+  if (rows.length === 0) throw new Error("Rekening tidak ditemukan.");
+  return rows[0];
+};
+
+// ── Lookup Barang by Kode ──
+// Sesuai searchBarangInvProforma di lookupService — tabel tbarang + tspk
+const getBarangByKode = async (kode, perushKode, cusKode) => {
+  if (!perushKode || !cusKode)
+    throw new Error("Perusahaan dan Customer harus dipilih dulu.");
+
+  const [rows] = await db.query(
+    `SELECT b.brg_kode AS Kode, b.brg_name AS Nama,
+            b.brg_ukuran AS Ukuran, b.brg_harga AS Harga
+     FROM tbarang b
+     LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor
+     WHERE b.brg_kode = ?
+       AND (s.spk_nomor IS NULL
+            OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ?))
+     LIMIT 1`,
+    [kode, perushKode, cusKode],
+  );
+  if (rows.length === 0) throw new Error("Kode barang tidak ditemukan.");
+  return rows[0];
+};
+
 // --- LOAD DATA UNTUK EDIT (loaddataall) ---
 const getDetailForm = async (nomor) => {
   const qHdr = `
@@ -231,4 +300,8 @@ module.exports = {
   getDetailForm,
   saveData,
   getUangMuka,
+  getPerusahaanByKode,
+  getCustomerByKode,
+  getRekeningByNomor,
+  getBarangByKode,
 };

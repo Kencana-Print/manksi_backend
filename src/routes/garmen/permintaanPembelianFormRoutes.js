@@ -9,6 +9,12 @@ const {
 const MENU_ID = 65;
 
 router.get(
+  "/barang/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getBarangByKode,
+);
+router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),

@@ -51,9 +51,19 @@ const getMkbDetail = async (req, res) => {
   }
 };
 
+const getSupplierByKode = async (req, res) => {
+  try {
+    const data = await poBahanFormService.getSupplierByKode(req.params.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   validateField,
   getDetail,
   save,
   getMkbDetail,
+  getSupplierByKode,
 };

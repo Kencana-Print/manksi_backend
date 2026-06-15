@@ -310,6 +310,16 @@ const getPerusahaan = async () => {
   return rows;
 };
 
+const getPerusahaanByKode = async (kode) => {
+  const [rows] = await db.query(
+    `SELECT perush_kode, perush_nama
+     FROM tperusahaan WHERE perush_kode = ? LIMIT 1`,
+    [kode],
+  );
+  if (rows.length === 0) throw new Error("Perusahaan tidak ditemukan.");
+  return rows[0];
+};
+
 // Tambah fungsi baru
 const getDigitalSign = async (kode) => {
   const [rows] = await db.query(
@@ -1640,6 +1650,7 @@ module.exports = {
   getCetakOptions,
   getTambahanOptions,
   getPerusahaan,
+  getPerusahaanByKode,
   getDigitalSign,
   getRekeningPerusahaan,
   getDivisi,
