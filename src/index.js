@@ -117,6 +117,8 @@ const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPe
 const detailPiutangRoutes = require("./routes/laporan/piutang/detailPiutangRoutes");
 const rekapPiutangRoutes = require("./routes/laporan/piutang/rekapPiutangRoutes");
 const kartuPiutangRoutes = require("./routes/laporan/piutang/kartuPiutangRoutes");
+const daftarPenerimaanRoutes = require("./routes/laporan/piutang/daftarPenerimaanRoutes");
+const cekGagalLinkRoutes = require("./routes/laporan/piutang/cekGagalLinkRoutes");
 
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
@@ -257,6 +259,8 @@ app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
 app.use("/api/laporan/piutang/detail-piutang", detailPiutangRoutes);
 app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);
 app.use("/api/laporan/piutang/kartu-piutang", kartuPiutangRoutes);
+app.use("/api/laporan/piutang/daftar-penerimaan", daftarPenerimaanRoutes);
+app.use("/api/laporan/piutang/cek-gagal-link", cekGagalLinkRoutes);
 
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/approval", approvalRoutes);

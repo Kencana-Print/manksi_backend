@@ -438,17 +438,40 @@ const getPiutangDashboard = async (user) => {
     ) x
   `;
 
-  const [[summary], [top5], [overdue], [overdueCount]] = await Promise.all([
-    db.query(sqlSummary),
-    db.query(sqlTop5),
-    db.query(sqlOverdue),
-    db.query(sqlOverdueCount),
-  ]);
+  // 4. Trend 6 Bulan Terakhir (Tagihan vs Penerimaan)
+  const sqlTrend = `
+    SELECT 
+      Bulan,
+      SUM(Debet) AS TotalTagihan,
+      SUM(Kredit) AS TotalPenerimaan
+    FROM (
+      SELECT DATE_FORMAT(tanggal, '%Y-%m') AS Bulan, debet AS Debet, 0 AS Kredit
+      FROM piutang_debet
+      WHERE flag = 0 AND tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+      UNION ALL
+      SELECT DATE_FORMAT(h.tanggal, '%Y-%m') AS Bulan, 0 AS Debet, d.kredit AS Kredit
+      FROM piutang_kredit_detail d
+      INNER JOIN piutang_kredit_header h ON d.nomor = h.nomor
+      WHERE h.tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+    ) x
+    GROUP BY Bulan
+    ORDER BY Bulan ASC
+  `;
+
+  const [[summary], [top5], [overdue], [overdueCount], [trend]] =
+    await Promise.all([
+      db.query(sqlSummary),
+      db.query(sqlTop5),
+      db.query(sqlOverdue),
+      db.query(sqlOverdueCount),
+      db.query(sqlTrend),
+    ]);
 
   return {
     summary: { ...summary[0], overdueTotal: overdueCount[0]?.Total || 0 },
     top5,
     overdue,
+    trend,
   };
 };
 
@@ -481,6 +504,299 @@ const getPiutangOverdue = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+const getPenerimaanSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian)) return null;
+
+  // Query 1: Total penerimaan & jumlah transaksi bulan ini
+  const sqlPenerimaan = `
+    SELECT
+      IFNULL(SUM(debet), 0)  AS TotalPenerimaanBulanIni,
+      COUNT(*)                AS JmlTransaksiBulanIni
+    FROM terima_bayar_debet
+    WHERE DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+  `;
+
+  // Query 2: Total kredit yang no_buktinya berasal dari penerimaan bulan ini
+  // (artinya penerimaan bulan ini yang sudah diaplikasikan ke invoice)
+  const sqlAplikasi = `
+    SELECT IFNULL(SUM(d.kredit), 0) AS TotalSudahAplikasi
+    FROM piutang_kredit_detail d
+    INNER JOIN terima_bayar_debet t ON t.nomor = d.no_bukti
+    WHERE DATE_FORMAT(t.tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+  `;
+
+  const [[rowPen], [rowApp]] = await Promise.all([
+    db.query(sqlPenerimaan),
+    db.query(sqlAplikasi),
+  ]);
+
+  const totalPenerimaan = Number(rowPen[0]?.TotalPenerimaanBulanIni) || 0;
+  const jmlTransaksi = Number(rowPen[0]?.JmlTransaksiBulanIni) || 0;
+  const sudahAplikasi = Number(rowApp[0]?.TotalSudahAplikasi) || 0;
+  const belumAplikasi = Math.max(0, totalPenerimaan - sudahAplikasi);
+
+  return {
+    TotalPenerimaanBulanIni: totalPenerimaan,
+    JmlTransaksiBulanIni: jmlTransaksi,
+    SaldoBelumAplikasi: Math.round(belumAplikasi),
+  };
+};
+
+// ── Dashboard Gudang Bahan ──
+const getGudangBahanDashboard = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "PEMBELIAN",
+    "GUDANG",
+    "PPIC",
+    "FINANCE",
+    "EDP",
+    "IT",
+    "DIREKSI",
+    "OWNER",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const cabang = user.cabangGarmen || "P04"; // default cabang garmen
+
+  // ── 1. Metric: Total jenis bahan aktif ──
+  const sqlTotalBahan = `
+    SELECT COUNT(*) AS TotalJenis
+    FROM tgarmen_brg
+    WHERE brg_aktif = 'Y' AND brg_jenis = 'ACCESORIES'
+  `;
+
+  // ── 2. Metric: Item di bawah buffer ──
+  // Hitung StokAkhir per barang lalu bandingkan dengan buffer
+  const sqlBawahBuffer = `
+    SELECT COUNT(*) AS JmlBawahBuffer
+    FROM (
+      SELECT
+        b.brg_kode,
+        b.brg_buffer,
+        IFNULL(SUM(s.mst_stok_in - s.mst_stok_out), 0) AS StokAkhir
+      FROM tgarmen_brg b
+      LEFT JOIN tmasterstok_acc s ON s.mst_brg_kode = b.brg_kode
+        AND s.mst_aktif = 'Y'
+        AND s.mst_cab = ?
+      WHERE b.brg_aktif = 'Y'
+        AND b.brg_jenis = 'ACCESORIES'
+        AND b.brg_buffer > 0
+      GROUP BY b.brg_kode, b.brg_buffer
+    ) x
+    WHERE x.StokAkhir < x.brg_buffer
+  `;
+
+  // ── 3. Metric: Total barcode aktif (stok > 0) ──
+  const sqlTotalBarcode = `
+    SELECT COUNT(DISTINCT mst_brg_kode) AS TotalBarcode
+    FROM tmasterstok_barcode
+    WHERE mst_aktif = 'Y'
+  `;
+
+  // ── 4. Metric: Barcode stok minus ──
+  const sqlBarcodeMinus = `
+    SELECT COUNT(*) AS JmlMinus
+    FROM (
+      SELECT
+        LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7) AS Kode,
+        SUM(mst_stok_in - mst_stok_out) AS Stok
+      FROM tmasterstok_barcode
+      WHERE mst_aktif = 'Y'
+      GROUP BY LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7)
+      HAVING Stok < -0.1
+    ) x
+  `;
+
+  // ── 5. Panel: Stok di bawah buffer (detail) ──
+  const sqlDetailBawahBuffer = `
+    SELECT Kode, Nama, Satuan, Buffer, StokAkhir
+    FROM (
+      SELECT
+        b.brg_kode  AS Kode,
+        IF(b.brg_note = '', b.brg_nama, CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama,
+        b.brg_satuan AS Satuan,
+        b.brg_buffer AS Buffer,
+        IFNULL(SUM(s.mst_stok_in - s.mst_stok_out), 0) AS StokAkhir
+      FROM tgarmen_brg b
+      LEFT JOIN tmasterstok_acc s ON s.mst_brg_kode = b.brg_kode
+        AND s.mst_aktif = 'Y'
+        AND s.mst_cab = ?
+      WHERE b.brg_aktif = 'Y'
+        AND b.brg_jenis = 'ACCESORIES'
+        AND b.brg_buffer > 0
+      GROUP BY b.brg_kode, b.brg_nama, b.brg_note, b.brg_satuan, b.brg_buffer
+    ) x
+    WHERE x.StokAkhir < x.Buffer
+    ORDER BY (x.StokAkhir / x.Buffer) ASC
+    LIMIT 20
+  `;
+
+  // ── 6. Panel: Top stok terbesar (detail) ──
+  const sqlTopStok = `
+    SELECT Kode, Nama, Satuan, Buffer, StokAkhir
+    FROM (
+      SELECT
+        b.brg_kode  AS Kode,
+        IF(b.brg_note = '', b.brg_nama, CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama,
+        b.brg_satuan AS Satuan,
+        b.brg_buffer AS Buffer,
+        IFNULL(SUM(s.mst_stok_in - s.mst_stok_out), 0) AS StokAkhir
+      FROM tgarmen_brg b
+      LEFT JOIN tmasterstok_acc s ON s.mst_brg_kode = b.brg_kode
+        AND s.mst_aktif = 'Y'
+        AND s.mst_cab = ?
+      WHERE b.brg_aktif = 'Y'
+        AND b.brg_jenis = 'ACCESORIES'
+      GROUP BY b.brg_kode, b.brg_nama, b.brg_note, b.brg_satuan, b.brg_buffer
+    ) x
+    WHERE x.StokAkhir > 0
+    ORDER BY x.StokAkhir DESC
+    LIMIT 10
+  `;
+
+  // ── 7. Panel: Stok bahan barcode ringkasan ──
+  const sqlBahanBarcode = `
+    SELECT Kode, Nama, Satuan, Buffer, Masuk, Keluar, Stok
+    FROM (
+      SELECT
+        LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7) AS Kode,
+        b.Bhn_Name   AS Nama,
+        b.Bhn_satuan AS Satuan,
+        b.bhn_buffer AS Buffer,
+        SUM(c.mst_stok_in)                    AS Masuk,
+        SUM(c.mst_stok_out)                   AS Keluar,
+        SUM(c.mst_stok_in - c.mst_stok_out)   AS Stok
+      FROM tmasterstok_barcode c
+      LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7)
+      WHERE c.mst_aktif = 'Y'
+      GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7),
+              b.Bhn_Name, b.Bhn_satuan, b.bhn_buffer
+    ) x
+    WHERE x.Stok > 0 OR x.Stok < -0.1
+    ORDER BY x.Stok DESC
+    LIMIT 20
+  `;
+
+  const [
+    [rowTotal],
+    [rowBuffer],
+    [rowBarcode],
+    [rowMinus],
+    [detailBawahBuffer],
+    [topStok],
+    [bahanBarcode],
+  ] = await Promise.all([
+    db.query(sqlTotalBahan),
+    db.query(sqlBawahBuffer, [cabang]),
+    db.query(sqlTotalBarcode),
+    db.query(sqlBarcodeMinus),
+    db.query(sqlDetailBawahBuffer, [cabang]),
+    db.query(sqlTopStok, [cabang]),
+    db.query(sqlBahanBarcode),
+  ]);
+
+  return {
+    metric: {
+      TotalJenis: rowTotal[0]?.TotalJenis || 0,
+      JmlBawahBuffer: rowBuffer[0]?.JmlBawahBuffer || 0,
+      TotalBarcode: rowBarcode[0]?.TotalBarcode || 0,
+      JmlMinus: rowMinus[0]?.JmlMinus || 0,
+    },
+    detailBawahBuffer,
+    topStok,
+    bahanBarcode,
+  };
+};
+
+const getGudangBahanBuffer = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "PEMBELIAN",
+    "GUDANG",
+    "PPIC",
+    "FINANCE",
+    "EDP",
+    "IT",
+    "DIREKSI",
+    "OWNER",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const cabang = user.cabangGarmen || "P04";
+
+  const sql = `
+    SELECT Kode, Nama, Satuan, Buffer, StokAkhir
+    FROM (
+      SELECT
+        b.brg_kode   AS Kode,
+        IF(b.brg_note = '', b.brg_nama, CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama,
+        b.brg_satuan AS Satuan,
+        b.brg_buffer AS Buffer,
+        IFNULL(SUM(s.mst_stok_in - s.mst_stok_out), 0) AS StokAkhir
+      FROM tgarmen_brg b
+      LEFT JOIN tmasterstok_acc s ON s.mst_brg_kode = b.brg_kode
+        AND s.mst_aktif = 'Y'
+        AND s.mst_cab = ?
+      WHERE b.brg_aktif = 'Y'
+        AND b.brg_jenis = 'ACCESORIES'
+        AND b.brg_buffer > 0
+      GROUP BY b.brg_kode, b.brg_nama, b.brg_note, b.brg_satuan, b.brg_buffer
+    ) x
+    WHERE x.StokAkhir < x.Buffer
+    ORDER BY (x.StokAkhir / x.Buffer) ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [cabang, limit, offset]);
+  return rows;
+};
+
+const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "PEMBELIAN",
+    "GUDANG",
+    "PPIC",
+    "FINANCE",
+    "EDP",
+    "IT",
+    "DIREKSI",
+    "OWNER",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT Kode, Nama, Satuan, Buffer, Masuk, Keluar, Stok
+    FROM (
+      SELECT
+        LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7) AS Kode,
+        b.Bhn_Name   AS Nama,
+        b.Bhn_satuan AS Satuan,
+        b.bhn_buffer AS Buffer,
+        SUM(c.mst_stok_in)                  AS Masuk,
+        SUM(c.mst_stok_out)                 AS Keluar,
+        SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
+      FROM tmasterstok_barcode c
+      LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7)
+      WHERE c.mst_aktif = 'Y'
+      GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7),
+               b.Bhn_Name, b.Bhn_satuan, b.bhn_buffer
+    ) x
+    WHERE x.Stok > 0 OR x.Stok < -0.1
+    ORDER BY x.Stok DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -493,4 +809,8 @@ module.exports = {
   getKunjunganSalesSummary,
   getPiutangDashboard,
   getPiutangOverdue,
+  getPenerimaanSummary,
+  getGudangBahanDashboard,
+  getGudangBahanBuffer,
+  getGudangBahanBarcode,
 };

@@ -18,7 +18,17 @@ const getBrowseDetail = async (req, res) => {
   }
 };
 
+const getAllDetail = async (req, res) => {
+  try {
+    const data = await service.getAllDetail(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getBrowseDetail,
+  getAllDetail,
 };

@@ -44,8 +44,6 @@ const searchSpk = async (keyword, page = 1, limit = 50) => {
 };
 
 const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
-  console.log("=== searchSpkProduksi called ===", { keyword, page, limit });
-
   const limitNum = Number(limit);
   const pageNum = Number(page);
   const offset = (pageNum - 1) * limitNum;
@@ -84,14 +82,6 @@ const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
   const [rows] = await db.query(
     `SELECT * ${baseQuery} ${whereSearch} ORDER BY Nama ASC LIMIT ? OFFSET ?`,
     dataParams,
-  );
-
-  // Log sample hasil
-  console.log(
-    "Total:",
-    total,
-    "| Sample:",
-    rows.slice(0, 3).map((r) => r.Nomor),
   );
 
   return { items: rows, total, page: pageNum, limit: limitNum };

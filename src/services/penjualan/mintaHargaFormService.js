@@ -47,7 +47,6 @@ const generateKalkulasiNomor = async (tanggal) => {
  * Mengambil biaya potong, jahit, daftar komponen kain, margin, dan allowance.
  */
 const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
-  console.log("DEBUG METADATA PARAMS:", { model, jenisKain, warna, qty });
   // 1. Ambil Biaya Potong
   const [potongRows] = await db.query(
     `SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_biaya <> 0 AND mhb_jenis = "POTONG" LIMIT 1`,
@@ -86,8 +85,6 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
      AND TRIM(k.mhk_jeniskain) = TRIM(?)`,
     [warna, jenisKain, model, jenisKain],
   );
-
-  console.log("DEBUG RESULT KOMPONEN:", komponenRows.length, "rows found");
 
   // 4. Ambil Margin (Tangga Laba berdasarkan Qty)
   const [marginRows] = await db.query(

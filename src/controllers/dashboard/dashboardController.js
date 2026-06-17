@@ -94,7 +94,7 @@ const getKunjunganSalesSummary = async (req, res) => {
 const getPiutangDashboard = async (req, res) => {
   try {
     const data = await service.getPiutangDashboard(req.user);
-    console.log("=== PIUTANG SUMMARY ===", JSON.stringify(data?.summary));
+
     res.status(200).json({
       success: true,
       data: data || { summary: {}, top5: [], overdue: [] },
@@ -115,6 +115,66 @@ const getPiutangOverdue = async (req, res) => {
   }
 };
 
+const getPenerimaanSummary = async (req, res) => {
+  try {
+    const data = await service.getPenerimaanSummary(req.user);
+    res.status(200).json({
+      success: true,
+      data: data ?? {
+        TotalPenerimaanBulanIni: 0,
+        JmlTransaksiBulanIni: 0,
+        SaldoBelumAplikasi: 0,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getGudangBahanDashboard = async (req, res) => {
+  try {
+    const data = await service.getGudangBahanDashboard(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || {
+        metric: {
+          TotalJenis: 0,
+          JmlBawahBuffer: 0,
+          TotalBarcode: 0,
+          JmlMinus: 0,
+        },
+        detailBawahBuffer: [],
+        topStok: [],
+        bahanBarcode: [],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getGudangBahanBuffer = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getGudangBahanBuffer(req.user, limit, offset);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getGudangBahanBarcode = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getGudangBahanBarcode(req.user, limit, offset);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -127,4 +187,8 @@ module.exports = {
   getKunjunganSalesSummary,
   getPiutangDashboard,
   getPiutangOverdue,
+  getPenerimaanSummary,
+  getGudangBahanDashboard,
+  getGudangBahanBuffer,
+  getGudangBahanBarcode,
 };

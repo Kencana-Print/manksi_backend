@@ -16,6 +16,13 @@ router.get(
   controller.getBrowse,
 );
 
+router.get(
+  "/all-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getAllDetail,
+);
+
 // Browse Detail (Expand baris)
 router.get(
   "/detail/:nomor",

@@ -63,7 +63,49 @@ const getBrowseDetail = async (nomorPenawaran) => {
   return rows;
 };
 
+// --- 3. GET SEMUA DETAIL (untuk export tanpa expand dulu) ---
+const getAllDetail = async (query) => {
+  const { startDate, endDate, divisi } = query;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sql = `
+    SELECT 
+      h.pen_nomor       AS NomorPenawaran,
+      h.pen_tanggal     AS TglPenawaran,
+      v.Divisi          AS Divisi,
+      c.cus_nama        AS NamaCustomer,
+      h.pen_keterangan  AS Keterangan,
+      s.spk_nomor       AS NomorSPK,
+      s.spk_tanggal     AS TglSPK,
+      s.spk_nama        AS NamaSPK,
+      s.spk_jumlah      AS Jumlah
+    FROM tpenawaran_hdr h
+    INNER JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
+    LEFT JOIN tdivisi v    ON v.kode = h.pen_divisi
+    LEFT JOIN tspk s       ON s.spk_pen_nomor = h.pen_nomor AND s.spk_aktif = 'Y'
+    WHERE h.pen_tanggal >= ? AND h.pen_tanggal <= ?
+  `;
+
+  const params = [dStart, dEnd];
+  if (divisi && divisi !== "0") {
+    sql += ` AND h.pen_divisi = ?`;
+    params.push(divisi);
+  }
+
+  sql += ` ORDER BY h.pen_nomor DESC, s.spk_nomor ASC`;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 module.exports = {
   getBrowse,
   getBrowseDetail,
+  getAllDetail,
 };

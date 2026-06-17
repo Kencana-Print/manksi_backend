@@ -36,5 +36,21 @@ router.get(
 );
 router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
 router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
+router.get("/penerimaan-summary", verifyToken, controller.getPenerimaanSummary);
+router.get(
+  "/gudang-bahan-dashboard",
+  verifyToken,
+  controller.getGudangBahanDashboard,
+);
+router.get(
+  "/gudang-bahan-buffer",
+  verifyToken,
+  controller.getGudangBahanBuffer,
+);
+router.get(
+  "/gudang-bahan-barcode",
+  verifyToken,
+  controller.getGudangBahanBarcode,
+);
 
 module.exports = router;
