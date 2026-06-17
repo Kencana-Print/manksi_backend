@@ -797,6 +797,230 @@ const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+// ── Dashboard Realisasi Penawaran ──
+const getRealisasiPenawaranDashboard = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const MARKETING_BAGIAN = [
+    "MARKETING",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "FINANCE",
+    "AUDIT",
+  ];
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  // ── 1. Metric summary ──
+  const sqlMetric = `
+    SELECT
+      COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
+
+      COUNT(DISTINCT CASE
+        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi <= 7
+        THEN h.pen_nomor END) AS KonversiCepat,
+
+      COUNT(DISTINCT CASE
+        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 8 AND 30
+        THEN h.pen_nomor END) AS KonversiNormal,
+
+      COUNT(DISTINCT CASE
+        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 31 AND 90
+        THEN h.pen_nomor END) AS KonversiLambat,
+
+      COUNT(DISTINCT CASE
+        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi > 90
+        THEN h.pen_nomor END) AS KonversiSangatLambat,
+
+      COUNT(DISTINCT CASE
+        WHEN spk.HariKonversi IS NULL
+        THEN h.pen_nomor END) AS BelumKonversi,
+
+      ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
+
+    FROM tpenawaran_hdr h
+    LEFT JOIN (
+      SELECT
+        spk_pen_nomor,
+        MIN(spk_tanggal) AS TglSpkPertama,
+        DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
+      FROM tspk s
+      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+      WHERE s.spk_aktif = 'Y'
+        AND s.spk_pen_nomor IS NOT NULL
+        AND s.spk_pen_nomor <> ''
+      GROUP BY s.spk_pen_nomor
+    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+
+  // ── 2. Tren rata-rata hari konversi per bulan (6 bulan terakhir) ──
+  const sqlTren = `
+    SELECT
+      DATE_FORMAT(h.pen_tanggal, '%Y-%m') AS Bulan,
+      COUNT(DISTINCT h.pen_nomor)           AS TotalPenawaran,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL THEN h.pen_nomor END) AS Konversi,
+      ROUND(AVG(spk.HariKonversi), 1)       AS RataRataHari
+    FROM tpenawaran_hdr h
+    LEFT JOIN (
+      SELECT
+        spk_pen_nomor,
+        DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
+      FROM tspk s
+      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+      WHERE s.spk_aktif = 'Y'
+        AND s.spk_pen_nomor IS NOT NULL
+        AND s.spk_pen_nomor <> ''
+      GROUP BY s.spk_pen_nomor
+    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+    GROUP BY DATE_FORMAT(h.pen_tanggal, '%Y-%m')
+    ORDER BY Bulan ASC
+  `;
+
+  // ── 3. Distribusi bucket ──
+  const sqlDistribusi = `
+    SELECT
+      CASE
+        WHEN spk.HariKonversi <= 7             THEN 'Cepat'
+        WHEN spk.HariKonversi BETWEEN 8 AND 30 THEN 'Normal'
+        WHEN spk.HariKonversi BETWEEN 31 AND 90 THEN 'Lambat'
+        WHEN spk.HariKonversi > 90             THEN 'Sangat Lambat'
+        ELSE 'Belum SPK'
+      END AS Bucket,
+      COUNT(DISTINCT h.pen_nomor) AS Jumlah
+    FROM tpenawaran_hdr h
+    LEFT JOIN (
+      SELECT
+        spk_pen_nomor,
+        DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
+      FROM tspk s
+      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+      WHERE s.spk_aktif = 'Y'
+        AND s.spk_pen_nomor IS NOT NULL
+        AND s.spk_pen_nomor <> ''
+      GROUP BY s.spk_pen_nomor
+    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+    GROUP BY Bucket
+    ORDER BY FIELD(Bucket, 'Cepat', 'Normal', 'Lambat', 'Sangat Lambat', 'Belum SPK')
+  `;
+
+  // ── 4. Tabel detail per penawaran ──
+  const sqlTabelDetail = `
+  SELECT
+    h.pen_nomor                              AS NomorPenawaran,
+    DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y')   AS TglPenawaran,
+    c.cus_nama                               AS Customer,
+    IFNULL(spk.TotalSPK, 0)                  AS TotalSPK,
+    spk.SpkPertama,
+    DATE_FORMAT(spk.TglSpkPertama, '%d-%m-%Y') AS TglSpkPertama,
+    spk.HariKonversi
+  FROM tpenawaran_hdr h
+  INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+  LEFT JOIN (
+    SELECT
+      spk_pen_nomor,
+      COUNT(*)                                   AS TotalSPK,
+      MIN(spk_nomor)                             AS SpkPertama,
+      MIN(spk_tanggal)                           AS TglSpkPertama,
+      DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
+    FROM tspk s
+    INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_pen_nomor IS NOT NULL
+      AND s.spk_pen_nomor <> ''
+    GROUP BY s.spk_pen_nomor
+  ) spk ON spk.spk_pen_nomor = h.pen_nomor
+  WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+    AND h.pen_tanggal <= CURDATE()
+    ${whereExtra}
+  ORDER BY h.pen_tanggal DESC
+  LIMIT 50
+`;
+
+  // Tambah ke Promise.all
+  const [[metric], [tren], [distribusi], [tabelDetail]] = await Promise.all([
+    db.query(sqlMetric),
+    db.query(sqlTren),
+    db.query(sqlDistribusi),
+    db.query(sqlTabelDetail),
+  ]);
+
+  // Tambah ke return
+  return {
+    metric: metric[0] || {},
+    tren,
+    distribusi,
+    tabelDetail,
+  };
+};
+
+const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const MARKETING_BAGIAN = [
+    "MARKETING",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "FINANCE",
+    "AUDIT",
+  ];
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const sql = `
+    SELECT
+      h.pen_nomor                                AS NomorPenawaran,
+      DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y')     AS TglPenawaran,
+      c.cus_nama                                 AS Customer,
+      IFNULL(spk.TotalSPK, 0)                    AS TotalSPK,
+      spk.SpkPertama,
+      DATE_FORMAT(spk.TglSpkPertama, '%d-%m-%Y') AS TglSpkPertama,
+      spk.HariKonversi
+    FROM tpenawaran_hdr h
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    LEFT JOIN (
+      SELECT
+        s.spk_pen_nomor,
+        COUNT(*)                                          AS TotalSPK,
+        MIN(s.spk_nomor)                                  AS SpkPertama,
+        MIN(s.spk_tanggal)                                AS TglSpkPertama,
+        DATEDIFF(MIN(s.spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
+      FROM tspk s
+      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+      WHERE s.spk_aktif = 'Y'
+        AND s.spk_pen_nomor IS NOT NULL
+        AND s.spk_pen_nomor <> ''
+      GROUP BY s.spk_pen_nomor
+    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+    ORDER BY h.pen_tanggal DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -813,4 +1037,6 @@ module.exports = {
   getGudangBahanDashboard,
   getGudangBahanBuffer,
   getGudangBahanBarcode,
+  getRealisasiPenawaranDashboard,
+  getRealisasiPenawaranDetail,
 };

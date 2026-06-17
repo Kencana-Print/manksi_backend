@@ -52,5 +52,15 @@ router.get(
   verifyToken,
   controller.getGudangBahanBarcode,
 );
+router.get(
+  "/realisasi-penawaran",
+  verifyToken,
+  controller.getRealisasiPenawaranDashboard,
+);
+router.get(
+  "/realisasi-penawaran-detail",
+  verifyToken,
+  controller.getRealisasiPenawaranDetail,
+);
 
 module.exports = router;

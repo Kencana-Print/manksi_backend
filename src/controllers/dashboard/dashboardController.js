@@ -175,6 +175,33 @@ const getGudangBahanBarcode = async (req, res) => {
   }
 };
 
+const getRealisasiPenawaranDashboard = async (req, res) => {
+  try {
+    const data = await service.getRealisasiPenawaranDashboard(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || { metric: {}, tren: [], distribusi: [] },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiPenawaranDetail = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getRealisasiPenawaranDetail(
+      req.user,
+      limit,
+      offset,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -191,4 +218,6 @@ module.exports = {
   getGudangBahanDashboard,
   getGudangBahanBuffer,
   getGudangBahanBarcode,
+  getRealisasiPenawaranDashboard,
+  getRealisasiPenawaranDetail,
 };
