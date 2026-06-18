@@ -277,6 +277,33 @@ const getSpkBelumMkbCount = async (req, res) => {
   }
 };
 
+const getAktivitasHariIni = async (req, res) => {
+  try {
+    const data = await service.getAktivitasHariIni();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getTrendSpk7Hari = async (req, res) => {
+  try {
+    const data = await service.getTrendSpk7Hari();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getApprovalPendingCount = async (req, res) => {
+  try {
+    const data = await service.getApprovalPendingCount();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -300,4 +327,7 @@ module.exports = {
   getMapVsSjDashboard,
   getMapBelumKirim,
   getSpkBelumMkbCount,
+  getAktivitasHariIni,
+  getTrendSpk7Hari,
+  getApprovalPendingCount,
 };

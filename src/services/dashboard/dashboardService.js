@@ -1222,6 +1222,120 @@ const getSpkBelumMkbCount = async (user) => {
   return rows[0]?.Total || 0;
 };
 
+// ── 2. Aktivitas Hari Ini (SPK baru + penawaran baru + invoice baru) ──
+const getAktivitasHariIni = async () => {
+  const sql = `
+    SELECT * FROM (
+      -- SPK baru hari ini
+      SELECT
+        'SPK'                                                          AS jenis,
+        s.spk_nomor                                                    AS nomor,
+        s.spk_nama                                                     AS nama,
+        d.divisi                                                       AS divisi,
+        DATE_FORMAT(IFNULL(s.date_create, s.spk_tanggal), '%H:%i')   AS jam,
+        IFNULL(s.date_create, s.spk_tanggal)                          AS waktu
+      FROM tspk s
+      LEFT JOIN tdivisi d ON d.kode = s.spk_divisi
+      WHERE (DATE(s.spk_tanggal) = CURDATE() OR DATE(s.date_create) = CURDATE())
+        AND s.spk_aktif = 'Y'
+
+      UNION ALL
+
+      -- Penawaran baru hari ini
+      SELECT
+        'PENAWARAN'                          AS jenis,
+        h.pen_nomor                          AS nomor,
+        h.pen_keterangan                     AS nama,
+        d.divisi                             AS divisi,
+        DATE_FORMAT(h.date_create, '%H:%i')  AS jam,
+        h.date_create                        AS waktu
+      FROM tpenawaran_hdr h
+      LEFT JOIN tdivisi d ON d.kode = h.pen_divisi
+      WHERE DATE(h.date_create) = CURDATE()
+
+      UNION ALL
+
+      -- Invoice baru hari ini
+      SELECT
+        'INVOICE'                            AS jenis,
+        a.inv_nomor                          AS nomor,
+        a.inv_keterangan                     AS nama,
+        p.perush_nama                        AS divisi,
+        DATE_FORMAT(IFNULL(a.date_create, a.inv_tanggal), '%H:%i') AS jam,
+        IFNULL(a.date_create, a.inv_tanggal)                        AS waktu
+      FROM tinv_hdr a
+      LEFT JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
+      WHERE (DATE(a.inv_tanggal) = CURDATE() OR DATE(a.date_create) = CURDATE())
+        AND a.inv_status_otomatis <> 1
+    ) akt
+    ORDER BY waktu DESC
+    LIMIT 20
+  `;
+  const [rows] = await db.query(sql);
+  return rows;
+};
+
+// ── 3. Trend SPK 7 hari terakhir (untuk C3 chart) ──
+const getTrendSpk7Hari = async () => {
+  const sql = `
+    SELECT
+      DATE_FORMAT(tgl, '%d/%m')   AS label,
+      IFNULL(spk_baru, 0)         AS spk_baru,
+      IFNULL(penawaran_baru, 0)   AS penawaran_baru
+    FROM (
+      SELECT DATE_SUB(CURDATE(), INTERVAL n DAY) AS tgl
+      FROM (
+        SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3
+        UNION SELECT 4 UNION SELECT 5 UNION SELECT 6
+      ) nums
+    ) dates
+    LEFT JOIN (
+      SELECT DATE(spk_tanggal) AS tgl_spk, COUNT(*) AS spk_baru
+      FROM tspk
+      WHERE spk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+        AND spk_aktif = 'Y'
+      GROUP BY DATE(spk_tanggal)
+    ) s ON s.tgl_spk = dates.tgl
+    LEFT JOIN (
+      SELECT DATE(pen_tanggal) AS tgl_pen, COUNT(*) AS penawaran_baru
+      FROM tpenawaran_hdr
+      WHERE pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY DATE(pen_tanggal)
+    ) p ON p.tgl_pen = dates.tgl
+    ORDER BY tgl ASC
+  `;
+  const [rows] = await db.query(sql);
+  return rows;
+};
+
+const getApprovalPendingCount = async () => {
+  const sql = `
+    SELECT
+      (SELECT COUNT(*) FROM tcustomer_pin 
+       WHERE cusp_acc = '') AS piutang,
+
+      (SELECT COUNT(*) FROM tspk_pin 
+       WHERE pin_acc = '') AS harga_nol,
+
+      (SELECT COUNT(*) FROM tspk_pin_prioritas 
+       WHERE pin_acc = '') AS prioritas,
+
+      (SELECT COUNT(*) FROM tapprove 
+       WHERE pin_jenis = 'INVBLMSJ' AND pin_acc = '') AS inv_blm_sj,
+
+      (SELECT COUNT(*) FROM tspk_pin5 
+       WHERE pin_jenis = 'UBAH' AND pin_acc = '' AND pin_dipakai = '') AS perubahan,
+
+      (SELECT COUNT(*) FROM tspk_pin5 
+       WHERE pin_jenis = 'HAPUS' AND pin_acc = '' AND pin_dipakai = '') AS hapus,
+
+      (SELECT COUNT(*) FROM tcustomer 
+       WHERE cus_plafon_acc IN ('PENDING_MANAGER', 'PENDING_DIREKSI')) AS plafon
+  `;
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -1245,4 +1359,7 @@ module.exports = {
   getMapVsSjDashboard,
   getMapBelumKirim,
   getSpkBelumMkbCount,
+  getAktivitasHariIni,
+  getTrendSpk7Hari,
+  getApprovalPendingCount,
 };

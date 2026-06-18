@@ -71,5 +71,12 @@ router.get("/map-belum-spk", verifyToken, controller.getMapBelumSpk);
 router.get("/map-vs-sj-dashboard", verifyToken, controller.getMapVsSjDashboard);
 router.get("/map-belum-kirim", verifyToken, controller.getMapBelumKirim);
 router.get("/spk-belum-mkb-count", verifyToken, controller.getSpkBelumMkbCount);
+router.get("/aktivitas-hari-ini", verifyToken, controller.getAktivitasHariIni);
+router.get("/trend-spk-7hari", verifyToken, controller.getTrendSpk7Hari);
+router.get(
+  "/approval-pending-count",
+  verifyToken,
+  controller.getApprovalPendingCount,
+);
 
 module.exports = router;
