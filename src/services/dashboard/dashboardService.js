@@ -816,33 +816,20 @@ const getRealisasiPenawaranDashboard = async (user) => {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
 
-  // ── 1. Metric summary ──
   const sqlMetric = `
     SELECT
       COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
-
-      COUNT(DISTINCT CASE
-        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi <= 7
-        THEN h.pen_nomor END) AS KonversiCepat,
-
-      COUNT(DISTINCT CASE
-        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 8 AND 30
-        THEN h.pen_nomor END) AS KonversiNormal,
-
-      COUNT(DISTINCT CASE
-        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 31 AND 90
-        THEN h.pen_nomor END) AS KonversiLambat,
-
-      COUNT(DISTINCT CASE
-        WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi > 90
-        THEN h.pen_nomor END) AS KonversiSangatLambat,
-
-      COUNT(DISTINCT CASE
-        WHEN spk.HariKonversi IS NULL
-        THEN h.pen_nomor END) AS BelumKonversi,
-
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi <= 7
+            THEN h.pen_nomor END) AS KonversiCepat,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 8 AND 30
+            THEN h.pen_nomor END) AS KonversiNormal,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi BETWEEN 31 AND 90
+            THEN h.pen_nomor END) AS KonversiLambat,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi > 90
+            THEN h.pen_nomor END) AS KonversiSangatLambat,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NULL
+            THEN h.pen_nomor END) AS BelumKonversi,
       ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
-
     FROM tpenawaran_hdr h
     LEFT JOIN (
       SELECT
@@ -861,13 +848,12 @@ const getRealisasiPenawaranDashboard = async (user) => {
       ${whereExtra}
   `;
 
-  // ── 2. Tren rata-rata hari konversi per bulan (6 bulan terakhir) ──
   const sqlTren = `
     SELECT
       DATE_FORMAT(h.pen_tanggal, '%Y-%m') AS Bulan,
-      COUNT(DISTINCT h.pen_nomor)           AS TotalPenawaran,
+      COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
       COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL THEN h.pen_nomor END) AS Konversi,
-      ROUND(AVG(spk.HariKonversi), 1)       AS RataRataHari
+      ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
     FROM tpenawaran_hdr h
     LEFT JOIN (
       SELECT
@@ -887,14 +873,13 @@ const getRealisasiPenawaranDashboard = async (user) => {
     ORDER BY Bulan ASC
   `;
 
-  // ── 3. Distribusi bucket ──
   const sqlDistribusi = `
     SELECT
       CASE
-        WHEN spk.HariKonversi <= 7             THEN 'Cepat'
-        WHEN spk.HariKonversi BETWEEN 8 AND 30 THEN 'Normal'
+        WHEN spk.HariKonversi <= 7              THEN 'Cepat'
+        WHEN spk.HariKonversi BETWEEN 8 AND 30  THEN 'Normal'
         WHEN spk.HariKonversi BETWEEN 31 AND 90 THEN 'Lambat'
-        WHEN spk.HariKonversi > 90             THEN 'Sangat Lambat'
+        WHEN spk.HariKonversi > 90              THEN 'Sangat Lambat'
         ELSE 'Belum SPK'
       END AS Bucket,
       COUNT(DISTINCT h.pen_nomor) AS Jumlah
@@ -917,54 +902,13 @@ const getRealisasiPenawaranDashboard = async (user) => {
     ORDER BY FIELD(Bucket, 'Cepat', 'Normal', 'Lambat', 'Sangat Lambat', 'Belum SPK')
   `;
 
-  // ── 4. Tabel detail per penawaran ──
-  const sqlTabelDetail = `
-  SELECT
-    h.pen_nomor                              AS NomorPenawaran,
-    DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y')   AS TglPenawaran,
-    c.cus_nama                               AS Customer,
-    IFNULL(spk.TotalSPK, 0)                  AS TotalSPK,
-    spk.SpkPertama,
-    DATE_FORMAT(spk.TglSpkPertama, '%d-%m-%Y') AS TglSpkPertama,
-    spk.HariKonversi
-  FROM tpenawaran_hdr h
-  INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-  LEFT JOIN (
-    SELECT
-      spk_pen_nomor,
-      COUNT(*)                                   AS TotalSPK,
-      MIN(spk_nomor)                             AS SpkPertama,
-      MIN(spk_tanggal)                           AS TglSpkPertama,
-      DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
-    FROM tspk s
-    INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
-    WHERE s.spk_aktif = 'Y'
-      AND s.spk_pen_nomor IS NOT NULL
-      AND s.spk_pen_nomor <> ''
-    GROUP BY s.spk_pen_nomor
-  ) spk ON spk.spk_pen_nomor = h.pen_nomor
-  WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-    AND h.pen_tanggal <= CURDATE()
-    ${whereExtra}
-  ORDER BY h.pen_tanggal DESC
-  LIMIT 50
-`;
-
-  // Tambah ke Promise.all
-  const [[metric], [tren], [distribusi], [tabelDetail]] = await Promise.all([
+  const [[metric], [tren], [distribusi]] = await Promise.all([
     db.query(sqlMetric),
     db.query(sqlTren),
     db.query(sqlDistribusi),
-    db.query(sqlTabelDetail),
   ]);
 
-  // Tambah ke return
-  return {
-    metric: metric[0] || {},
-    tren,
-    distribusi,
-    tabelDetail,
-  };
+  return { metric: metric[0] || {}, tren, distribusi };
 };
 
 const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
@@ -1021,6 +965,263 @@ const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+// ── Dashboard MAP vs SPK (summary + nilai per divisi) ──
+const getMapVsSpkDashboard = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const paramsMetric = [dStart, dEnd];
+  const paramsDivisi = [dStart, dEnd];
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND m.mspk_divisi = ?";
+    paramsMetric.push(String(user.divisi));
+    paramsDivisi.push(String(user.divisi));
+  }
+
+  const sqlMetric = `
+    SELECT
+      COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
+      COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NOT NULL THEN m.mspk_nomor END) AS SudahSPK,
+      COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NULL     THEN m.mspk_nomor END) AS BelumSPK,
+      IFNULL(SUM(IF(spk.spk_nomor IS NOT NULL,
+            spk.spk_harga * spk.spk_jumlah,
+            m.mspk_harga  * m.mspk_rencana_order)), 0) AS TotalNilai,
+      IFNULL(SUM(CASE WHEN spk.spk_nomor IS NOT NULL
+            THEN spk.spk_harga * spk.spk_jumlah ELSE 0 END), 0) AS NilaiSudahSPK,
+      IFNULL(SUM(CASE WHEN spk.spk_nomor IS NULL
+            THEN m.mspk_harga * m.mspk_rencana_order ELSE 0 END), 0) AS NilaiBelumSPK
+    FROM tmemospk m
+    INNER JOIN tcustomer c ON c.cus_kode = m.mspk_cus_kode
+    LEFT  JOIN tspk spk ON spk.spk_memo = m.mspk_nomor AND spk.spk_aktif = 'Y'
+    WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+    ${whereExtra}
+  `;
+
+  const sqlDivisi = `
+    SELECT Divisi, TotalMAP, SudahSPK, NilaiSPK, NilaiPotensi
+    FROM (
+      SELECT
+        IFNULL(d.Divisi, 'LAINNYA') AS Divisi,
+        COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
+        COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NOT NULL THEN m.mspk_nomor END) AS SudahSPK,
+        IFNULL(SUM(CASE WHEN spk.spk_nomor IS NOT NULL
+              THEN spk.spk_harga * spk.spk_jumlah ELSE 0 END), 0) AS NilaiSPK,
+        IFNULL(SUM(CASE WHEN spk.spk_nomor IS NULL
+              THEN m.mspk_harga * m.mspk_rencana_order ELSE 0 END), 0) AS NilaiPotensi
+      FROM tmemospk m
+      LEFT JOIN tdivisi d   ON d.kode = m.mspk_divisi
+      LEFT JOIN tspk spk    ON spk.spk_memo = m.mspk_nomor AND spk.spk_aktif = 'Y'
+      WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+      ${whereExtra}
+      GROUP BY m.mspk_divisi, d.Divisi
+    ) x
+    ORDER BY (x.NilaiSPK + x.NilaiPotensi) DESC
+  `;
+
+  const [[metricRows], [divisiRows]] = await Promise.all([
+    db.query(sqlMetric, paramsMetric),
+    db.query(sqlDivisi, paramsDivisi),
+  ]);
+
+  return { metric: metricRows[0] || {}, divisi: divisiRows };
+};
+
+const getMapBelumSpk = async (
+  user,
+  limit = 20,
+  offset = 0,
+  startDate,
+  endDate,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND m.mspk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+  params.push(limit, offset);
+
+  const sql = `
+    SELECT
+      m.mspk_nomor                             AS Nomor,
+      DATE_FORMAT(m.mspk_tanggal, '%d-%m-%Y') AS Tanggal,
+      IFNULL(dv.Divisi, '-')                   AS Divisi,
+      c.cus_nama                               AS NamaCustomer,
+      m.mspk_nama                              AS NamaMAP,
+      m.mspk_jumlah                            AS Jumlah,
+      m.mspk_harga * m.mspk_rencana_order      AS NilaiPotensi,
+      DATEDIFF(CURDATE(), m.mspk_tanggal)      AS UmurHari
+    FROM tmemospk m
+    INNER JOIN tcustomer c  ON c.cus_kode = m.mspk_cus_kode
+    LEFT  JOIN tdivisi dv   ON dv.kode = m.mspk_divisi
+    WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+    ${whereExtra}
+      AND NOT EXISTS (
+        SELECT 1 FROM tspk s
+        WHERE s.spk_memo = m.mspk_nomor AND s.spk_aktif = 'Y'
+      )
+    ORDER BY m.mspk_tanggal ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+const getMapVsSjDashboard = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND m.mspk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
+      COUNT(DISTINCT CASE WHEN IFNULL(sj.TotalKirim, 0) = 0
+            THEN m.mspk_nomor END) AS BelumKirim,
+      COUNT(DISTINCT CASE WHEN IFNULL(sj.TotalKirim, 0) > 0
+            AND IFNULL(sj.TotalKirim, 0) < m.mspk_jumlah
+            THEN m.mspk_nomor END) AS SebagianKirim,
+      COUNT(DISTINCT CASE WHEN IFNULL(sj.TotalKirim, 0) >= m.mspk_jumlah
+            THEN m.mspk_nomor END) AS LunasKirim,
+      IFNULL(SUM(m.mspk_jumlah), 0)               AS TotalQtyOrder,
+      IFNULL(SUM(IFNULL(sj.TotalKirim, 0)), 0)     AS TotalQtyKirim
+    FROM tmemospk m
+    LEFT JOIN (
+      SELECT d.sjd_mspk_nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl_memo d
+      INNER JOIN tsj_hdr_memo h ON h.sj_nomor = d.sjd_sj_nomor
+      GROUP BY d.sjd_mspk_nomor
+    ) sj ON sj.sjd_mspk_nomor = m.mspk_nomor
+    WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+    ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+const getMapBelumKirim = async (
+  user,
+  limit = 20,
+  offset = 0,
+  startDate,
+  endDate,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND m.mspk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+  params.push(limit, offset);
+
+  const sql = `
+    SELECT
+      m.mspk_nomor                             AS Nomor,
+      DATE_FORMAT(m.mspk_tanggal, '%d-%m-%Y') AS Tanggal,
+      IFNULL(dv.Divisi, '-')                   AS Divisi,
+      c.cus_nama                               AS NamaCustomer,
+      m.mspk_nama                              AS NamaMAP,
+      m.mspk_jumlah                            AS QtyOrder,
+      IFNULL(sj.TotalKirim, 0)                 AS QtyKirim,
+      DATE_FORMAT(m.mspk_dateline, '%d-%m-%Y') AS Dateline
+    FROM tmemospk m
+    INNER JOIN tcustomer c ON c.cus_kode = m.mspk_cus_kode
+    LEFT  JOIN tdivisi dv  ON dv.kode = m.mspk_divisi
+    LEFT  JOIN (
+      SELECT d.sjd_mspk_nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl_memo d
+      INNER JOIN tsj_hdr_memo h ON h.sj_nomor = d.sjd_sj_nomor
+      GROUP BY d.sjd_mspk_nomor
+    ) sj ON sj.sjd_mspk_nomor = m.mspk_nomor
+    WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+    ${whereExtra}
+      AND IFNULL(sj.TotalKirim, 0) < m.mspk_jumlah
+    ORDER BY m.mspk_tanggal ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+const getSpkBelumMkbCount = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  // Hanya relevan untuk PEMBELIAN dan super viewer
+  const allowed = [
+    "PEMBELIAN",
+    "PPIC",
+    "GUDANG",
+    "EDP",
+    "IT",
+    "DIREKSI",
+    "OWNER",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return 0;
+
+  const sql = `
+    SELECT COUNT(*) AS Total
+    FROM tspk s
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_close = 0
+      AND s.spk_cmo <> ''
+      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND s.spk_divisi IN (3, 4, 6)
+      AND s.spk_nomor NOT IN (
+        SELECT h.MKB_SPK_NOMOR
+        FROM tmkb_hdr h
+        WHERE h.MKB_SPK_NOMOR <> ''
+      )
+      AND s.spk_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0]?.Total || 0;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -1039,4 +1240,9 @@ module.exports = {
   getGudangBahanBarcode,
   getRealisasiPenawaranDashboard,
   getRealisasiPenawaranDetail,
+  getMapVsSpkDashboard,
+  getMapBelumSpk,
+  getMapVsSjDashboard,
+  getMapBelumKirim,
+  getSpkBelumMkbCount,
 };

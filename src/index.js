@@ -97,21 +97,31 @@ const transferRoutes = require("./routes/piutang/penerimaan/transferRoutes");
 const transferFormRoutes = require("./routes/piutang/penerimaan/transferFormRoutes");
 const potonganRoutes = require("./routes/piutang/penerimaan/potonganRoutes");
 const potonganFormRoutes = require("./routes/piutang/penerimaan/potonganFormRoutes");
+const pelunasanPiutangRoutes = require("./routes/piutang/pelunasanRoutes");
+const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 
 //Laporan Routes
 //Laporan Gudang Garmen
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
+const spkBelumMkbRoutes = require("./routes/laporan/gudang-garmen/spkBelumMkbRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
 
 // Laporan Penjualan
-const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
-const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
-
-// Laporan Marketing
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
+const mapVsSjRoutes = require("./routes/laporan/penjualan/mapVsSjRoutes");
+const mapVsSpkRoutes = require("./routes/laporan/penjualan/mapVsSpkRoutes");
+
+// Laporan Marketing
+const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
+const mapBelumRealisasiRoutes = require("./routes/laporan/marketing/mapBelumRealisasiRoutes");
+const spkBelumClosingRoutes = require("./routes/laporan/marketing/spkBelumClosingRoutes");
+const realisasiPenjualanRoutes = require("./routes/laporan/marketing/realisasiPenjualanRoutes");
+const rekapMapRoutes = require("./routes/laporan/marketing/rekapMapRoutes");
+const rekapPenawaranRoutes = require("./routes/laporan/marketing/rekapPenawaranRoutes");
+const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
 
 // Laporan Piutang
 const detailPiutangRoutes = require("./routes/laporan/piutang/detailPiutangRoutes");
@@ -241,20 +251,30 @@ app.use("/api/piutang/penerimaan/transfer", transferRoutes);
 app.use("/api/piutang/penerimaan/transfer-form", transferFormRoutes);
 app.use("/api/piutang/penerimaan/potongan", potonganRoutes);
 app.use("/api/piutang/penerimaan/potongan-form", potonganFormRoutes);
+app.use("/api/piutang/pelunasan", pelunasanPiutangRoutes);
+app.use("/api/piutang/pelunasan-form", pelunasanFormRoutes);
 
 app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
   lapStokBahanBarcodeRoutes,
 );
 app.use("/api/laporan/gudang-garmen/kartu-stok-barang", kartuStokBarangRoutes);
+app.use("/api/laporan/gudang-garmen/spk-belum-mkb", spkBelumMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
 
-app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
-app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
-
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
+app.use("/api/laporan/penjualan/map-vs-sj", mapVsSjRoutes);
+app.use("/api/laporan/penjualan/map-vs-spk", mapVsSpkRoutes);
+
+app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
+app.use("/api/laporan/marketing/map-belum-realisasi", mapBelumRealisasiRoutes);
+app.use("/api/laporan/marketing/spk-belum-closing", spkBelumClosingRoutes);
+app.use("/api/laporan/marketing/realisasi-penjualan", realisasiPenjualanRoutes);
+app.use("/api/laporan/marketing/rekap-map", rekapMapRoutes);
+app.use("/api/laporan/marketing/rekap-penawaran", rekapPenawaranRoutes);
+app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
 
 app.use("/api/laporan/piutang/detail-piutang", detailPiutangRoutes);
 app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);

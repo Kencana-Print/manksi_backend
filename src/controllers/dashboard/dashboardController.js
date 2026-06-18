@@ -202,6 +202,81 @@ const getRealisasiPenawaranDetail = async (req, res) => {
   }
 };
 
+const getMapVsSpkDashboard = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getMapVsSpkDashboard(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res
+      .status(200)
+      .json({ success: true, data: data || { metric: {}, divisi: [] } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMapBelumSpk = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const { startDate, endDate } = req.query;
+    const data = await service.getMapBelumSpk(
+      req.user,
+      limit,
+      offset,
+      startDate,
+      endDate,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMapVsSjDashboard = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getMapVsSjDashboard(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.status(200).json({ success: true, data: data || {} });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMapBelumKirim = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const { startDate, endDate } = req.query;
+    const data = await service.getMapBelumKirim(
+      req.user,
+      limit,
+      offset,
+      startDate,
+      endDate,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getSpkBelumMkbCount = async (req, res) => {
+  try {
+    const data = await service.getSpkBelumMkbCount(req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -220,4 +295,9 @@ module.exports = {
   getGudangBahanBarcode,
   getRealisasiPenawaranDashboard,
   getRealisasiPenawaranDetail,
+  getMapVsSpkDashboard,
+  getMapBelumSpk,
+  getMapVsSjDashboard,
+  getMapBelumKirim,
+  getSpkBelumMkbCount,
 };

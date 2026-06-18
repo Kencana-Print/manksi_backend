@@ -1627,6 +1627,104 @@ const getSetoranPembayaranLookup = async (
   return { rows, total };
 };
 
+const getInvoicePiutang = async (cabang, search = "") => {
+  let whereExtra = "";
+  let params = [cabang];
+
+  if (search && search.trim() !== "") {
+    whereExtra = ` AND (a.inv_nomor LIKE ? OR c.cus_nama LIKE ? OR a.inv_keterangan LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+
+  const query = `
+    SELECT
+      a.inv_nomor                                  AS Nomor,
+      DATE_FORMAT(a.inv_tanggal, '%d-%m-%Y')       AS Tanggal,
+      c.cus_nama                                    AS Customer,
+      a.inv_keterangan                              AS Keterangan
+    FROM tinv_hdr a
+    INNER JOIN tcustomer c ON c.cus_kode = a.inv_cus_kode
+    WHERE a.inv_perush_kode = ?
+      AND a.inv_status_otomatis <> 1
+      ${whereExtra}
+    ORDER BY a.inv_tanggal DESC
+    LIMIT 300
+  `;
+
+  const [rows] = await db.query(query, params);
+  return rows;
+};
+
+const getKodeBayar = async () => {
+  const [rows] = await db.query(
+    `SELECT tt_kode AS kode, tt_nama AS nama FROM tkode_tt ORDER BY tt_kode`,
+  );
+  return rows;
+};
+
+const searchBuktiBayar = async (cabang, kode, search = "") => {
+  if (!cabang || !kode) throw new Error("Cabang dan kode bayar wajib diisi.");
+
+  let rows = [];
+
+  if (kode === "RT") {
+    // Retur Penjualan
+    let whereClause = `WHERE a.retj_perush_kode = ?`;
+    let params = [cabang];
+
+    if (search && search.trim() !== "") {
+      whereClause += ` AND (a.retj_nomor LIKE ? OR a.retj_keterangan LIKE ? OR b.cus_nama LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    const query = `
+      SELECT
+        a.retj_nomor                            AS Nomor,
+        DATE_FORMAT(a.retj_tanggal, '%d-%m-%Y') AS Tanggal,
+        a.retj_keterangan                        AS Keterangan,
+        b.cus_nama                               AS Customer,
+        (
+          SELECT SUM(retjd_harga * retjd_jumlah *
+            IF(a.retj_sts_ppn = 1, ((100 + a.retj_ppn) / 100), 1))
+          FROM tretj_dtl
+          WHERE retjd_retj_nomor = a.retj_nomor
+        )                                        AS Debet
+      FROM tretj_hdr a
+      INNER JOIN tcustomer b ON a.retj_cus_kode = b.cus_kode
+      ${whereClause}
+      ORDER BY a.retj_tanggal DESC
+      LIMIT 200
+    `;
+    [rows] = await db.query(query, params);
+  } else {
+    // BG, BT, CS, PT
+    let whereClause = `WHERE a.cabang = ? AND a.kode = ?`;
+    let params = [cabang, kode];
+
+    if (search && search.trim() !== "") {
+      whereClause += ` AND (a.nomor LIKE ? OR a.notes LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const query = `
+      SELECT
+        a.nomor                            AS Nomor,
+        DATE_FORMAT(a.tanggal, '%d-%m-%Y') AS Tanggal,
+        a.kode                             AS Kode,
+        a.customer                         AS Customer,
+        a.debet                            AS Debet,
+        a.notes                            AS Keterangan
+      FROM terima_bayar_debet a
+      ${whereClause}
+      ORDER BY a.tanggal DESC
+      LIMIT 200
+    `;
+    [rows] = await db.query(query, params);
+  }
+
+  return rows;
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1683,4 +1781,7 @@ module.exports = {
   searchKaryawan,
   searchAccount,
   getSetoranPembayaranLookup,
+  getInvoicePiutang,
+  getKodeBayar,
+  searchBuktiBayar,
 };

@@ -62,5 +62,14 @@ router.get(
   verifyToken,
   controller.getRealisasiPenawaranDetail,
 );
+router.get(
+  "/map-vs-spk-dashboard",
+  verifyToken,
+  controller.getMapVsSpkDashboard,
+);
+router.get("/map-belum-spk", verifyToken, controller.getMapBelumSpk);
+router.get("/map-vs-sj-dashboard", verifyToken, controller.getMapVsSjDashboard);
+router.get("/map-belum-kirim", verifyToken, controller.getMapBelumKirim);
+router.get("/spk-belum-mkb-count", verifyToken, controller.getSpkBelumMkbCount);
 
 module.exports = router;

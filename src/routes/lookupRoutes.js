@@ -165,4 +165,10 @@ router.get(
   controller.getSetoranPembayaranLookup,
 );
 
+router.get("/invoice-piutang", verifyToken, controller.getInvoicePiutang);
+
+router.get("/kodebayar", verifyToken, controller.getKodeBayar);
+
+router.get("/bukti-bayar", verifyToken, controller.searchBuktiBayar);
+
 module.exports = router;
