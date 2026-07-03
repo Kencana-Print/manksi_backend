@@ -153,4 +153,36 @@ const uploadImage = async (req, res) => {
   }
 };
 
-module.exports = { getById, save, uploadImage, getKalkulasiMetadata };
+const getKatalogCustomer = async (req, res) => {
+  try {
+    const { cusKode } = req.params;
+    const { divisi = "", q = "", page = 1, limit = 20 } = req.query;
+
+    if (!cusKode || cusKode.trim() === "") {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
+    const result = await mintaHargaFormService.getKatalogCustomer(
+      cusKode,
+      divisi,
+      q.trim(),
+      parseInt(page),
+      parseInt(limit),
+    );
+
+    // Kirim data array (items) dan nilai total
+    res
+      .status(200)
+      .json({ success: true, data: result.items, total: result.total });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getById,
+  save,
+  uploadImage,
+  getKalkulasiMetadata,
+  getKatalogCustomer,
+};

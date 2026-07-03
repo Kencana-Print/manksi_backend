@@ -171,4 +171,37 @@ router.get("/kodebayar", verifyToken, controller.getKodeBayar);
 
 router.get("/bukti-bayar", verifyToken, controller.searchBuktiBayar);
 
+router.get(
+  "/history-pakai-material",
+  verifyToken,
+  controller.searchHistoryPakaiMaterial,
+);
+
+router.get("/spg", verifyToken, controller.searchSpg);
+
+// Endpoint: /api/lookups/po-jasa
+// Digunakan di PoJasaSearchModal.vue (form BPB Jasa)
+router.get("/po-jasa", verifyToken, controller.searchPoJasa);
+
+// Endpoint: /api/lookups/realisasi-minta-by-spk
+// Digunakan di RealisasiMintaBySpkSearchModal.vue (form BPB Jasa, filter per SPK)
+router.get(
+  "/realisasi-minta-by-spk",
+  verifyToken,
+  controller.searchRealisasiMintaBySpk,
+);
+
+// Gudang Barang Jadi (STBJ)
+router.get("/gudang-jadi", verifyToken, controller.getGudangJadi);
+// Gudang Produksi Koli (STBJ)
+router.get(
+  "/gudang-produksi-koli",
+  verifyToken,
+  controller.getGudangProduksiKoli,
+);
+// Packing tersedia (belum ada STBJ)
+router.get("/packing-tersedia", verifyToken, controller.getPackingTersedia);
+
+router.get("/inv-proforma", verifyToken, controller.searchInvProforma);
+
 module.exports = router;

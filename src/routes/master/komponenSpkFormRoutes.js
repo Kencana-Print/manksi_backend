@@ -6,7 +6,7 @@ const {
   checkPermission,
 } = require("../../middleware/authMiddleware");
 
-const menuId = 18; // ID Identitas Komponen SPK
+const menuId = 18;
 
 router.get(
   "/load",

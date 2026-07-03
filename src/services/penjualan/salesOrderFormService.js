@@ -7,15 +7,16 @@ const tutupBukuService = require("../tutupBukuService");
 // --- 1. GENERATE NOMOR SPK OTOMATIS ---
 // Sesuai Delphi: getmaxnomor(akodeperus, akodejo) -> 'SM-KA-000001'
 const generateNomor = async (perushKode, joKode) => {
-  // Hanya mencari nilai maksimum dari nomor yang berawalan 'SO-'
+  const prefix = `SO-${perushKode}-${joKode}-`;
+  // prefix.length + 1 = posisi digit urut, dinamis mengikuti panjang kode
   const [rows] = await db.query(
-    `SELECT IFNULL(MAX(CAST(RIGHT(spk_nomor, 6) AS UNSIGNED)), 0) AS jumlah 
-     FROM tspk 
-     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE 'SO-%'`,
-    [perushKode, joKode],
+    `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
+     FROM tspk
+     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?`,
+    [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
   const nextVal = rows[0].jumlah + 1;
-  return `SO-${perushKode}-${joKode}-${String(nextVal).padStart(6, "0")}`;
+  return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
 // --- 2. GET DETAIL UNTUK MODE UBAH ---
@@ -130,8 +131,16 @@ const getDetail = async (nomor) => {
 
   // D. Detail Size (tspk_size) - Divisi 3, 4, 6
   const [dtlSize] = await db.query(
-    `SELECT spks_size AS size, spks_qty AS qty, spks_a AS lb, spks_b AS pb 
-     FROM tspk_size WHERE spks_nomor = ? AND spks_qty > 0`,
+    `SELECT spks_size AS size, spks_qty AS qty,
+          spks_a AS lb, spks_b AS pb,
+          spks_ld AS ld, spks_pl_pendek AS pl_pendek,
+          spks_pl_panjang AS pl_panjang, spks_p_bahu AS p_bahu,
+          spks_l_lengan AS l_lengan, spks_l_manset AS l_manset,
+          spks_l_pinggang AS l_pinggang, spks_p_celana AS p_celana,
+          spks_l_panggul AS l_panggul, spks_l_paha AS l_paha,
+          spks_pesak AS pesak, spks_l_lutut AS l_lutut,
+          spks_l_bawah AS l_bawah
+   FROM tspk_size WHERE spks_nomor = ? AND spks_qty > 0`,
     [nomor],
   );
 
@@ -206,6 +215,7 @@ const HEADER_EXTRA_FIELDS = [
   "MainImageBlob",
   "MainImageName",
   "isSalesOrder",
+  "spk_standar_ukuran",
 ];
 const cleanHeader = (h) => {
   const result = { ...h };
@@ -249,7 +259,7 @@ const saveData = async (payload, user) => {
     if (!header.spk_cus_kode) throw new Error("Customer belum diisi.");
     if (!header.spk_sal_kode) throw new Error("Sales belum diisi.");
     if (!header.spk_jo_kode) throw new Error("Jenis Order belum diisi.");
-    if (!header.spk_nama) throw new Error("Nama SPK belum diisi.");
+    if (!header.spk_nama) throw new Error("Nama SO belum diisi.");
     if (!header.spk_cab) throw new Error("Kode Workshop (Cabang) harus diisi.");
 
     if (!header.spk_nomor_po || String(header.spk_nomor_po).trim() === "") {
@@ -293,7 +303,7 @@ const saveData = async (payload, user) => {
     ];
     if (reqSpkLama.includes(header.spk_ketpo) && spkLamaClean === "") {
       throw new Error(
-        `Untuk Ket.Po '${header.spk_ketpo}', SPK Lama wajib diisi.`,
+        `Untuk Ket.Po '${header.spk_ketpo}', SO Lama wajib diisi.`,
       );
     }
 
@@ -307,7 +317,7 @@ const saveData = async (payload, user) => {
       );
       if (sumAlokasi > 0 && sumAlokasi !== qtyPesan) {
         throw new Error(
-          "Jumlah SPK vs Total Qty Alokasi beda. Silahkan cek dulu.",
+          "Jumlah SO vs Total Qty Alokasi beda. Silahkan cek dulu.",
         );
       }
     }
@@ -324,7 +334,7 @@ const saveData = async (payload, user) => {
         throw new Error("Detail barang kaosan Qty Order harus diisi.");
       if (sumKaosan !== qtyPesan)
         throw new Error(
-          "Jumlah SPK vs Total Qty Order di Detail Barang Kaosan harus sama.",
+          "Jumlah SO vs Total Qty Order di Detail Barang Kaosan harus sama.",
         );
     }
 
@@ -501,6 +511,26 @@ const saveData = async (payload, user) => {
       }
     }
 
+    if (
+      ["4", "6"].includes(divisiStr) &&
+      !["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some((sub) =>
+        header.spk_jo_kode.includes(sub),
+      )
+    ) {
+      const totalSize = (dtlSize || []).reduce(
+        (s, r) => s + Number(r.qty || 0),
+        0,
+      );
+      if (totalSize === 0) {
+        throw new Error("Divisi Garmen: Qty Order di Detail Size harus diisi.");
+      }
+      if (totalSize !== qtyPesan) {
+        throw new Error(
+          "Jumlah SO vs Total Qty Order di detail size harus sama.",
+        );
+      }
+    }
+
     // ==========================================
     // 5. EKSEKUSI DETAIL SIZE (tspk_size)
     // ==========================================
@@ -520,11 +550,33 @@ const saveData = async (payload, user) => {
               barcode = `99${nomor}`; // Simplified for example, implement logic as needed
             }
             await conn.query(
-              `
-              INSERT INTO tspk_size (spks_nomor, spks_size, spks_qty, spks_a, spks_b, spks_barcode) 
-              VALUES (?, ?, ?, ?, ?, ?)
-            `,
-              [nomor, item.size, item.qty, item.lb || 0, item.pb || 0, barcode],
+              `INSERT INTO tspk_size 
+    (spks_nomor, spks_size, spks_qty, spks_a, spks_b, spks_barcode,
+     spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
+     spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
+     spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                nomor,
+                item.size,
+                item.qty,
+                item.ld || 0, // spks_a — backward compat
+                item.pb || 0, // spks_b — backward compat
+                barcode,
+                item.ld || 0,
+                item.pl_pendek || 0,
+                item.pl_panjang || 0,
+                item.p_bahu || 0,
+                item.l_lengan || 0,
+                item.l_manset || 0,
+                item.l_pinggang || 0,
+                item.p_celana || 0,
+                item.l_panggul || 0,
+                item.l_paha || 0,
+                item.pesak || 0,
+                item.l_lutut || 0,
+                item.l_bawah || 0,
+              ],
             );
           }
         }
@@ -584,7 +636,7 @@ const saveData = async (payload, user) => {
     // PATCH 4: Logic khusus tspk_pin5 dari Delphi
     if (xminta5 === "ACC" && xurut5) {
       await conn.query(
-        `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SPK" AND pin_nomor=? AND pin_urut=?`,
+        `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
         [nomor, xurut5],
       );
     }
@@ -646,7 +698,7 @@ const validateField = async (type, value, extraParam = "") => {
     );
     if (spk.length > 0 && spk[0].spk_nomor !== extraParam) {
       throw new Error(
-        `No.Invoice dari DC tsb sudah dibuatkan SPK Nomor: ${spk[0].spk_nomor}`,
+        `No.Invoice dari DC tsb sudah dibuatkan SO Nomor: ${spk[0].spk_nomor}`,
       );
     }
     return { valid: true, data: { jumlah: inv[0].jml } };
@@ -658,7 +710,7 @@ const validateField = async (type, value, extraParam = "") => {
       [value],
     );
     if (spk.length === 0)
-      throw new Error("SPK Lama tsb tidak ada atau tidak aktif.");
+      throw new Error("SO Lama tsb tidak ada atau tidak aktif.");
     return { valid: true };
   }
 
@@ -896,6 +948,149 @@ const checkHakTopUrgent = async (cusKode, divisi) => {
   return false;
 };
 
+const getInitSizes = async () => {
+  const [rows] = await db.query(
+    `SELECT ukuran AS size FROM retail.tukuran WHERE kategori = "" ORDER BY kode`,
+  );
+  return rows.map((r) => ({
+    size: r.size,
+    qty: 0,
+    // atasan
+    ld: 0,
+    pb: 0,
+    pl_pendek: 0,
+    pl_panjang: 0,
+    p_bahu: 0,
+    l_lengan: 0,
+    l_manset: 0,
+    // bawahan
+    l_pinggang: 0,
+    p_celana: 0,
+    l_panggul: 0,
+    l_paha: 0,
+    pesak: 0,
+    l_lutut: 0,
+    l_bawah: 0,
+  }));
+};
+
+const JO_KATEGORI = {
+  BB: "ATASAN",
+  BU: "ATASAN",
+  JK: "ATASAN",
+  JS: "ATASAN",
+  KK: "ATASAN",
+  KO: "ATASAN",
+  KS: "ATASAN",
+  CL: "BAWAHAN",
+  WP: "WEARPACK",
+};
+
+const getStandarUkuran = async (joKode, varian = "STANDAR") => {
+  const jo = String(joKode || "").toUpperCase();
+  const kategori = JO_KATEGORI[jo];
+  if (!kategori) return [];
+
+  const kategoriList =
+    kategori === "WEARPACK" ? ["ATASAN", "BAWAHAN"] : [kategori];
+
+  const [allSizes] = await db.query(
+    `SELECT ukuran AS size FROM retail.tukuran WHERE kategori = "" ORDER BY kode`,
+  );
+
+  // Query dengan varian
+  const placeholders = kategoriList.map(() => "?").join(",");
+  const [standar] = await db.query(
+    `SELECT * FROM retail.tukuran_standar 
+     WHERE ts_kategori IN (${placeholders}) AND ts_varian = ?`,
+    [...kategoriList, varian],
+  );
+
+  const standarMap = {};
+  for (const row of standar) {
+    if (!standarMap[row.ts_ukuran]) standarMap[row.ts_ukuran] = {};
+    Object.assign(standarMap[row.ts_ukuran], row);
+  }
+
+  return allSizes.map((s) => {
+    const d = standarMap[s.size] || {};
+    return {
+      size: s.size,
+      qty: 0,
+      ld: Number(d.ts_ld) || 0,
+      pb: Number(d.ts_pb) || 0,
+      pl_pendek: Number(d.ts_pl_pendek) || 0,
+      pl_panjang: Number(d.ts_pl_panjang) || 0,
+      p_bahu: Number(d.ts_p_bahu) || 0,
+      l_lengan: Number(d.ts_l_lengan) || 0,
+      l_manset: Number(d.ts_l_manset) || 0,
+      l_pinggang: Number(d.ts_l_pinggang) || 0,
+      p_celana: Number(d.ts_p_celana) || 0,
+      l_panggul: Number(d.ts_l_panggul) || 0,
+      l_paha: Number(d.ts_l_paha) || 0,
+      pesak: Number(d.ts_pesak) || 0,
+      l_lutut: Number(d.ts_l_lutut) || 0,
+      l_bawah: Number(d.ts_l_bawah) || 0,
+    };
+  });
+};
+
+const getKatalogCustomer = async (
+  cusKode,
+  divisi = "",
+  keyword = "",
+  page = 1,
+  limit = 20,
+) => {
+  const offset = (page - 1) * limit;
+
+  let whereBase = `WHERE s.spk_cus_kode = ? AND s.spk_aktif = 'Y'`;
+  const baseParams = [cusKode];
+
+  if (divisi && divisi !== "SEMUA") {
+    whereBase += ` AND LEFT(s.spk_divisi, 1) = ?`;
+    baseParams.push(String(divisi).charAt(0));
+  }
+  if (keyword) {
+    whereBase += ` AND (s.spk_nama LIKE ? OR s.spk_nomor LIKE ?)`;
+    baseParams.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tspk s ${whereBase}`,
+    baseParams,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       s.spk_nomor        AS nomor,
+       s.spk_nama         AS nama,
+       DATE_FORMAT(s.spk_tanggal, '%d-%b-%Y') AS tanggal_pesanan,
+       s.spk_tanggal,
+       s.spk_jumlah       AS jumlah,
+       s.spk_memo         AS memo,
+       s.spk_harga        AS harga,
+       s.spk_kain         AS kain,
+       s.spk_ukuran       AS ukuran,
+       s.spk_finishing    AS finishing,
+       s.spk_keterangan   AS keterangan,
+       s.spk_cab          AS cab,
+       s.spk_divisi       AS divisi,
+       s.spk_statuskerja  AS statuskerja,
+       j.jo_nama          AS jenis_order,
+       p.perush_nama      AS perusahaan
+     FROM tspk s
+     LEFT JOIN tjenisorder j ON j.jo_kode = s.spk_jo_kode
+     LEFT JOIN tperusahaan p ON p.perush_kode = s.spk_perush_kode
+     ${whereBase}
+     ORDER BY s.spk_tanggal DESC
+     LIMIT ? OFFSET ?`,
+    [...baseParams, Number(limit), Number(offset)],
+  );
+
+  return { items: rows, total };
+};
+
 module.exports = {
   getDetail,
   saveData,
@@ -904,4 +1099,7 @@ module.exports = {
   processImage,
   getDatelineLimits,
   checkHakTopUrgent,
+  getInitSizes,
+  getStandarUkuran,
+  getKatalogCustomer,
 };

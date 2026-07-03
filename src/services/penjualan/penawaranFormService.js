@@ -125,9 +125,9 @@ const save = async (data, userKode, isNewMode) => {
           pen_cus_kode, pen_sal_kode, pen_keterangan, pen_note, pen_rekening, 
           pen_dpper, pen_status_harga, pen_ttd, pen_ttd_jabatan, pen_up, 
           pen_marketing, pen_marketing_telp, pen_cetaktotal, pen_panjang, pen_lebar, 
-          pen_tambahan, pen_fu1, pen_fu2, pen_fu3, pen_proyeksi, 
+          pen_tambahan, pen_fu1, pen_fu2, pen_fu3, pen_proyeksi, pen_sample,
           pen_mx, pen_digitalsign, date_create, user_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
       `;
       await conn.query(insertQ, [
         nomorPen,
@@ -155,6 +155,7 @@ const save = async (data, userKode, isNewMode) => {
         data.Fu2,
         data.Fu3,
         data.Proyeksi,
+        data.SampleText || "",
         data.Mx,
         data.DigitalSign,
         userKode,
@@ -166,7 +167,7 @@ const save = async (data, userKode, isNewMode) => {
           pen_keterangan=?, pen_note=?, pen_rekening=?, pen_dpper=?, pen_status_harga=?, 
           pen_ttd=?, pen_ttd_jabatan=?, pen_up=?, pen_marketing=?, pen_marketing_telp=?, 
           pen_cetaktotal=?, pen_panjang=?, pen_lebar=?, pen_tambahan=?, 
-          pen_fu1=?, pen_fu2=?, pen_fu3=?, pen_proyeksi=?, pen_mx=?, pen_digitalsign=?,
+          pen_fu1=?, pen_fu2=?, pen_fu3=?, pen_proyeksi=?, pen_sample = ?, pen_mx=?, pen_digitalsign=?,
           date_modified=NOW(), user_modified=?
         WHERE pen_nomor=?
       `;
@@ -194,6 +195,7 @@ const save = async (data, userKode, isNewMode) => {
         data.Fu2,
         data.Fu3,
         data.Proyeksi,
+        data.SampleText || "",
         data.Mx,
         data.DigitalSign,
         userKode,

@@ -36,6 +36,21 @@ router.get(
   mapFormController.loadMintaHarga,
 );
 
+// Tambah sebelum route /:nomor (GET by id harus paling bawah)
+router.get(
+  "/nama-suggestions",
+  verifyToken,
+  mapFormController.getNamaSuggestions,
+);
+router.get("/check-duplikat", verifyToken, mapFormController.checkDuplikatNama);
+
+// --- ROUTE KATALOG CUSTOMER ---
+router.get(
+  "/katalog/customer/:cusKode",
+  verifyToken,
+  mapFormController.getKatalogCustomer
+);
+
 // --- ROUTE LOAD DATA MAP (EDIT MODE) ---
 router.get(
   "/:nomor",

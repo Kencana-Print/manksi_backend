@@ -3,9 +3,21 @@ const lookupService = require("../services/lookupService");
 
 const searchSpk = async (req, res) => {
   try {
-    const page = req.query.page || 1;
-    const limit = req.query.limit || 50;
-    const data = await lookupService.searchSpk(req.query.q, page, limit);
+    const {
+      q,
+      page = 1,
+      limit = 50,
+      filterMode = "all",
+      cusKode = "",
+      perushKode = "",
+      divisi = "",
+    } = req.query;
+
+    const data = await lookupService.searchSpk(q, page, limit, filterMode, {
+      cusKode,
+      perushKode,
+      divisi,
+    });
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -559,6 +571,16 @@ const searchMemo = async (req, res) => {
   }
 };
 
+const searchSpg = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchSpg(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 const searchMppb = async (req, res) => {
   try {
     const data = await lookupService.searchMppb(
@@ -574,9 +596,8 @@ const searchMppb = async (req, res) => {
 
 const getHistoryAlokasi = async (req, res) => {
   try {
-    const { cusKode } = req.query;
-    // service.getHistoryAlokasi sudah kita buat di percakapan sebelumnya
-    const data = await lookupService.getHistoryAlokasi(cusKode);
+    const { cusKode, page = 1, limit = 20 } = req.query;
+    const data = await lookupService.getHistoryAlokasi(cusKode, page, limit);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -638,8 +659,8 @@ const searchMkb = async (req, res) => {
 
 const searchGudangBahan = async (req, res) => {
   try {
-    const { q, page, limit } = req.query;
-    const data = await lookupService.searchGudangBahan(q, page, limit);
+    const { q, page, limit, mode = "" } = req.query;
+    const data = await lookupService.searchGudangBahan(q, page, limit, mode);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -785,6 +806,117 @@ const searchBuktiBayar = async (req, res) => {
   }
 };
 
+const searchHistoryPakaiMaterial = async (req, res) => {
+  try {
+    const {
+      noMaterial,
+      kodeBahan,
+      excludeNomor = "",
+      q = "",
+      page = 1,
+      limit = 25,
+    } = req.query;
+    if (!noMaterial || !kodeBahan)
+      return res
+        .status(400)
+        .json({ success: false, message: "noMaterial dan kodeBahan wajib." });
+    const data = await lookupService.searchHistoryPakaiMaterial(
+      noMaterial,
+      kodeBahan,
+      excludeNomor,
+      q,
+      page,
+      limit,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+const searchPoJasa = async (req, res) => {
+  try {
+    const { q = "", cab = "ALL", page = 1, limit = 20 } = req.query;
+    const data = await lookupService.searchPoJasa(
+      q,
+      cab,
+      Number(page),
+      Number(limit),
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchRealisasiMintaBySpk = async (req, res) => {
+  try {
+    const { spkNomor, q = "", page = 1, limit = 20 } = req.query;
+    if (!spkNomor)
+      return res
+        .status(400)
+        .json({ success: false, message: "spkNomor wajib." });
+    const data = await lookupService.searchRealisasiMintaBySpk(
+      spkNomor,
+      q,
+      Number(page),
+      Number(limit),
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getGudangJadi = async (req, res) => {
+  try {
+    const { q = "", divisi = 0 } = req.query;
+    const data = await lookupService.getGudangJadi(q, Number(divisi));
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+const getGudangProduksiKoli = async (req, res) => {
+  try {
+    const { q = "", cab = "", divisi = 0 } = req.query;
+    const data = await lookupService.getGudangProduksiKoli(
+      q,
+      cab,
+      Number(divisi),
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+const getPackingTersedia = async (req, res) => {
+  try {
+    const { q = "", page = 1, limit = 50 } = req.query;
+    const data = await lookupService.getPackingTersedia(q, page, limit);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+const searchInvProforma = async (req, res) => {
+  try {
+    const { cusKode = "", q = "", page = 1, limit = 50 } = req.query;
+    const data = await lookupService.searchInvProforma(
+      cusKode,
+      q,
+      Number(page),
+      Number(limit),
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -827,6 +959,7 @@ module.exports = {
   searchInvDc,
   searchSjMemo,
   searchMemo,
+  searchSpg,
   searchMppb,
   getHistoryAlokasi,
   searchBarangKaosan,
@@ -844,4 +977,11 @@ module.exports = {
   getInvoicePiutang,
   getKodeBayar,
   searchBuktiBayar,
+  searchHistoryPakaiMaterial,
+  searchPoJasa,
+  searchRealisasiMintaBySpk,
+  getGudangJadi,
+  getGudangProduksiKoli,
+  getPackingTersedia,
+  searchInvProforma,
 };

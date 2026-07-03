@@ -1223,7 +1223,7 @@ const getSpkBelumMkbCount = async (user) => {
 };
 
 // ── 2. Aktivitas Hari Ini (SPK baru + penawaran baru + invoice baru) ──
-const getAktivitasHariIni = async () => {
+const getAktivitasHariIni = async (limit = 20, offset = 0) => {
   const sql = `
     SELECT * FROM (
       -- SPK baru hari ini
@@ -1232,23 +1232,38 @@ const getAktivitasHariIni = async () => {
         s.spk_nomor                                                    AS nomor,
         s.spk_nama                                                     AS nama,
         d.divisi                                                       AS divisi,
-        DATE_FORMAT(IFNULL(s.date_create, s.spk_tanggal), '%H:%i')   AS jam,
-        IFNULL(s.date_create, s.spk_tanggal)                          AS waktu
+        DATE_FORMAT(s.date_create, '%H:%i')                           AS jam,
+        s.date_create                                                  AS waktu
       FROM tspk s
       LEFT JOIN tdivisi d ON d.kode = s.spk_divisi
-      WHERE (DATE(s.spk_tanggal) = CURDATE() OR DATE(s.date_create) = CURDATE())
+      WHERE DATE(s.date_create) = CURDATE()
         AND s.spk_aktif = 'Y'
+
+      UNION ALL
+
+      -- MAP baru hari ini
+      SELECT
+        'MAP'                                                           AS jenis,
+        m.mspk_nomor                                                    AS nomor,
+        m.mspk_nama                                                     AS nama,
+        d.divisi                                                        AS divisi,
+        DATE_FORMAT(m.date_create, '%H:%i')                            AS jam,
+        m.date_create                                                   AS waktu
+      FROM tmemospk m
+      LEFT JOIN tdivisi d ON d.kode = m.mspk_divisi
+      WHERE DATE(m.date_create) = CURDATE()
+        AND m.mspk_aktif = 'Y'
 
       UNION ALL
 
       -- Penawaran baru hari ini
       SELECT
-        'PENAWARAN'                          AS jenis,
-        h.pen_nomor                          AS nomor,
-        h.pen_keterangan                     AS nama,
-        d.divisi                             AS divisi,
-        DATE_FORMAT(h.date_create, '%H:%i')  AS jam,
-        h.date_create                        AS waktu
+        'PENAWARAN'                                                    AS jenis,
+        h.pen_nomor                                                    AS nomor,
+        h.pen_keterangan                                               AS nama,
+        d.divisi                                                       AS divisi,
+        DATE_FORMAT(h.date_create, '%H:%i')                           AS jam,
+        h.date_create                                                  AS waktu
       FROM tpenawaran_hdr h
       LEFT JOIN tdivisi d ON d.kode = h.pen_divisi
       WHERE DATE(h.date_create) = CURDATE()
@@ -1257,22 +1272,41 @@ const getAktivitasHariIni = async () => {
 
       -- Invoice baru hari ini
       SELECT
-        'INVOICE'                            AS jenis,
-        a.inv_nomor                          AS nomor,
-        a.inv_keterangan                     AS nama,
-        p.perush_nama                        AS divisi,
-        DATE_FORMAT(IFNULL(a.date_create, a.inv_tanggal), '%H:%i') AS jam,
-        IFNULL(a.date_create, a.inv_tanggal)                        AS waktu
+        'INVOICE'                                                            AS jenis,
+        a.inv_nomor                                                          AS nomor,
+        a.inv_keterangan                                                     AS nama,
+        p.perush_nama                                                        AS divisi,
+        DATE_FORMAT(IFNULL(a.date_create, a.inv_tanggal), '%H:%i')          AS jam,
+        IFNULL(a.date_create, a.inv_tanggal)                                AS waktu
       FROM tinv_hdr a
       LEFT JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
       WHERE (DATE(a.inv_tanggal) = CURDATE() OR DATE(a.date_create) = CURDATE())
         AND a.inv_status_otomatis <> 1
     ) akt
     ORDER BY waktu DESC
-    LIMIT 20
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+const getAktivitasHariIniCount = async () => {
+  const sql = `
+    SELECT SUM(cnt) AS total FROM (
+      SELECT COUNT(*) AS cnt FROM tspk
+        WHERE (DATE(spk_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND spk_aktif = 'Y'
+      UNION ALL
+      SELECT COUNT(*) FROM tmemospk
+        WHERE (DATE(mspk_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND mspk_aktif = 'Y'
+      UNION ALL
+      SELECT COUNT(*) FROM tpenawaran_hdr WHERE DATE(date_create) = CURDATE()
+      UNION ALL
+      SELECT COUNT(*) FROM tinv_hdr
+        WHERE (DATE(inv_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND inv_status_otomatis <> 1
+    ) x
   `;
   const [rows] = await db.query(sql);
-  return rows;
+  return Number(rows[0]?.total || 0);
 };
 
 // ── 3. Trend SPK 7 hari terakhir (untuk C3 chart) ──
@@ -1360,6 +1394,7 @@ module.exports = {
   getMapBelumKirim,
   getSpkBelumMkbCount,
   getAktivitasHariIni,
+  getAktivitasHariIniCount,
   getTrendSpk7Hari,
   getApprovalPendingCount,
 };

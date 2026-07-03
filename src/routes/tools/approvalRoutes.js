@@ -138,4 +138,18 @@ router.post(
   controller.submitPlafonOtorisasi,
 );
 
+// --- APPROVAL MUTASI PRODUKSI TANPA PLANNING PPIC (MENU_ID: 266) ---
+router.get(
+  "/mutasi-noplan",
+  verifyToken,
+  checkPermission(266, "view"),
+  controller.getMutasiNoPlanList,
+);
+router.post(
+  "/mutasi-noplan/otorisasi",
+  verifyToken,
+  checkPermission(266, "edit"),
+  controller.submitMutasiNoPlanOtorisasi,
+);
+
 module.exports = router;

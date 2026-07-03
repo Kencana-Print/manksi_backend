@@ -530,6 +530,106 @@ const getPrintData = async (nomor) => {
   return rows[0];
 };
 
+// --- AUTOCOMPLETE NAMA PEKERJAAN ---
+const getNamaSuggestions = async (keyword, divisi, cusKode) => {
+  // Return nama unik yang pernah dipakai untuk kombinasi divisi + customer
+  // Sorted by frekuensi pemakaian (paling sering muncul dulu)
+  const query = `
+    SELECT mspk_nama AS nama, COUNT(*) AS frekuensi
+    FROM tmemospk
+    WHERE mspk_nama LIKE ?
+      AND mspk_divisi = ?
+      AND mspk_cus_kode = ?
+      AND mspk_aktif = 'Y'
+    GROUP BY mspk_nama
+    ORDER BY frekuensi DESC, mspk_nama ASC
+    LIMIT 10
+  `;
+  const [rows] = await db.query(query, [`%${keyword}%`, divisi, cusKode]);
+  return rows.map((r) => ({ nama: r.nama, frekuensi: Number(r.frekuensi) }));
+};
+
+// --- CEK DUPLIKAT NAMA PEKERJAAN ---
+const checkDuplikatNama = async (nama, divisi, cusKode, excludeNomor = "") => {
+  // Cek apakah nama yang sama pernah diinput untuk divisi + customer yang sama
+  // dan masih aktif (bukan revisi)
+  let query = `
+    SELECT mspk_nomor, mspk_tanggal, mspk_jo_kode,
+           DATE_FORMAT(mspk_tanggal, '%d-%b-%Y') AS tgl_formatted
+    FROM tmemospk
+    WHERE mspk_nama = ?
+      AND mspk_divisi = ?
+      AND mspk_cus_kode = ?
+      AND mspk_aktif = 'Y'
+      AND mspk_revisi = 'N'
+  `;
+  const params = [nama, divisi, cusKode];
+
+  if (excludeNomor) {
+    query += ` AND mspk_nomor <> ?`;
+    params.push(excludeNomor);
+  }
+
+  query += ` ORDER BY mspk_tanggal DESC LIMIT 5`;
+
+  const [rows] = await db.query(query, params);
+  return rows; // array of { mspk_nomor, tgl_formatted, mspk_jo_kode }
+};
+
+// --- GET KATALOG HISTORI PESANAN CUSTOMER (LAZY LOADING) ---
+const getKatalogCustomer = async (
+  cusKode,
+  divisi = "",
+  keyword = "",
+  page = 1,
+  limit = 20,
+) => {
+  const offset = (page - 1) * limit;
+
+  // 1. Ambil Total Data Keseluruhan (tanpa limit)
+  let countQuery = `SELECT COUNT(*) AS total FROM tmemospk WHERE mspk_cus_kode = ? AND mspk_aktif = 'Y' AND mspk_revisi = 'N'`;
+  const countParams = [cusKode];
+
+  if (divisi && divisi !== "SEMUA") {
+    countQuery += ` AND mspk_divisi = ?`;
+    countParams.push(divisi);
+  }
+  if (keyword) {
+    countQuery += ` AND mspk_nama LIKE ?`;
+    countParams.push(`%${keyword}%`);
+  }
+  const [countRows] = await db.query(countQuery, countParams);
+  const totalData = countRows[0].total;
+
+  // 2. Ambil Data Sesuai Halaman (Limit & Offset)
+  let query = `
+    SELECT 
+      mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tanggal, '%d-%b-%Y') AS tanggal_pesanan,
+      mspk_tanggal, mspk_jumlah, mspk_harga, mspk_kain, mspk_gramasi, 
+      mspk_keterangan, mspk_cab, mspk_divisi, mspk_statuskerja
+    FROM tmemospk
+    WHERE mspk_cus_kode = ? AND mspk_aktif = 'Y' AND mspk_revisi = 'N'
+  `;
+  const params = [cusKode];
+
+  if (divisi && divisi !== "SEMUA") {
+    query += ` AND mspk_divisi = ?`;
+    params.push(divisi);
+  }
+  if (keyword) {
+    query += ` AND mspk_nama LIKE ?`;
+    params.push(`%${keyword}%`);
+  }
+
+  query += ` ORDER BY mspk_tanggal DESC LIMIT ? OFFSET ?`;
+  params.push(Number(limit), Number(offset));
+
+  const [rows] = await db.query(query, params);
+
+  // Kembalikan items dan totalnya
+  return { items: rows, total: totalData };
+};
+
 module.exports = {
   generateNomor,
   getInitGrids,
@@ -539,4 +639,7 @@ module.exports = {
   save,
   processImage,
   getPrintData,
+  getNamaSuggestions,
+  checkDuplikatNama,
+  getKatalogCustomer,
 };

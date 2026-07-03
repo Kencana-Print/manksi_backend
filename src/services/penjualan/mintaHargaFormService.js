@@ -694,10 +694,79 @@ const processImage = async (tempFilePath, nomorMh, cabang) => {
   }
 };
 
+// --- GET KATALOG HISTORI PERMINTAAN HARGA CUSTOMER (LAZY LOADING) ---
+const getKatalogCustomer = async (
+  cusKode,
+  divisi = "",
+  keyword = "",
+  page = 1,
+  limit = 20,
+) => {
+  const offset = (page - 1) * limit;
+
+  // 1. Hitung Total Data (Tanpa Limit)
+  // Asumsi: Kita tampilkan semua yang bukan CANCEL
+  let countQuery = `
+    SELECT COUNT(*) AS total 
+    FROM tmintaharga 
+    WHERE mh_cus_kode = ? AND mh_status <> 'CANCEL'
+  `;
+  const countParams = [cusKode];
+
+  if (divisi && divisi !== "SEMUA") {
+    countQuery += ` AND mh_divisi = ?`;
+    countParams.push(divisi);
+  }
+  if (keyword) {
+    countQuery += ` AND mh_nama LIKE ?`;
+    countParams.push(`%${keyword}%`);
+  }
+
+  const [countRows] = await db.query(countQuery, countParams);
+  const totalData = countRows[0].total;
+
+  // 2. Ambil Data Sesuai Halaman (Limit & Offset)
+  let query = `
+    SELECT 
+      mh_nomor, 
+      mh_nama, 
+      DATE_FORMAT(mh_tanggal, '%d-%b-%Y') AS tanggal_pesanan,
+      mh_tanggal, 
+      mh_jmlorder AS jumlah, 
+      mh_harga AS harga, 
+      mh_kain, 
+      mh_gramasi, 
+      mh_ket AS keterangan, 
+      mh_cabkaos AS cabang, 
+      mh_divisi, 
+      mh_status
+    FROM tmintaharga
+    WHERE mh_cus_kode = ? AND mh_status <> 'CANCEL'
+  `;
+  const params = [cusKode];
+
+  if (divisi && divisi !== "SEMUA") {
+    query += ` AND mh_divisi = ?`;
+    params.push(divisi);
+  }
+  if (keyword) {
+    query += ` AND mh_nama LIKE ?`;
+    params.push(`%${keyword}%`);
+  }
+
+  query += ` ORDER BY mh_tanggal DESC, mh_nomor DESC LIMIT ? OFFSET ?`;
+  params.push(Number(limit), Number(offset));
+
+  const [rows] = await db.query(query, params);
+
+  return { items: rows, total: totalData };
+};
+
 module.exports = {
   getById,
   getKalkulasiMetadata,
   save,
   updateNomorKalkulasi,
   processImage,
+  getKatalogCustomer,
 };

@@ -279,7 +279,9 @@ const getSpkBelumMkbCount = async (req, res) => {
 
 const getAktivitasHariIni = async (req, res) => {
   try {
-    const data = await service.getAktivitasHariIni();
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getAktivitasHariIni(limit, offset);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

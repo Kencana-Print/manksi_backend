@@ -30,7 +30,8 @@ const getBrowse = async (startDate, endDate, divisiId) => {
         IFNULL((SELECT COUNT(c.sk_nomor) FROM tspk_komponen_cetak c WHERE c.sk_nomor=s.spk_nomor), 0) AS xcetak,
         IFNULL((SELECT COUNT(r.sk_nomor) FROM tspk_komponen_bordir r WHERE r.sk_nomor=s.spk_nomor), 0) AS xbordir
       FROM tspk s
-      WHERE s.spk_cmo <> "" 
+      WHERE s.spk_is_so = 0
+        AND s.spk_cmo <> "" 
         AND s.spk_aktif = "Y" 
         AND s.spk_jo_kode NOT IN ("BR","SB","SD","PL")
         AND s.spk_close = 0 
@@ -49,18 +50,22 @@ const getBrowse = async (startDate, endDate, divisiId) => {
 // Query Detail (Saat baris di expand)
 const getDetail = async (spkNomor) => {
   const query = `
-    SELECT x.Nomor, x.Kode, b.Bhn_Name AS Komponen, x.Lini 
+    SELECT x.Nomor, x.Kode, b.Bhn_Name AS Komponen, x.Lini, x.Proses, x.Penempatan, x.Ukuran
     FROM (
-      SELECT p.sk_nomor AS Nomor, p.sk_kode AS Kode, 'POTONG' AS Lini FROM tspk_komponen_potong p WHERE p.sk_nomor = ?
+      SELECT sk_nomor AS Nomor, sk_kode AS Kode,
+             'POTONG' AS Lini, '' AS Proses, '' AS Penempatan, '' AS Ukuran
+      FROM tspk_komponen_potong
+      WHERE sk_nomor = ?
       UNION ALL
-      SELECT c.sk_nomor AS Nomor, c.sk_kode AS Kode, 'CETAK' AS Lini FROM tspk_komponen_cetak c WHERE c.sk_nomor = ?
-      UNION ALL
-      SELECT r.sk_nomor AS Nomor, r.sk_kode AS Kode, 'BORDIR' AS Lini FROM tspk_komponen_bordir r WHERE r.sk_nomor = ?
+      SELECT kcb_nomor, kcb_kode,
+             'SECOND PROCESS', kcb_proses, kcb_penempatan, kcb_ukuran
+      FROM tspk_komponen_cetak_bordir
+      WHERE kcb_nomor = ?
     ) x
     LEFT JOIN tbahan b ON b.Bhn_kode = x.Kode
-    ORDER BY x.lini, x.kode
+    ORDER BY x.Lini, x.Kode
   `;
-  const [rows] = await db.query(query, [spkNomor, spkNomor, spkNomor]);
+  const [rows] = await db.query(query, [spkNomor, spkNomor]);
   return rows;
 };
 

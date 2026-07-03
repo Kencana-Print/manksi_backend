@@ -57,26 +57,37 @@ const loadKomponenLini = async (nomor, map, lini) => {
 
 const getFormLoadData = async (nomor) => {
   const spk = await getSpkInfo(nomor);
-  const map = spk.spk_memo;
 
-  // Load data untuk ke-3 grid sekaligus (paralel agar cepat)
-  const [potong, cetak, bordir] = await Promise.all([
-    loadKomponenLini(nomor, map, "POTONG"),
-    loadKomponenLini(nomor, map, "CETAK"),
-    loadKomponenLini(nomor, map, "BORDIR"),
-  ]);
+  const [potong] = await db.query(
+    `SELECT a.sk_kode AS Kode, b.Bhn_Name AS Nama
+     FROM tspk_komponen_potong a
+     LEFT JOIN tbahan b ON b.Bhn_kode = a.sk_kode
+     WHERE a.sk_nomor = ?
+     ORDER BY a.sk_nourut ASC`,
+    [nomor],
+  );
+
+  const [cetakBordir] = await db.query(
+    `SELECT a.kcb_kode AS Kode, b.Bhn_Name AS Nama,
+            a.kcb_proses AS Proses, a.kcb_penempatan AS Penempatan,
+            a.kcb_ukuran AS Ukuran
+     FROM tspk_komponen_cetak_bordir a
+     LEFT JOIN tbahan b ON b.Bhn_kode = a.kcb_kode
+     WHERE a.kcb_nomor = ?
+     ORDER BY a.kcb_nourut ASC`,
+    [nomor],
+  );
 
   return {
     NomorSPK: spk.spk_nomor,
     NamaBarang: spk.spk_nama,
     JenisBarang: spk.jo_nama,
     Jumlah: spk.spk_jumlah,
-    Map: map,
+    Map: spk.spk_memo,
     Cetak: spk.spk_sablon === "Y" || spk.spk_sublim === "Y",
     Bordir: spk.spk_bordir === "Y",
     ListPotong: potong,
-    ListCetak: cetak,
-    ListBordir: bordir,
+    ListCetakBordir: cetakBordir,
   };
 };
 
@@ -96,47 +107,40 @@ const saveForm = async (nomor, payload) => {
   try {
     await conn.beginTransaction();
 
-    // 1. Bersihkan data lama
-    await conn.query("DELETE FROM tspk_komponen_potong WHERE sk_nomor = ?", [
+    await conn.query(`DELETE FROM tspk_komponen_potong WHERE sk_nomor = ?`, [
       nomor,
     ]);
-    await conn.query("DELETE FROM tspk_komponen_cetak WHERE sk_nomor = ?", [
-      nomor,
-    ]);
-    await conn.query("DELETE FROM tspk_komponen_bordir WHERE sk_nomor = ?", [
-      nomor,
-    ]);
+    await conn.query(
+      `DELETE FROM tspk_komponen_cetak_bordir WHERE kcb_nomor = ?`,
+      [nomor],
+    );
 
-    // 2. Insert Potong
-    if (payload.ListPotong && payload.ListPotong.length > 0) {
-      const potongVals = payload.ListPotong.map((p, i) => [
+    const potongRows = (payload.ListPotong || []).filter((p) => p.Kode);
+    if (potongRows.length > 0) {
+      const vals = potongRows.map((p, i) => [nomor, p.Kode, i + 1]);
+      await conn.query(
+        `INSERT INTO tspk_komponen_potong (sk_nomor, sk_kode, sk_nourut) VALUES ?`,
+        [vals],
+      );
+    }
+
+    const cbRows = (payload.ListCetakBordir || []).filter(
+      (p) => p.Kode && p.Proses,
+    );
+    if (cbRows.length > 0) {
+      const vals = cbRows.map((p, i) => [
         nomor,
         p.Kode,
+        p.Proses,
+        p.Penempatan || "",
+        p.Ukuran || "",
         i + 1,
       ]);
       await conn.query(
-        "INSERT INTO tspk_komponen_potong (sk_nomor, sk_kode, sk_nourut) VALUES ?",
-        [potongVals],
-      );
-    }
-    // 3. Insert Cetak
-    if (payload.ListCetak && payload.ListCetak.length > 0) {
-      const cetakVals = payload.ListCetak.map((p, i) => [nomor, p.Kode, i + 1]);
-      await conn.query(
-        "INSERT INTO tspk_komponen_cetak (sk_nomor, sk_kode, sk_nourut) VALUES ?",
-        [cetakVals],
-      );
-    }
-    // 4. Insert Bordir
-    if (payload.ListBordir && payload.ListBordir.length > 0) {
-      const bordirVals = payload.ListBordir.map((p, i) => [
-        nomor,
-        p.Kode,
-        i + 1,
-      ]);
-      await conn.query(
-        "INSERT INTO tspk_komponen_bordir (sk_nomor, sk_kode, sk_nourut) VALUES ?",
-        [bordirVals],
+        `INSERT INTO tspk_komponen_cetak_bordir
+         (kcb_nomor, kcb_kode, kcb_proses, kcb_penempatan, kcb_ukuran, kcb_nourut)
+         VALUES ?`,
+        [vals],
       );
     }
 

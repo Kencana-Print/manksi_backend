@@ -856,6 +856,68 @@ const approvalPlafon = async (cusKode, statusAcc, userKode, userBagian) => {
   };
 };
 
+// =========================================================================
+// APPROVAL MUTASI PRODUKSI TANPA PLANNING PPIC (MENU_ID: 266)
+// =========================================================================
+const getMutasiNoPlanList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_trs = 'MUTASI PRODUKSI NOPLAN' AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT
+      p.pin_nomor          AS Nomor,
+      h.mph_spk_nomor      AS NomorSpk,
+      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
+      h.mph_gdgasal        AS GdgAsal,
+      h.mph_gdgtujuan      AS GdgTujuan,
+      DATE_FORMAT(h.mph_tanggal, "%d-%m-%Y") AS Tanggal,
+      p.pin_ket             AS Keterangan,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta      AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s")   AS TglAcc,
+      p.pin_user_pin        AS Otorisasi,
+      p.pin_acc             AS Acc
+    FROM tspk_pin5 p
+    LEFT JOIN tmutasiproduksi_hdr h ON h.MPH_nomor = p.pin_nomor
+    LEFT JOIN tspk s     ON s.spk_nomor  = h.mph_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.mph_spk_nomor
+    ${sqlCondition}
+    ORDER BY p.pin_tgl_minta DESC
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+const submitMutasiNoPlanOtorisasi = async (nomor, statusAcc, userKode) => {
+  await db.query(
+    `UPDATE tspk_pin5 SET
+       pin_tgl_pin = NOW(),
+       pin_user_pin = ?,
+       pin_acc = ?
+     WHERE pin_trs = 'MUTASI PRODUKSI NOPLAN' AND pin_nomor = ? AND pin_urut = 1`,
+    [userKode, statusAcc, nomor],
+  );
+  const [userMinta] = await db.query(
+    `SELECT pin_user_minta FROM tspk_pin5
+     WHERE pin_trs = 'MUTASI PRODUKSI NOPLAN' AND pin_nomor = ? AND pin_urut = 1 LIMIT 1`,
+    [nomor],
+  );
+  return {
+    nomor,
+    peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+  };
+};
+
 module.exports = {
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
@@ -874,4 +936,6 @@ module.exports = {
   submitHapusDataOtorisasi,
   getPlafonList,
   approvalPlafon,
+  getMutasiNoPlanList,
+  submitMutasiNoPlanOtorisasi,
 };

@@ -166,6 +166,84 @@ const setCloseManual = async (nomor, alasan) => {
   return result;
 };
 
+/**
+ * Menyimpan approval realisasi (update field promin_apv)
+ * Sesuai dengan logika (Key =VK_F7) di Delphi
+ */
+const saveApproveRealisasi = async (nomorRealisasi) => {
+  // ── RAKIT WAKTU (WIB) MANUAL DARI NODE.JS ──
+  const getLocalTime = () => {
+    const d = new Date();
+    // Konversi ke zona waktu Indonesia (WIB)
+    const wibDate = new Date(
+      d.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+    );
+    const pad = (n) => String(n).padStart(2, "0");
+
+    // Format akhir: YYYY-MM-DD HH:mm:ss
+    return `${wibDate.getFullYear()}-${pad(wibDate.getMonth() + 1)}-${pad(wibDate.getDate())} ${pad(wibDate.getHours())}:${pad(wibDate.getMinutes())}:${pad(wibDate.getSeconds())}`;
+  };
+
+  const exactTime = getLocalTime();
+
+  const query = `
+    UPDATE tproduksiminta_hdr 
+    SET promin_apv = ? 
+    WHERE promin_nomor = ?
+  `;
+
+  // Lempar exactTime hasil rakitan JS ke parameter kueri
+  const [result] = await db.query(query, [exactTime, nomorRealisasi]);
+
+  if (result.affectedRows === 0) {
+    throw new Error("Data realisasi tidak ditemukan atau gagal diupdate.");
+  }
+
+  return result;
+};
+
+// Approve Gudang
+const saveApproveGudang = async (nomor, capv, userKode, alasan) => {
+  const query = `
+    UPDATE tproduksiminta_hdr 
+    SET promin_apv_gudang = ?, 
+        promin_apv_gudang_by = ?, 
+        promin_apv_gudang_alasan = ? 
+    WHERE promin_nomor = ?
+  `;
+  return await db.query(query, [capv, userKode, alasan, nomor]);
+};
+
+// Approve Manager
+const saveApproveManager = async (nomor, capv, userKode, alasan) => {
+  const query = `
+    UPDATE tproduksiminta_hdr 
+    SET promin_apv_mgr = ?, 
+        promin_apv_mgr_by = ?, 
+        promin_apv_mgr_alasan = ? 
+    WHERE promin_nomor = ?
+  `;
+  return await db.query(query, [capv, userKode, alasan, nomor]);
+};
+
+// Ajukan Perubahan
+const submitAjukanPerubahan = async (
+  nomor,
+  urut,
+  tgl,
+  spk,
+  userKode,
+  alasan,
+) => {
+  // Diasumsikan ada tabel log atau update ke header/detail
+  const query = `
+    INSERT INTO tproduksiminta_ubah (
+      promin_nomor, urut, tgl_ubah, spk_ubah, user_ubah, alasan_ubah, tgl_input
+    ) VALUES (?, ?, ?, ?, ?, ?, NOW())
+  `;
+  return await db.query(query, [nomor, urut, tgl, spk, userKode, alasan]);
+};
+
 module.exports = {
   getBrowse,
   getDetailBahan,
@@ -174,4 +252,8 @@ module.exports = {
   checkPendingApproval,
   deleteMintaBahan,
   setCloseManual,
+  saveApproveRealisasi,
+  saveApproveGudang,
+  saveApproveManager,
+  submitAjukanPerubahan,
 };

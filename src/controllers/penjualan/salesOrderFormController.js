@@ -122,6 +122,49 @@ const checkHakTopUrgent = async (req, res) => {
   }
 };
 
+const getInitSizes = async (req, res) => {
+  try {
+    const data = await service.getInitSizes();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getStandarUkuran = async (req, res) => {
+  try {
+    const { joKode, varian } = req.query;
+    const data = await service.getStandarUkuran(joKode, varian || "STANDAR");
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKatalogCustomer = async (req, res) => {
+  try {
+    const { cusKode } = req.params;
+    const { divisi = "", q = "", page = 1, limit = 20 } = req.query;
+
+    if (!cusKode || cusKode.trim() === "") {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
+    const result = await service.getKatalogCustomer(
+      cusKode,
+      divisi,
+      q.trim(),
+      parseInt(page),
+      parseInt(limit),
+    );
+    res
+      .status(200)
+      .json({ success: true, data: result.items, total: result.total });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getDetail,
   save,
@@ -130,4 +173,7 @@ module.exports = {
   uploadImage,
   getDatelineLimits,
   checkHakTopUrgent,
+  getInitSizes,
+  getStandarUkuran,
+  getKatalogCustomer,
 };

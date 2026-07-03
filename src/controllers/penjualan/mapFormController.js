@@ -96,6 +96,64 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const getNamaSuggestions = async (req, res) => {
+  try {
+    const { q = "", divisi = "", cusKode = "" } = req.query;
+    if (!q.trim() || !divisi || !cusKode) {
+      return res.json({ success: true, data: [] });
+    }
+    const data = await mapFormService.getNamaSuggestions(
+      q.trim(),
+      divisi,
+      cusKode,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const checkDuplikatNama = async (req, res) => {
+  try {
+    const {
+      nama = "",
+      divisi = "",
+      cusKode = "",
+      excludeNomor = "",
+    } = req.query;
+    if (!nama.trim() || !divisi || !cusKode) {
+      return res.json({ success: true, data: [] });
+    }
+    const data = await mapFormService.checkDuplikatNama(
+      nama.trim(),
+      divisi,
+      cusKode,
+      excludeNomor,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getKatalogCustomer = async (req, res) => {
+  try {
+    const { cusKode } = req.params;
+    const { divisi = "", q = "", page = 1, limit = 20 } = req.query;
+
+    if (!cusKode || cusKode.trim() === "") {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
+    const result = await mapFormService.getKatalogCustomer(cusKode, divisi, q.trim(), parseInt(page), parseInt(limit));
+    
+    // Kirim data array (items) dan nilai total
+    res.status(200).json({ success: true, data: result.items, total: result.total });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getInitGrids,
   getSpkInformasi,
@@ -104,4 +162,7 @@ module.exports = {
   save,
   uploadImage,
   getPrintData,
+  getNamaSuggestions,
+  checkDuplikatNama,
+  getKatalogCustomer, 
 };

@@ -333,6 +333,43 @@ const submitPlafonOtorisasi = async (req, res) => {
   }
 };
 
+// =========================================================================
+// APPROVAL MUTASI PRODUKSI TANPA PLANNING PPIC (MENU_ID: 266)
+// =========================================================================
+const getMutasiNoPlanList = async (req, res) => {
+  try {
+    const data = await service.getMutasiNoPlanList(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const submitMutasiNoPlanOtorisasi = async (req, res) => {
+  try {
+    const { nomor, status_acc } = req.body;
+    const userKode = req.user.kode;
+    if (!nomor || !status_acc) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor dan Status ACC wajib diisi",
+      });
+    }
+    const result = await service.submitMutasiNoPlanOtorisasi(
+      nomor,
+      status_acc,
+      userKode,
+    );
+    res.status(200).json({
+      success: true,
+      message: `Berhasil.\nSilahkan info ke ${result.peminta}`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMasterData,
   getPengajuanDtl,
@@ -351,4 +388,6 @@ module.exports = {
   submitHapusDataOtorisasi,
   getPlafonList,
   submitPlafonOtorisasi,
+  getMutasiNoPlanList,
+  submitMutasiNoPlanOtorisasi,
 };

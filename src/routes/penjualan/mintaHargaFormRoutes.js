@@ -19,6 +19,13 @@ router.post(
   controller.uploadImage,
 );
 
+// --- ROUTE KATALOG CUSTOMER (TAMBAHKAN DI SINI) ---
+router.get(
+  "/katalog/customer/:cusKode",
+  verifyToken,
+  controller.getKatalogCustomer,
+);
+
 // Load Data
 router.get(
   "/:nomor",
