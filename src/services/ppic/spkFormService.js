@@ -21,7 +21,7 @@ const generateNomor = async (perushKode, joKode, conn = db) => {
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-  const nextVal = rows[0].jumlah + 1;
+  const nextVal = Number(rows[0].jumlah) + 1; // ← FIX: paksa Number()
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 

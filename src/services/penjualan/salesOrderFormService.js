@@ -8,14 +8,14 @@ const tutupBukuService = require("../tutupBukuService");
 // Sesuai Delphi: getmaxnomor(akodeperus, akodejo) -> 'SM-KA-000001'
 const generateNomor = async (perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
-  // prefix.length + 1 = posisi digit urut, dinamis mengikuti panjang kode
   const [rows] = await db.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
      FROM tspk
-     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?`,
+     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
+     FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-  const nextVal = rows[0].jumlah + 1;
+  const nextVal = Number(rows[0].jumlah) + 1; // ← FIX: paksa Number()
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
