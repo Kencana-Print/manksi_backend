@@ -44,5 +44,12 @@ router.put(
   checkPermission(MENU_ID, "edit"),
   controller.approveCmo,
 );
+router.get("/:nomor/print-check", verifyToken, controller.checkPrintPermission);
+router.post(
+  "/:nomor/request-print-approval",
+  verifyToken,
+  controller.requestPrintApproval,
+);
+router.post("/:nomor/record-print", verifyToken, controller.recordPrint);
 
 module.exports = router;

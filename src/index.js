@@ -170,6 +170,7 @@ const cekGagalLinkRoutes = require("./routes/laporan/piutang/cekGagalLinkRoutes"
 
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
+const userFormRoutes = require("./routes/tools/userFormRoutes");
 const approvalRoutes = require("./routes/tools/approvalRoutes");
 
 const app = express();
@@ -358,6 +359,7 @@ app.use("/api/laporan/piutang/daftar-penerimaan", daftarPenerimaanRoutes);
 app.use("/api/laporan/piutang/cek-gagal-link", cekGagalLinkRoutes);
 
 app.use("/api/tools/users", userRoutes);
+app.use("/api/tools/user-form", userFormRoutes);
 app.use("/api/tools/approval", approvalRoutes);
 
 const PORT = process.env.PORT || 3088;

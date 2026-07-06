@@ -102,6 +102,15 @@ const getBrowseList = async (filters) => {
         IFNULL((SELECT pin_acc FROM tspk_pin5 WHERE pin_trs="SPK" AND pin_nomor=s.spk_nomor ORDER BY pin_urut DESC LIMIT 1),"") AS pin_acc,
         IFNULL((SELECT pin_dipakai FROM tspk_pin5 WHERE pin_trs="SPK" AND pin_nomor=s.spk_nomor ORDER BY pin_urut DESC LIMIT 1),"") AS pin_dipakai,
         IFNULL((SELECT IF(pin_acc="" AND pin_dipakai="","WAIT",IF(pin_acc="Y" AND pin_dipakai="","ACC",IF(pin_acc="N","TOLAK",""))) FROM tspk_pin5 WHERE pin_trs="SPK" AND pin_nomor=s.spk_nomor ORDER BY pin_urut DESC LIMIT 1),"") AS Ngedit,
+        IFNULL(s.spk_cetak_count, 0) AS CetakCount,
+        IFNULL((
+          SELECT IF(pin_acc="Y" AND pin_dipakai="", "ACC_READY",
+                IF(pin_acc="", "WAIT",
+                IF(pin_acc="N", "TOLAK", "")))
+          FROM tspk_pin5
+          WHERE pin_trs="SPK CETAK ULANG" AND pin_nomor=s.spk_nomor
+          ORDER BY pin_urut DESC LIMIT 1
+        ), "") AS CetakApprovalStatus,
         IF(s.spk_divisi=5 AND (LENGTH(s.spk_repeat)>5 OR LENGTH(s.spk_memo)>5), l.lch_tanggal, k.lds_tgl) AS Design_Tanggal,
         k.lds_user AS Design_User, k.lds_note AS Design_Note
       FROM tspk s
@@ -261,6 +270,103 @@ const approveCmo = async (nomor, userKode) => {
   ]);
 };
 
+// ─────────────────────────────────────────────────────────
+// CETAK SPK — dibatasi 1x bebas, cetak ke-2 dst wajib approval
+// (mirip pola pin5, tapi HARD-BLOCK: dicegah sampai di-ACC,
+// bukan soft-flag seperti Mutasi Produksi NoPlan)
+// ─────────────────────────────────────────────────────────
+const checkPrintPermission = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT spk_cetak_count FROM tspk WHERE spk_nomor = ?`,
+    [nomor],
+  );
+  if (rows.length === 0) throw new Error("SPK tidak ditemukan.");
+  const count = Number(rows[0].spk_cetak_count) || 0;
+
+  if (count === 0) {
+    return { allowed: true, count, needApproval: false, approvalStatus: "" };
+  }
+
+  // Sudah pernah dicetak minimal 1x — cek approval pending/ACC terbaru
+  const [pinRows] = await db.query(
+    `SELECT pin_acc, pin_dipakai FROM tspk_pin5
+     WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ?
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  if (pinRows.length === 0) {
+    return { allowed: false, count, needApproval: true, approvalStatus: "" };
+  }
+  const pin = pinRows[0];
+  if (pin.pin_acc === "Y" && pin.pin_dipakai === "") {
+    // Sudah di-ACC dan belum dipakai — boleh cetak 1x, akan ditandai
+    // "dipakai" begitu recordPrint dipanggil setelah cetak berhasil.
+    return { allowed: true, count, needApproval: false, approvalStatus: "ACC" };
+  }
+  const status =
+    pin.pin_acc === "N" ? "TOLAK" : pin.pin_acc === "" ? "WAIT" : "";
+  return { allowed: false, count, needApproval: true, approvalStatus: status };
+};
+
+const requestPrintApproval = async (nomor, alasan, userKode) => {
+  const [spk] = await db.query(
+    `SELECT spk_nama, spk_tanggal FROM tspk WHERE spk_nomor = ?`,
+    [nomor],
+  );
+  if (spk.length === 0) throw new Error("SPK tidak ditemukan.");
+
+  const [lastPin] = await db.query(
+    `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+     WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ?
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  let urut = 1;
+  if (lastPin.length > 0) {
+    urut =
+      lastPin[0].pin_dipakai === ""
+        ? lastPin[0].pin_urut
+        : lastPin[0].pin_urut + 1;
+  }
+
+  await db.query(
+    `INSERT INTO tspk_pin5
+       (pin_trs, pin_jenis, pin_nomor, pin_urut, pin_tgl_trs, pin_ket,
+        pin_tgl_minta, pin_user_minta, pin_alasan, pin_acc, pin_dipakai)
+     VALUES ('SPK CETAK ULANG', 'CETAK', ?, ?, ?, ?, NOW(), ?, ?, '', '')
+     ON DUPLICATE KEY UPDATE
+       pin_acc = '', pin_dipakai = '', pin_tgl_minta = NOW(),
+       pin_user_minta = VALUES(pin_user_minta),
+       pin_alasan = VALUES(pin_alasan)`,
+    [nomor, urut, spk[0].spk_tanggal, spk[0].spk_nama, userKode, alasan || ""],
+  );
+};
+
+// Dipanggil SETELAH cetak berhasil dibuka (increment counter, tandai
+// approval terpakai kalau cetak ini menggunakan approval)
+const recordPrint = async (nomor) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE tspk SET spk_cetak_count = spk_cetak_count + 1, spk_iscetak = 'Y'
+       WHERE spk_nomor = ?`,
+      [nomor],
+    );
+    await conn.query(
+      `UPDATE tspk_pin5 SET pin_dipakai = 'Y'
+       WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ? AND pin_acc = 'Y' AND pin_dipakai = ''`,
+      [nomor],
+    );
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowseList,
   getSizes,
@@ -268,4 +374,7 @@ module.exports = {
   toggleStatus,
   requestPin,
   approveCmo,
+  checkPrintPermission,
+  requestPrintApproval,
+  recordPrint,
 };

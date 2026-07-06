@@ -152,4 +152,19 @@ router.post(
   controller.submitMutasiNoPlanOtorisasi,
 );
 
+// --- APPROVAL SPK CETAK ULANG (MENU_ID: 267) ---
+// routes
+router.get(
+  "/spk-cetak-ulang",
+  verifyToken,
+  checkPermission(267, "view"),
+  controller.getSpkCetakUlangList,
+);
+router.post(
+  "/spk-cetak-ulang/otorisasi",
+  verifyToken,
+  checkPermission(267, "edit"),
+  controller.submitSpkCetakUlangOtorisasi,
+);
+
 module.exports = router;

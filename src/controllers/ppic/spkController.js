@@ -86,6 +86,37 @@ const approveCmo = async (req, res) => {
   }
 };
 
+const checkPrintPermission = async (req, res) => {
+  try {
+    const data = await service.checkPrintPermission(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const requestPrintApproval = async (req, res) => {
+  try {
+    const { alasan } = req.body;
+    const userKode = req.user?.kode || "ADMIN";
+    await service.requestPrintApproval(req.params.nomor, alasan, userKode);
+    res
+      .status(200)
+      .json({ success: true, message: "Pengajuan approval cetak dikirim." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const recordPrint = async (req, res) => {
+  try {
+    await service.recordPrint(req.params.nomor);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getSizes,
@@ -93,4 +124,7 @@ module.exports = {
   toggleClose,
   requestPin,
   approveCmo,
+  checkPrintPermission,
+  requestPrintApproval,
+  recordPrint,
 };

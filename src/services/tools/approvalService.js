@@ -918,6 +918,68 @@ const submitMutasiNoPlanOtorisasi = async (nomor, statusAcc, userKode) => {
   };
 };
 
+// =========================================================================
+// APPROVAL CETAK SPK > 1 KALI (MENU_ID: 267)
+// =========================================================================
+const getSpkCetakUlangList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_trs = 'SPK CETAK ULANG' AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT
+      p.pin_nomor          AS Nomor,
+      s.spk_nama           AS NamaSpk,
+      s.spk_cetak_count     AS SudahCetak,
+      DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
+      p.pin_alasan          AS Alasan,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta      AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s")   AS TglAcc,
+      p.pin_user_pin        AS Otorisasi,
+      p.pin_acc             AS Acc
+    FROM tspk_pin5 p
+    LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
+    ${sqlCondition}
+    ORDER BY p.pin_tgl_minta DESC
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+const submitSpkCetakUlangOtorisasi = async (nomor, statusAcc, userKode) => {
+  await db.query(
+    `UPDATE tspk_pin5 SET
+       pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
+     WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ?
+       AND pin_urut = (
+         SELECT max_urut FROM (
+           SELECT MAX(pin_urut) AS max_urut FROM tspk_pin5
+           WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ?
+         ) t
+       )`,
+    [userKode, statusAcc, nomor, nomor],
+  );
+  const [userMinta] = await db.query(
+    `SELECT pin_user_minta FROM tspk_pin5
+     WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  return {
+    nomor,
+    peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
+  };
+};
+
 module.exports = {
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
@@ -938,4 +1000,6 @@ module.exports = {
   approvalPlafon,
   getMutasiNoPlanList,
   submitMutasiNoPlanOtorisasi,
+  getSpkCetakUlangList,
+  submitSpkCetakUlangOtorisasi,
 };
