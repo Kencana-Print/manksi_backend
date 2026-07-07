@@ -87,6 +87,9 @@ const approveSjRoutes = require("./routes/garmen/poInternalMapApproveRoutes");
 const mutasiProduksiRoutes = require("./routes/garmen/mutasiProduksiRoutes");
 const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRoutes");
 
+const lhkPolaRoutes = require("./routes/garmen/lhkPolaRoutes");
+const lhkPolaFormRoutes = require("./routes/garmen/lhkPolaFormRoutes");
+
 // Pembelian Routes
 const mkbRoutes = require("./routes/pembelian/mkbRoutes");
 const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
@@ -286,6 +289,9 @@ app.use("/api/garmen/po-internal-map/approve", approveSjRoutes);
 
 app.use("/api/garmen/mutasi-produksi", mutasiProduksiRoutes);
 app.use("/api/garmen/mutasi-produksi-form", mutasiProduksiFormRoutes);
+
+app.use("/api/garmen/lhk-pola", lhkPolaRoutes);
+app.use("/api/garmen/lhk-pola-form", lhkPolaFormRoutes);
 
 app.use("/api/penjualan/mppb", mppbRoutes);
 app.use("/api/penjualan/mppb/form", mppbFormRoutes);

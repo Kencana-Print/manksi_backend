@@ -287,8 +287,12 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
   const mh = rows[0];
   if (mh.mh_status === "CANCEL")
     throw new Error("No. Permintaan tsb telah dicancel.");
-  if (Number(mh.mh_harga_kalkulasi) === 0)
-    throw new Error("Belum ada kalkulasi harga untuk No. Permintaan ini.");
+
+  // -----------------------------------------------------------------
+  // HAPUS ATAU KOMENTARI 2 BARIS DI BAWAH INI AGAR HARGA 0 DIPERBOLEHKAN
+  // -----------------------------------------------------------------
+  // if (Number(mh.mh_harga_kalkulasi) === 0)
+  //   throw new Error("Belum ada kalkulasi harga untuk No. Permintaan ini.");
 
   return {
     minta: mh.mh_nomor,
@@ -298,7 +302,7 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
     panjang: Number(mh.mh_panjang) || 0,
     lebar: Number(mh.mh_lebar) || 0,
     qty: Number(mh.mh_jmlorder) || 0,
-    harga: Number(mh.mh_harga_kalkulasi) || 0,
+    harga: Number(mh.mh_harga_kalkulasi) || 0, // Akan bernilai 0
   };
 };
 
@@ -352,5 +356,5 @@ module.exports = {
   getById,
   save,
   getMintaHargaDetail,
-  processImage, // <--- Jangan lupa di-export
+  processImage,
 };
