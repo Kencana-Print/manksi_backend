@@ -28,9 +28,18 @@ const searchSpk = async (
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "so") {
-    // MKB: SO (spk_is_so=1) + MAP dari tmemospk
+    // MKB: SO (tsalesorder = baru, tspk legacy WHERE spk_is_so=1 = lama
+    // pre-migrasi) + MAP dari tmemospk. tspk_is_so=1 TIDAK LAGI menjadi
+    // satu-satunya sumber SO — data SO baru sekarang hidup di
+    // tsalesorder, jadi harus di-UNION juga.
     baseQuery = `
       FROM (
+        SELECT so_nomor AS Nomor, so_nama AS Nama, so_tanggal AS Tanggal,
+               so_jumlah AS Jumlah, so_ukuran AS Ukuran, so_kain AS Kain,
+               so_finishing AS Finishing, so_divisi AS Divisi,
+               so_cmo AS CMO, so_aktif AS Aktif
+        FROM tsalesorder
+        UNION ALL
         SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
                spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain,
                spk_finishing AS Finishing, spk_divisi AS Divisi,
@@ -75,17 +84,32 @@ const searchSpk = async (
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "sj") {
+    // SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1 (lama).
+    // Kolom di-alias spk_* di kedua sisi supaya selectClause di bawah
+    // (yang literal pakai nama kolom spk_nomor, spk_nama, dst untuk
+    // filterMode sj/spk-ppic) tetap bekerja tanpa perlu disentuh.
     const cusKode = options?.cusKode || "";
     const perushKode = options?.perushKode || "";
     const divisi = options?.divisi || "";
-
     baseQuery = `
-    FROM tspk
-    WHERE spk_is_so = 1
-      AND spk_aktif = 'Y'
+    FROM (
+      SELECT so_nomor AS spk_nomor, so_nama AS spk_nama, so_nama2 AS spk_nama2,
+             so_tanggal AS spk_tanggal, so_jumlah AS spk_jumlah,
+             so_ukuran AS spk_ukuran, so_kain AS spk_kain,
+             so_finishing AS spk_finishing, so_divisi AS spk_divisi,
+             so_cmo AS spk_cmo, so_aktif AS spk_aktif,
+             so_cus_kode AS spk_cus_kode, so_perush_kode AS spk_perush_kode
+      FROM tsalesorder
+      UNION ALL
+      SELECT spk_nomor, spk_nama, spk_nama2, spk_tanggal, spk_jumlah,
+             spk_ukuran, spk_kain, spk_finishing, spk_divisi,
+             spk_cmo, spk_aktif, spk_cus_kode, spk_perush_kode
+      FROM tspk
+      WHERE spk_is_so = 1
+    ) spk
+    WHERE spk_aktif = 'Y'
       AND spk_cmo <> ''
   `;
-
     if (cusKode) {
       baseQuery += ` AND spk_cus_kode = ?`;
       params.push(cusKode);
@@ -98,15 +122,22 @@ const searchSpk = async (
       baseQuery += ` AND spk_divisi = ?`;
       params.push(divisi);
     }
-
     if (keyword) {
       whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ? OR spk_nama2 LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
   } else {
-    // Query UNION standar — untuk halaman lain (MKB, dll)
+    // Query UNION standar — untuk halaman lain (MKB, dll). Sekarang
+    // mencakup 3 sumber: tsalesorder (SO baru), tspk (SPK PPIC +
+    // SO legacy, tidak difilter spk_is_so supaya keduanya tetap
+    // tercakup persis seperti perilaku asli), dan tmemospk (MAP).
     baseQuery = `
       FROM (
+        SELECT so_nomor AS Nomor, so_nama AS Nama, so_tanggal AS Tanggal,
+               so_jumlah AS Jumlah, so_ukuran AS Ukuran, so_kain AS Kain,
+               so_finishing AS Finishing, so_divisi AS Divisi, so_cmo AS CMO, so_aktif AS Aktif
+        FROM tsalesorder
+        UNION ALL
         SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
                spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain,
                spk_finishing AS Finishing, spk_divisi AS Divisi, spk_cmo AS CMO, spk_aktif AS Aktif

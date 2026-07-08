@@ -2,6 +2,61 @@ const db = require("../../config/database");
 const ExcelJS = require("exceljs");
 
 // ============================================================
+// HELPER MAPPING — so_* (kolom fisik tsalesorder) -> spk_*
+// (bentuk yang dipakai seluruh logic di bawah, identik dengan
+// kolom tspk). Data SO historis (Delphi/pre-migrasi) tetap hidup
+// di tspk dengan nama kolom spk_* asli, jadi tidak perlu mapping.
+// ============================================================
+const mapSoHeaderRow = (row) => {
+  if (!row) return row;
+  const out = {};
+  for (const [key, val] of Object.entries(row)) {
+    out[key.startsWith("so_") ? "spk_" + key.slice(3) : key] = val;
+  }
+  return out;
+};
+
+// Cari header SO — coba tsalesorder (data baru) dulu, fallback ke
+// tspk legacy (spk_is_so=1, data lama pre-migrasi). Mengembalikan
+// { header, source } dengan header sudah berbentuk spk_* seragam.
+const getSoHeaderUnified = async (soNomor, conn = db) => {
+  const [newRows] = await conn.query(
+    `SELECT * FROM tsalesorder WHERE so_nomor = ?`,
+    [soNomor],
+  );
+  if (newRows.length > 0) {
+    return { header: mapSoHeaderRow(newRows[0]), source: "new" };
+  }
+  const [legacyRows] = await conn.query(
+    `SELECT * FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1`,
+    [soNomor],
+  );
+  if (legacyRows.length > 0) {
+    return { header: legacyRows[0], source: "legacy" };
+  }
+  return { header: null, source: null };
+};
+
+// Ambil size SO — coba tsalesorder_size dulu, fallback tspk_size.
+// Kolom sudah di-alias identik dengan getSizeList (spks_* style)
+// supaya bisa langsung dipakai sebagai sizeSource di saveData.
+const getSoSizeListUnified = async (soNomor) => {
+  const [newRows] = await db.query(
+    `SELECT sos_size AS size, sos_qty AS qty,
+            sos_ld AS ld, sos_pb AS pb,
+            sos_pl_pendek AS pl_pendek, sos_pl_panjang AS pl_panjang,
+            sos_p_bahu AS p_bahu, sos_l_lengan AS l_lengan, sos_l_manset AS l_manset,
+            sos_l_pinggang AS l_pinggang, sos_p_celana AS p_celana,
+            sos_l_panggul AS l_panggul, sos_l_paha AS l_paha,
+            sos_pesak AS pesak, sos_l_lutut AS l_lutut, sos_l_bawah AS l_bawah
+     FROM tsalesorder_size WHERE sos_so_nomor = ? AND sos_qty > 0`,
+    [soNomor],
+  );
+  if (newRows.length > 0) return newRows;
+  return getSizeList(soNomor); // fallback tspk_size, fungsi sudah ada di bawah
+};
+
+// ============================================================
 // SPK PPIC — FORM SERVICE
 // Catatan: file ini KHUSUS SPK PPIC (spk_is_so = 0).
 // Tidak ada validasi piutang/alokasi/kaosan/pin approval — semua
@@ -71,25 +126,39 @@ const getDetail = async (nomor) => {
 };
 
 // --- Ambil data SO sebagai dasar pembuatan SPK PPIC baru ---
+// UNION-aware: cek tsalesorder (SO baru) dulu, fallback ke tspk
+// legacy (SO lama pre-migrasi). JOIN nama (jo_nama, sal_nama, dst)
+// dilakukan terpisah setelah header ditemukan, supaya query dasar
+// tetap sederhana dan sama untuk kedua sumber.
 const getSoSourceDetail = async (soNomor) => {
-  const [so] = await db.query(
-    `SELECT s.*, j.jo_nama, a.sal_nama, p.perush_nama, c.cus_nama, c.cus_perfect
-     FROM tspk s
-     LEFT JOIN tjenisorder j ON s.spk_jo_kode = j.jo_kode
-     LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
-     LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
-     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
-     WHERE s.spk_nomor = ? AND s.spk_is_so = 1`,
-    [soNomor],
-  );
-  if (so.length === 0) throw new Error("Sales Order tidak ditemukan.");
-  if (so[0].spk_aktif !== "Y" || !so[0].spk_cmo) {
+  const { header, source } = await getSoHeaderUnified(soNomor);
+  if (!header) throw new Error("Sales Order tidak ditemukan.");
+  if (header.spk_aktif !== "Y" || !header.spk_cmo) {
     throw new Error("SO ini belum aktif/approved, tidak bisa dibuatkan SPK.");
   }
 
-  const dtlSize = await getSizeList(soNomor);
+  const [[joRow], [salRow], [perushRow], [cusRow]] = await Promise.all([
+    db.query(`SELECT jo_nama FROM tjenisorder WHERE jo_kode = ?`, [
+      header.spk_jo_kode,
+    ]),
+    db.query(`SELECT sal_nama FROM tsales WHERE sal_kode = ?`, [
+      header.spk_sal_kode,
+    ]),
+    db.query(`SELECT perush_nama FROM tperusahaan WHERE perush_kode = ?`, [
+      header.spk_perush_kode,
+    ]),
+    db.query(`SELECT cus_nama, cus_perfect FROM tcustomer WHERE cus_kode = ?`, [
+      header.spk_cus_kode,
+    ]),
+  ]);
+  header.jo_nama = joRow[0]?.jo_nama || "";
+  header.sal_nama = salRow[0]?.sal_nama || "";
+  header.perush_nama = perushRow[0]?.perush_nama || "";
+  header.cus_nama = cusRow[0]?.cus_nama || "";
+  header.cus_perfect = cusRow[0]?.cus_perfect || "N";
 
-  return { header: so[0], dtlSize };
+  const dtlSize = await getSoSizeListUnified(soNomor);
+  return { header, dtlSize, _soSource: source };
 };
 
 // --- Ambil tspk_size (dipakai baik untuk SO sumber maupun SPK) ---
@@ -131,33 +200,27 @@ const saveData = async (payload, user) => {
     await conn.beginTransaction();
 
     let nomor;
-
     if (!isEdit) {
       // --- CREATE: copy header dari SO terpilih ---
+      // UNION-aware: SO sumber bisa berasal dari tsalesorder (baru)
+      // atau tspk legacy (lama, pre-migrasi). Header sudah dalam
+      // bentuk spk_* seragam via getSoHeaderUnified, sehingga
+      // seluruh logic copy-ke-tspk di bawah TIDAK berubah sama sekali.
       if (!so_nomor) throw new Error("No. SO sumber wajib dipilih.");
-
-      const [soRows] = await conn.query(
-        `SELECT * FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1`,
-        [so_nomor],
-      );
-      if (soRows.length === 0) throw new Error("Sales Order tidak ditemukan.");
-      const soHeader = soRows[0];
-
+      const { header: soHeader } = await getSoHeaderUnified(so_nomor, conn);
+      if (!soHeader) throw new Error("Sales Order tidak ditemukan.");
       if (soHeader.spk_aktif !== "Y" || !soHeader.spk_cmo) {
         throw new Error(
           "SO ini belum aktif/approved, tidak bisa dibuatkan SPK.",
         );
       }
-
       nomor = await generateNomor(
         soHeader.spk_perush_kode,
         soHeader.spk_jo_kode,
       );
-
       const newHeader = { ...soHeader };
       delete newHeader.spk_nomor;
       delete newHeader.spk_is_so;
-
       newHeader.spk_nomor = nomor;
       newHeader.spk_is_so = 0;
       newHeader.spk_so_ref = so_nomor;
@@ -168,13 +231,14 @@ const saveData = async (payload, user) => {
       newHeader.date_create = new Date();
       delete newHeader.user_modified;
       delete newHeader.date_modified;
-
       await conn.query(`INSERT INTO tspk SET ?`, [newHeader]);
-
-      // Copy tspk_size dari SO sebagai starting point, lalu override
-      // dengan dtlSize dari payload kalau user sudah sesuaikan di form
+      // Copy size dari SO (tsalesorder_size ATAU tspk_size, tergantung
+      // sumber) sebagai starting point, lalu override dengan dtlSize
+      // dari payload kalau user sudah sesuaikan di form
       const sizeSource =
-        dtlSize && dtlSize.length > 0 ? dtlSize : await getSizeList(so_nomor);
+        dtlSize && dtlSize.length > 0
+          ? dtlSize
+          : await getSoSizeListUnified(so_nomor);
       await saveSizeList(conn, nomor, sizeSource);
 
       // Pindahkan layout proses yang sempat diupload sebelum SPK tersimpan

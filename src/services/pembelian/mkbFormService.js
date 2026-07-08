@@ -72,12 +72,20 @@ const recalcBpbLink = async (conn, mkbNomor) => {
 
 // --- GET DATA FORM (MODE EDIT) ---
 const getDetailForm = async (nomor) => {
+  // Tambahan JOIN ke tsalesorder (SO baru) — sebelumnya cuma tspk
+  // (SPK PPIC + SO legacy) & tmemospk (MAP). Prioritas IFNULL:
+  // tsalesorder -> tspk -> tmemospk.
   const qHdr = `
-    SELECT a.*, IFNULL(s.spk_nama, m.mspk_nama) as namaspk, s.spk_memo,
-           IFNULL(ss.jo_nama, mm.jo_nama) as jenisorder, IFNULL(s.spk_jumlah, m.mspk_jumlah) as jumlahspk
+    SELECT a.*,
+           IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) as namaspk,
+           IFNULL(so.so_memo, s.spk_memo) as spk_memo,
+           IFNULL(joso.jo_nama, IFNULL(ss.jo_nama, mm.jo_nama)) as jenisorder,
+           IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) as jumlahspk
     FROM tmkb_hdr a
+    LEFT JOIN tsalesorder so ON so.so_nomor = a.mkb_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = a.mkb_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = a.mkb_spk_nomor
+    LEFT JOIN tjenisorder joso ON so.so_jo_kode = joso.jo_kode
     LEFT JOIN tjenisorder ss ON s.spk_jo_kode = ss.jo_kode
     LEFT JOIN tjenisorder mm ON m.mspk_jo_kode = mm.jo_kode
     WHERE a.mkb_nomor = ?
@@ -297,10 +305,18 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
   if (existing.length > 0) {
     throw new Error(`SPK tsb sudah dibuatkan MKB No: ${existing[0].mkb_nomor}`);
   }
-
-  // 2. Ambil detail SPK & Planning-nya
+  // 2. Ambil detail SPK & Planning-nya — sekarang mencakup 3 sumber:
+  // tsalesorder (SO baru), tspk (SPK PPIC + SO legacy), tmemospk (MAP).
+  // tbarang tetap dipakai untuk sumber tspk lama (brg_name = nama produk
+  // yang tersimpan saat SO/SPK itu dibuat); untuk tsalesorder, nama
+  // produk sudah langsung ada di kolom so_nama sendiri.
   const qSpk = `
     SELECT * FROM (
+      SELECT so_nomor AS Nomor, so_nama AS Nama, jo_nama AS JenisOrder, so_jumlah AS Jumlah, so_memo AS Memo
+      FROM tsalesorder
+      LEFT JOIN tjenisorder ON so_jo_kode = jo_kode
+      WHERE so_aktif = "Y"
+      UNION ALL
       SELECT spk_nomor AS Nomor, brg_name AS Nama, jo_nama AS JenisOrder, spk_jumlah AS Jumlah, spk_memo AS Memo
       FROM tspk 
       INNER JOIN tbarang ON spk_nomor = brg_kode
@@ -314,12 +330,10 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
   `;
   const [spkRows] = await db.query(qSpk, [nomorSpk]);
   if (spkRows.length === 0) throw new Error("SPK tersebut belum ada.");
-
   const [planRows] = await db.query(
     `SELECT plan_tanggal, plan_datang FROM tplanningspk WHERE plan_datang <> 0 AND plan_spk = ? ORDER BY plan_tanggal`,
     [nomorSpk],
   );
-
   return { info: spkRows[0], planning: planRows };
 };
 
@@ -366,8 +380,8 @@ const getPrintData = async (nomor) => {
       DATE_FORMAT(h.mkb_tanggal, '%d %M %Y') AS Tanggal, 
       h.mkb_note AS Keterangan, 
       h.mkb_spk_nomor AS NoSPK,
-      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
-      IFNULL(s.spk_jumlah, m.mspk_jumlah) AS JumlahSpk,
+      IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS NamaSpk,
+      IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS JumlahSpk,
       d.mkbd_bhn_kode AS KodeBahan, 
       b.bhn_name AS NamaBahan, 
       d.mkbd_bhn_satuan AS Satuan, 
@@ -380,6 +394,7 @@ const getPrintData = async (nomor) => {
     LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.mkbd_bhn_kode, 6, 2)
     LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+    LEFT JOIN tsalesorder so ON so.so_nomor = h.mkb_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
     WHERE d.mkbd_mkb_nomor = ?

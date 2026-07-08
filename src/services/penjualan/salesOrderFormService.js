@@ -4,65 +4,88 @@ const fs = require("fs");
 const path = require("path");
 const tutupBukuService = require("../tutupBukuService");
 
-// --- 1. GENERATE NOMOR SPK OTOMATIS ---
-// Sesuai Delphi: getmaxnomor(akodeperus, akodejo) -> 'SM-KA-000001'
+// ============================================================
+// HELPER MAPPING — spk_* (kontrak field frontend, TIDAK berubah)
+// <-> so_* (kolom fisik tsalesorder). Translasi terjadi HANYA di
+// boundary SQL; seluruh logic bisnis di tengah tetap pakai nama
+// field spk_* seperti kode asli, supaya frontend nol perubahan.
+// ============================================================
+const mapSoHeaderRow = (row) => {
+  if (!row) return row;
+  const out = {};
+  for (const [key, val] of Object.entries(row)) {
+    out[key.startsWith("so_") ? "spk_" + key.slice(3) : key] = val;
+  }
+  return out;
+};
+const mapSpkHeaderToSo = (header) => {
+  const out = {};
+  for (const [key, val] of Object.entries(header)) {
+    out[key.startsWith("spk_") ? "so_" + key.slice(4) : key] = val;
+  }
+  return out;
+};
+
+// --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
+// hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
 const generateNomor = async (perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
   const [rows] = await db.query(
-    `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
-     FROM tspk
-     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
+    `SELECT IFNULL(MAX(CAST(SUBSTR(so_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
+     FROM tsalesorder
+     WHERE so_perush_kode = ? AND so_jo_kode = ? AND so_nomor LIKE ?
      FOR UPDATE`,
     [prefix.length + 1, perushKode, joKode, `${prefix}%`],
   );
-  const nextVal = Number(rows[0].jumlah) + 1; // ← FIX: paksa Number()
+  const nextVal = Number(rows[0].jumlah) + 1;
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
 // --- 2. GET DETAIL UNTUK MODE UBAH ---
 const getDetail = async (nomor) => {
   // A. Header
-  const [header] = await db.query(
+  const [headerRows] = await db.query(
     `SELECT s.*, j.jo_nama, a.sal_nama, p.perush_nama, c.cus_nama, k.cus_nama AS cusk, c.cus_perfect,
-      IFNULL((SELECT mkb_nomor FROM tmkb_hdr WHERE mkb_spk_nomor=spk_nomor ORDER BY mkb_tanggal DESC LIMIT 1),"") AS mkb,
-      IFNULL((SELECT DATE_FORMAT(mkb_tanggal,"%Y-%m-%d") FROM tmkb_hdr WHERE mkb_spk_nomor=spk_nomor ORDER BY mkb_tanggal DESC LIMIT 1),"") AS dtmkb,
+      IFNULL((SELECT mkb_nomor FROM tmkb_hdr WHERE mkb_spk_nomor = s.so_nomor ORDER BY mkb_tanggal DESC LIMIT 1), "") AS mkb,
+      IFNULL((SELECT DATE_FORMAT(mkb_tanggal,"%Y-%m-%d") FROM tmkb_hdr WHERE mkb_spk_nomor = s.so_nomor ORDER BY mkb_tanggal DESC LIMIT 1), "") AS dtmkb,
       IFNULL(m.mpb_jmlorder, 0) AS jmlmppb,
       IFNULL((
-        SELECT SUM(d.invd_jumlah) 
-        FROM retail.tinv_hdr h 
-        INNER JOIN retail.tinv_dtl d ON d.invd_inv_nomor=h.inv_nomor 
-        WHERE h.inv_nomor = s.spk_invdc AND LEFT(s.spk_divisi, 1) <> '3'
+        SELECT SUM(d.invd_jumlah)
+        FROM retail.tinv_hdr h
+        INNER JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        WHERE h.inv_nomor = s.so_invdc AND LEFT(s.so_divisi, 1) <> '3'
       ), 0) AS jmlinvdc
-     FROM tspk s
-     LEFT JOIN tjenisorder j ON s.spk_jo_kode = j.jo_kode
-     LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
-     LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
-     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
-     LEFT JOIN retail.tcustomer k ON s.spk_cus_kaosan = k.cus_kode
-     LEFT JOIN tmpb m ON s.spk_mppb = m.mpb_nomor
-     WHERE s.spk_nomor = ?`,
+     FROM tsalesorder s
+     LEFT JOIN tjenisorder j ON s.so_jo_kode = j.jo_kode
+     LEFT JOIN tsales a ON s.so_sal_kode = a.sal_kode
+     LEFT JOIN tperusahaan p ON s.so_perush_kode = p.perush_kode
+     LEFT JOIN tcustomer c ON s.so_cus_kode = c.cus_kode
+     LEFT JOIN retail.tcustomer k ON s.so_cus_kaosan = k.cus_kode
+     LEFT JOIN tmpb m ON s.so_mppb = m.mpb_nomor
+     WHERE s.so_nomor = ?`,
     [nomor],
   );
+  if (headerRows.length === 0) throw new Error("Data SO tidak ditemukan.");
 
-  if (header.length === 0) throw new Error("Data SPK tidak ditemukan.");
+  // Translasi so_* -> spk_* SEKALI di sini; sisa function di bawah
+  // 100% identik dengan versi asli (operasi terhadap field spk_*).
+  const header = [mapSoHeaderRow(headerRows[0])];
 
-  // --- CEK 3 STATUS PIN (APPROVAL) SEPERTI DELPHI ---
-
-  // 1. PIN Customer (Limit Piutang) -> Default 'N'
+  // --- CEK 3 STATUS PIN (APPROVAL) — TIDAK BERUBAH, tabel-tabel
+  // approval ini murni keyed by string nomor, tidak tergantung
+  // header-nya hidup di tspk atau tsalesorder ---
   const [pinCus] = await db.query(
     `SELECT IF(cusp_acc="Y", "ACC", IF(cusp_acc="N", "TOLAK", "Y")) AS acc FROM tcustomer_pin WHERE cusp_nomor=?`,
     [nomor],
   );
   const pin_customer = pinCus.length > 0 ? pinCus[0].acc : "N";
 
-  // 2. PIN Harga 0 (Ket PO)
   const [pinHarga] = await db.query(
     `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc FROM tspk_pin WHERE pin_nomor=?`,
     [nomor],
   );
   const ketpo_acc = pinHarga.length > 0 ? pinHarga[0].acc : "";
 
-  // 3. PIN Prioritas
   const [pinPrio] = await db.query(
     `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc 
    FROM tspk_pin_prioritas WHERE pin_nomor=?`,
@@ -70,8 +93,6 @@ const getDetail = async (nomor) => {
   );
   let kepentingan_acc = pinPrio.length > 0 ? pinPrio[0].acc : "";
 
-  // Jika TOP URGENT tapi belum ada pin sama sekali → cek ulang kelayakan
-  // Lakukan INI DULU sebelum hitung spk_aktif
   if (
     header[0].spk_statuskerja === "TOP URGENT" &&
     kepentingan_acc === "" &&
@@ -83,19 +104,17 @@ const getDetail = async (nomor) => {
       header[0].spk_divisi,
     );
     if (!berhak) {
-      kepentingan_acc = "MINTA ACC"; // ← update variable, bukan header langsung
+      kepentingan_acc = "MINTA ACC";
     }
   }
 
-  // Baru hitung spk_aktif pakai kepentingan_acc yang sudah final
   const pin_jo = header[0].spk_pinjo || "";
   let spk_aktif = header[0].spk_aktif;
-
   if (
     pin_customer === "TOLAK" ||
     ketpo_acc === "MINTA ACC" ||
     ketpo_acc === "TOLAK" ||
-    kepentingan_acc === "MINTA ACC" || // ← sekarang pakai nilai yang sudah dikoreksi
+    kepentingan_acc === "MINTA ACC" ||
     kepentingan_acc === "TOLAK" ||
     pin_jo === "MINTA ACC" ||
     pin_jo === "TOLAK"
@@ -105,46 +124,48 @@ const getDetail = async (nomor) => {
     spk_aktif = header[0].spk_aktif;
   }
 
-  // Assign semua ke header[0] — satu tempat, urutan jelas
-  header[0].isSalesOrder = header[0].spk_is_so === 1;
+  header[0].isSalesOrder = true; // selalu true — service ini khusus tsalesorder
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
-  header[0].kepentingan_acc = kepentingan_acc; // ← ini yang hilang sebelumnya
-  header[0].spk_aktif = spk_aktif; // ← ini yang menimpa sebelumnya
+  header[0].kepentingan_acc = kepentingan_acc;
+  header[0].spk_aktif = spk_aktif;
 
-  // B. Detail Alokasi
+  // B. Detail Alokasi — dari tsalesorder_alokasi
   const [alokasi] = await db.query(
-    `SELECT * FROM talokasi WHERE spk_nomor = ? ORDER BY urut`,
+    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
+            soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
+     FROM tsalesorder_alokasi WHERE soa_so_nomor = ? ORDER BY soa_urut`,
     [nomor],
   );
 
-  // C. Detail Kaosan (tspk_dc) - Hanya untuk Divisi 3
+  // C. Detail Kaosan — dari tsalesorder_kaosan (nama tetap di-JOIN
+  // read-time, TIDAK disimpan, sama seperti perilaku tspk_dc asli)
   const [dtlKaosan] = await db.query(
-    `SELECT d.spkd_kode AS kode, 
+    `SELECT d.sok_kode AS kode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
-            d.spkd_ukuran AS ukuran, d.spkd_qtyorder AS qtyorder
-     FROM tspk_dc d
-     LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.spkd_kode 
-     WHERE d.spkd_nomor = ?`,
+            d.sok_ukuran AS ukuran, d.sok_qtyorder AS qtyorder
+     FROM tsalesorder_kaosan d
+     LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sok_kode
+     WHERE d.sok_so_nomor = ?`,
     [nomor],
   );
 
-  // D. Detail Size (tspk_size) - Divisi 3, 4, 6
+  // D. Detail Size — dari tsalesorder_size
   const [dtlSize] = await db.query(
-    `SELECT spks_size AS size, spks_qty AS qty,
-          spks_a AS lb, spks_b AS pb,
-          spks_ld AS ld, spks_pl_pendek AS pl_pendek,
-          spks_pl_panjang AS pl_panjang, spks_p_bahu AS p_bahu,
-          spks_l_lengan AS l_lengan, spks_l_manset AS l_manset,
-          spks_l_pinggang AS l_pinggang, spks_p_celana AS p_celana,
-          spks_l_panggul AS l_panggul, spks_l_paha AS l_paha,
-          spks_pesak AS pesak, spks_l_lutut AS l_lutut,
-          spks_l_bawah AS l_bawah
-   FROM tspk_size WHERE spks_nomor = ? AND spks_qty > 0`,
+    `SELECT sos_size AS size, sos_qty AS qty,
+            sos_ld AS ld, sos_pb AS pb,
+            sos_pl_pendek AS pl_pendek, sos_pl_panjang AS pl_panjang,
+            sos_p_bahu AS p_bahu, sos_l_lengan AS l_lengan, sos_l_manset AS l_manset,
+            sos_l_pinggang AS l_pinggang, sos_p_celana AS p_celana,
+            sos_l_panggul AS l_panggul, sos_l_paha AS l_paha,
+            sos_pesak AS pesak, sos_l_lutut AS l_lutut, sos_l_bawah AS l_bawah
+     FROM tsalesorder_size WHERE sos_so_nomor = ? AND sos_qty > 0`,
     [nomor],
   );
 
-  // E. Keterangan Komponen (tspk_ketkomponen join tketkomponen)
+  // E. Keterangan Komponen — TIDAK dimigrasi (tspk_ketkomponen tidak
+  // punya FK ke tspk, murni keyed by string nomor; tabel ini juga
+  // tidak pernah di-INSERT dari service ini, hanya dibaca)
   const [ketKomponen] = await db.query(
     `SELECT CAST(
      GROUP_CONCAT(
@@ -168,22 +189,17 @@ const getDetail = async (nomor) => {
   };
 };
 
-// --- HELPER: GET OMZET CUSTOMER (MIGRASI DELPHI) ---
+// --- HELPER: GET OMZET CUSTOMER — TIDAK BERUBAH ---
 const getOmzet = async (cusKode, tahun, kurangTahun) => {
   const targetTahun = parseInt(tahun) - parseInt(kurangTahun);
-
-  // Cari Induk Customer (cus_kodei)
   const [cus] = await db.query(
     `SELECT cus_kodei FROM tcustomer WHERE cus_kode = ?`,
     [cusKode],
   );
-
   let kodeCari = cusKode;
   if (cus.length > 0 && cus[0].cus_kodei) {
     kodeCari = cus[0].cus_kodei;
   }
-
-  // Hitung Omzet (Piutang Debet flag=0) dari Induk beserta Anak cabangnya
   const [rows] = await db.query(
     `SELECT IFNULL(SUM(debet), 0) AS nominal 
      FROM piutang_debet 
@@ -192,7 +208,6 @@ const getOmzet = async (cusKode, tahun, kurangTahun) => {
        AND customer IN (SELECT cus_kode FROM tcustomer WHERE cus_kodei = ? OR cus_kode = ?)`,
     [targetTahun, kodeCari, kodeCari],
   );
-
   return rows[0].nominal;
 };
 
@@ -235,33 +250,28 @@ const saveData = async (payload, user) => {
     xurut5,
     isSalesOrder,
   } = payload;
-  const conn = await db.getConnection();
 
+  const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-
     let nomor = header.spk_nomor;
     const divisiStr = String(header.spk_divisi).charAt(0);
 
     // ==========================================
-    // 1. VALIDASI DATA (MENGADOPSI LOGIKA DELPHI)
+    // 1. VALIDASI DATA — TIDAK BERUBAH
     // ==========================================
-
-    // Tutup Buku
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
     if (zdtClose && new Date(header.spk_tanggal) < zdtClose) {
       throw new Error(
         "Anda tidak boleh input/ubah di tanggal periode yang sudah diclose.",
       );
     }
-
     if (!header.spk_perush_kode) throw new Error("Perusahaan belum diisi.");
     if (!header.spk_cus_kode) throw new Error("Customer belum diisi.");
     if (!header.spk_sal_kode) throw new Error("Sales belum diisi.");
     if (!header.spk_jo_kode) throw new Error("Jenis Order belum diisi.");
     if (!header.spk_nama) throw new Error("Nama SO belum diisi.");
     if (!header.spk_cab) throw new Error("Kode Workshop (Cabang) harus diisi.");
-
     if (!header.spk_nomor_po || String(header.spk_nomor_po).trim() === "") {
       header.spk_tgl_po = null;
       header.spk_datelinepo = null;
@@ -274,7 +284,6 @@ const saveData = async (payload, user) => {
         "Tanggal Dateline PO harus lebih besar atau sama dengan Tanggal PO.",
       );
     }
-
     if (
       (divisiStr === "1" || divisiStr === "5") &&
       (!header.spk_panjang || !header.spk_lebar)
@@ -283,7 +292,6 @@ const saveData = async (payload, user) => {
         "Ukuran Panjang dan Lebar harus diisi untuk divisi MMT/Spanduk.",
       );
     }
-
     if (
       Number(header.spk_harga) === 0 &&
       !header.spk_ketpo &&
@@ -291,10 +299,8 @@ const saveData = async (payload, user) => {
     ) {
       throw new Error("Jika harga 0, Ket.PO wajib dipilih.");
     }
-
     const spkLamaClean = header.spk_lama ? String(header.spk_lama).trim() : "";
-    header.spk_lama = spkLamaClean; // Kembalikan ke objek header
-
+    header.spk_lama = spkLamaClean;
     const reqSpkLama = [
       "BARANG PENDUKUNG",
       "BARANG PER SET",
@@ -306,10 +312,7 @@ const saveData = async (payload, user) => {
         `Untuk Ket.Po '${header.spk_ketpo}', SO Lama wajib diisi.`,
       );
     }
-
-    // Validasi Total Quantity (Alokasi, Kaosan, Size)
     const qtyPesan = Number(header.spk_jumlah);
-
     if (alokasi && alokasi.length > 0) {
       const sumAlokasi = alokasi.reduce(
         (acc, curr) => acc + Number(curr.jumlah || 0),
@@ -321,7 +324,6 @@ const saveData = async (payload, user) => {
         );
       }
     }
-
     if (divisiStr === "3") {
       if (!dtlKaosan || dtlKaosan.length === 0)
         throw new Error("Detail barang kaosan harus diisi.");
@@ -329,7 +331,6 @@ const saveData = async (payload, user) => {
         (acc, curr) => acc + Number(curr.qtyorder || 0),
         0,
       );
-
       if (sumKaosan === 0)
         throw new Error("Detail barang kaosan Qty Order harus diisi.");
       if (sumKaosan !== qtyPesan)
@@ -337,15 +338,11 @@ const saveData = async (payload, user) => {
           "Jumlah SO vs Total Qty Order di Detail Barang Kaosan harus sama.",
         );
     }
-
     header.spk_cabkaos = user.cabangKaos || "";
 
     // ==========================================
-    // 2. EKSEKUSI HEADER (TSPK & TBARANG)
+    // 2. EKSEKUSI HEADER — target tsalesorder
     // ==========================================
-
-    // Cek piutang tahun ini atau tahun lalu (kurang 1 tahun)
-    // Cek piutang DULU sebelum INSERT/UPDATE
     const currentYear = new Date().getFullYear();
     const piutang = isSalesOrder
       ? 0
@@ -354,17 +351,16 @@ const saveData = async (payload, user) => {
     if (!isEdit) {
       nomor = await generateNomor(header.spk_perush_kode, header.spk_jo_kode);
       header.spk_nomor = nomor;
-      header.spk_is_so = nomor.startsWith("SO-") ? 1 : 0;
       header.user_create = user.kode;
       header.date_create = new Date();
       header.spk_aktif = piutang > 100 ? "N" : "Y";
-      await conn.query(`INSERT INTO tspk SET ?`, [cleanHeader(header)]);
+      await conn.query(`INSERT INTO tsalesorder SET ?`, [
+        mapSpkHeaderToSo(cleanHeader(header)),
+      ]);
     } else {
       header.user_modified = user.kode;
       header.date_modified = new Date();
-      // Untuk edit, hanya paksa PASIF jika ada piutang — jangan override jika sudah di-set sebelumnya
       if (piutang > 100) header.spk_aktif = "N";
-      // Tambah: jika kepentingan_acc MINTA ACC → paksa PASIF
       if (
         header.kepentingan_acc === "MINTA ACC" ||
         header.kepentingan_acc === "TOLAK"
@@ -377,8 +373,6 @@ const saveData = async (payload, user) => {
       if (header.spk_pinjo === "MINTA ACC" || header.spk_pinjo === "TOLAK") {
         header.spk_aktif = "N";
       }
-
-      // Simpan ke tspk_pin_prioritas jika MINTA ACC
       if (header.kepentingan_acc === "MINTA ACC") {
         await conn.query(
           `INSERT INTO tspk_pin_prioritas (pin_nomor, pin_tgl_minta, pin_user_minta)
@@ -387,18 +381,25 @@ const saveData = async (payload, user) => {
           [nomor, user.kode, user.kode],
         );
       } else if (!header.kepentingan_acc) {
-        // Kalau kosong (sudah tidak TOP URGENT atau sudah berhak), hapus pin
         await conn.query(`DELETE FROM tspk_pin_prioritas WHERE pin_nomor=?`, [
           nomor,
         ]);
       }
-      await conn.query(`UPDATE tspk SET ? WHERE spk_nomor = ?`, [
-        cleanHeader(header),
+      await conn.query(`UPDATE tsalesorder SET ? WHERE so_nomor = ?`, [
+        mapSpkHeaderToSo(cleanHeader(header)),
         nomor,
       ]);
-      await conn.query(`DELETE FROM talokasi WHERE spk_nomor = ?`, [nomor]);
-      await conn.query(`DELETE FROM tspk_dc WHERE spkd_nomor = ?`, [nomor]);
-      await conn.query(`DELETE FROM tspk_size WHERE spks_nomor = ?`, [nomor]);
+      await conn.query(
+        `DELETE FROM tsalesorder_alokasi WHERE soa_so_nomor = ?`,
+        [nomor],
+      );
+      await conn.query(
+        `DELETE FROM tsalesorder_kaosan WHERE sok_so_nomor = ?`,
+        [nomor],
+      );
+      await conn.query(`DELETE FROM tsalesorder_size WHERE sos_so_nomor = ?`, [
+        nomor,
+      ]);
       await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
         nomor,
       ]);
@@ -407,7 +408,6 @@ const saveData = async (payload, user) => {
     const kodeCusUtama = String(header.spk_divisi).startsWith("3")
       ? header.spk_cus_kaosan
       : header.spk_cus_kode;
-
     if (piutang > 100) {
       await conn.query(
         `INSERT INTO tcustomer_pin (cusp_kode, cusp_nomor, cusp_tgl_minta, cusp_user_minta) 
@@ -421,7 +421,7 @@ const saveData = async (payload, user) => {
       ]);
     }
 
-    // Sinkronisasi tbarang
+    // Sinkronisasi tbarang — tabel master eksternal, TIDAK BERUBAH
     await conn.query(`DELETE FROM tbarang WHERE brg_kode = ?`, [nomor]);
     await conn.query(
       `INSERT INTO tbarang (brg_kode, brg_name, brg_ukuran, brg_kain, brg_finishing, brg_harga, brg_divisi, user_create, date_create) 
@@ -439,17 +439,16 @@ const saveData = async (payload, user) => {
     );
 
     // ==========================================
-    // 3. EKSEKUSI DETAIL ALOKASI
+    // 3. DETAIL ALOKASI — target tsalesorder_alokasi
     // ==========================================
     if (alokasi && alokasi.length > 0) {
       for (let i = 0; i < alokasi.length; i++) {
         const item = alokasi[i];
         if (item.alamat || item.kota) {
           await conn.query(
-            `
-            INSERT INTO talokasi (spk_nomor, urut, alamat, kota, person, hp, jumlah) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `,
+            `INSERT INTO tsalesorder_alokasi
+               (soa_so_nomor, soa_urut, soa_alamat, soa_kota, soa_person, soa_hp, soa_jumlah)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               nomor,
               i + 1,
@@ -465,7 +464,7 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 4. EKSEKUSI DETAIL KAOSAN (tspk_dc)
+    // 4. DETAIL KAOSAN — target tsalesorder_kaosan
     // ==========================================
     if (divisiStr === "3" && dtlKaosan && dtlKaosan.length > 0) {
       for (const item of dtlKaosan) {
@@ -475,21 +474,16 @@ const saveData = async (payload, user) => {
           )
             ? nomor
             : item.kode;
-
           await conn.query(
-            `INSERT INTO tspk_dc (spkd_nomor, spkd_kode, spkd_ukuran, spkd_qtyorder) VALUES (?, ?, ?, ?)`,
+            `INSERT INTO tsalesorder_kaosan (sok_so_nomor, sok_kode, sok_ukuran, sok_qtyorder) VALUES (?, ?, ?, ?)`,
             [nomor, kodeItem, item.ukuran, item.qtyorder],
           );
-
-          // Sinkronisasi ke tbarangdc_dtl (Ignore if exist)
           await conn.query(
             `INSERT IGNORE INTO retail.tbarangdc_dtl (brgd_kode, brgd_ukuran, brgd_hrg1) VALUES (?, ?, 0)`,
             [nomor, item.ukuran],
           );
         }
       }
-
-      // Sinkronisasi khusus retail.tbarangdc jika jasa bordir/sablon
       if (
         ["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some((sub) =>
           header.spk_jo_kode.includes(sub),
@@ -532,7 +526,7 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 5. EKSEKUSI DETAIL SIZE (tspk_size)
+    // 5. DETAIL SIZE — target tsalesorder_size
     // ==========================================
     if (
       ["3", "4", "6"].includes(divisiStr) &&
@@ -543,27 +537,24 @@ const saveData = async (payload, user) => {
       if (dtlSize && dtlSize.length > 0) {
         for (const item of dtlSize) {
           if (Number(item.qty) > 0) {
-            // Generate barcode khusus premium garmen
             let barcode = "";
             if (divisiStr === "4" && header.spk_tipe === "Premium") {
-              // Pseudo barcode generator (ambil 2 digit terakhir no size dicombine no spk)
-              barcode = `99${nomor}`; // Simplified for example, implement logic as needed
+              barcode = `99${nomor}`;
             }
             await conn.query(
-              `INSERT INTO tspk_size 
-    (spks_nomor, spks_size, spks_qty, spks_a, spks_b, spks_barcode,
-     spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
-     spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
-     spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO tsalesorder_size
+                 (sos_so_nomor, sos_size, sos_qty, sos_barcode,
+                  sos_ld, sos_pb, sos_pl_pendek, sos_pl_panjang, sos_p_bahu,
+                  sos_l_lengan, sos_l_manset, sos_l_pinggang, sos_p_celana,
+                  sos_l_panggul, sos_l_paha, sos_pesak, sos_l_lutut, sos_l_bawah)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 nomor,
                 item.size,
                 item.qty,
-                item.ld || 0, // spks_a — backward compat
-                item.pb || 0, // spks_b — backward compat
                 barcode,
                 item.ld || 0,
+                item.pb || 0,
                 item.pl_pendek || 0,
                 item.pl_panjang || 0,
                 item.p_bahu || 0,
@@ -584,7 +575,7 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 6. UPDATE STATUS TRASAKSI TERKAIT
+    // 6. UPDATE STATUS TRANSAKSI TERKAIT — tabel eksternal, TIDAK BERUBAH
     // ==========================================
     if (!isEdit) {
       if (header.spk_pen_nomor) {
@@ -603,24 +594,23 @@ const saveData = async (payload, user) => {
 
     // ==========================================
     // 7. PATCH: SINKRONISASI PABRIK & CABANG KAOSAN
+    // ⚠ CATATAN: log_tabel masih hardcode "tspk" di bawah — kalau ada
+    // proses sync eksternal yang membaca tlog_sync.log_tabel untuk
+    // menentukan tabel sumber re-sync, nilai ini PERLU dikonfirmasi
+    // apakah harus diganti "tsalesorder". Belum diubah karena aku
+    // tidak tahu detail proses konsumennya.
     // ==========================================
-    // PATCH 3: Sinkronisasi ke Pabrik HANYA dijalankan pada saat SPK Baru (!isEdit) dan jenis Pengerjaan
     if (!isEdit && header.spk_jo_kode && header.spk_jo_kode.includes("BR")) {
       const cabKaos = user.cabangKaos || "";
       const nomorPO = header.spk_nomor_po
         ? String(header.spk_nomor_po).trim()
         : "";
-
       if (cabKaos !== "" && cabKaos !== "KDC" && nomorPO !== "") {
         const prefixPO = nomorPO.substring(0, 3);
-
-        // Update tabel retail SO DTF Header
         await conn.query(
           `UPDATE retail.tsodtf_hdr SET sd_spk_nomor=? WHERE sd_nomor=?`,
           [nomor, nomorPO],
         );
-
-        // Insert ke tlog_sync pabrik
         await conn.query(
           `INSERT INTO tlog_sync (log_tabel, log_nomor, log_cab, log_task, log_sync) 
            VALUES ("tspk", ?, ?, "INSERT", "Y") 
@@ -631,9 +621,8 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 8. PATCH: UPDATE PIN 5 BULAN BERIKUTNYA
+    // 8. PATCH: UPDATE PIN 5 BULAN BERIKUTNYA — TIDAK BERUBAH
     // ==========================================
-    // PATCH 4: Logic khusus tspk_pin5 dari Delphi
     if (xminta5 === "ACC" && xurut5) {
       await conn.query(
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
@@ -651,7 +640,9 @@ const saveData = async (payload, user) => {
   }
 };
 
-// --- VALIDASI FIELD FORM (MIRIP EVENT EXIT DELPHI) ---
+// --- VALIDASI FIELD FORM — UNION tspk + tsalesorder karena data
+// historis (Delphi-created) tetap di tspk, data baru di tsalesorder.
+// Duplikasi/keberadaan harus dicek di KEDUANYA. ---
 const validateField = async (type, value, extraParam = "") => {
   if (!value) return { valid: true };
 
@@ -661,14 +652,18 @@ const validateField = async (type, value, extraParam = "") => {
       [value],
     );
     if (memo.length === 0) throw new Error("Map/Memo tsb tidak ada.");
-    const [spk] = await db.query(
-      `SELECT spk_nomor FROM tspk WHERE spk_memo=?`,
-      [value],
+    const [used] = await db.query(
+      `SELECT Nomor FROM (
+         SELECT spk_nomor AS Nomor FROM tspk WHERE spk_memo = ?
+         UNION ALL
+         SELECT so_nomor AS Nomor FROM tsalesorder WHERE so_memo = ?
+       ) x LIMIT 1`,
+      [value, value],
     );
-    if (spk.length > 0 && spk[0].spk_nomor !== extraParam) {
+    if (used.length > 0 && used[0].Nomor !== extraParam) {
       return {
         valid: false,
-        warn: `MAP tsb sudah dipakai oleh ${spk[0].spk_nomor}. Yakin akan dilanjutkan?`,
+        warn: `MAP tsb sudah dipakai oleh ${used[0].Nomor}. Yakin akan dilanjutkan?`,
       };
     }
     return { valid: true };
@@ -692,39 +687,45 @@ const validateField = async (type, value, extraParam = "") => {
     );
     if (!inv[0].jml)
       throw new Error("No.Invoice tsb tidak ada atau jumlah kosong.");
-    const [spk] = await db.query(
-      `SELECT spk_nomor FROM tspk WHERE spk_invdc=?`,
-      [value],
+    const [used] = await db.query(
+      `SELECT Nomor FROM (
+         SELECT spk_nomor AS Nomor FROM tspk WHERE spk_invdc = ?
+         UNION ALL
+         SELECT so_nomor AS Nomor FROM tsalesorder WHERE so_invdc = ?
+       ) x LIMIT 1`,
+      [value, value],
     );
-    if (spk.length > 0 && spk[0].spk_nomor !== extraParam) {
+    if (used.length > 0 && used[0].Nomor !== extraParam) {
       throw new Error(
-        `No.Invoice dari DC tsb sudah dibuatkan SO Nomor: ${spk[0].spk_nomor}`,
+        `No.Invoice dari DC tsb sudah dibuatkan SO Nomor: ${used[0].Nomor}`,
       );
     }
     return { valid: true, data: { jumlah: inv[0].jml } };
   }
 
   if (type === "spklama") {
-    const [spk] = await db.query(
-      `SELECT spk_nomor FROM tspk WHERE spk_aktif="Y" AND spk_nomor=?`,
-      [value],
+    const [found] = await db.query(
+      `SELECT Nomor FROM (
+         SELECT spk_nomor AS Nomor FROM tspk WHERE spk_aktif="Y" AND spk_nomor=?
+         UNION ALL
+         SELECT so_nomor AS Nomor FROM tsalesorder WHERE so_aktif="Y" AND so_nomor=?
+       ) x LIMIT 1`,
+      [value, value],
     );
-    if (spk.length === 0)
+    if (found.length === 0)
       throw new Error("SO Lama tsb tidak ada atau tidak aktif.");
     return { valid: true };
   }
 
-  // 1. VALIDASI CUSTOMER (UMUM) -> Umur > 90 Hari
+  // Validasi Customer & Customer Kaosan — TIDAK BERUBAH (tidak
+  // menyentuh tspk/tsalesorder sama sekali)
   if (type === "customer") {
-    // Cek status customer aktif
     const [cus] = await db.query(
       `SELECT cus_aktif, cus_piutang FROM tcustomer WHERE cus_kode=?`,
       [value],
     );
     if (cus.length === 0) throw new Error("Kode customer ini belum ada.");
-    if (cus[0].cus_aktif === 1) throw new Error("Status customer ini pasif."); // Asumsi 1 = pasif di DB Anda
-
-    // Cek Tunggakan Piutang jika cus_piutang tidak 'N'
+    if (cus[0].cus_aktif === 1) throw new Error("Status customer ini pasif.");
     if (cus[0].cus_piutang !== "N") {
       const [tunggakan] = await db.query(
         `
@@ -737,7 +738,6 @@ const validateField = async (type, value, extraParam = "") => {
       `,
         [value],
       );
-
       if (tunggakan[0].jmlTunggakan > 0) {
         return {
           valid: true,
@@ -749,9 +749,7 @@ const validateField = async (type, value, extraParam = "") => {
     return { valid: true, pin: "N" };
   }
 
-  // 2. VALIDASI CUSTOMER KAOSAN -> Umur > 30 Hari
   if (type === "custKaosan") {
-    // Cek retail tcustomer
     const [cus] = await db.query(
       `SELECT cus_aktif, cus_piutang FROM retail.tcustomer WHERE cus_kode=?`,
       [value],
@@ -760,7 +758,6 @@ const validateField = async (type, value, extraParam = "") => {
       throw new Error("Kode customer kaosan ini belum ada.");
     if (cus[0].cus_aktif === 1)
       throw new Error("Status customer kaosan ini pasif.");
-
     if (cus[0].cus_piutang !== "N") {
       const [tunggakan] = await db.query(
         `
@@ -774,7 +771,6 @@ const validateField = async (type, value, extraParam = "") => {
       `,
         [value],
       );
-
       if (tunggakan[0].jmlTunggakan > 0) {
         return {
           valid: true,
@@ -789,7 +785,10 @@ const validateField = async (type, value, extraParam = "") => {
   return { valid: true };
 };
 
-// --- HELPER: Normalisasi Key Object menjadi lowercase ---
+// --- getMemoDetail, processImage, getDatelineLimits,
+// checkHakTopUrgent, getInitSizes, getStandarUkuran — TIDAK
+// BERUBAH SAMA SEKALI, tidak pernah menyentuh tspk/tsalesorder ---
+
 const normalizeKeys = (obj) => {
   if (!obj) return obj;
   return Object.keys(obj).reduce((acc, key) => {
@@ -798,7 +797,6 @@ const normalizeKeys = (obj) => {
   }, {});
 };
 
-// --- GET DETAIL MEMO (UNTUK AUTO-FILL SPK) ---
 const getMemoDetail = async (nomor) => {
   const [header] = await db.query(
     `SELECT m.*, e.sal_nama, j.jo_nama, c.cus_nama, p.perush_nama, 
@@ -813,45 +811,33 @@ const getMemoDetail = async (nomor) => {
      WHERE m.mspk_nomor = ?`,
     [nomor],
   );
-
   if (header.length === 0) throw new Error("Memo/MAP tidak ditemukan.");
-
   const [sizes] = await db.query(
     `SELECT mspks_size, mspks_qty, mspks_a, mspks_b 
      FROM tmemospk_size 
      WHERE mspks_nomor = ? AND mspks_qty > 0`,
     [nomor],
   );
-
-  // Normalisasi keys untuk header dan semua baris sizes
   const normalizedHeader = normalizeKeys(header[0]);
   const normalizedSizes = sizes.map(normalizeKeys);
-
   return { header: normalizedHeader, sizes: normalizedSizes };
 };
 
-// --- UPLOAD IMAGE ---
 const processImage = async (tempFilePath, cabang, spkNomor) => {
   if (!fs.existsSync(tempFilePath))
     throw new Error("File sumber sementara tidak ditemukan.");
-
-  const finalFileName = `${spkNomor}.jpg`; // Format Delphi
-
-  // Sesuai aturan: public/images/cabang/
+  const finalFileName = `${spkNomor}.jpg`;
   const branchFolderPath = path.join(process.cwd(), "public", "images", cabang);
   if (!fs.existsSync(branchFolderPath)) {
     fs.mkdirSync(branchFolderPath, { recursive: true });
   }
-
   const finalPath = path.join(branchFolderPath, finalFileName);
-
   try {
     await sharp(tempFilePath)
-      .flatten({ background: { r: 255, g: 255, b: 255 } }) // transparansi -> putih
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
       .toFormat("jpeg")
       .jpeg({ quality: 80 })
       .toFile(finalPath);
-
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
     return finalFileName;
   } catch (error) {
@@ -860,81 +846,62 @@ const processImage = async (tempFilePath, cabang, spkNomor) => {
   }
 };
 
-// --- SERVICE: GET DATELINE LIMITS (MIGRASI DELPHI) ---
 const getDatelineLimits = async (divisi, joKode, kepentingan, cabKaos) => {
   const divStr = String(divisi).charAt(0);
   const joStr = String(joKode).toUpperCase();
-
-  // Ambil data rules dari tabel kepentingan
   const [rows] = await db.query(
     `SELECT * FROM tspk_kepentingan WHERE kepentingan = ?`,
     [kepentingan],
   );
-
   let minHari = 0;
   let maxHari = 0;
-  let isKebal = false; // Flag untuk pengecualian (tidak dikunci)
-
+  let isKebal = false;
   if (rows.length > 0) {
     const rules = rows[0];
-
     if (divStr === "1") {
-      // Spanduk
       minHari = Number(rules.spanduk1) || 0;
       maxHari = Number(rules.spanduk2) || 0;
     } else if (divStr === "5") {
-      // MMT
       minHari = Number(rules.mmt1) || 0;
       maxHari = Number(rules.mmt2) || 0;
     } else if (divStr === "3") {
-      // Kaosan
       const isPengerjaan = ["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some(
         (sub) => joStr.includes(sub),
       );
       if (isPengerjaan) {
         minHari = Number(rules.kaosan1sb) || 0;
         maxHari = Number(rules.kaosan2sb) || 0;
-        // Pengecualian Delphi: jika cabang kaos terisi & bukan KDC, bebas dateline
         if (cabKaos && cabKaos !== "KDC") isKebal = true;
       } else {
         minHari = Number(rules.kaosan1) || 0;
         maxHari = Number(rules.kaosan2) || 0;
       }
     } else if (divStr === "4" || divStr === "6") {
-      // Garmen
       if (joStr === "KS") {
         minHari = 0;
-        maxHari = 30; // Hardcode Delphi
+        maxHari = 30;
       } else {
         minHari = Number(rules.garmen1) || 0;
         maxHari = Number(rules.garmen2) || 0;
       }
     }
   }
-
   return { minHari, maxHari, isKebal };
 };
 
-// --- SERVICE: CEK KELAYAKAN TOP URGENT ---
 const checkHakTopUrgent = async (cusKode, divisi) => {
   const divStr = String(divisi).charAt(0);
   const currentYear = new Date().getFullYear();
-
-  // 1. Cek Omzet
   const omzetTahunIni = await getOmzet(cusKode, currentYear, 0);
   const omzetTahunLalu = await getOmzet(cusKode, currentYear, 1);
-
   if (omzetTahunIni > 250_000_000 || omzetTahunLalu > 100_000_000) {
     return true;
   }
-
-  // 2. Cek flag prioritas langsung dari tcustomer
   const [rows] = await db.query(
     `SELECT cus_prioritas, cus_spanduk, cus_garmen, cus_mmt 
      FROM tcustomer WHERE Cus_kode = ?`,
     [cusKode],
   );
-
   if (rows.length > 0) {
     const c = rows[0];
     if (c.cus_prioritas === "Y") {
@@ -944,7 +911,6 @@ const checkHakTopUrgent = async (cusKode, divisi) => {
         return true;
     }
   }
-
   return false;
 };
 
@@ -955,7 +921,6 @@ const getInitSizes = async () => {
   return rows.map((r) => ({
     size: r.size,
     qty: 0,
-    // atasan
     ld: 0,
     pb: 0,
     pl_pendek: 0,
@@ -963,7 +928,6 @@ const getInitSizes = async () => {
     p_bahu: 0,
     l_lengan: 0,
     l_manset: 0,
-    // bawahan
     l_pinggang: 0,
     p_celana: 0,
     l_panggul: 0,
@@ -985,33 +949,26 @@ const JO_KATEGORI = {
   CL: "BAWAHAN",
   WP: "WEARPACK",
 };
-
 const getStandarUkuran = async (joKode, varian = "STANDAR") => {
   const jo = String(joKode || "").toUpperCase();
   const kategori = JO_KATEGORI[jo];
   if (!kategori) return [];
-
   const kategoriList =
     kategori === "WEARPACK" ? ["ATASAN", "BAWAHAN"] : [kategori];
-
   const [allSizes] = await db.query(
     `SELECT ukuran AS size FROM retail.tukuran WHERE kategori = "" ORDER BY kode`,
   );
-
-  // Query dengan varian
   const placeholders = kategoriList.map(() => "?").join(",");
   const [standar] = await db.query(
     `SELECT * FROM retail.tukuran_standar 
      WHERE ts_kategori IN (${placeholders}) AND ts_varian = ?`,
     [...kategoriList, varian],
   );
-
   const standarMap = {};
   for (const row of standar) {
     if (!standarMap[row.ts_ukuran]) standarMap[row.ts_ukuran] = {};
     Object.assign(standarMap[row.ts_ukuran], row);
   }
-
   return allSizes.map((s) => {
     const d = standarMap[s.size] || {};
     return {
@@ -1035,6 +992,7 @@ const getStandarUkuran = async (joKode, varian = "STANDAR") => {
   });
 };
 
+// --- Katalog SO (SalesOrderTabKatalog.vue) — target tsalesorder ---
 const getKatalogCustomer = async (
   cusKode,
   divisi = "",
@@ -1043,51 +1001,46 @@ const getKatalogCustomer = async (
   limit = 20,
 ) => {
   const offset = (page - 1) * limit;
-
-  let whereBase = `WHERE s.spk_cus_kode = ? AND s.spk_aktif = 'Y'`;
+  let whereBase = `WHERE s.so_cus_kode = ? AND s.so_aktif = 'Y'`;
   const baseParams = [cusKode];
-
   if (divisi && divisi !== "SEMUA") {
-    whereBase += ` AND LEFT(s.spk_divisi, 1) = ?`;
+    whereBase += ` AND LEFT(s.so_divisi, 1) = ?`;
     baseParams.push(String(divisi).charAt(0));
   }
   if (keyword) {
-    whereBase += ` AND (s.spk_nama LIKE ? OR s.spk_nomor LIKE ?)`;
+    whereBase += ` AND (s.so_nama LIKE ? OR s.so_nomor LIKE ?)`;
     baseParams.push(`%${keyword}%`, `%${keyword}%`);
   }
-
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tspk s ${whereBase}`,
+    `SELECT COUNT(*) AS total FROM tsalesorder s ${whereBase}`,
     baseParams,
   );
-
   const [rows] = await db.query(
     `SELECT
-       s.spk_nomor        AS nomor,
-       s.spk_nama         AS nama,
-       DATE_FORMAT(s.spk_tanggal, '%d-%b-%Y') AS tanggal_pesanan,
-       s.spk_tanggal,
-       s.spk_jumlah       AS jumlah,
-       s.spk_memo         AS memo,
-       s.spk_harga        AS harga,
-       s.spk_kain         AS kain,
-       s.spk_ukuran       AS ukuran,
-       s.spk_finishing    AS finishing,
-       s.spk_keterangan   AS keterangan,
-       s.spk_cab          AS cab,
-       s.spk_divisi       AS divisi,
-       s.spk_statuskerja  AS statuskerja,
+       s.so_nomor        AS nomor,
+       s.so_nama         AS nama,
+       DATE_FORMAT(s.so_tanggal, '%d-%b-%Y') AS tanggal_pesanan,
+       s.so_tanggal       AS spk_tanggal,
+       s.so_jumlah        AS jumlah,
+       s.so_memo          AS memo,
+       s.so_harga         AS harga,
+       s.so_kain          AS kain,
+       s.so_ukuran        AS ukuran,
+       s.so_finishing     AS finishing,
+       s.so_keterangan    AS keterangan,
+       s.so_cab           AS cab,
+       s.so_divisi        AS divisi,
+       s.so_statuskerja   AS statuskerja,
        j.jo_nama          AS jenis_order,
        p.perush_nama      AS perusahaan
-     FROM tspk s
-     LEFT JOIN tjenisorder j ON j.jo_kode = s.spk_jo_kode
-     LEFT JOIN tperusahaan p ON p.perush_kode = s.spk_perush_kode
+     FROM tsalesorder s
+     LEFT JOIN tjenisorder j ON j.jo_kode = s.so_jo_kode
+     LEFT JOIN tperusahaan p ON p.perush_kode = s.so_perush_kode
      ${whereBase}
-     ORDER BY s.spk_tanggal DESC
+     ORDER BY s.so_tanggal DESC
      LIMIT ? OFFSET ?`,
     [...baseParams, Number(limit), Number(offset)],
   );
-
   return { items: rows, total };
 };
 

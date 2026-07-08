@@ -229,12 +229,25 @@ const getSpkDetail = async (
   excludeNomor = "",
   existingDetail = [],
 ) => {
-  // 1. Validasi SO ada, milik customer ybs, sudah di-CMO
-  const [[soRow]] = await db.query(
-    `SELECT spk_nomor, spk_cmo FROM tspk
-     WHERE spk_aktif = 'Y' AND spk_nomor = ? AND spk_cus_kode = ? AND spk_is_so = 1`,
+  // 1. Validasi SO ada, milik customer ybs, sudah di-CMO — cek
+  //    tsalesorder (SO baru) dulu, fallback ke tspk legacy
+  //    (spk_is_so=1, data lama pre-migrasi). SO baru sudah tidak
+  //    lagi hidup di tspk.
+  const [[soNew]] = await db.query(
+    `SELECT so_nomor AS spk_nomor, so_cmo AS spk_cmo
+     FROM tsalesorder
+     WHERE so_aktif = 'Y' AND so_nomor = ? AND so_cus_kode = ?`,
     [soNomor, cusKode],
   );
+  let soRow = soNew;
+  if (!soRow) {
+    const [[soLegacy]] = await db.query(
+      `SELECT spk_nomor, spk_cmo FROM tspk
+       WHERE spk_aktif = 'Y' AND spk_nomor = ? AND spk_cus_kode = ? AND spk_is_so = 1`,
+      [soNomor, cusKode],
+    );
+    soRow = soLegacy;
+  }
   if (!soRow) throw new Error("SO Tidak ditemukan di Customer tsb.");
   if (!soRow.spk_cmo) throw new Error("SO tsb belum di Approve oleh CMO.");
 
@@ -351,30 +364,38 @@ const getSpkList = async (
 ) => {
   const divisiStr = String(divisi).charAt(0);
   const like = `%${q}%`;
-
   let where = `s.spk_cus_kode = ? AND s.spk_perush_kode = ?
     AND s.spk_aktif = 'Y' AND s.spk_divisi = ? AND s.spk_cmo <> ''`;
   const params = [cusKode, perushKode, divisiStr];
-
   if (invProNomor) {
     where += ` AND s.spk_nomor IN (
       SELECT invd_spk_nomor FROM tinv_dtl WHERE invd_inv_nomor = ?
     )`;
     params.push(invProNomor);
   }
-
   if (q) {
     where += ` AND (s.spk_nomor LIKE ? OR s.spk_nama LIKE ?)`;
     params.push(like, like);
   }
-
-  // Divisi 1 khusus AHMAD → filter spanduk (abaikan untuk web)
+  // Sumber SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1
+  // (lama, pre-migrasi). Kolom di-alias spk_* di kedua sisi.
   const [rows] = await db.query(
     `SELECT s.spk_nomor AS Nomor,
             DATE_FORMAT(s.spk_tanggal,'%d-%m-%Y') AS Tanggal,
             s.spk_nama AS Nama, s.spk_ukuran AS Ukuran,
             s.spk_jo_kode AS Jenis, c.cus_nama AS Customer
-     FROM tspk s
+     FROM (
+       SELECT so_nomor AS spk_nomor, so_tanggal AS spk_tanggal, so_nama AS spk_nama,
+              so_ukuran AS spk_ukuran, so_jo_kode AS spk_jo_kode, so_cus_kode AS spk_cus_kode,
+              so_perush_kode AS spk_perush_kode, so_divisi AS spk_divisi,
+              so_aktif AS spk_aktif, so_cmo AS spk_cmo
+       FROM tsalesorder
+       UNION ALL
+       SELECT spk_nomor, spk_tanggal, spk_nama, spk_ukuran, spk_jo_kode, spk_cus_kode,
+              spk_perush_kode, spk_divisi, spk_aktif, spk_cmo
+       FROM tspk
+       WHERE spk_is_so = 1
+     ) s
      INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
      WHERE ${where}
      ORDER BY s.spk_tanggal DESC
@@ -401,31 +422,39 @@ const getJadwalKirimList = async (
   const offset = (Number(page) - 1) * limitNum;
   const divisiStr = String(divisi).charAt(0);
   const like = `%${q}%`;
-
   let where = `s.spk_aktif = 'Y' AND s.spk_cmo <> ''
     AND s.spk_divisi = ? AND s.spk_perush_kode = ? AND s.spk_cus_kode = ?`;
   const params = [divisiStr, perushKode, cusKode];
-
   if (invProNomor) {
     where += ` AND s.spk_nomor IN (
       SELECT d.invd_spk_nomor FROM tinv_dtl d WHERE d.invd_inv_nomor = ?
     )`;
     params.push(invProNomor);
   }
-
   if (q) {
     where += ` AND (a.spk_nomor LIKE ? OR s.spk_nama LIKE ? OR b.nomor_kirim LIKE ?)`;
     params.push(like, like, like);
   }
-
+  // Sumber SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1
+  // (lama, pre-migrasi), digunakan sebagai subquery inline karena
+  // di-JOIN dengan kondisi dinamis (${where}).
+  const soUnion = `
+    SELECT so_nomor AS spk_nomor, so_nama AS spk_nama, so_divisi AS spk_divisi,
+           so_perush_kode AS spk_perush_kode, so_cus_kode AS spk_cus_kode,
+           so_aktif AS spk_aktif, so_cmo AS spk_cmo
+    FROM tsalesorder
+    UNION ALL
+    SELECT spk_nomor, spk_nama, spk_divisi, spk_perush_kode, spk_cus_kode, spk_aktif, spk_cmo
+    FROM tspk
+    WHERE spk_is_so = 1
+  `;
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
      FROM tjadwalkirim a
-     INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor AND ${where}
+     INNER JOIN (${soUnion}) s ON s.spk_nomor = a.spk_nomor AND ${where}
      LEFT JOIN tjadwalkirim_dtl b ON b.nomor_kirim = a.Nomor_Kirim`,
     params,
   );
-
   const [rows] = await db.query(
     `SELECT a.spk_nomor AS SPK, s.spk_nama AS Nama,
             DATE_FORMAT(a.Tanggal, '%Y-%m-%d') AS Jadwal,
@@ -434,7 +463,7 @@ const getJadwalKirimList = async (
             b.uraian     AS Uraian,
             b.jumlah     AS QtyJadwal
      FROM tjadwalkirim a
-     INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor AND ${where}
+     INNER JOIN (${soUnion}) s ON s.spk_nomor = a.spk_nomor AND ${where}
      LEFT JOIN tjadwalkirim_dtl b ON b.nomor_kirim = a.Nomor_Kirim
      ORDER BY a.Tanggal DESC, b.nomor_kirim, b.No_urut
      LIMIT ? OFFSET ?`,
