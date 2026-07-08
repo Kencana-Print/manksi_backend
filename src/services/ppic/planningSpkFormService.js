@@ -182,13 +182,14 @@ const saveData = async (payload, userKode) => {
         [pl_tgl1, pl_tgl2, pl_cab || "", pl_keterangan || "", userKode, nomor],
       );
     } else {
-      // INSERT header — pl_spk_nomor dikosongkan (multi SPK per baris)
+      // INSERT header — kolom pl_spk_nomor sudah tidak ada secara
+      // fisik di tabel (sisa skema lama sebelum multi-SPK per baris)
       nomor = await generateNomor(tahun);
       await conn.query(
         `INSERT INTO tplan_ppic_hdr
-           (pl_nomor, pl_tgl1, pl_tgl2, pl_cab, pl_spk_nomor,
+           (pl_nomor, pl_tgl1, pl_tgl2, pl_cab,
             pl_keterangan, user_create, date_create)
-         VALUES (?, ?, ?, ?, '', ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
         [nomor, pl_tgl1, pl_tgl2, pl_cab || "", pl_keterangan || "", userKode],
       );
     }
