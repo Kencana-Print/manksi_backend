@@ -6,9 +6,6 @@ const path = require("path");
 
 // --- GENERATE NOMOR ---
 const generateNomor = async (perushKode, joKode) => {
-  // Logic Delphi: getmaxnomor
-  // select ifnull(max(substr(mspk_nomor,11,6)),0) ...
-  // ajumlah:= 100001+fields[0].AsFloat;
   const query = `
     SELECT IFNULL(MAX(CAST(SUBSTR(mspk_nomor, 11, 6) AS UNSIGNED)), 0) AS max_val 
     FROM tmemospk 
@@ -16,8 +13,13 @@ const generateNomor = async (perushKode, joKode) => {
   `;
   const [[row]] = await db.query(query, [perushKode, joKode]);
 
-  const nextNum = 100000 + parseInt(row.max_val, 10) + 1;
-  const numStr = String(nextNum).slice(-6); // RightStr(..., 6)
+  // FIX: base harus 1,000,000 (7 digit) supaya slice(-6) benar-benar
+  // membuang digit "1" di depan dan cuma nyisain 6 digit counter murni.
+  // Base 6-digit (100000) sebelumnya bikin digit "1" itu ikut kesimpen
+  // di nomor MAP, lalu ke-parse lagi jadi counter di generate berikutnya
+  // → nomor meledak (001100 → 101101 → 201102 → ...).
+  const nextNum = 1000000 + parseInt(row.max_val, 10) + 1;
+  const numStr = String(nextNum).slice(-6);
 
   return `MAP-${perushKode}-${joKode}-${numStr}`;
 };
@@ -258,6 +260,10 @@ const save = async (data, userKode, isNewMode) => {
             `Jika komponen [${k.nama}] dicentang, keterangan harus di isi.`,
           );
       }
+    }
+
+    if (!data.PerushKode || !String(data.PerushKode).trim()) {
+      throw new Error("Perusahaan harus diisi.");
     }
 
     let nomorMap = data.Nomor;

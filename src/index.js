@@ -37,6 +37,8 @@ const bapProduksiRoutes = require("./routes/master/bapProduksiRoutes");
 const bapProduksiFormRoutes = require("./routes/master/bapProduksiFormRoutes");
 
 // PPIC Routes
+const proofRoutes = require("./routes/ppic/proofRoutes");
+const proofFormRoutes = require("./routes/ppic/proofFormRoutes");
 const bastRoutes = require("./routes/garmen/bastRoutes");
 const spkPpicRoutes = require("./routes/ppic/spkRoutes");
 const spkPpicFormRoutes = require("./routes/ppic/spkFormRoutes");
@@ -232,6 +234,8 @@ app.use("/api/pembelian/mkb", mkbRoutes);
 app.use("/api/pembelian/po-bahan", poBahanRoutes);
 app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
 
+app.use("/api/ppic/proof", proofRoutes);
+app.use("/api/ppic/proof-form", proofFormRoutes);
 app.use("/api/garmen/cetak-bast", bastRoutes);
 app.use("/api/ppic/spk", spkPpicRoutes);
 app.use("/api/ppic/spk/form", spkPpicFormRoutes);

@@ -632,23 +632,34 @@ const searchPenawaranDetail = async (penawaranNomor) => {
 // --- FUNGSI UNTUK MODAL SEARCH MAP GARMEN ---
 const searchMapGarmen = async (keyword, cusKode, perushKode, divisi) => {
   let params = [];
-  // Dasar: mspk_cmo dan mspk_close pake huruf kecil semua sesuai skema
-  let whereClause = `WHERE mspk_cmo <> "" AND mspk_close = 'N'`; // mspk_close di skema Anda default 'N'
 
-  if (divisi) {
-    whereClause += ` AND mspk_divisi = ?`;
-    params.push(divisi);
+  // Menerima divisi tunggal ("4") maupun multi ("3,4,6"), dipecah
+  // jadi IN(...) supaya kompatibel dengan pemanggil yang mengirim
+  // beberapa divisi sekaligus (mis. form Proof Garmen: divisi 3,4,6).
+  const divisiList = divisi
+    ? String(divisi)
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean)
+    : [];
+
+  // Sumber HANYA tmemospk — field ini murni "Pilih MAP Garmen",
+  // bukan pengganti union SPK+SO+MAP.
+  let whereClause = `WHERE mspk_cmo <> "" AND mspk_close = 'N'`;
+  if (divisiList.length > 0) {
+    whereClause += ` AND mspk_divisi IN (${divisiList.map(() => "?").join(",")})`;
+    params.push(...divisiList);
   }
   if (cusKode) {
-    whereClause += ` AND Mspk_cus_kode = ?`; // Mspk_cus_kode
+    whereClause += ` AND Mspk_cus_kode = ?`;
     params.push(cusKode);
   }
   if (perushKode) {
-    whereClause += ` AND mspk_perush_kode = ?`; // mspk_perush_kode
+    whereClause += ` AND mspk_perush_kode = ?`;
     params.push(perushKode);
   }
   if (keyword && keyword.trim() !== "") {
-    whereClause += ` AND (MSPK_Nomor LIKE ? OR Mspk_nama LIKE ?)`; // MSPK_Nomor & Mspk_nama
+    whereClause += ` AND (MSPK_Nomor LIKE ? OR Mspk_nama LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
 
@@ -669,6 +680,7 @@ const searchMapGarmen = async (keyword, cusKode, perushKode, divisi) => {
   const [rows] = await db.query(query, params);
   return { items: rows };
 };
+
 // --- FUNGSI UNTUK VALIDASI KETIK LANGSUNG (edtkodeExit) ---
 const validateMapGarmen = async (nomor) => {
   const query = `
