@@ -266,6 +266,36 @@ const save = async (data, userKode, isNewMode) => {
       throw new Error("Perusahaan harus diisi.");
     }
 
+    if (isNewMode) {
+      // CREATE — hard block sesuai permintaan asli, tidak ada pengecualian
+      if (data.AccCustomer !== "Y") {
+        throw new Error(
+          "Customer belum menyetujui pesanan ini. MAP tidak bisa disimpan.",
+        );
+      }
+      if (!data.AccTanggal) {
+        throw new Error("Tanggal persetujuan customer wajib diisi.");
+      }
+    } else {
+      // EDIT — cek state SEBELUMNYA di database, bukan cuma apa yang dikirim FE
+      const [existingRows] = await conn.query(
+        `SELECT mspk_acc_customer FROM tmemospk WHERE mspk_nomor = ?`,
+        [data.Nomor],
+      );
+      const wasAlreadyApproved = existingRows[0]?.mspk_acc_customer === "Y";
+
+      if (!wasAlreadyApproved) {
+        // Record ini sebelumnya belum approved (termasuk semua MAP lama).
+        // Boleh diedit bebas untuk hal lain — TAPI kalau user di form ini
+        // MENCOBA set jadi Y, wajib lengkap dulu, gak boleh setengah-setengah.
+        if (data.AccCustomer === "Y" && !data.AccTanggal) {
+          throw new Error("Tanggal persetujuan customer wajib diisi.");
+        }
+      }
+      // Kalau wasAlreadyApproved === true, tidak divalidasi ulang sama sekali —
+      // edit lain (workshop, keterangan, dll) bebas jalan.
+    }
+
     let nomorMap = data.Nomor;
 
     // --- INSERT / UPDATE HEADER ---
@@ -283,7 +313,8 @@ const save = async (data, userKode, isNewMode) => {
           mspk_jo_kode, mspk_tanggal, mspk_dateline, mspk_pen_nomor, mspk_pen_id, mspk_mh_nomor,
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
-          mspk_estimasijadi, mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size
+          mspk_estimasijadi, mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size,
+          mspk_acc_customer, mspk_acc_tanggal
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?)
       `;
       await conn.query(insertQ, [
@@ -332,6 +363,8 @@ const save = async (data, userKode, isNewMode) => {
         data.Cmo || "",
         data.DesignBaru || "N",
         data.RencanaSize || "",
+        data.AccCustomer || "N",
+        data.AccTanggal || null,
       ]);
 
       // Jika ini adalah revisi, matikan status aktif MAP Referensinya
@@ -351,7 +384,8 @@ const save = async (data, userKode, isNewMode) => {
           mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
           mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
           mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
-          mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?
+          mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
+          mspk_acc_customer=?, mspk_acc_tanggal=?
         WHERE mspk_nomor=?
       `;
       await conn.query(updateQ, [
@@ -395,6 +429,8 @@ const save = async (data, userKode, isNewMode) => {
         data.DesignBaru || "N",
         data.RencanaSize || "",
         nomorMap,
+        data.AccCustomer || "N",
+        data.AccTanggal || null,
       ]);
 
       // Jika edit hasil ACC, matikan PIN
@@ -465,8 +501,10 @@ const processImage = async (tempFilePath, cabang, type, mapNomor) => {
     throw new Error("File sumber sementara tidak ditemukan.");
 
   // Format Nama: MAP-JA-KO-001001.jpg ATAU MAP-JA-KO-001001-email.jpg
-  const finalFileName =
-    type === "EMAIL" ? `${mapNomor}-email.jpg` : `${mapNomor}.jpg`;
+  let finalFileName;
+  if (type === "EMAIL") finalFileName = `${mapNomor}-email.jpg`;
+  else if (type === "ACC") finalFileName = `${mapNomor}-acc.jpg`;
+  else finalFileName = `${mapNomor}.jpg`;
 
   // Sesuai aturan: public/images/cabang/map
   const branchFolderPath = path.join(

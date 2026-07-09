@@ -38,6 +38,7 @@ router.post(
 router.get("/dateline-limits", verifyToken, controller.getDatelineLimits);
 router.get("/check-top-urgent", verifyToken, controller.checkHakTopUrgent);
 router.get("/init-sizes", verifyToken, controller.getInitSizes);
+router.get("/komponen-init", verifyToken, controller.getKomponenMaster);
 router.get("/standar-ukuran", verifyToken, controller.getStandarUkuran);
 router.get(
   "/katalog/customer/:cusKode",

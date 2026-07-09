@@ -28,9 +28,9 @@ const mapSpkHeaderToSo = (header) => {
 
 // --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
 // hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
-const generateNomor = async (perushKode, joKode) => {
+const generateNomor = async (conn, perushKode, joKode) => {
   const prefix = `SO-${perushKode}-${joKode}-`;
-  const [rows] = await db.query(
+  const [rows] = await conn.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(so_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
      FROM tsalesorder
      WHERE so_perush_kode = ? AND so_jo_kode = ? AND so_nomor LIKE ?
@@ -54,7 +54,9 @@ const getDetail = async (nomor) => {
         FROM retail.tinv_hdr h
         INNER JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
         WHERE h.inv_nomor = s.so_invdc AND LEFT(s.so_divisi, 1) <> '3'
-      ), 0) AS jmlinvdc
+      ), 0) AS jmlinvdc,
+      map.mspk_acc_customer AS map_acc_customer,
+      map.mspk_acc_tanggal AS map_acc_tanggal
      FROM tsalesorder s
      LEFT JOIN tjenisorder j ON s.so_jo_kode = j.jo_kode
      LEFT JOIN tsales a ON s.so_sal_kode = a.sal_kode
@@ -62,6 +64,7 @@ const getDetail = async (nomor) => {
      LEFT JOIN tcustomer c ON s.so_cus_kode = c.cus_kode
      LEFT JOIN retail.tcustomer k ON s.so_cus_kaosan = k.cus_kode
      LEFT JOIN tmpb m ON s.so_mppb = m.mpb_nomor
+     LEFT JOIN tmemospk map ON map.mspk_nomor = s.so_memo
      WHERE s.so_nomor = ?`,
     [nomor],
   );
@@ -180,11 +183,14 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
+  const komponen = await getKetKomponenGrid(nomor);
+
   return {
     header: header[0],
     alokasi,
     dtlKaosan,
     dtlSize,
+    komponen,
     ketKomponen: ketKomponen[0]?.ketKomponen || "",
   };
 };
@@ -245,6 +251,7 @@ const saveData = async (payload, user) => {
     alokasi,
     dtlKaosan,
     dtlSize,
+    dtlKetKomponen,
     isEdit,
     xminta5,
     xurut5,
@@ -272,6 +279,7 @@ const saveData = async (payload, user) => {
     if (!header.spk_jo_kode) throw new Error("Jenis Order belum diisi.");
     if (!header.spk_nama) throw new Error("Nama SO belum diisi.");
     if (!header.spk_cab) throw new Error("Kode Workshop (Cabang) harus diisi.");
+
     if (!header.spk_nomor_po || String(header.spk_nomor_po).trim() === "") {
       header.spk_tgl_po = null;
       header.spk_datelinepo = null;
@@ -349,15 +357,43 @@ const saveData = async (payload, user) => {
       : await getOmzet(header.spk_cus_kode, currentYear, 0);
 
     if (!isEdit) {
-      nomor = await generateNomor(header.spk_perush_kode, header.spk_jo_kode);
+      nomor = await generateNomor(
+        conn,
+        header.spk_perush_kode,
+        header.spk_jo_kode,
+      );
       header.spk_nomor = nomor;
       header.user_create = user.kode;
       header.date_create = new Date();
       header.spk_aktif = piutang > 100 ? "N" : "Y";
+      if (!header.spk_memo) {
+        if (header.spk_acc_customer !== "Y") {
+          throw new Error(
+            "Customer belum menyetujui pesanan ini. SO tidak bisa disimpan.",
+          );
+        }
+        if (!header.spk_acc_tanggal) {
+          throw new Error("Tanggal persetujuan customer wajib diisi.");
+        }
+      }
       await conn.query(`INSERT INTO tsalesorder SET ?`, [
         mapSpkHeaderToSo(cleanHeader(header)),
       ]);
     } else {
+      if (!header.spk_memo) {
+        const [existingRows] = await conn.query(
+          `SELECT so_acc_customer FROM tsalesorder WHERE so_nomor = ?`,
+          [nomor],
+        );
+        const wasAlreadyApproved = existingRows[0]?.so_acc_customer === "Y";
+        if (
+          !wasAlreadyApproved &&
+          header.spk_acc_customer === "Y" &&
+          !header.spk_acc_tanggal
+        ) {
+          throw new Error("Tanggal persetujuan customer wajib diisi.");
+        }
+      }
       header.user_modified = user.kode;
       header.date_modified = new Date();
       if (piutang > 100) header.spk_aktif = "N";
@@ -398,9 +434,6 @@ const saveData = async (payload, user) => {
         [nomor],
       );
       await conn.query(`DELETE FROM tsalesorder_size WHERE sos_so_nomor = ?`, [
-        nomor,
-      ]);
-      await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
         nomor,
       ]);
     }
@@ -575,7 +608,25 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 6. UPDATE STATUS TRANSAKSI TERKAIT — tabel eksternal, TIDAK BERUBAH
+    // 6. DETAIL KETERANGAN KOMPONEN — target tspk_ketkomponen
+    // FIX: sebelumnya di-DELETE saat edit tapi TIDAK PERNAH di-INSERT
+    // ulang, jadi data ini hilang tiap kali SO di-edit. Sekarang
+    // delete + insert dijalankan sepasang, konsisten untuk create & edit.
+    // ==========================================
+    await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [nomor]);
+    if (dtlKetKomponen && Array.isArray(dtlKetKomponen)) {
+      for (const k of dtlKetKomponen) {
+        if (k.pakai) {
+          await conn.query(
+            `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES (?,?,?)`,
+            [nomor, k.kode, k.ket],
+          );
+        }
+      }
+    }
+
+    // ==========================================
+    // 7. UPDATE STATUS TRANSAKSI TERKAIT — tabel eksternal, TIDAK BERUBAH
     // ==========================================
     if (!isEdit) {
       if (header.spk_pen_nomor) {
@@ -785,10 +836,6 @@ const validateField = async (type, value, extraParam = "") => {
   return { valid: true };
 };
 
-// --- getMemoDetail, processImage, getDatelineLimits,
-// checkHakTopUrgent, getInitSizes, getStandarUkuran — TIDAK
-// BERUBAH SAMA SEKALI, tidak pernah menyentuh tspk/tsalesorder ---
-
 const normalizeKeys = (obj) => {
   if (!obj) return obj;
   return Object.keys(obj).reduce((acc, key) => {
@@ -823,10 +870,11 @@ const getMemoDetail = async (nomor) => {
   return { header: normalizedHeader, sizes: normalizedSizes };
 };
 
-const processImage = async (tempFilePath, cabang, spkNomor) => {
+const processImage = async (tempFilePath, cabang, spkNomor, type = "MAIN") => {
   if (!fs.existsSync(tempFilePath))
     throw new Error("File sumber sementara tidak ditemukan.");
-  const finalFileName = `${spkNomor}.jpg`;
+  const finalFileName =
+    type === "ACC" ? `${spkNomor}-acc.jpg` : `${spkNomor}.jpg`;
   const branchFolderPath = path.join(process.cwd(), "public", "images", cabang);
   if (!fs.existsSync(branchFolderPath)) {
     fs.mkdirSync(branchFolderPath, { recursive: true });
@@ -935,6 +983,40 @@ const getInitSizes = async () => {
     pesak: 0,
     l_lutut: 0,
     l_bawah: 0,
+  }));
+};
+
+// ← BARU: gabungkan master tketkomponen + data existing tspk_ketkomponen
+// jadi format checkbox — sama pola kayak mapFormService.getById().
+const getKetKomponenGrid = async (nomor) => {
+  const [master] = await db.query(
+    `SELECT kode, nama FROM tketkomponen ORDER BY kode`,
+  );
+  const [existing] = await db.query(
+    `SELECT skk_kode, skk_ket FROM tspk_ketkomponen WHERE skk_spk = ?`,
+    [nomor],
+  );
+  return master.map((k) => {
+    const found = existing.find((e) => e.skk_kode === k.kode);
+    return {
+      kode: String(k.kode),
+      nama: k.nama,
+      pakai: !!found,
+      ket: found ? found.skk_ket : "",
+    };
+  });
+};
+
+// ← BARU: dipakai mode Create (belum ada nomor, jadi tidak ada existing data)
+const getKomponenMaster = async () => {
+  const [master] = await db.query(
+    `SELECT kode, nama FROM tketkomponen ORDER BY kode`,
+  );
+  return master.map((k) => ({
+    kode: String(k.kode),
+    nama: k.nama,
+    pakai: false,
+    ket: "",
   }));
 };
 
@@ -1055,4 +1137,5 @@ module.exports = {
   getInitSizes,
   getStandarUkuran,
   getKatalogCustomer,
+  getKomponenMaster,
 };

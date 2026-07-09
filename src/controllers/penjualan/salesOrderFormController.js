@@ -60,7 +60,7 @@ const getMemoDetail = async (req, res) => {
 const uploadImage = async (req, res) => {
   try {
     if (!req.file) throw new Error("File gambar tidak ditemukan.");
-    const { spkNomor, cabang } = req.body;
+    const { spkNomor, cabang, type } = req.body; // ← tambah type
 
     if (!spkNomor || !cabang) {
       throw new Error("Nomor SPK dan Cabang harus disertakan.");
@@ -70,6 +70,7 @@ const uploadImage = async (req, res) => {
       req.file.path,
       cabang,
       spkNomor,
+      type, // ← diteruskan ke service
     );
     res
       .status(200)
@@ -165,6 +166,15 @@ const getKatalogCustomer = async (req, res) => {
   }
 };
 
+const getKomponenMaster = async (req, res) => {
+  try {
+    const data = await service.getKomponenMaster();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getDetail,
   save,
@@ -176,4 +186,5 @@ module.exports = {
   getInitSizes,
   getStandarUkuran,
   getKatalogCustomer,
+  getKomponenMaster,
 };

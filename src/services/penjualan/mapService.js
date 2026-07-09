@@ -45,7 +45,8 @@ const getBrowseList = async (filters) => {
         SELECT IFNULL(IF(pin_acc="" AND pin_dipakai="","WAIT",IF(pin_acc="Y" AND pin_dipakai="","ACC",IF(pin_acc="Y" AND pin_dipakai="Y","",IF(pin_acc="N","TOLAK","")))), "")
         FROM tspk_pin5 WHERE pin_trs="MAP" AND pin_nomor=x.mspk_nomor ORDER BY pin_urut DESC LIMIT 1
       ),"") AS Ngedit,
-      x.mspk_newdesign AS Design_Baru, x.mspk_designdone AS Design_Done, x.mspk_keterangan AS Keterangan
+      x.mspk_newdesign AS Design_Baru, x.mspk_designdone AS Design_Done, x.mspk_keterangan AS Keterangan,
+      x.mspk_acc_customer AS AccCustomer, x.mspk_acc_tanggal AS AccTanggal
     FROM tmemospk x
     LEFT JOIN tcustomer c ON x.mspk_cus_kode = c.cus_kode
     LEFT JOIN tsales s ON x.mspk_sal_kode = s.sal_kode
