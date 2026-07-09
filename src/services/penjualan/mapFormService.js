@@ -396,7 +396,7 @@ const save = async (data, userKode, isNewMode) => {
         data.SalesKode,
         data.JoKode,
         data.StatusKerja,
-        data.KetUkuran || "", // Memasukkan "Ket. Ukuran" ke kolom mspk_ukuran
+        data.KetUkuran || "",
         data.Gramasi,
         panjang,
         lebar,
@@ -428,9 +428,9 @@ const save = async (data, userKode, isNewMode) => {
         data.Cmo || "",
         data.DesignBaru || "N",
         data.RencanaSize || "",
-        nomorMap,
         data.AccCustomer || "N",
         data.AccTanggal || null,
+        nomorMap,
       ]);
 
       // Jika edit hasil ACC, matikan PIN
