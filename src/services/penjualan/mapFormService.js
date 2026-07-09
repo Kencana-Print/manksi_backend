@@ -169,6 +169,7 @@ const getById = async (nomor) => {
 // --- SAVE MAP ---
 const save = async (data, userKode, isNewMode) => {
   const conn = await db.getConnection();
+
   try {
     await conn.beginTransaction();
 
@@ -197,11 +198,9 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
 
-      // Fix: jangan gunakan .setHours() langsung pada variable yang dipakai lagi
       const tglMapDay = new Date(data.Tanggal);
       tglMapDay.setHours(0, 0, 0, 0);
       const nowDay = new Date();
-      // Jam 5 sore = 17:00
       if (nowDay.getHours() >= 17 && tglMapDay <= nowDay) {
         throw new Error(
           "Sudah lewat jam 5 sore bosku. Masukkan inputan ke hari berikutnya.",
@@ -216,7 +215,7 @@ const save = async (data, userKode, isNewMode) => {
       throw new Error("Tanggal deadline harus >= tanggal memo.");
     }
 
-    // ── 5. SANITASI DATA NUMERIK KOSONG (MENGGANTIKAN LOGIKA DELPHI) ──
+    // ── 5. SANITASI DATA NUMERIK KOSONG ──
     const safeNum = (val) => {
       const parsed = parseFloat(String(val).replace(/,/g, ""));
       return isNaN(parsed) ? 0 : parsed;
@@ -267,7 +266,6 @@ const save = async (data, userKode, isNewMode) => {
     }
 
     if (isNewMode) {
-      // CREATE — hard block sesuai permintaan asli, tidak ada pengecualian
       if (data.AccCustomer !== "Y") {
         throw new Error(
           "Customer belum menyetujui pesanan ini. MAP tidak bisa disimpan.",
@@ -277,7 +275,6 @@ const save = async (data, userKode, isNewMode) => {
         throw new Error("Tanggal persetujuan customer wajib diisi.");
       }
     } else {
-      // EDIT — cek state SEBELUMNYA di database, bukan cuma apa yang dikirim FE
       const [existingRows] = await conn.query(
         `SELECT mspk_acc_customer FROM tmemospk WHERE mspk_nomor = ?`,
         [data.Nomor],
@@ -285,15 +282,10 @@ const save = async (data, userKode, isNewMode) => {
       const wasAlreadyApproved = existingRows[0]?.mspk_acc_customer === "Y";
 
       if (!wasAlreadyApproved) {
-        // Record ini sebelumnya belum approved (termasuk semua MAP lama).
-        // Boleh diedit bebas untuk hal lain — TAPI kalau user di form ini
-        // MENCOBA set jadi Y, wajib lengkap dulu, gak boleh setengah-setengah.
         if (data.AccCustomer === "Y" && !data.AccTanggal) {
           throw new Error("Tanggal persetujuan customer wajib diisi.");
         }
       }
-      // Kalau wasAlreadyApproved === true, tidak divalidasi ulang sama sekali —
-      // edit lain (workshop, keterangan, dll) bebas jalan.
     }
 
     let nomorMap = data.Nomor;
@@ -317,7 +309,8 @@ const save = async (data, userKode, isNewMode) => {
           mspk_acc_customer, mspk_acc_tanggal
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
-      await conn.query(insertQ, [
+
+      const insertParams = [
         nomorMap,
         data.Nama,
         data.Nama2 || data.Nama,
@@ -325,7 +318,7 @@ const save = async (data, userKode, isNewMode) => {
         data.CustKode,
         data.SalesKode,
         data.StatusKerja,
-        data.KetUkuran || "", // Memasukkan "Ket. Ukuran" ke kolom mspk_ukuran
+        data.KetUkuran || "",
         data.Gramasi,
         panjang,
         lebar,
@@ -365,9 +358,23 @@ const save = async (data, userKode, isNewMode) => {
         data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
-      ]);
+      ];
 
-      // Jika ini adalah revisi, matikan status aktif MAP Referensinya
+      // ── DEBUG WRAP: insertQ ──
+      try {
+        await conn.query(insertQ, insertParams);
+      } catch (e) {
+        console.error("❌ GAGAL DI insertQ:", e.message);
+        console.error(
+          "❌ Jumlah placeholder insertQ:",
+          (insertQ.match(/\?/g) || []).length,
+        );
+        console.error("❌ Jumlah insertParams:", insertParams.length);
+        console.error("❌ RAW MYSQL ERROR:", e);
+        console.error("❌ SQL final (mysql2):", e.sql);
+        throw e;
+      }
+
       if (data.IsRevisi === "Y" && data.Referensi) {
         await conn.query(
           `UPDATE tmemospk SET mspk_revisi="Y", mspk_aktif="N" WHERE mspk_nomor=?`,
@@ -388,7 +395,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_acc_customer=?, mspk_acc_tanggal=?
         WHERE mspk_nomor=?
       `;
-      await conn.query(updateQ, [
+      const updateParams = [
         data.Nama,
         data.Nama2 || data.Nama,
         data.Divisi,
@@ -431,9 +438,8 @@ const save = async (data, userKode, isNewMode) => {
         data.AccCustomer || "N",
         data.AccTanggal || null,
         nomorMap,
-      ]);
+      ];
 
-      // Jika edit hasil ACC, matikan PIN
       if (data.StatusEdit === "ACC") {
         await conn.query(
           `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="MAP" AND pin_nomor=? AND pin_dipakai=""`,

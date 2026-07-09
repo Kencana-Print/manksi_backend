@@ -44,9 +44,7 @@ const save = async (req, res) => {
   try {
     const isNewMode =
       !req.body.Nomor || req.body.Nomor === "Baru= Nomor Otomatis";
-    // userKode didapat dari token otentikasi (middleware)
     const userKode = req.user?.kode || "ADMIN";
-
     const savedNomor = await mapFormService.save(req.body, userKode, isNewMode);
     res.status(200).json({
       success: true,
@@ -145,10 +143,18 @@ const getKatalogCustomer = async (req, res) => {
       return res.json({ success: true, data: [], total: 0 });
     }
 
-    const result = await mapFormService.getKatalogCustomer(cusKode, divisi, q.trim(), parseInt(page), parseInt(limit));
-    
+    const result = await mapFormService.getKatalogCustomer(
+      cusKode,
+      divisi,
+      q.trim(),
+      parseInt(page),
+      parseInt(limit),
+    );
+
     // Kirim data array (items) dan nilai total
-    res.status(200).json({ success: true, data: result.items, total: result.total });
+    res
+      .status(200)
+      .json({ success: true, data: result.items, total: result.total });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -164,5 +170,5 @@ module.exports = {
   getPrintData,
   getNamaSuggestions,
   checkDuplikatNama,
-  getKatalogCustomer, 
+  getKatalogCustomer,
 };
