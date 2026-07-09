@@ -304,6 +304,13 @@ const save = async (data, userKode, isNewMode) => {
         nomorMap = await generateNomor(data.PerushKode, data.JoKode);
       }
 
+      console.log(
+        "[DEBUG insertQ] placeholders:",
+        (insertQ.match(/\?/g) || []).length,
+        "| params:",
+        arguments.length,
+      );
+
       const insertQ = `
         INSERT INTO tmemospk (
           mspk_nomor, mspk_nama, mspk_nama2, mspk_divisi, mspk_cus_kode, mspk_sal_kode,
@@ -375,6 +382,12 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
     } else {
+      console.log(
+        "[DEBUG insertQ] placeholders:",
+        (insertQ.match(/\?/g) || []).length,
+        "| params:",
+        arguments.length,
+      );
       const updateQ = `
         UPDATE tmemospk SET 
           mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
