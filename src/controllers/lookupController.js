@@ -448,16 +448,16 @@ const searchPermintaanBarangGarmen = async (req, res) => {
 
 const searchBarangInvProforma = async (req, res) => {
   try {
-    const { perush, cus, q, page, limit } = req.query;
-    if (!perush || !cus)
+    const { perushKode, cusKode, q, page, limit } = req.query;
+    if (!perushKode || !cusKode)
       return res.status(400).json({
         success: false,
         message: "Perusahaan & Customer wajib dipilih dulu.",
       });
 
     const data = await lookupService.searchBarangInvProforma(
-      perush,
-      cus,
+      perushKode,
+      cusKode,
       q,
       page,
       limit,

@@ -56,18 +56,39 @@ const getSpkDetailsAndMkb = async (
   }
 
   // 4. Validasi PLANNING (Hanya untuk Non-MAP)
+  // 4. Validasi PLANNING (Hanya untuk Non-MAP)
   if (!spkNomor.toUpperCase().startsWith("MAP")) {
     const [planRows] = await db.query(
-      `SELECT SUM(plan_datang) as total_datang, SUM(plan_cutting) as total_cutting FROM tplanningspk WHERE plan_spk = ?`,
+      `SELECT SUM(plan_datang) as total_datang
+     FROM tplanningspk
+     WHERE plan_spk = ?`,
       [spkNomor],
     );
-    const planning = planRows[0];
-    if (!planning || Number(planning.total_datang) === 0) {
+    const totalDatang = planRows[0]?.total_datang || 0;
+
+    if (Number(totalDatang) === 0) {
       throw new Error(
         "SPK tsb belum input planning kedatangan bahan.\nHubungi divisi pembelian.",
       );
     }
-    if (!planning || Number(planning.total_cutting) === 0) {
+
+    // ← DIGANTI: cek planning Cutting dari SUMBER BARU (web PPIC) DULU,
+    // fallback ke tabel lama untuk SPK yang planning-nya masih dari desktop.
+    const [cuttingRows] = await db.query(
+      `SELECT SUM(qty) AS total_cutting FROM (
+       SELECT SUM(plan_qty_jadwal) AS qty
+       FROM tplan_ppic_dtl2
+       WHERE plan_spk = ? AND plan_divisi = 'CUTTING'
+       UNION ALL
+       SELECT SUM(plan_cutting) AS qty
+       FROM tplanningspk
+       WHERE plan_spk = ?
+     ) x`,
+      [spkNomor, spkNomor],
+    );
+    const totalCutting = cuttingRows[0]?.total_cutting || 0;
+
+    if (Number(totalCutting) === 0) {
       throw new Error("SPK tsb belum input planning Cutting.");
     }
   }
