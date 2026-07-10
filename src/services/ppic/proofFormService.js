@@ -38,7 +38,10 @@ const generateNomor = async (tahun, conn = db) => {
      FOR UPDATE`,
     [String(tahun)],
   );
-  const next = rows[0].jumlah + 1;
+  // FIX: paksa Number() — driver mysql2 balikin hasil CAST(...AS UNSIGNED)
+  // sebagai STRING (BIGINT UNSIGNED), bukan Number. Tanpa ini, "832" + 1
+  // di JS jadi STRING CONCATENATION ("8321"), bukan penjumlahan (833).
+  const next = Number(rows[0].jumlah) + 1;
   return `PRF/${String(next).padStart(4, "0")}/${tahun}`;
 };
 
