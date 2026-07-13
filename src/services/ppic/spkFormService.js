@@ -249,6 +249,7 @@ const saveData = async (payload, user) => {
       newHeader.spk_aktif = "Y";
       newHeader.spk_ketbeli = spk_ketbeli || "";
       newHeader.spk_keterangan = spk_keterangan || "";
+      newHeader.spk_tanggal = new Date();
       newHeader.user_create = user.kode;
       newHeader.date_create = new Date();
       delete newHeader.user_modified;
