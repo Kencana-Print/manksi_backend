@@ -181,6 +181,28 @@ const getSizeList = async (nomor) => {
 };
 
 // ============================================================
+// FILTER KOLOM TSPK — cegah field yang nyasar dari skema tsalesorder
+// (yang subset/beda dari tspk) bikin crash "Unknown column" saat INSERT.
+// Cache di-load sekali, refresh kalau kosong/gagal.
+// ============================================================
+let _tspkColumnsCache = null;
+const getTspkColumns = async (conn = db) => {
+  if (_tspkColumnsCache) return _tspkColumnsCache;
+  const [rows] = await conn.query(`SHOW COLUMNS FROM tspk`);
+  _tspkColumnsCache = new Set(rows.map((r) => r.Field));
+  return _tspkColumnsCache;
+};
+
+const filterToTspkColumns = async (obj, conn = db) => {
+  const validCols = await getTspkColumns(conn);
+  const out = {};
+  for (const [key, val] of Object.entries(obj)) {
+    if (validCols.has(key)) out[key] = val;
+  }
+  return out;
+};
+
+// ============================================================
 // SAVE DATA — create & edit SPK PPIC
 // ============================================================
 const saveData = async (payload, user) => {
@@ -231,7 +253,8 @@ const saveData = async (payload, user) => {
       newHeader.date_create = new Date();
       delete newHeader.user_modified;
       delete newHeader.date_modified;
-      await conn.query(`INSERT INTO tspk SET ?`, [newHeader]);
+      const filteredHeader = await filterToTspkColumns(newHeader, conn);
+      await conn.query(`INSERT INTO tspk SET ?`, [filteredHeader]);
       // Copy size dari SO (tsalesorder_size ATAU tspk_size, tergantung
       // sumber) sebagai starting point, lalu override dengan dtlSize
       // dari payload kalau user sudah sesuaikan di form
