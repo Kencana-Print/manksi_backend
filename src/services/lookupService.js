@@ -83,6 +83,31 @@ const searchSpk = async (
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
+  } else if (filterMode === "spk-map") {
+    // Minta Bahan Baku: SPK PPIC (spk_is_so=0) + MAP, WAJIB sudah
+    // di-approve CMO. TIDAK termasuk SO — backend getSpkDetailsAndMkb()
+    // menolak SPK yang belum ada CMO-nya, jadi modal ini juga harus
+    // filter CMO <> '' supaya user gak pilih SPK yang bakal ditolak.
+    baseQuery = `
+    FROM (
+      SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
+             spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain,
+             spk_finishing AS Finishing, spk_divisi AS Divisi,
+             spk_cmo AS CMO, spk_aktif AS Aktif
+      FROM tspk
+      WHERE spk_is_so = 0
+      UNION ALL
+      SELECT mspk_nomor, mspk_nama, mspk_tanggal,
+             mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing,
+             mspk_divisi, mspk_cmo, 'Y'
+      FROM tmemospk
+    ) a
+    WHERE Aktif = 'Y' AND Divisi IN (3,4,6) AND CMO <> ''
+  `;
+    if (keyword) {
+      whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
   } else if (filterMode === "sj") {
     // SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1 (lama).
     // Kolom di-alias spk_* di kedua sisi supaya selectClause di bawah

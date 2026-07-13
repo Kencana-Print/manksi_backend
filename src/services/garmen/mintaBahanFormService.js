@@ -21,16 +21,17 @@ const getSpkDetailsAndMkb = async (
   const querySpk = `
     SELECT * FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_jumlah AS Jumlah, 
-             spk_pending, spk_accpending, spk_ppotong, spk_cmo AS cmo 
+             spk_pending, spk_accpending, spk_ppotong, spk_cmo AS cmo,
+             spk_so_ref AS SoRef
       FROM tspk WHERE spk_aktif="Y"
       UNION ALL
       SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_jumlah AS Jumlah, 
-             "" AS spk_pending, "" AS spk_accpending, "" AS spk_ppotong, mspk_cmo AS cmo 
+             "" AS spk_pending, "" AS spk_accpending, "" AS spk_ppotong, mspk_cmo AS cmo,
+             "" AS SoRef
       FROM tmemospk
     ) final WHERE Nomor = ?
   `;
   const [spkRows] = await db.query(querySpk, [spkNomor]);
-
   if (spkRows.length === 0) throw new Error("No.Spk belum terdaftar.");
   const spk = spkRows[0];
 
@@ -56,13 +57,17 @@ const getSpkDetailsAndMkb = async (
   }
 
   // 4. Validasi PLANNING (Hanya untuk Non-MAP)
-  // 4. Validasi PLANNING (Hanya untuk Non-MAP)
   if (!spkNomor.toUpperCase().startsWith("MAP")) {
+    // ← BARU: cek planning di SPK PPIC-nya SENDIRI *dan* SO asalnya
+    // (spk_so_ref) — MKB/planning kadang tersimpan pakai nomor SO
+    // kalau diinput sebelum SPK PPIC-nya jadi.
+    const lookupNomors = spk.SoRef ? [spkNomor, spk.SoRef] : [spkNomor];
+
     const [planRows] = await db.query(
       `SELECT SUM(plan_datang) as total_datang
      FROM tplanningspk
-     WHERE plan_spk = ?`,
-      [spkNomor],
+     WHERE plan_spk IN (?)`,
+      [lookupNomors],
     );
     const totalDatang = planRows[0]?.total_datang || 0;
 
@@ -72,19 +77,17 @@ const getSpkDetailsAndMkb = async (
       );
     }
 
-    // ← DIGANTI: cek planning Cutting dari SUMBER BARU (web PPIC) DULU,
-    // fallback ke tabel lama untuk SPK yang planning-nya masih dari desktop.
     const [cuttingRows] = await db.query(
       `SELECT SUM(qty) AS total_cutting FROM (
        SELECT SUM(plan_qty_jadwal) AS qty
        FROM tplan_ppic_dtl2
-       WHERE plan_spk = ? AND plan_divisi = 'CUTTING'
+       WHERE plan_spk IN (?) AND plan_divisi = 'CUTTING'
        UNION ALL
        SELECT SUM(plan_cutting) AS qty
        FROM tplanningspk
-       WHERE plan_spk = ?
+       WHERE plan_spk IN (?)
      ) x`,
-      [spkNomor, spkNomor],
+      [lookupNomors, lookupNomors],
     );
     const totalCutting = cuttingRows[0]?.total_cutting || 0;
 
@@ -102,10 +105,12 @@ const getSpkDetailsAndMkb = async (
     FROM tmkb_hdr j
     INNER JOIN tmkb_dtl i ON i.mkbd_mkb_nomor = j.MKB_NOMOR
     LEFT JOIN tbahan b ON b.Bhn_kode = i.mkbd_bhn_kode
-    WHERE j.MKB_SPK_NOMOR = ?
+    WHERE j.MKB_SPK_NOMOR IN (?)
     GROUP BY i.mkbd_bhn_kode
   `;
-  const [mkbRows] = await db.query(queryMkb, [spkNomor]);
+  const [mkbRows] = await db.query(queryMkb, [
+    spk.SoRef ? [spkNomor, spk.SoRef] : [spkNomor],
+  ]);
 
   // 6. Validasi CEK BARU
   if (!isEdit && keterangan && keterangan.toUpperCase().includes("BARU")) {

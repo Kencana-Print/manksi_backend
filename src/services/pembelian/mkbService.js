@@ -1,5 +1,5 @@
 const db = require("../../config/database");
-const tutupBukuService = require("../tutupBukuService"); // Pastikan path sesuai
+const tutupBukuService = require("../tutupBukuService");
 
 // --- QUERY BROWSE MKB ---
 const getBrowseMkb = async (startDate, endDate) => {
@@ -8,13 +8,13 @@ const getBrowseMkb = async (startDate, endDate) => {
       h.mkb_nomor AS Nomor, 
       h.mkb_tanggal AS Tanggal, 
       (z.po1 + z.po2) AS PO,
-      IFNULL(s.spk_nomor, m.mspk_nomor) AS SPK, 
-      IFNULL(s.spk_tanggal, m.mspk_tanggal) AS TglSPK, 
-      IFNULL(s.spk_dateline, m.mspk_dateline) AS Dateline, 
-      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
-      IFNULL(s.spk_jumlah, m.mspk_jumlah) AS JumlahSPK, 
-      IFNULL(s.spk_kain, m.mspk_kain) AS Kain, 
-      IFNULL(s.spk_finishing, m.mspk_finishing) AS Finishing,
+      IFNULL(so.so_nomor, IFNULL(s.spk_nomor, m.mspk_nomor)) AS SPK, 
+      IFNULL(so.so_tanggal, IFNULL(s.spk_tanggal, m.mspk_tanggal)) AS TglSPK, 
+      IFNULL(so.so_dateline, IFNULL(s.spk_dateline, m.mspk_dateline)) AS Dateline, 
+      IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS NamaSpk,
+      IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS JumlahSPK, 
+      IFNULL(so.so_kain, IFNULL(s.spk_kain, m.mspk_kain)) AS Kain, 
+      IFNULL(so.so_finishing, IFNULL(s.spk_finishing, m.mspk_finishing)) AS Finishing,
       c.cus_nama AS Customer, 
       c.cus_alamat AS Alamat,
       
@@ -55,9 +55,10 @@ const getBrowseMkb = async (startDate, endDate) => {
       h.date_create AS Created
       
     FROM tmkb_hdr h
+    LEFT JOIN tsalesorder so ON so.so_nomor = h.mkb_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
-    LEFT JOIN tcustomer c ON c.cus_kode = IFNULL(s.spk_cus_kode, m.mspk_cus_kode)
+    LEFT JOIN tcustomer c ON c.cus_kode = IFNULL(so.so_cus_kode, IFNULL(s.spk_cus_kode, m.mspk_cus_kode))
     LEFT JOIN (
       SELECT a.*,
         IFNULL((SELECT COUNT(DISTINCT p.pod_po_nomor) FROM tpo_dtl p WHERE p.pod_mkb_nomor = a.nomor), 0) AS po1,

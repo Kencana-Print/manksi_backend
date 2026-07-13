@@ -38,18 +38,20 @@ const getFormDetail = async (nomor) => {
   const loadDivisi = async (divisi) => {
     const [rows] = await db.query(
       `SELECT
-         d.plan_spk             AS NomorSPK,
-         s.spk_nama             AS NamaSPK,
-         s.spk_jumlah           AS QtySPK,
-         DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS plan_tgl_jadwal,
-         d.plan_wip             AS plan_wip,
-         d.plan_qty_po          AS plan_qty_po,
-         d.plan_qty_jadwal      AS plan_qty_jadwal,
-         d.plan_line_kelompok   AS plan_line_kelompok
-       FROM tplan_ppic_dtl2 d
-       LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
-       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
-       ORDER BY d.plan_tgl_jadwal ASC`,
+        d.plan_spk             AS NomorSPK,
+        s.spk_nama             AS NamaSPK,
+        s.spk_jumlah           AS QtySPK,
+        DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS plan_tgl_jadwal,
+        d.plan_wip             AS plan_wip,
+        d.plan_qty_po          AS plan_qty_po,
+        d.plan_qty_jadwal      AS plan_qty_jadwal,
+        d.plan_line_kelompok   AS plan_line_kelompok,
+        d.plan_supplier_kode   AS supplierKode,
+        d.plan_supplier_nama   AS supplierNama
+      FROM tplan_ppic_dtl2 d
+      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
+      ORDER BY d.plan_tgl_jadwal ASC`,
       [nomor, divisi],
     );
     return rows;
@@ -205,14 +207,19 @@ const saveData = async (payload, userKode) => {
         // skip baris yang tidak punya SPK atau tanggal
         if (!row.NomorSPK || !row.plan_tgl_jadwal) continue;
 
+        // Supplier cuma relevan buat Sewing dengan Line Eksternal
+        const isExternal =
+          divisi === "SEWING" && row.plan_line_kelompok === "LINE EXTERNAL";
+
         // Validasi duplikat SPK di divisi yang sama sudah di frontend
         // tapi backend cek juga untuk safety
         await conn.query(
           `INSERT IGNORE INTO tplan_ppic_dtl2
-             (plan_pl_nomor, plan_spk, plan_divisi, plan_tanggal,
+            (plan_pl_nomor, plan_spk, plan_divisi, plan_tanggal,
               plan_tgl_jadwal, plan_wip, plan_qty_po,
-              plan_qty_jadwal, plan_line_kelompok)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              plan_qty_jadwal, plan_line_kelompok,
+              plan_supplier_kode, plan_supplier_nama)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             nomor,
             row.NomorSPK,
@@ -223,6 +230,8 @@ const saveData = async (payload, userKode) => {
             Number(row.plan_qty_po) || 0,
             Number(row.plan_qty_jadwal) || 0,
             divisi === "KOLI" ? "" : row.plan_line_kelompok || "",
+            isExternal ? row.supplierKode || "" : "",
+            isExternal ? row.supplierNama || "" : "",
           ],
         );
       }
