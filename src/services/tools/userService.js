@@ -6,6 +6,8 @@ const getBrowse = async () => {
     SELECT 
       user_kode AS Kode, 
       user_nama AS Nama, 
+      user_cab AS Cabang,
+      user_bagian AS Bagian,
       IF(user_aktif = 0, "YA", "TIDAK") AS Aktif 
     FROM tuser 
     ORDER BY user_nama ASC

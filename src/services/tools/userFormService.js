@@ -38,6 +38,9 @@ const mapUserRow = (row) => {
     nama: row.user_nama,
     password: row.user_password || "", // TODO: masih plaintext, sama seperti Delphi
     divisi: Number(row.user_divisi) || 0,
+    bagian: row.user_bagian || "",
+    cabang: row.user_cab || "",
+    cabangKaos: row.user_cabkaos || "",
     aktif: Number(row.user_aktif) !== 1, // 0/NULL => aktif, 1 => pasif
     editReport: Number(row.user_edit_report) === 1,
     lihatBeli: Number(row.user_lihat_beli) === 1,
@@ -122,6 +125,9 @@ const getFormData = async (kode) => {
     nama: "",
     password: "",
     divisi: 0,
+    bagian: "",
+    cabang: "",
+    cabangKaos: "",
     aktif: true, // default Delphi: refreshdata -> ckaktif.Checked=true
     editReport: false,
     lihatBeli: false,
@@ -182,6 +188,9 @@ const saveUser = async (payload, isEdit) => {
     password,
     divisi,
     aktif,
+    bagian,
+    cabang,
+    cabangKaos,
     editReport,
     lihatBeli,
     lihatHarga,
@@ -209,15 +218,19 @@ const saveUser = async (payload, isEdit) => {
       if (!exists) throw new Error("Data user tidak ditemukan untuk diubah.");
       await conn.query(
         `UPDATE tuser SET
-           user_nama = ?, user_password = ?, user_divisi = ?,
-           user_aktif = ?, user_edit_report = ?, user_lihat_beli = ?,
-           user_lihat_harga = ?, user_lihat_cus = ?, user_lihat_sup = ?,
-           date_modify = NOW()
-         WHERE user_kode = ?`,
+          user_nama = ?, user_password = ?, user_divisi = ?,
+          user_bagian = ?, user_cab = ?, user_cabkaos = ?,
+          user_aktif = ?, user_edit_report = ?, user_lihat_beli = ?,
+          user_lihat_harga = ?, user_lihat_cus = ?, user_lihat_sup = ?,
+          date_modify = NOW()
+        WHERE user_kode = ?`,
         [
           nama,
           password || "",
           divisiNum,
+          bagian || "",
+          cabang || "",
+          cabangKaos || "",
           aktif ? 0 : 1,
           editReport ? 1 : 0,
           lihatBeli ? 1 : 0,
@@ -238,14 +251,17 @@ const saveUser = async (payload, isEdit) => {
       }
       await conn.query(
         `INSERT INTO tuser
-           (user_kode, user_nama, user_divisi, date_create, user_password,
-            user_aktif, user_edit_report, user_lihat_beli, user_lihat_harga,
-            user_lihat_cus, user_lihat_sup)
-         VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+          (user_kode, user_nama, user_divisi, user_bagian, user_cab, user_cabkaos,
+            date_create, user_password, user_aktif, user_edit_report, user_lihat_beli,
+            user_lihat_harga, user_lihat_cus, user_lihat_sup)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
         [
           kode,
           nama,
           divisiNum,
+          bagian || "",
+          cabang || "",
+          cabangKaos || "",
           password || "",
           aktif ? 0 : 1,
           editReport ? 1 : 0,
