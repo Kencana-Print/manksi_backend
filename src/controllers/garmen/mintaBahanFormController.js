@@ -65,7 +65,11 @@ const saveData = async (req, res) => {
     // -------------------------------------------------
 
     // Cek Akses Cabang
-    if (payload.cabang !== req.user.cabang && req.user.cabang !== "ALL") {
+    if (
+      payload.cabang !== req.user.cabang &&
+      req.user.cabang !== "ALL" &&
+      !req.user.cabang.startsWith("HO-")
+    ) {
       return res.status(403).json({
         success: false,
         message: "Nomor permintaan tsb bukan cabang anda.",
