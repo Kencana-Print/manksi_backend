@@ -1,8 +1,17 @@
 const db = require("../../config/database");
+const sharp = require("sharp");
+const fs = require("fs");
+const path = require("path");
 
 // ============================================================
-// LHK POLA — FORM SERVICE (create/edit + lookup SPK)
+// HELPER: sanitize nomor buat nama file (nomor LHK/SPK/MAP
+// sering mengandung "/", gak boleh langsung jadi nama file)
 // ============================================================
+const sanitizeForFilename = (str) =>
+  String(str || "").replace(/[\/\\:*?"<>|]/g, "_");
+
+const buildGambarFileName = (lhkNomor, tab, spkNomor) =>
+  `${sanitizeForFilename(lhkNomor)}-${tab}-${sanitizeForFilename(spkNomor)}.jpg`;
 
 // --- GENERATE NOMOR (format: LHKP/0001/2026) ---
 const generateNomor = async (tanggal) => {
@@ -13,7 +22,8 @@ const generateNomor = async (tanggal) => {
      WHERE RIGHT(lhkp_nomor, 4) = ?`,
     [String(tahun)],
   );
-  const nextVal = rows[0].jumlah + 1;
+  // FIX sekalian: bug pattern #1 — hasil agregat SQL harus di-Number() dulu
+  const nextVal = Number(rows[0].jumlah) + 1;
   return `LHKP/${String(nextVal).padStart(4, "0")}/${tahun}`;
 };
 
@@ -33,8 +43,8 @@ const getDetail = async (nomor) => {
       `SELECT d.ldm_id AS id, d.ldm_urut AS urut, d.ldm_spk_nomor AS spkNomor,
               IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
               d.ldm_lebar_kain AS lebarKain, d.ldm_size AS size,
-              d.ldm_tujuan_proses AS tujuanProses, d.ldm_mesin AS mesin,
-              d.ldm_keterangan AS keterangan
+              d.ldm_tujuan_proses AS tujuanProses,
+              d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar
        FROM tlhkpola_marker_dtl d
        LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
        LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
@@ -46,7 +56,7 @@ const getDetail = async (nomor) => {
       `SELECT d.ldg_id AS id, d.ldg_urut AS urut, d.ldg_spk_nomor AS spkNomor,
               IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
               d.ldg_divisi AS divisi, d.ldg_grading_size AS gradingSize,
-              d.ldg_keterangan AS keterangan
+              d.ldg_keterangan AS keterangan, d.ldg_gambar AS gambar
        FROM tlhkpola_grading_dtl d
        LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
        LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldg_spk_nomor
@@ -65,7 +75,6 @@ const getDetail = async (nomor) => {
 
 // ============================================================
 // SAVE DATA — create & edit
-// Wajib minimal 1 baris SPK terisi (di tab Marker ATAU Grading).
 // ============================================================
 const saveData = async (payload, user, isEdit) => {
   const {
@@ -120,6 +129,26 @@ const saveData = async (payload, user, isEdit) => {
       );
     }
 
+    // ── Tarik dulu mapping gambar lama (per spkNomor) SEBELUM di-delete,
+    // supaya gambar "nempel" ke SPK meski urut baris berubah ──
+    const [oldMarkerGambar] = await conn.query(
+      `SELECT ldm_spk_nomor AS spkNomor, ldm_gambar AS gambar
+       FROM tlhkpola_marker_dtl WHERE ldm_nomor = ? AND ldm_gambar IS NOT NULL`,
+      [nomor],
+    );
+    const markerGambarMap = new Map(
+      oldMarkerGambar.map((r) => [r.spkNomor, r.gambar]),
+    );
+
+    const [oldGradingGambar] = await conn.query(
+      `SELECT ldg_spk_nomor AS spkNomor, ldg_gambar AS gambar
+       FROM tlhkpola_grading_dtl WHERE ldg_nomor = ? AND ldg_gambar IS NOT NULL`,
+      [nomor],
+    );
+    const gradingGambarMap = new Map(
+      oldGradingGambar.map((r) => [r.spkNomor, r.gambar]),
+    );
+
     // --- Replace total detail Marker/Mika/Duplek ---
     await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
       nomor,
@@ -132,13 +161,13 @@ const saveData = async (payload, user, isEdit) => {
         r.lebarKain || "",
         r.size || "",
         r.tujuanProses || "",
-        r.mesin || "",
         r.keterangan || "",
+        markerGambarMap.get(r.spkNomor) || null, // ← carry-forward
       ]);
       await conn.query(
         `INSERT INTO tlhkpola_marker_dtl
            (ldm_nomor, ldm_urut, ldm_spk_nomor, ldm_lebar_kain, ldm_size,
-            ldm_tujuan_proses, ldm_mesin, ldm_keterangan)
+            ldm_tujuan_proses, ldm_keterangan, ldm_gambar)
          VALUES ?`,
         [vals],
       );
@@ -156,10 +185,11 @@ const saveData = async (payload, user, isEdit) => {
         r.divisi || "",
         r.gradingSize || "",
         r.keterangan || "",
+        gradingGambarMap.get(r.spkNomor) || null, // ← carry-forward
       ]);
       await conn.query(
         `INSERT INTO tlhkpola_grading_dtl
-           (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size, ldg_keterangan)
+           (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size, ldg_keterangan, ldg_gambar)
          VALUES ?`,
         [vals],
       );
@@ -173,6 +203,55 @@ const saveData = async (payload, user, isEdit) => {
   } finally {
     conn.release();
   }
+};
+
+// ============================================================
+// UPLOAD GAMBAR PER BARIS — dipanggil SETELAH save berhasil
+// (nomor LHK sudah pasti ada). Key = spkNomor, bukan urut.
+// ============================================================
+const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
+  if (!fs.existsSync(tempFilePath))
+    throw new Error("File sumber sementara tidak ditemukan.");
+  if (tab !== "marker" && tab !== "grading")
+    throw new Error("Tab tidak valid.");
+
+  const finalFileName = buildGambarFileName(lhkNomor, tab, spkNomor);
+  const folderPath = path.join(process.cwd(), "public", "images", "lhkpola");
+  if (!fs.existsSync(folderPath)) {
+    fs.mkdirSync(folderPath, { recursive: true });
+  }
+  const finalPath = path.join(folderPath, finalFileName);
+
+  try {
+    await sharp(tempFilePath)
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .toFormat("jpeg")
+      .jpeg({ quality: 80 })
+      .toFile(finalPath);
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+  } catch (error) {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    throw new Error("Gagal memproses gambar ke format JPG.");
+  }
+
+  // Update kolom gambar di baris yang match spkNomor
+  const col = tab === "marker" ? "ldm_gambar" : "ldg_gambar";
+  const table =
+    tab === "marker" ? "tlhkpola_marker_dtl" : "tlhkpola_grading_dtl";
+  const nomorCol = tab === "marker" ? "ldm_nomor" : "ldg_nomor";
+  const spkCol = tab === "marker" ? "ldm_spk_nomor" : "ldg_spk_nomor";
+
+  const [result] = await db.query(
+    `UPDATE ${table} SET ${col} = ? WHERE ${nomorCol} = ? AND ${spkCol} = ?`,
+    [finalFileName, lhkNomor, spkNomor],
+  );
+  if (result.affectedRows === 0) {
+    throw new Error(
+      `Baris SPK ${spkNomor} tidak ditemukan di ${tab} untuk LHK Pola ${lhkNomor}.`,
+    );
+  }
+
+  return finalFileName;
 };
 
 // ============================================================
@@ -204,9 +283,7 @@ const deleteData = async (nomor) => {
 };
 
 // ============================================================
-// LOOKUP SPK/MAP — untuk F1/search di form (Marker & Grading tab)
-// Sumber gabungan tmemospk (MAP) + tspk (SPK), divisi 3/4/6,
-// sesuai filter Delphi frmLhkDesign F1 handler.
+// LOOKUP SPK/MAP
 // ============================================================
 const searchSpk = async (q = "") => {
   const like = `%${q}%`;
@@ -230,8 +307,6 @@ const searchSpk = async (q = "") => {
   return rows;
 };
 
-// Ambil satu SPK by nomor persis — dipakai saat user ketik manual +
-// Enter (bukan lewat modal), untuk auto-fill Nama & Divisi.
 const getSpkByNomor = async (nomor) => {
   const [rows] = await db.query(
     `SELECT x.* FROM (
@@ -248,7 +323,6 @@ const getSpkByNomor = async (nomor) => {
   return rows[0] || null;
 };
 
-// Nama divisi (label), bukan cuma kode angka
 const getDivisiNama = async (kodeDivisi) => {
   if (!kodeDivisi) return "";
   const [rows] = await db.query(
@@ -261,8 +335,10 @@ const getDivisiNama = async (kodeDivisi) => {
 module.exports = {
   getDetail,
   saveData,
+  uploadGambarDetail,
   deleteData,
   searchSpk,
   getSpkByNomor,
   getDivisiNama,
+  buildGambarFileName,
 };

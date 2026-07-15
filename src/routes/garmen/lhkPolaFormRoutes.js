@@ -5,10 +5,18 @@ const {
   verifyToken,
   checkPermission,
 } = require("../../middleware/authMiddleware");
+const upload = require("../../middleware/uploadMiddleware");
 
 const MENU_ID = 174;
 
-// Rute statis WAJIB di atas '/:nomor' generik.
+// --- ROUTE UPLOAD GAMBAR (rute statis, WAJIB di atas '/:nomor') ---
+router.post(
+  "/upload-gambar",
+  verifyToken,
+  upload.single("gambar"),
+  ctrl.uploadGambar,
+);
+
 router.get(
   "/lookup/search-spk",
   verifyToken,
