@@ -32,12 +32,10 @@ const toggleClose = async (req, res) => {
     const { isClose } = req.body; // 'Y' atau 'N'
 
     await mapService.toggleClose(nomor, isClose);
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: `Berhasil di-${isClose === "Y" ? "Close" : "Open"}.`,
-      });
+    res.status(200).json({
+      success: true,
+      message: `Berhasil di-${isClose === "Y" ? "Close" : "Open"}.`,
+    });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -47,8 +45,9 @@ const approveCmo = async (req, res) => {
   try {
     const { nomor } = req.params;
 
-    // Validasi Hak Akses CMO (Sesuai role di token)
-    if (!req.user.isCmo) {
+    // FIX: sebelumnya cek req.user.isCmo (gak pernah ada di payload JWT).
+    // Field yang benar: req.user.flags.cmo (dari kolom user_cmo, tipe int 1/0).
+    if (req.user.flags?.cmo !== 1) {
       return res
         .status(403)
         .json({ success: false, message: "Anda tidak memiliki hak CMO." });
