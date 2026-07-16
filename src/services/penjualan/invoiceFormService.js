@@ -72,22 +72,9 @@ const getById = async (nomor) => {
 
   // Untuk tiap baris — cek isSPK, lalu re-fetch daftar SJ terkait (getsj)
   for (const row of dtl) {
-    const [[soCheck]] = await db.query(
-      `SELECT spk_nomor FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1`,
-      [row.invd_spk_nomor],
-    );
+    const soCheck = await isSpk(row.invd_spk_nomor);
     if (soCheck) {
-      const [sjRows] = await db.query(
-        `SELECT DISTINCT d2.sjd_sj_nomor
-         FROM tspk turunan
-         INNER JOIN tsj_hdr h2 ON h2.sj_perush_kode = ?
-         INNER JOIN tsj_dtl d2 ON d2.sjd_sj_nomor = h2.sj_nomor
-           AND d2.sjd_spk_nomor = turunan.spk_nomor
-         WHERE turunan.spk_so_ref = ?
-           AND turunan.spk_is_so = 0`,
-        [hdr.inv_perush_kode, row.invd_spk_nomor],
-      );
-      row.sjList = sjRows.map((r) => r.sjd_sj_nomor).join(",");
+      row.sjList = await getSjForSpk(row.invd_spk_nomor, hdr.inv_perush_kode);
     } else {
       row.sjList = "-";
     }
@@ -161,9 +148,17 @@ const getDebet = async (nomor) => {
 
 // ─────────────────────────────────────────────────────────
 // IS SPK — cek apakah kode adalah SO aktif (bukan SPK turunan)
-// Sesuai struktur baru: invd_spk_nomor selalu merujuk ke SO
+// FIX: UNION-aware — SO bisa ada di tsalesorder (baru) ATAU
+// tspk legacy (spk_is_so=1, data lama pre-migrasi). Sebelumnya
+// cuma cek tspk, jadi SO baru selalu dianggap "bukan SO".
 // ─────────────────────────────────────────────────────────
 const isSpk = async (kode) => {
+  const [newRows] = await db.query(
+    `SELECT so_nomor FROM tsalesorder WHERE so_nomor = ?`,
+    [kode],
+  );
+  if (newRows.length > 0) return true;
+
   const [[row]] = await db.query(
     `SELECT spk_nomor FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1`,
     [kode],
@@ -172,8 +167,8 @@ const isSpk = async (kode) => {
 };
 
 // ─────────────────────────────────────────────────────────
-// GET SJ LIST untuk SO tertentu
-// Sesuai struktur baru: harus lewat jembatan SO → SPK turunan (spk_so_ref) → SJ
+// GET SJ LIST untuk SO tertentu — tidak berubah, SPK turunan
+// (spk_so_ref) selalu hidup di tspk apapun sumber SO-nya.
 // ─────────────────────────────────────────────────────────
 const getSjForSpk = async (soNomor, perushKode) => {
   const [rows] = await db.query(
@@ -191,8 +186,11 @@ const getSjForSpk = async (soNomor, perushKode) => {
 
 // ─────────────────────────────────────────────────────────
 // SEARCH BARANG/SPK untuk modal F1 di grid
-// Tetap dari tbarang LEFT JOIN tspk, tapi sekarang filter spk_is_so=1
-// karena barang/harga ada di level SO
+// FIX: UNION-aware — kode barang (brg_kode) yang merujuk ke SO
+// aktif sekarang bisa cocok ke tsalesorder ATAU tspk legacy.
+// Sebelumnya cuma cek tspk, jadi SO baru gak pernah match filter
+// perusahaan/customer, sehingga selalu lolos sebagai "barang non-SO"
+// (Kurang/JmlInv selalu 0) meski sebenarnya SO valid.
 // ─────────────────────────────────────────────────────────
 const searchBarang = async (
   perushKode,
@@ -205,7 +203,22 @@ const searchBarang = async (
   const offset = (Number(page) - 1) * limitNum;
   const like = `%${q}%`;
 
-  let where = `(s.spk_nomor IS NULL OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ? AND s.spk_is_so = 1))`;
+  let where = `(
+    NOT EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk WHERE spk_is_so = 1
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode
+    )
+    OR EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk WHERE spk_is_so = 1
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode AND sox.Perush = ? AND sox.Cus = ?
+    )
+  )`;
   const params = [perushKode, cusKode];
 
   if (q) {
@@ -216,7 +229,6 @@ const searchBarang = async (
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
      FROM tbarang b
-     LEFT JOIN tspk s ON s.spk_nomor = b.brg_kode AND s.spk_aktif = 'Y'
      WHERE ${where}`,
     params,
   );
@@ -225,7 +237,6 @@ const searchBarang = async (
     `SELECT b.brg_kode AS Kode, b.brg_name AS Nama,
             b.brg_ukuran AS Ukuran, b.brg_harga AS Harga
      FROM tbarang b
-     LEFT JOIN tspk s ON s.spk_nomor = b.brg_kode AND s.spk_aktif = 'Y'
      WHERE ${where}
      ORDER BY b.brg_kode
      LIMIT ? OFFSET ?`,
@@ -236,38 +247,55 @@ const searchBarang = async (
 
 // ─────────────────────────────────────────────────────────
 // LOAD DETAIL BARANG (saat barang dipilih dari modal/manual)
-// Sesuai Delphi loaddatadetail — query ke tspk filter spk_is_so=1
+// FIX: UNION-aware — coba tsalesorder (SO baru) dulu, fallback
+// ke tspk legacy (spk_is_so=1). Kolom so_jumlah/so_jumlah_inv
+// sepadan 1:1 dengan spk_jumlah/spk_jumlah_inv (pola sama seperti
+// mapSoHeaderRow di salesOrderFormService.js).
 // ─────────────────────────────────────────────────────────
 const loadBarangDetail = async (kode, perushKode) => {
-  const [[row]] = await db.query(
-    `SELECT b.brg_kode, b.brg_name, b.brg_ukuran, b.brg_harga,
-            IFNULL(s.spk_jumlah - s.spk_jumlah_inv, 0) AS jumlah,
-            s.spk_jumlah_inv,
-            (s.spk_jumlah - s.spk_jumlah_inv) AS kurang,
-            s.spk_nomor, s.spk_perush_kode, s.spk_cus_kode, s.spk_is_so
-     FROM tbarang b
-     LEFT JOIN tspk s ON s.spk_nomor = b.brg_kode AND s.spk_aktif = 'Y' AND s.spk_is_so = 1
-     WHERE b.brg_kode = ?`,
+  const [[barang]] = await db.query(
+    `SELECT brg_kode, brg_name, brg_ukuran, brg_harga FROM tbarang WHERE brg_kode = ?`,
     [kode],
   );
-  if (!row) throw new Error("Barang Tidak di temukan.");
+  if (!barang) throw new Error("Barang Tidak di temukan.");
 
-  const spkAda = await isSpk(kode); // sekarang cek SO aktif
+  // Coba tsalesorder (SO baru) dulu
+  const [[soNew]] = await db.query(
+    `SELECT so_jumlah AS jumlah_total, so_jumlah_inv AS jumlah_inv,
+            so_perush_kode, so_cus_kode
+     FROM tsalesorder WHERE so_nomor = ? AND so_aktif = 'Y'`,
+    [kode],
+  );
+  // Fallback ke tspk legacy
+  const [[soLegacy]] = !soNew
+    ? await db.query(
+        `SELECT spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv,
+                spk_perush_kode, spk_cus_kode
+         FROM tspk WHERE spk_nomor = ? AND spk_aktif = 'Y' AND spk_is_so = 1`,
+        [kode],
+      )
+    : [[null]];
+
+  const so = soNew || soLegacy;
+  const jumlahTotal = so ? Number(so.jumlah_total) || 0 : 0;
+  const jumlahInv = so ? Number(so.jumlah_inv) || 0 : 0;
+
+  const spkAda = await isSpk(kode);
   let sjList = "-";
   if (spkAda) {
-    sjList = await getSjForSpk(kode, perushKode); // kode di sini = nomor SO
+    sjList = await getSjForSpk(kode, perushKode);
   }
 
   return {
-    Kode: row.brg_kode,
-    Nama: row.brg_name,
-    Ukuran: row.brg_ukuran,
-    Jumlah: row.jumlah,
-    Harga: row.brg_harga,
-    Total: Number(row.brg_harga) * Number(row.jumlah),
+    Kode: barang.brg_kode,
+    Nama: barang.brg_name,
+    Ukuran: barang.brg_ukuran,
+    Jumlah: so ? jumlahTotal - jumlahInv : 0,
+    Harga: barang.brg_harga,
+    Total: Number(barang.brg_harga) * (so ? jumlahTotal - jumlahInv : 0),
     SjNomor: sjList,
-    JmlInv: row.spk_jumlah_inv || 0,
-    Kurang: row.kurang || 0,
+    JmlInv: jumlahInv,
+    Kurang: so ? jumlahTotal - jumlahInv : 0,
   };
 };
 
