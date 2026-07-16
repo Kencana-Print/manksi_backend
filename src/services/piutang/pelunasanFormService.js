@@ -248,18 +248,18 @@ const saveFormPelunasan = async (payload, userKode) => {
 
     if (details && details.length > 0) {
       for (const d of details) {
-        if (!d.nota) continue;
+        if (!d.Nota) continue;
         await conn.query(
           `INSERT INTO piutang_kredit_detail 
-           (nomor, nota, kode, no_bukti, kredit, notes) 
-           VALUES (?, ?, ?, ?, ?, ?)`,
+       (nomor, nota, kode, no_bukti, kredit, notes) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
           [
             savedNomor,
-            d.nota,
-            d.kode || "",
-            d.no_bukti || "",
-            parseFloat(d.kredit) || 0,
-            d.notesdetail || "",
+            d.Nota,
+            d.Kode || "",
+            d.NoBukti || "",
+            parseFloat(d.Kredit) || 0,
+            d.NotesDetail || "",
           ],
         );
       }
