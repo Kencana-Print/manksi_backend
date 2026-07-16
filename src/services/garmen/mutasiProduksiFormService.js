@@ -651,22 +651,34 @@ const getSudahGp032 = async (nomorSpk) => {
 
 // ─────────────────────────────────────────────────────────
 // CEK KOMPONEN IDENTIFIKASI (sesuai Delphi cekkomponen)
-// Cek tspk_komponen_potong / cetak / bordir
+// FIX: sebelumnya cek tabel lama tspk_komponen_cetak/tspk_komponen_bordir
+// yang sudah tidak pernah ditulis lagi sejak alur SPK PPIC baru.
+// Sekarang: POTONG tetap dari tspk_komponen_potong (masih dipakai),
+// CETAK & BORDIR dari tspk_komponen_cetak_bordir yang dibedakan
+// lewat kolom kcb_proses ('SABLON' untuk lini Cetak, 'BORDIR' untuk Bordir).
 // ─────────────────────────────────────────────────────────
 const cekKomponen = async (nomorSpk, lini) => {
-  const tabelMap = {
-    POTONG: "tspk_komponen_potong",
-    CETAK: "tspk_komponen_cetak",
-    BORDIR: "tspk_komponen_bordir",
-  };
-  const tabel = tabelMap[lini.toUpperCase()];
-  if (!tabel) return true; // Lini tidak dikenal → lewati
+  const liniUpper = lini.toUpperCase();
 
-  const [[row]] = await db.query(
-    `SELECT COUNT(sk_nomor) AS jml FROM ${tabel} WHERE sk_nomor = ?`,
-    [nomorSpk],
-  );
-  return Number(row.jml) > 0;
+  if (liniUpper === "POTONG") {
+    const [[row]] = await db.query(
+      `SELECT COUNT(sk_nomor) AS jml FROM tspk_komponen_potong WHERE sk_nomor = ?`,
+      [nomorSpk],
+    );
+    return Number(row.jml) > 0;
+  }
+
+  if (liniUpper === "CETAK" || liniUpper === "BORDIR") {
+    const kcbProses = liniUpper === "CETAK" ? "SABLON" : "BORDIR";
+    const [[row]] = await db.query(
+      `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
+       WHERE kcb_nomor = ? AND kcb_proses = ?`,
+      [nomorSpk, kcbProses],
+    );
+    return Number(row.jml) > 0;
+  }
+
+  return true; // Lini tidak dikenal → lewati
 };
 
 // ─────────────────────────────────────────────────────────
