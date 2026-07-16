@@ -12,7 +12,11 @@ const generateNomor = async (tahun) => {
        AND RIGHT(pl_nomor, 4) = ?`,
     [String(tahun)],
   );
-  return `PL/PPIC/${String(rows[0].jumlah + 1).padStart(5, "0")}/${tahun}`;
+  // FIX: rows[0].jumlah balik sebagai STRING dari mysql2 meski sudah
+  // di-CAST AS UNSIGNED di SQL — wajib Number() dulu sebelum +1,
+  // kalau tidak jadi string concat ("1"+1="11" bukan 2).
+  const nextVal = Number(rows[0].jumlah) + 1;
+  return `PL/PPIC/${String(nextVal).padStart(5, "0")}/${tahun}`;
 };
 
 // ─────────────────────────────────────────────

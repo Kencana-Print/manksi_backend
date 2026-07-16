@@ -1,5 +1,5 @@
 const db = require("../../config/database");
-const tutupBukuService = require("../tutupBukuService"); // Pastikan path ini sesuai dengan struktur Anda
+const tutupBukuService = require("../tutupBukuService");
 
 // --- 1. GET BROWSE MASTER ---
 const getBrowse = async (query) => {
