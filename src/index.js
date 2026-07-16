@@ -146,6 +146,7 @@ const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 //Laporan Routes
 //Laporan Gudang Garmen
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
+const kartuStokBahanRoutes = require("./routes/laporan/gudang-garmen/kartuStokBahanRoutes");
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const spkBelumMkbRoutes = require("./routes/laporan/gudang-garmen/spkBelumMkbRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
@@ -344,6 +345,7 @@ app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
   lapStokBahanBarcodeRoutes,
 );
+app.use("/api/laporan/gudang-garmen/kartu-stok-bahan", kartuStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/kartu-stok-barang", kartuStokBarangRoutes);
 app.use("/api/laporan/gudang-garmen/spk-belum-mkb", spkBelumMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
