@@ -3,19 +3,21 @@ const db = require("../../config/database");
 
 // ─────────────────────────────────────────────
 // Generate nomor MKA: MKA/0001/2025
-// Delphi: SUBSTR(mkb_nomor,5,4) → 4 digit urut
-//         LEFT(mkb_nomor,3) = 'MKA'
-//         RIGHT(mkb_nomor,4) = tahun
+// FIX: sekarang terima conn (WAJIB dipanggil di dalam transaksi
+// saveData) + pakai FOR UPDATE, supaya tidak race dengan request
+// lain yang bersamaan. Juga wrap Number() karena mysql2 balikin
+// hasil CAST(...AS UNSIGNED) sebagai string, bukan number murni.
 // ─────────────────────────────────────────────
-const generateNomor = async (tahun) => {
-  const [rows] = await db.query(
+const generateNomor = async (conn, tahun) => {
+  const [rows] = await conn.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(mkb_nomor, 5, 4) AS UNSIGNED)), 0) AS jumlah
      FROM tmka_hdr
      WHERE LEFT(mkb_nomor, 3) = 'MKA'
-       AND RIGHT(mkb_nomor, 4) = ?`,
+       AND RIGHT(mkb_nomor, 4) = ?
+     FOR UPDATE`,
     [String(tahun)],
   );
-  const nextVal = rows[0].jumlah + 1;
+  const nextVal = Number(rows[0].jumlah) + 1;
   return `MKA/${String(nextVal).padStart(4, "0")}/${tahun}`;
 };
 
@@ -331,10 +333,10 @@ const saveData = async (payload, userKode) => {
       // Catatan: mkb_spk_nomor tidak boleh diubah saat edit (Delphi: disabled)
     } else {
       // CREATE — generate nomor
-      nomor = await generateNomor(tahun);
+      nomor = await generateNomor(conn, tahun);
       await conn.query(
         `INSERT INTO tmka_hdr
-           (mkb_nomor, mkb_tanggal, mkb_note, mkb_spk_nomor, date_create, user_create)
+          (mkb_nomor, mkb_tanggal, mkb_note, mkb_spk_nomor, date_create, user_create)
          VALUES (?, ?, ?, ?, NOW(), ?)`,
         [nomor, mkb_tanggal, mkb_note || "", mkb_spk_nomor, userKode],
       );
