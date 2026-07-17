@@ -383,18 +383,18 @@ const save = async (data, userKode, isNewMode) => {
       }
     } else {
       const updateQ = `
-        UPDATE tmemospk SET 
-          mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
-          mspk_jo_kode=?, 
-          mspk_statuskerja=?, mspk_ukuran=?, mspk_gramasi=?, mspk_panjang=?, mspk_lebar=?, mspk_kain=?,
-          mspk_finishing=?, mspk_sablon=?, mspk_bordir=?, mspk_sublim=?, mspk_jumlah=?, mspk_harga=?,
-          mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
-          mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
-          mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
-          mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
-          mspk_acc_customer=?, mspk_acc_tanggal=?
-        WHERE mspk_nomor=?
-      `;
+    UPDATE tmemospk SET 
+      mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
+      mspk_jo_kode=?, 
+      mspk_statuskerja=?, mspk_ukuran=?, mspk_gramasi=?, mspk_panjang=?, mspk_lebar=?, mspk_kain=?,
+      mspk_finishing=?, mspk_sablon=?, mspk_bordir=?, mspk_sublim=?, mspk_jumlah=?, mspk_harga=?,
+      mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
+      mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
+      mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
+      mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
+      mspk_acc_customer=?, mspk_acc_tanggal=?
+    WHERE mspk_nomor=?
+  `;
       const updateParams = [
         data.Nama,
         data.Nama2 || data.Nama,
@@ -439,6 +439,11 @@ const save = async (data, userKode, isNewMode) => {
         data.AccTanggal || null,
         nomorMap,
       ];
+
+      // FIX: query UPDATE sebelumnya dibangun tapi tidak pernah dieksekusi
+      // sama sekali — jadi seluruh field header MAP gak pernah ter-update
+      // pas edit, apapun yang diubah user.
+      await conn.query(updateQ, updateParams);
 
       if (data.StatusEdit === "ACC") {
         await conn.query(
