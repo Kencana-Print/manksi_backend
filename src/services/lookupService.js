@@ -261,32 +261,25 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
   const limitNum = Number(limit);
   const pageNum = Number(page);
   const offset = (pageNum - 1) * limitNum;
-
-  let params = [];
+  const isBordirFlag =
+    isBordir === true || isBordir === "true" || isBordir === "1";
 
   let whereClause = `WHERE b.bhn_aktif = 0`;
+  const params = [];
 
   if (mode === "komponen") {
     whereClause += ` AND b.bhn_jb_kode = 'LL'`;
   }
-
-  if (isBordir === "true") {
+  if (isBordirFlag) {
     whereClause += ` AND b.bhn_bordir <> 0`;
   }
-
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (b.bhn_kode LIKE ? OR b.bhn_name LIKE ?)`;
-    params.push(`%${keyword}%`, `%${keyword}%`);
+    params.push(`%${keyword.trim()}%`, `%${keyword.trim()}%`);
   }
 
-  // Hitung total (pakai alias b agar konsisten)
-  const [countResult] = await db.query(
-    `SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`,
-    params,
-  );
-  const total = countResult[0].total;
-
-  let query = `
+  const dataParams = [...params];
+  let dataQuery = `
     SELECT 
       b.bhn_kode AS Kode, 
       b.bhn_name AS Nama, 
@@ -299,7 +292,7 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
         SELECT SUM(c.mst_stok_in - c.mst_stok_out) 
         FROM tmasterstok_barcode c
         WHERE c.mst_aktif = 'Y' 
-          AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) = b.Bhn_kode
+          AND c.mst_brg_kode LIKE CONCAT(b.bhn_kode, '_______')
       ), 0) AS Stok
     FROM tbahan b
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.bhn_kode, 6, 2)
@@ -308,17 +301,21 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
     ${whereClause} 
     ORDER BY b.bhn_name ASC
   `;
-
   if (limitNum > 0) {
-    query += ` LIMIT ? OFFSET ?`;
-    params.push(limitNum, offset);
+    dataQuery += ` LIMIT ? OFFSET ?`;
+    dataParams.push(limitNum, offset);
   }
 
-  const [rows] = await db.query(query, params);
+  // Jalankan count & data secara paralel — dua query independen,
+  // tidak perlu menunggu satu sama lain secara berurutan.
+  const [[countResult], [rows]] = await Promise.all([
+    db.query(`SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`, params),
+    db.query(dataQuery, dataParams),
+  ]);
 
   return {
     items: rows,
-    total,
+    total: countResult[0].total,
     page: pageNum,
     limit: limitNum,
   };
