@@ -202,6 +202,86 @@ const filterToTspkColumns = async (obj, conn = db) => {
   return out;
 };
 
+const getKomponenFromProof = async (identifierNomor) => {
+  if (!identifierNomor) return { ListPotong: [], ListCetakBordir: [] };
+
+  const [rows] = await db.query(
+    `SELECT DISTINCT d.pfd_kode AS Kode, b.Bhn_Name AS Nama, h.pf_lini AS Lini
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pfd_kode
+     WHERE h.pf_spk_nomor = ? AND d.pfd_kode <> ''`,
+    [identifierNomor],
+  );
+
+  const ListPotong = [];
+  const ListCetakBordir = [];
+  for (const r of rows) {
+    if (r.Lini === "POTONG") {
+      ListPotong.push({ Kode: r.Kode, Nama: r.Nama });
+    } else if (
+      r.Lini === "CETAK" ||
+      r.Lini === "SUBLIM" ||
+      r.Lini === "BORDIR"
+    ) {
+      // FIX: mapping default Proses per lini — sebelumnya SUBLIM
+      // ikut ke-default "SABLON", sekarang benar per lini.
+      const defaultProses =
+        r.Lini === "BORDIR"
+          ? "BORDIR"
+          : r.Lini === "SUBLIM"
+            ? "SUBLIM"
+            : "SABLON";
+      ListCetakBordir.push({
+        Kode: r.Kode,
+        Nama: r.Nama,
+        Proses: defaultProses,
+        Penempatan: "",
+        Ukuran: "",
+      });
+    }
+  }
+  return { ListPotong, ListCetakBordir };
+};
+
+// --- Recompute tspk_komponen_potong/cetak_bordir dari Proof Garmen.
+// ListPotong: full replace (tidak ada field manual di sini).
+// ListCetakBordir: Kode/Nama ikut Proof, TAPI Proses/Penempatan/Ukuran
+// yang sudah diisi user (dari payload saat save) DIPERTAHANKAN,
+// dicocokkan per Kode — supaya input manual itu tidak hilang setiap
+// kali komponen di-refresh ulang dari Proof.
+const refreshKomponenFromProof = async (
+  conn,
+  nomor,
+  payloadKomponenSpk = {},
+) => {
+  const [[row]] = await conn.query(
+    `SELECT spk_memo, spk_so_ref FROM tspk WHERE spk_nomor = ?`,
+    [nomor],
+  );
+  const identifier = row?.spk_memo || row?.spk_so_ref || "";
+  const proofData = await getKomponenFromProof(identifier);
+
+  const ListPotong = proofData.ListPotong;
+
+  const existingByKode = new Map(
+    (payloadKomponenSpk.ListCetakBordir || []).map((r) => [r.Kode, r]),
+  );
+  const ListCetakBordir = proofData.ListCetakBordir.map((p) => {
+    const existing = existingByKode.get(p.Kode);
+    return {
+      Kode: p.Kode,
+      Nama: p.Nama,
+      Proses: existing?.Proses || p.Proses,
+      Penempatan: existing?.Penempatan || "",
+      Ukuran: existing?.Ukuran || "",
+    };
+  });
+
+  await saveKomponenSpk(conn, nomor, { ListPotong, ListCetakBordir });
+  return { ListPotong, ListCetakBordir };
+};
+
 // ============================================================
 // SAVE DATA — create & edit SPK PPIC
 // ============================================================
@@ -290,10 +370,10 @@ const saveData = async (payload, user) => {
       }
     }
 
-    // --- Komponen (potong + cetak/bordir) ---
-    if (komponenSpk) {
-      await saveKomponenSpk(conn, nomor, komponenSpk);
-    }
+    // --- Komponen (potong + cetak/bordir) — Kode/Nama full otomatis
+    // dari Proof Garmen; Proses/Penempatan/Ukuran manual dari user
+    // dipertahankan lewat merge di refreshKomponenFromProof. ---
+    await refreshKomponenFromProof(conn, nomor, komponenSpk || {});
 
     // --- Keterangan khusus ---
     if (keteranganKhusus !== undefined) {
@@ -859,4 +939,6 @@ module.exports = {
   saveKeteranganKhusus,
   getKetKomponenMaster,
   getMkaFromMap,
+  getKomponenFromProof,
+  refreshKomponenFromProof,
 };

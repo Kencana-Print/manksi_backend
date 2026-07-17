@@ -161,6 +161,16 @@ const getMkaFromMap = async (req, res) => {
   }
 };
 
+const getKomponenFromProof = async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const data = await service.getKomponenFromProof(identifier);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getDetail,
   getSoSource,
@@ -174,4 +184,5 @@ module.exports = {
   getKeteranganKhusus,
   getKetKomponenMaster,
   getMkaFromMap,
+  getKomponenFromProof,
 };

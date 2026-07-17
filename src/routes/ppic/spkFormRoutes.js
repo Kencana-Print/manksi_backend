@@ -46,6 +46,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   controller.getMkaFromMap,
 );
+router.get(
+  "/komponen-from-proof/:identifier",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getKomponenFromProof,
+);
 
 router.post(
   "/layout-proses/import",
