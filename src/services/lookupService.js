@@ -1099,6 +1099,42 @@ const searchBarangInvProforma = async (
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
+// lookupService.js — tambah fungsi baru
+const searchBarangJadi = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  const like = `%${keyword || ""}%`;
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM tbarang b
+     WHERE b.brg_divisi IN (3,4,6)
+       AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`,
+    [like, like],
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       b.brg_kode AS Kode,
+       b.brg_name AS Nama,
+       b.brg_ukuran AS Ukuran,
+       b.brg_harga AS Harga
+     FROM tbarang b
+     WHERE b.brg_divisi IN (3,4,6)
+       AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)
+     ORDER BY b.brg_name
+     LIMIT ? OFFSET ?`,
+    [like, like, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 const getWorkshops = async () => {
   // Sesuai logic FormCreate di Delphi: SELECT DISTINCT pab_kode FROM tpabrik
   const [rows] = await db.query(
@@ -2278,6 +2314,7 @@ module.exports = {
   searchBarangGarmen,
   searchPermintaanBarangGarmen,
   searchBarangInvProforma,
+  searchBarangJadi,
   getWorkshops,
   getKepentinganSpk,
   getKetPo,

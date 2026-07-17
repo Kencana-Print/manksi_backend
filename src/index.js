@@ -148,6 +148,12 @@ const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
 const kartuStokBahanRoutes = require("./routes/laporan/gudang-garmen/kartuStokBahanRoutes");
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
+const mutasiStokBahanRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBahanRoutes");
+const stokAccVsMkaRoutes = require("./routes/laporan/gudang-garmen/stokAccVsMkaRoutes");
+const stokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/stokBarangJadiRoutes");
+const kartuStokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/kartuStokBarangJadiRoutes");
+const mutasiStokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBarangJadiRoutes");
+const standartBabaranVsRealisasiRoutes = require("./routes/laporan/gudang-garmen/standartBabaranVsRealisasiRoutes");
 const spkBelumMkbRoutes = require("./routes/laporan/gudang-garmen/spkBelumMkbRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
@@ -347,6 +353,21 @@ app.use(
 );
 app.use("/api/laporan/gudang-garmen/kartu-stok-bahan", kartuStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/kartu-stok-barang", kartuStokBarangRoutes);
+app.use("/api/laporan/gudang-garmen/mutasi-stok-bahan", mutasiStokBahanRoutes);
+app.use("/api/laporan/gudang-garmen/stok-acc-vs-mka", stokAccVsMkaRoutes);
+app.use("/api/laporan/gudang-garmen/stok-barang-jadi", stokBarangJadiRoutes);
+app.use(
+  "/api/laporan/gudang-garmen/kartu-stok-barangjadi",
+  kartuStokBarangJadiRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/mutasi-stok-barang-jadi",
+  mutasiStokBarangJadiRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/standart-babaran-vs-realisasi",
+  standartBabaranVsRealisasiRoutes,
+);
 app.use("/api/laporan/gudang-garmen/spk-belum-mkb", spkBelumMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);

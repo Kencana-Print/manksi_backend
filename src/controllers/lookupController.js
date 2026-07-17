@@ -468,6 +468,16 @@ const searchBarangInvProforma = async (req, res) => {
   }
 };
 
+const searchBarangJadi = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchBarangJadi(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getWorkshops = async (req, res) => {
   try {
     const data = await lookupService.getWorkshops();
@@ -950,6 +960,7 @@ module.exports = {
   searchBarangGarmen,
   searchPermintaanBarangGarmen,
   searchBarangInvProforma,
+  searchBarangJadi,
   getWorkshops,
   getKepentinganSpk,
   getKetPo,

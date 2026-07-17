@@ -115,6 +115,8 @@ router.get(
   controller.searchBarangInvProforma,
 );
 
+router.get("/barang-jadi", verifyToken, controller.searchBarangJadi);
+
 router.get("/workshop", verifyToken, controller.getWorkshops);
 
 router.get("/kepentingan-spk", verifyToken, controller.getKepentinganSpk);
