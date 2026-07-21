@@ -162,6 +162,7 @@ const pojVsBpjRoutes = require("./routes/laporan/gudang-garmen/pojVsBpjRoutes");
 const outstandingPoMitraRoutes = require("./routes/laporan/gudang-garmen/outstandingPoMitraRoutes");
 const realisasiMintaBahanRoutes = require("./routes/laporan/gudang-garmen/realisasiMintaBahanRoutes");
 const realisasiMintaVsLhkCuttRoutes = require("./routes/laporan/gudang-garmen/realisasiMintaVsLhkCuttRoutes");
+const spkDtfBelumPoRoutes = require("./routes/laporan/gudang-garmen/spkDtfBelumPoRoutes");
 const spkVsRealisasiVsLhkCuttRoutes = require("./routes/laporan/gudang-garmen/spkVsRealisasiVsLhkCuttRoutes");
 const spkVsStbjVsSjRoutes = require("./routes/laporan/gudang-garmen/spkVsStbjVsSjRoutes");
 const spkMkbVsPoBpbRoutes = require("./routes/laporan/gudang-garmen/spkMkbVsPoBpbRoutes");
@@ -173,6 +174,10 @@ const laporanMutasiProduksiRoutes = require("./routes/laporan/gudang-garmen/lapo
 const laporanKekuranganProduksiRoutes = require("./routes/laporan/gudang-garmen/laporanKekuranganProduksiRoutes");
 const laporanOutstandingSpkRoutes = require("./routes/laporan/gudang-garmen/laporanOutstandingSpkRoutes");
 const browseSpkRoutes = require("./routes/laporan/gudang-garmen/browseSpkRoutes");
+const browseMapRoutes = require("./routes/laporan/gudang-garmen/browseMapRoutes");
+
+// Laporan Produksi Garmen
+const monitoringProduksiRoutes = require("./routes/laporan/produksi-garmen/monitoringProduksiRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -401,6 +406,7 @@ app.use(
   "/api/laporan/gudang-garmen/realisasi-minta-vs-lhk-cutt",
   realisasiMintaVsLhkCuttRoutes,
 );
+app.use("/api/laporan/gudang-garmen/spk-dtf-belum-po", spkDtfBelumPoRoutes);
 app.use(
   "/api/laporan/gudang-garmen/spkv-realisasiv-lhkcutt",
   spkVsRealisasiVsLhkCuttRoutes,
@@ -424,6 +430,12 @@ app.use(
   laporanOutstandingSpkRoutes,
 );
 app.use("/api/laporan/gudang-garmen/browse-spk", browseSpkRoutes);
+app.use("/api/laporan/gudang-garmen/browse-map", browseMapRoutes);
+
+app.use(
+  "/api/laporan/produksi-garmen/monitoring-produksi",
+  monitoringProduksiRoutes,
+);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
