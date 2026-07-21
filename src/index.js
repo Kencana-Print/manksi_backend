@@ -150,6 +150,7 @@ const kartuStokBahanRoutes = require("./routes/laporan/gudang-garmen/kartuStokBa
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const mutasiStokBahanRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBahanRoutes");
 const stokAccVsMkaRoutes = require("./routes/laporan/gudang-garmen/stokAccVsMkaRoutes");
+const stokDcRoutes = require("./routes/laporan/gudang-garmen/stokDcRoutes");
 const stokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/stokBarangJadiRoutes");
 const kartuStokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/kartuStokBarangJadiRoutes");
 const mutasiStokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBarangJadiRoutes");
@@ -157,6 +158,21 @@ const standartBabaranVsRealisasiRoutes = require("./routes/laporan/gudang-garmen
 const spkBelumMkbRoutes = require("./routes/laporan/gudang-garmen/spkBelumMkbRoutes");
 const poBahanVsMkbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsMkbRoutes");
 const poBahanVsBpbRoutes = require("./routes/laporan/gudang-garmen/poBahanVsBpbRoutes");
+const pojVsBpjRoutes = require("./routes/laporan/gudang-garmen/pojVsBpjRoutes");
+const outstandingPoMitraRoutes = require("./routes/laporan/gudang-garmen/outstandingPoMitraRoutes");
+const realisasiMintaBahanRoutes = require("./routes/laporan/gudang-garmen/realisasiMintaBahanRoutes");
+const realisasiMintaVsLhkCuttRoutes = require("./routes/laporan/gudang-garmen/realisasiMintaVsLhkCuttRoutes");
+const spkVsRealisasiVsLhkCuttRoutes = require("./routes/laporan/gudang-garmen/spkVsRealisasiVsLhkCuttRoutes");
+const spkVsStbjVsSjRoutes = require("./routes/laporan/gudang-garmen/spkVsStbjVsSjRoutes");
+const spkMkbVsPoBpbRoutes = require("./routes/laporan/gudang-garmen/spkMkbVsPoBpbRoutes");
+const spkVsPoRoutes = require("./routes/laporan/gudang-garmen/spkVsPoRoutes");
+const spkVsBpbRoutes = require("./routes/laporan/gudang-garmen/spkVsBpbRoutes");
+const spkVsBpbNonPoRoutes = require("./routes/laporan/gudang-garmen/spkVsBpbNonPoRoutes");
+const spkCloseStbjRoutes = require("./routes/laporan/gudang-garmen/spkCloseStbjRoutes");
+const laporanMutasiProduksiRoutes = require("./routes/laporan/gudang-garmen/laporanMutasiProduksiRoutes");
+const laporanKekuranganProduksiRoutes = require("./routes/laporan/gudang-garmen/laporanKekuranganProduksiRoutes");
+const laporanOutstandingSpkRoutes = require("./routes/laporan/gudang-garmen/laporanOutstandingSpkRoutes");
+const browseSpkRoutes = require("./routes/laporan/gudang-garmen/browseSpkRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -355,6 +371,7 @@ app.use("/api/laporan/gudang-garmen/kartu-stok-bahan", kartuStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/kartu-stok-barang", kartuStokBarangRoutes);
 app.use("/api/laporan/gudang-garmen/mutasi-stok-bahan", mutasiStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/stok-acc-vs-mka", stokAccVsMkaRoutes);
+app.use("/api/laporan/gudang-garmen/stok-dc", stokDcRoutes);
 app.use("/api/laporan/gudang-garmen/stok-barang-jadi", stokBarangJadiRoutes);
 app.use(
   "/api/laporan/gudang-garmen/kartu-stok-barangjadi",
@@ -371,6 +388,42 @@ app.use(
 app.use("/api/laporan/gudang-garmen/spk-belum-mkb", spkBelumMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-mkb", poBahanVsMkbRoutes);
 app.use("/api/laporan/gudang-garmen/po-bahan-vs-bpb", poBahanVsBpbRoutes);
+app.use("/api/laporan/gudang-garmen/poj-vs-bpj", pojVsBpjRoutes);
+app.use(
+  "/api/laporan/gudang-garmen/outstanding-po-mitra",
+  outstandingPoMitraRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/realisasi-minta-bahan",
+  realisasiMintaBahanRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/realisasi-minta-vs-lhk-cutt",
+  realisasiMintaVsLhkCuttRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/spkv-realisasiv-lhkcutt",
+  spkVsRealisasiVsLhkCuttRoutes,
+);
+app.use("/api/laporan/gudang-garmen/spk-vs-stbj-vs-sj", spkVsStbjVsSjRoutes);
+app.use("/api/laporan/gudang-garmen/spk-mkb-vs-po-bpb", spkMkbVsPoBpbRoutes);
+app.use("/api/laporan/gudang-garmen/spk-vs-po", spkVsPoRoutes);
+app.use("/api/laporan/gudang-garmen/spk-vs-bpb", spkVsBpbRoutes);
+app.use("/api/laporan/gudang-garmen/spk-vs-bpb-non-po", spkVsBpbNonPoRoutes);
+app.use("/api/laporan/gudang-garmen/spk-close-stbj", spkCloseStbjRoutes);
+app.use(
+  "/api/laporan/gudang-garmen/mutasi-prod-detail",
+  laporanMutasiProduksiRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/kekurangan-produksi",
+  laporanKekuranganProduksiRoutes,
+);
+app.use(
+  "/api/laporan/gudang-garmen/lap-outstanding-spk",
+  laporanOutstandingSpkRoutes,
+);
+app.use("/api/laporan/gudang-garmen/browse-spk", browseSpkRoutes);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);

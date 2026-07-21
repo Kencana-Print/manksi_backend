@@ -99,10 +99,17 @@ const getBabaranInfo = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 const searchNoMaterial = async (req, res) => {
   try {
-    const { nomorSpk = "", q = "", page = "1", limit = "30" } = req.query;
+    const {
+      nomorSpk = "",
+      q = "",
+      excludeNomor = "",
+      page = "1",
+      limit = "30",
+    } = req.query;
     const data = await svc.searchNoMaterial(
       nomorSpk,
       q,
+      excludeNomor,
       parseInt(page),
       parseInt(limit),
     );
@@ -442,6 +449,16 @@ const cekGudangAsal = async (req, res) => {
               success: false,
               message: "Spk tsb belum input lhk dc.\nHubungi divisi tsb.",
             });
+        }
+      }
+      // Cek LHK Cetak untuk QC Cetak ke DC (GP010 sebagai asal — baru)
+      else if (gdgAsal === "GP010") {
+        const hasLhk = await svc.cekLhk(nomorSpk, "GP002");
+        if (!hasLhk) {
+          return res.status(400).json({
+            success: false,
+            message: "Spk tsb belum input lhk cetak.\nHubungi divisi tsb.",
+          });
         }
       }
     }

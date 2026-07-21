@@ -1,4 +1,9 @@
 const db = require("../../config/database");
+const outstandingPoMitraService = require("../laporan/gudang-garmen/outstandingPoMitraService");
+const standartBabaranVsRealisasiService = require("../laporan/gudang-garmen/standartBabaranVsRealisasiService");
+const stokAccVsMkaService = require("../laporan/gudang-garmen/stokAccVsMkaService");
+const stokBarangJadiService = require("../laporan/gudang-garmen/stokBarangJadiService");
+const mutasiStokBarangJadiService = require("../laporan/gudang-garmen/mutasiStokBarangJadiService");
 
 const RANGE_DAYS = 90;
 
@@ -1370,6 +1375,455 @@ const getApprovalPendingCount = async () => {
   return rows[0];
 };
 
+// ── Pipeline SPK → Produksi (funnel), filter by spk_dateline ──
+const getPipelineSpkProduksi = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  let whereExtra = "";
+  const params = [startDate, endDate];
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT s.spk_nomor) AS TotalMasuk,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tmkb_hdr k WHERE k.MKB_SPK_NOMOR = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaMkb,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaRealisasi,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tmutasiproduksi_hdr h
+        WHERE h.mph_spk_nomor = s.spk_nomor
+          AND (h.mph_gdgasal = 'GP001' OR h.mph_gdgasal = 'GP015')
+          AND h.mph_nomaterial <> ''
+      ) THEN s.spk_nomor END) AS AdaLhk,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaStbj,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tsj_dtl d WHERE d.sjd_spk_nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaKirim
+    FROM tspk s
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_divisi IN (3, 4, 6)
+      AND s.spk_dateline >= ? AND s.spk_dateline <= ?
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+// ── Bahan Kurang — base query SEKARANG termasuk detail per bahan
+// (Kode, NamaBahan, Satuan), bukan cuma agregat SPK ──
+const bahanKurangBaseQuery = `
+  SELECT
+    IFNULL(sp.spk_nomor, mm.mspk_nomor) AS Nomor,
+    IFNULL(sp.spk_nama, mm.mspk_nama) AS NamaSpk,
+    d.mkbd_bhn_kode AS Kode,
+    b.Bhn_Name AS NamaBahan,
+    b.Bhn_satuan AS Satuan,
+    (d.mkbd_jumlah - (
+      d.mkbd_jumlah_RS +
+      IFNULL((
+        SELECT SUM(dd.bpbd_Jumlah) FROM tbpb_dtl dd
+        INNER JOIN tbpb_hdr hh ON hh.bpb_Nomor = dd.bpbd_bpb_Nomor
+        WHERE hh.bpb_po_Nomor = i.pod_po_Nomor AND dd.bpbd_bhn_kode = i.pod_bhn_kode
+      ), 0) +
+      IFNULL((
+        SELECT SUM(dd.bpbd_Jumlah) FROM tbpb_dtl dd
+        INNER JOIN tbpb_hdr hh ON hh.bpb_Nomor = dd.bpbd_bpb_Nomor
+        WHERE hh.bpb_po_Nomor = '' AND dd.bpbd_mkb = h.MKB_NOMOR
+          AND dd.bpbd_bhn_kode = d.mkbd_bhn_kode
+      ), 0)
+    )) AS Kurang
+  FROM tmkb_hdr h
+  INNER JOIN tmkb_dtl d ON h.MKB_NOMOR = d.mkbd_mkb_nomor
+  LEFT JOIN tbahan b ON b.Bhn_kode = d.mkbd_bhn_kode
+  LEFT JOIN tpo_dtl i ON i.pod_mkb_nomor = d.mkbd_mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode
+  LEFT JOIN tspk sp ON sp.spk_nomor = h.MKB_SPK_NOMOR
+    AND sp.spk_aktif = 'Y' AND sp.spk_close = 0 AND sp.spk_jumlah_jadi < sp.spk_jumlah
+  LEFT JOIN tmemospk mm ON mm.mspk_nomor = h.MKB_SPK_NOMOR AND mm.mspk_aktif = 'Y'
+  WHERE sp.spk_nomor IS NOT NULL OR mm.mspk_nomor IS NOT NULL
+`;
+
+const getBahanKurangCount = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return { total: 0 };
+
+  const sql = `SELECT COUNT(DISTINCT y.Nomor) AS Total FROM (${bahanKurangBaseQuery}) y WHERE y.Kurang > 0`;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.Total || 0 };
+};
+
+// ── List ber-paginasi: langkah 1 ambil SPK page (Nomor, NamaSpk,
+// JmlBahanKurang), langkah 2 ambil detail bahan utk SPK di page itu
+// (WHERE Nomor IN (...)), lalu digabung jadi nested array bahanList
+// per SPK. 2 query per page, bukan N+1. ──
+const getBahanKurangList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sqlSpkPage = `
+    SELECT y.Nomor, y.NamaSpk, COUNT(*) AS JmlBahanKurang
+    FROM (${bahanKurangBaseQuery}) y
+    WHERE y.Kurang > 0
+    GROUP BY y.Nomor, y.NamaSpk
+    ORDER BY SUM(y.Kurang) DESC
+    LIMIT ? OFFSET ?
+  `;
+  const [spkRows] = await db.query(sqlSpkPage, [limit, offset]);
+  if (!spkRows.length) return [];
+
+  const nomorList = spkRows.map((r) => r.Nomor);
+  const sqlDetail = `
+    SELECT y.Nomor, y.Kode, y.NamaBahan, y.Satuan, y.Kurang
+    FROM (${bahanKurangBaseQuery}) y
+    WHERE y.Kurang > 0 AND y.Nomor IN (?)
+    ORDER BY y.Nomor, y.Kurang DESC
+  `;
+  const [detailRows] = await db.query(sqlDetail, [nomorList]);
+
+  const detailBySpk = {};
+  for (const d of detailRows) {
+    if (!detailBySpk[d.Nomor]) detailBySpk[d.Nomor] = [];
+    detailBySpk[d.Nomor].push({
+      Kode: d.Kode,
+      NamaBahan: d.NamaBahan,
+      Satuan: d.Satuan,
+      Kurang: d.Kurang,
+    });
+  }
+
+  return spkRows.map((s) => ({
+    Nomor: s.Nomor,
+    NamaSpk: s.NamaSpk,
+    JmlBahanKurang: s.JmlBahanKurang,
+    bahanList: detailBySpk[s.Nomor] || [],
+  }));
+};
+
+// ── SPK Belum MKB — list ber-paginasi (count reuse getSpkBelumMkbCount
+// yang sudah ada) ──
+const getSpkBelumMkbListPaged = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "PEMBELIAN",
+    "PPIC",
+    "GUDANG",
+    "EDP",
+    "IT",
+    "DIREKSI",
+    "OWNER",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT
+      s.spk_nomor AS Nomor,
+      s.spk_nama AS Nama,
+      DATE_FORMAT(s.spk_tanggal, '%d-%m-%Y') AS Tanggal,
+      DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
+      DATEDIFF(s.spk_dateline, CURDATE()) AS SisaHari
+    FROM tspk s
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_close = 0
+      AND s.spk_cmo <> ''
+      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND s.spk_divisi IN (3, 4, 6)
+      AND s.spk_nomor NOT IN (
+        SELECT h.MKB_SPK_NOMOR FROM tmkb_hdr h WHERE h.MKB_SPK_NOMOR <> ''
+      )
+      AND s.spk_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+    ORDER BY s.spk_dateline ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── Panel 4: PO Jasa vs BPB Jasa summary (bulan berjalan) ──
+// Status logic persis sama seperti laporan Approve PO Jasa:
+//   pojh_status_rec <> 1                                   → Belum
+//   pojh_status_rec = 1 DAN masih ada detail pojd_status=0  → Proses
+//   pojh_status_rec = 1 DAN semua detail sudah settled      → Closed
+const getPoJasaVsBpjSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT
+      COUNT(*) AS TotalPO,
+      SUM(CASE WHEN h.pojh_status_rec <> 1 THEN 1 ELSE 0 END) AS Belum,
+      SUM(CASE WHEN h.pojh_status_rec = 1 AND EXISTS (
+            SELECT 1 FROM tpojasa_dtl d
+            WHERE d.pojd_status = 0 AND d.pojd_pojh_nomor = h.pojh_nomor
+          ) THEN 1 ELSE 0 END) AS Proses,
+      SUM(CASE WHEN h.pojh_status_rec = 1 AND NOT EXISTS (
+            SELECT 1 FROM tpojasa_dtl d
+            WHERE d.pojd_status = 0 AND d.pojd_pojh_nomor = h.pojh_nomor
+          ) THEN 1 ELSE 0 END) AS Closed
+    FROM tpojasa_hdr h
+    WHERE h.pojh_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+      AND h.pojh_tanggal <= CURDATE()
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0] || {};
+};
+
+// ── Outstanding PO Mitra — summary + list ber-paginasi (slice
+// in-memory dari getBrowse 514, sudah sorted by Kurang desc) ──
+const getOutstandingPoMitraSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await outstandingPoMitraService.getBrowse(
+    startDate,
+    endDate,
+    "ALL",
+  );
+
+  const totalMitra = rows.length;
+  const totalKurang = rows.reduce((s, r) => s + Number(r.Kurang || 0), 0);
+  return { totalMitra, totalKurang };
+};
+
+const getOutstandingPoMitraList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await outstandingPoMitraService.getBrowse(
+    startDate,
+    endDate,
+    "ALL",
+  );
+
+  const sorted = [...rows].sort(
+    (a, b) => Number(b.Kurang || 0) - Number(a.Kurang || 0),
+  );
+  return sorted.slice(offset, offset + limit);
+};
+
+// ── Efisiensi Babaran — summary + list ber-paginasi (slice in-memory
+// dari getBrowse 509 mode 'spk', sorted by Minus asc) ──
+const getEfisiensiBabaranSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await standartBabaranVsRealisasiService.getBrowse(
+    startDate,
+    endDate,
+    "ALL",
+    "spk",
+  );
+
+  const totalSpk = rows.length;
+  const spkDeviasi = rows.filter((r) => Number(r.Minus) < 0);
+  return {
+    totalSpk,
+    jmlDeviasi: spkDeviasi.length,
+    pctDeviasi: totalSpk ? Math.round((spkDeviasi.length / totalSpk) * 100) : 0,
+  };
+};
+
+const getEfisiensiBabaranList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await standartBabaranVsRealisasiService.getBrowse(
+    startDate,
+    endDate,
+    "ALL",
+    "spk",
+  );
+
+  const spkDeviasi = rows.filter((r) => Number(r.Minus) < 0);
+  const sorted = [...spkDeviasi].sort(
+    (a, b) => Number(a.Minus) - Number(b.Minus),
+  );
+  return sorted.slice(offset, offset + limit).map((r) => ({
+    Nomor: r.Nomor,
+    Nama: r.Nama,
+    Customer: r.Customer,
+    Minus: r.Minus,
+    Status: r.Status,
+  }));
+};
+
+// ── Stok Acc vs MKA — item aksesoris yang StokAcc < Mka (Free < 0),
+// reuse getBrowse 569, filter+sort di JS (dataset per bulan relatif
+// kecil, aman tanpa query SQL terpisah) ──
+const getStokAccVsMkaCount = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return { total: 0 };
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await stokAccVsMkaService.getBrowse(startDate, endDate);
+
+  const kurang = rows.filter(
+    (r) => Number(r.Free) < 0 && Number(r.StokAcc) >= 0,
+  );
+  return { total: kurang.length };
+};
+
+const getStokAccVsMkaList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await stokAccVsMkaService.getBrowse(startDate, endDate);
+
+  const kurang = rows.filter(
+    (r) => Number(r.Free) < 0 && Number(r.StokAcc) >= 0,
+  );
+  const sorted = [...kurang].sort((a, b) => Number(a.Free) - Number(b.Free));
+  const page = sorted.slice(offset, offset + limit);
+
+  // Ambil breakdown per SPK untuk tiap item di halaman ini (bukan
+  // seluruh dataset — cuma page-size, aman dari N+1 besar)
+  const withSpkDetail = await Promise.all(
+    page.map(async (r) => {
+      const dtl = await stokAccVsMkaService.getDetail(
+        r.Kode,
+        startDate,
+        endDate,
+      );
+      return {
+        Kode: r.Kode,
+        Nama: r.Nama,
+        Satuan: r.Satuan,
+        StokAcc: r.StokAcc,
+        Mka: r.Mka,
+        Free: r.Free,
+        spkList: dtl.map((d) => ({
+          Spk: d.Spk,
+          NamaSpk: d.Nama,
+          Mka: d.Mka,
+          Realisasi: d.Realisasi,
+          Sisa: Number(d.Mka) - Number(d.Realisasi),
+        })),
+      };
+    }),
+  );
+
+  return withSpkDetail;
+};
+
+// ── Metric ringkas Barang Jadi ──
+const getBarangJadiMetric = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["ADMIN", "PRODUKSI", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+
+  const [stokRows, mutasiRows] = await Promise.all([
+    stokBarangJadiService.getBrowse(""),
+    mutasiStokBarangJadiService.getBrowse(startDate, endDate, "", false),
+  ]);
+
+  const distinctKode = new Set(stokRows.map((r) => r.Kode));
+  const totalStok = stokRows.reduce((s, r) => s + Number(r.Stok || 0), 0);
+  const itemMinus = mutasiRows.filter((r) => Number(r.StokAkhir) < 0);
+
+  return {
+    TotalItem: distinctKode.size,
+    TotalStok: totalStok,
+    ItemBergerak: mutasiRows.length,
+    ItemMinus: itemMinus.length,
+  };
+};
+
+// ── Stok Barang Jadi saat ini — reuse getBrowse 506, sort desc Stok ──
+const getStokBarangJadiList = async (
+  user,
+  limit = 20,
+  offset = 0,
+  gudang = "",
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["ADMIN", "PRODUKSI", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const rows = await stokBarangJadiService.getBrowse(gudang);
+  const sorted = [...rows].sort((a, b) => Number(b.Stok) - Number(a.Stok));
+  return sorted.slice(offset, offset + limit).map((r) => ({
+    Kode: r.Kode,
+    Nama: r.Nama,
+    Ukuran: r.Ukuran,
+    Gudang: r.Gudang,
+    Stok: r.Stok,
+    Customer: r.Customer,
+  }));
+};
+
+// ── Mutasi Barang Jadi bulan ini — reuse getBrowse 508, sort by
+// |pergerakan bersih| desc (item paling aktif duluan) ──
+const getMutasiBarangJadiList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["ADMIN", "PRODUKSI", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  const rows = await mutasiStokBarangJadiService.getBrowse(
+    startDate,
+    endDate,
+    "",
+    false,
+  );
+
+  const withNet = rows.map((r) => ({
+    ...r,
+    _net: Math.abs(
+      Number(r.Stbj) +
+        Number(r.MutasiMasuk) +
+        Number(r.Koreksi) -
+        (Number(r.SuratJalan) + Number(r.MutasiKeluar)),
+    ),
+  }));
+  const sorted = withNet.sort((a, b) => b._net - a._net);
+  return sorted.slice(offset, offset + limit).map((r) => ({
+    Kode: r.Kode,
+    Nama: r.Nama,
+    Ukuran: r.Ukuran,
+    Stbj: r.Stbj,
+    MutasiMasuk: r.MutasiMasuk,
+    Koreksi: r.Koreksi,
+    SuratJalan: r.SuratJalan,
+    MutasiKeluar: r.MutasiKeluar,
+    StokAkhir: r.StokAkhir,
+  }));
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -1397,4 +1851,18 @@ module.exports = {
   getAktivitasHariIniCount,
   getTrendSpk7Hari,
   getApprovalPendingCount,
+  getPipelineSpkProduksi,
+  getBahanKurangCount,
+  getBahanKurangList,
+  getSpkBelumMkbListPaged,
+  getPoJasaVsBpjSummary,
+  getOutstandingPoMitraSummary,
+  getOutstandingPoMitraList,
+  getEfisiensiBabaranSummary,
+  getEfisiensiBabaranList,
+  getStokAccVsMkaCount,
+  getStokAccVsMkaList,
+  getBarangJadiMetric,
+  getStokBarangJadiList,
+  getMutasiBarangJadiList,
 };

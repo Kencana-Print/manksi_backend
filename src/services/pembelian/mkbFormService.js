@@ -305,11 +305,7 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
   if (existing.length > 0) {
     throw new Error(`SPK tsb sudah dibuatkan MKB No: ${existing[0].mkb_nomor}`);
   }
-  // 2. Ambil detail SPK & Planning-nya — sekarang mencakup 3 sumber:
-  // tsalesorder (SO baru), tspk (SPK PPIC + SO legacy), tmemospk (MAP).
-  // tbarang tetap dipakai untuk sumber tspk lama (brg_name = nama produk
-  // yang tersimpan saat SO/SPK itu dibuat); untuk tsalesorder, nama
-  // produk sudah langsung ada di kolom so_nama sendiri.
+  // 2. Ambil detail SPK & Planning-nya
   const qSpk = `
     SELECT * FROM (
       SELECT so_nomor AS Nomor, so_nama AS Nama, jo_nama AS JenisOrder, so_jumlah AS Jumlah, so_memo AS Memo
@@ -334,7 +330,31 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
     `SELECT plan_tanggal, plan_datang FROM tplanningspk WHERE plan_datang <> 0 AND plan_spk = ? ORDER BY plan_tanggal`,
     [nomorSpk],
   );
-  return { info: spkRows[0], planning: planRows };
+
+  // 3. TAMBAHAN: kalau SPK ini SO biasa yang berasal dari MAP (spk_memo
+  // terisi, dan nomorSpk itu SENDIRI bukan MAP), tarik komponen+bahan+
+  // babaran dari BAST (tkesesuaianmap_komponen) — supaya babaran di
+  // MKB otomatis sesuai babaran yang sudah di-approve di BAST MAP,
+  // bukan diketik ulang manual dari nol.
+  let bastKomponen = [];
+  const memo = spkRows[0].Memo || "";
+  const isSpkItuSendiriMap = String(nomorSpk).startsWith("MAP");
+  if (memo && !isSpkItuSendiriMap) {
+    const [rows] = await db.query(
+      `SELECT k.kode, k.komponen, k.warna, k.babaran, k.babarank,
+              b.Bhn_Name AS nama_bahan, b.Bhn_satuan AS satuan,
+              IFNULL(g.bg_nama, '') AS gramasi
+       FROM tkesesuaianmap_komponen k
+       LEFT JOIN tbahan b ON b.Bhn_kode = k.kode
+       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(k.kode, 6, 2)
+       WHERE k.nomor = ?
+       ORDER BY k.no_urut`,
+      [memo],
+    );
+    bastKomponen = rows;
+  }
+
+  return { info: spkRows[0], planning: planRows, bastKomponen };
 };
 
 const getLinkablePo = async (kodeBahan, mkbNomor) => {

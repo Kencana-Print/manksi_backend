@@ -38,11 +38,41 @@ const getBastFormData = async (nomorMap, userCabang) => {
   // 3. Load Komponen / Bahan
   let [komponen] = await db.query(
     `SELECT a.*, b.bhn_name, b.bhn_satuan 
-     FROM tkesesuaianmap_komponen a
-     LEFT JOIN tbahan b ON b.bhn_kode = a.kode
-     WHERE a.nomor = ? ORDER BY a.no_urut`,
+   FROM tkesesuaianmap_komponen a
+   LEFT JOIN tbahan b ON b.bhn_kode = a.kode
+   WHERE a.nomor = ? ORDER BY a.no_urut`,
     [nomorMap],
   );
+  if (komponen.length === 0) {
+    // FIX: prioritaskan MKB (Memo Kebutuhan Bahan) sebagai sumber komponen
+    // + bahan + babaran untuk MAP — MKB dibuat khusus untuk MAP ini
+    // (mkb_spk_nomor = nomorMap) dan sudah punya babaran aktual yang
+    // diinput user (mkbd_babaran), bukan cuma daftar bahan kosong seperti
+    // fallback tmintabahan_dtl sebelumnya.
+    const [mkbRows] = await db.query(
+      `SELECT d.mkbd_bhn_kode AS kode, b.bhn_name, b.bhn_satuan,
+            d.mkbd_komponen AS komponen, d.mkbd_warna AS warna,
+            d.mkbd_babaran AS babaran, 0 AS babarank
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+     WHERE h.mkb_spk_nomor = ? AND d.mkbd_komponen <> ''
+     ORDER BY d.mkbd_nourut`,
+      [nomorMap],
+    );
+    if (mkbRows.length > 0) {
+      komponen = mkbRows;
+    } else {
+      [komponen] = await db.query(
+        `SELECT DISTINCT d.mind_bhn_kode AS kode, b.bhn_name, b.bhn_satuan, d.mind_komponen AS komponen, 0 AS babaran, 0 AS babarank
+       FROM tmintabahan_hdr h
+       LEFT JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
+       LEFT JOIN tbahan b ON b.bhn_kode = d.mind_bhn_kode
+       WHERE h.min_spk_nomor = ?`,
+        [nomorMap],
+      );
+    }
+  }
 
   if (komponen.length === 0) {
     [komponen] = await db.query(
@@ -55,18 +85,16 @@ const getBastFormData = async (nomorMap, userCabang) => {
     );
   }
 
-  // ---> [FIX] A. UPDATE BABARAN KALKULASI & FALLBACK KOMPONEN <---
+  //  A. UPDATE BABARAN KALKULASI & FALLBACK KOMPONEN <---
   const [kalkulasiRows] = await db.query(
     `SELECT k.kk_komponen, k.kk_warna, k.kk_babaran 
-     FROM tmemospk m
+      FROM tmemospk m
      INNER JOIN tmintaharga h ON h.mh_nomor = m.mspk_mh_nomor
      INNER JOIN kalkulasi.tkalkulasi2_komponen k ON k.kk_nomor = h.mh_nomor_kalkulasi
      WHERE m.mspk_nomor = ? ORDER BY k.kk_nourut`,
     [nomorMap],
   );
-
   if (komponen.length === 0) {
-    // Jika BAST & Permintaan Bahan kosong, ambil komponen dari data Kalkulasi (Fallback)
     komponen = kalkulasiRows.map((k) => ({
       kode: "",
       bhn_name: "",
@@ -76,8 +104,6 @@ const getBastFormData = async (nomorMap, userCabang) => {
       babaran: 0,
       babarank: k.kk_babaran,
     }));
-
-    // Jika Kalkulasi juga kosong, buat 1 baris kosong (Sama persis dengan initgrid2 di Delphi)
     if (komponen.length === 0) {
       komponen.push({
         kode: "",
@@ -90,7 +116,6 @@ const getBastFormData = async (nomorMap, userCabang) => {
       });
     }
   } else {
-    // Jika komponen sudah ada isinya, cukup update/cocokkan nilai babarank-nya
     komponen.forEach((comp) => {
       const calcMatch = kalkulasiRows.find(
         (k) => k.kk_komponen === comp.komponen,
@@ -106,18 +131,17 @@ const getBastFormData = async (nomorMap, userCabang) => {
   // 4. Load Aksesoris
   let [aksesoris] = await db.query(
     `SELECT k.*, o.brg_nama AS acc_nama, o.brg_satuan AS acc_satuan, o.brg_note AS acc_note
-     FROM tkesesuaianmap_acc k
-     LEFT JOIN tgarmen_brg o ON o.brg_kode = k.kode AND o.brg_jenis = 'ACCESORIES'
+      FROM tkesesuaianmap_acc k
+     LEFT JOIN tgarmen_brg o ON TRIM(o.brg_kode) = TRIM(k.kode) AND o.brg_jenis = 'ACCESORIES'
      WHERE k.nomor = ? ORDER BY k.no_urut`,
     [nomorMap],
   );
-
   if (aksesoris.length === 0) {
     [aksesoris] = await db.query(
       `SELECT DISTINCT d.mind_acc_kode AS kode, b.brg_nama AS acc_nama, b.brg_satuan AS acc_satuan, b.brg_note AS acc_note, 0 AS qty
-       FROM taccmintabahan_hdr h
+        FROM taccmintabahan_hdr h
        LEFT JOIN taccmintabahan_dtl d ON d.mind_nomor = h.min_nomor
-       LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mind_acc_kode AND b.brg_jenis = 'ACCESORIES'
+       LEFT JOIN tgarmen_brg b ON TRIM(b.brg_kode) = TRIM(d.mind_acc_kode) AND b.brg_jenis = 'ACCESORIES'
        WHERE h.min_spk_nomor = ? ORDER BY b.brg_nama`,
       [nomorMap],
     );
@@ -368,7 +392,7 @@ const getSpkSizes = async (nomorMap) => {
     SELECT mspks_size 
     FROM tmemospk_size 
     WHERE mspks_nomor = ? 
-    ORDER BY mspks_urut ASC
+    ORDER BY mspks_size ASC
   `;
   const [rows] = await db.query(query, [nomorMap]);
   return rows;

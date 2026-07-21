@@ -792,23 +792,98 @@ const searchMintaBahan = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- SEARCH HEADER REALISASI MINTA (Untuk kolom No. Realisasi Minta) ---
-const searchRealisasiMinta = async (keyword, page = 1, limit = 50) => {
+const searchRealisasiMinta = async (
+  keyword,
+  page = 1,
+  limit = 50,
+  nomorSpk = "",
+  excludeNomor = "",
+) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
-  let params = [];
-  let whereClause = "WHERE 1=1";
 
+  // ── MODE: pilih material untuk SPK tertentu (dipakai Mutasi Produksi) ──
+  if (nomorSpk) {
+    let where = `WHERE h.promin_spk_nomor = ?`;
+    const whereParams = [nomorSpk];
+    if (keyword && keyword.trim() !== "") {
+      where += ` AND (b.Bhn_Name LIKE ? OR g.gdgp_cab LIKE ? OR h.promin_nomor LIKE ?)`;
+      whereParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
+
+    const [countResult] = await db.query(
+      `SELECT COUNT(*) AS total
+       FROM tproduksiminta_hdr h
+       INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
+       LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+       LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.promin_gdgp_kode
+       ${where}`,
+      whereParams,
+    );
+    const total = countResult[0].total;
+
+    const dataParams = [excludeNomor || "", ...whereParams, limitNum, offset];
+    const [rows] = await db.query(
+      `SELECT h.promin_nomor AS Nomor,
+              DATE_FORMAT(h.promin_tanggal, '%d-%m-%Y') AS Tanggal,
+              d.promind_bhn_kode AS Kode,
+              b.Bhn_Name AS JenisKain,
+              b.Bhn_satuan AS Satuan,
+              d.promind_Jumlah - IFNULL((
+                SELECT SUM(r.proretd_Jumlah)
+                FROM tproduksiretur_dtl r
+                WHERE r.proretd_nominta = h.promin_nomor
+                  AND r.proretd_bhn_kode = d.promind_bhn_kode
+              ), 0) AS Jumlah,
+              d.promind_sup_kode AS Kodesup,
+              s.sup_nama AS NamaSupplier,
+              g.gdgp_cab AS Cab,
+              (
+                IFNULL((
+                  SELECT SUM(mph_qty_berat)
+                  FROM tmutasiproduksi_hdr
+                  WHERE mph_nomaterial = h.promin_nomor
+                    AND mph_bhn_kode = d.promind_bhn_kode
+                    AND mph_nomor <> ?
+                ), 0)
+                +
+                IFNULL((
+                  SELECT SUM(bpj_qty_berat)
+                  FROM tbpj_hdr
+                  WHERE bpj_nomaterial = h.promin_nomor
+                    AND bpj_bhn_kode = d.promind_bhn_kode
+                ), 0)
+              ) AS Terpakai
+       FROM tproduksiminta_hdr h
+       INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
+       LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+       LEFT JOIN tsupplier s ON s.sup_kode = d.promind_sup_kode
+       LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.promin_gdgp_kode
+       ${where}
+       ORDER BY h.promin_nomor DESC
+       LIMIT ? OFFSET ?`,
+      dataParams,
+    );
+
+    const items = rows.map((r) => ({
+      ...r,
+      Sisa: Number(r.Jumlah) - Number(r.Terpakai),
+    }));
+    return { items, total };
+  }
+
+  // ── MODE DEFAULT: browsing umum tanpa filter SPK (perilaku existing, tidak berubah) ──
+  let whereClause = "WHERE 1=1";
+  const params = [];
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (h.promin_nomor LIKE ? OR h.promin_spk_nomor LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
-
   const [countResult] = await db.query(
     `SELECT COUNT(*) AS total FROM tproduksiminta_hdr h ${whereClause}`,
     params,
   );
   const total = countResult[0].total;
-
   const query = `
     SELECT 
       h.promin_nomor AS Nomor, 
@@ -824,7 +899,6 @@ const searchRealisasiMinta = async (keyword, page = 1, limit = 50) => {
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
-
   const [rows] = await db.query(query, params);
   return { items: rows, total };
 };

@@ -27,9 +27,11 @@ const GUDANG_MAP = {
     1: { asal: "GP001", tujuan: "GP012" }, // Potong ke QC Ptg
     2: { asal: "GP012", tujuan: "GP002" }, // QC Ptg ke Cetak
     3: { asal: "GP002", tujuan: "GP010" }, // Cetak ke QC Cetak
-    4: { asal: "GP032", tujuan: "GP003" }, // DC ke Jahit  ← P04 pakai GP032
+    4: { asal: "GP032", tujuan: "GP003" }, // DC ke Jahit
     5: { asal: "GP003", tujuan: "GP004" }, // Jahit ke Lipat
     6: { asal: "GP004", tujuan: "GP013" }, // Lipat ke Koli
+    7: { asal: "GP012", tujuan: "GP032" }, // QC Potong ke DC
+    8: { asal: "GP010", tujuan: "GP032" }, // QC Cetak ke DC
   },
   P01: {
     1: { asal: "GP015", tujuan: "GP021" }, // Potong ke QC Ptg
@@ -149,7 +151,13 @@ const getMkbInfo = async (nomorSpk, komponen) => {
 // GET NO MATERIAL (lookup dari tproduksiminta)
 // Sesuai Delphi F1 pada edtNoMaterial
 // ─────────────────────────────────────────────────────────
-const searchNoMaterial = async (nomorSpk, q = "", page = 1, limit = 30) => {
+const searchNoMaterial = async (
+  nomorSpk,
+  q = "",
+  excludeNomor = "",
+  page = 1,
+  limit = 30,
+) => {
   const offset = (page - 1) * limit;
   const [rows] = await db.query(
     `SELECT h.promin_nomor AS Nomor,
@@ -165,7 +173,23 @@ const searchNoMaterial = async (nomorSpk, q = "", page = 1, limit = 30) => {
             ), 0) AS Jumlah,
             d.promind_sup_kode AS Kodesup,
             s.sup_nama AS NamaSupplier,
-            g.gdgp_cab AS Cab
+            g.gdgp_cab AS Cab,
+            (
+              IFNULL((
+                SELECT SUM(mph_qty_berat)
+                FROM tmutasiproduksi_hdr
+                WHERE mph_nomaterial = h.promin_nomor
+                  AND mph_bhn_kode = d.promind_bhn_kode
+                  AND mph_nomor <> ?
+              ), 0)
+              +
+              IFNULL((
+                SELECT SUM(bpj_qty_berat)
+                FROM tbpj_hdr
+                WHERE bpj_nomaterial = h.promin_nomor
+                  AND bpj_bhn_kode = d.promind_bhn_kode
+              ), 0)
+            ) AS Terpakai
      FROM tproduksiminta_hdr h
      INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
      LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
@@ -175,9 +199,13 @@ const searchNoMaterial = async (nomorSpk, q = "", page = 1, limit = 30) => {
        AND (b.Bhn_Name LIKE ? OR g.gdgp_cab LIKE ?)
      ORDER BY h.promin_nomor DESC
      LIMIT ? OFFSET ?`,
-    [nomorSpk, `%${q}%`, `%${q}%`, limit, offset],
+    [excludeNomor || "", nomorSpk, `%${q}%`, `%${q}%`, limit, offset],
   );
-  return rows;
+  // Sisa = Jumlah (setelah dikurangi retur) - Total pemakaian di mutasi lain
+  return rows.map((r) => ({
+    ...r,
+    Sisa: Number(r.Jumlah) - Number(r.Terpakai),
+  }));
 };
 
 // ─────────────────────────────────────────────────────────
@@ -1153,6 +1181,7 @@ const save = async (data, userKode, isNewMode) => {
       data.JenisMutasi,
       Kelompok,
       data.TglSpk || Tanggal,
+      GdgTujuan,
     );
     await syncApprovalNoPlan(
       conn,
@@ -1333,9 +1362,18 @@ const cekPlanningKosong = async (
   jenisMutasi,
   kelompok,
   tglDibuat,
+  gdgTujuan = "",
 ) => {
   if (JENIS_TANPA_VALIDASI_PLANNING.includes(String(jenisMutasi))) {
-    return false; // dikecualikan, tidak perlu approval
+    return false;
+  }
+  // FIX: mutasi APAPUN yang tujuannya DC (GP032) memang tidak pernah
+  // dijadwalkan di Planning PPIC — dikecualikan juga dari validasi ini,
+  // terlepas dari jenisMutasi-nya. Ini menangkap kasus user pilih Lini
+  // Tujuan = DC secara manual (F1 search), bukan cuma lewat preset
+  // tombol Jenis Mutasi yang sudah dikecualikan di atas.
+  if (gdgTujuan === "GP032") {
+    return false;
   }
   const rows = await getPlanningPpic(
     nomorSpk,

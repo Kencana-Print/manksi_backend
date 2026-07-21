@@ -306,6 +306,178 @@ const getApprovalPendingCount = async (req, res) => {
   }
 };
 
+const getPipelineSpkProduksi = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Tanggal wajib diisi." });
+    }
+    const data = await service.getPipelineSpkProduksi(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getBahanKurangCount = async (req, res) => {
+  try {
+    const data = await service.getBahanKurangCount(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getBahanKurangList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getBahanKurangList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkBelumMkbListPaged = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getSpkBelumMkbListPaged(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getPoJasaVsBpjSummary = async (req, res) => {
+  try {
+    const data = await service.getPoJasaVsBpjSummary(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getOutstandingPoMitraSummary = async (req, res) => {
+  try {
+    const data = await service.getOutstandingPoMitraSummary(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getOutstandingPoMitraList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getOutstandingPoMitraList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getEfisiensiBabaranSummary = async (req, res) => {
+  try {
+    const data = await service.getEfisiensiBabaranSummary(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getEfisiensiBabaranList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getEfisiensiBabaranList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getStokAccVsMkaCount = async (req, res) => {
+  try {
+    const data = await service.getStokAccVsMkaCount(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getStokAccVsMkaList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getStokAccVsMkaList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getBarangJadiMetric = async (req, res) => {
+  try {
+    const data = await service.getBarangJadiMetric(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getStokBarangJadiList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0, gudang = "" } = req.query;
+    const data = await service.getStokBarangJadiList(
+      req.user,
+      Number(limit),
+      Number(offset),
+      gudang,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getMutasiBarangJadiList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getMutasiBarangJadiList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -332,4 +504,18 @@ module.exports = {
   getAktivitasHariIni,
   getTrendSpk7Hari,
   getApprovalPendingCount,
+  getPipelineSpkProduksi,
+  getBahanKurangCount,
+  getBahanKurangList,
+  getSpkBelumMkbListPaged,
+  getPoJasaVsBpjSummary,
+  getOutstandingPoMitraSummary,
+  getOutstandingPoMitraList,
+  getEfisiensiBabaranSummary,
+  getEfisiensiBabaranList,
+  getStokAccVsMkaCount,
+  getStokAccVsMkaList,
+  getBarangJadiMetric,
+  getStokBarangJadiList,
+  getMutasiBarangJadiList,
 };

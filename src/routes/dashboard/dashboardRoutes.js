@@ -78,5 +78,63 @@ router.get(
   verifyToken,
   controller.getApprovalPendingCount,
 );
+router.get(
+  "/pipeline-spk-produksi",
+  verifyToken,
+  controller.getPipelineSpkProduksi,
+);
+router.get("/bahan-kurang-count", verifyToken, controller.getBahanKurangCount);
+router.get("/bahan-kurang-list", verifyToken, controller.getBahanKurangList);
+router.get(
+  "/spk-belum-mkb-list-paged",
+  verifyToken,
+  controller.getSpkBelumMkbListPaged,
+);
+router.get(
+  "/po-jasa-vs-bpj-summary",
+  verifyToken,
+  controller.getPoJasaVsBpjSummary,
+);
+router.get(
+  "/outstanding-po-mitra-summary",
+  verifyToken,
+  controller.getOutstandingPoMitraSummary,
+);
+router.get(
+  "/outstanding-po-mitra-list",
+  verifyToken,
+  controller.getOutstandingPoMitraList,
+);
+router.get(
+  "/efisiensi-babaran-summary",
+  verifyToken,
+  controller.getEfisiensiBabaranSummary,
+);
+router.get(
+  "/efisiensi-babaran-list",
+  verifyToken,
+  controller.getEfisiensiBabaranList,
+);
+router.get(
+  "/stok-acc-vs-mka-count",
+  verifyToken,
+  controller.getStokAccVsMkaCount,
+);
+router.get(
+  "/stok-acc-vs-mka-list",
+  verifyToken,
+  controller.getStokAccVsMkaList,
+);
+router.get("/barang-jadi-metric", verifyToken, controller.getBarangJadiMetric);
+router.get(
+  "/stok-barang-jadi-list",
+  verifyToken,
+  controller.getStokBarangJadiList,
+);
+router.get(
+  "/mutasi-barang-jadi-list",
+  verifyToken,
+  controller.getMutasiBarangJadiList,
+);
 
 module.exports = router;

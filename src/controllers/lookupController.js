@@ -352,8 +352,14 @@ const searchMintaBahan = async (req, res) => {
 
 const searchRealisasiMinta = async (req, res) => {
   try {
-    const { q, page, limit } = req.query;
-    const data = await lookupService.searchRealisasiMinta(q, page, limit);
+    const { q, page, limit, nomorSpk, excludeNomor } = req.query;
+    const data = await lookupService.searchRealisasiMinta(
+      q,
+      page,
+      limit,
+      nomorSpk || "",
+      excludeNomor || "",
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
