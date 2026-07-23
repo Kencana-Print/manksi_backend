@@ -81,4 +81,51 @@ const getManualTutupBuku = async (modulNama) => {
   }
 };
 
-module.exports = { getTanggalTutupBuku, getManualTutupBuku };
+/**
+ * @description Generalisasi dari getTanggalTutupBuku — hitung boundary
+ * closing OTOMATIS untuk BULAN TRANSAKSI TERTENTU (bukan cuma hari ini).
+ * Dipakai di modul yang ngecek "apakah tanggal transaksi record ini
+ * sudah lewat masa closing-nya", replikasi dari pola Delphi:
+ *   zDay := ztglclose;
+ *   zMonth := bulan(tanggalRecord);
+ *   zYear := tahun(tanggalRecord);
+ *   if zMonth=12 then begin zMonth:=1; zYear:=zYear+1; end
+ *   else zMonth:=zMonth+1;
+ *   // boundary = EncodeDate(zYear, zMonth, zDay)
+ * @param {Date|string} tanggalRecord Tanggal transaksi yang mau dicek
+ * @returns {Promise<Date>} Boundary closing utk bulan transaksi tsb
+ */
+const getTanggalTutupBukuUntukTanggal = async (tanggalRecord) => {
+  try {
+    const query = `SELECT tgl_close FROM tversi WHERE aplikasi = "MANKSI" LIMIT 1`;
+    const [rows] = await db.query(query);
+
+    let ztglclose = 0;
+    if (rows.length > 0) {
+      ztglclose = parseInt(rows[0].tgl_close, 10);
+    }
+
+    const ref = new Date(tanggalRecord);
+    const zDay = ztglclose;
+    let zMonth = ref.getMonth() + 1;
+    let zYear = ref.getFullYear();
+
+    if (zMonth === 12) {
+      zMonth = 1;
+      zYear = zYear + 1;
+    } else {
+      zMonth = zMonth + 1;
+    }
+
+    return new Date(zYear, zMonth - 1, zDay);
+  } catch (error) {
+    console.error("Gagal menghitung batas close per tanggal record:", error);
+    return new Date(2000, 0, 1);
+  }
+};
+
+module.exports = {
+  getTanggalTutupBuku,
+  getManualTutupBuku,
+  getTanggalTutupBukuUntukTanggal,
+};

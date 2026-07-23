@@ -954,10 +954,10 @@ const save = async (data, userKode, isNew) => {
 const getDataCetak = async (nomor) => {
   const [[hdr]] = await db.query(
     `SELECT h.*,
-            p.perush_nama, p.perush_alamat, p.perush_kota, p.perush_telp,
-            c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, c.cus_fax,
-            g.gdg_nama,
-            DATE_FORMAT(h.date_create,'%d-%m-%Y %T') AS created
+          p.perush_nama, p.perush_alamat, p.perush_kota, p.perush_telp, p.perush_email,
+          c.cus_nama, c.cus_alamat, c.cus_kota, c.cus_telp, c.cus_fax,
+          g.gdg_nama,
+          DATE_FORMAT(h.date_create,'%d-%m-%Y %T') AS created
      FROM tsj_hdr h
      INNER JOIN tperusahaan p ON p.perush_kode = h.sj_perush_kode
      INNER JOIN tcustomer   c ON c.cus_kode    = h.sj_cus_kode

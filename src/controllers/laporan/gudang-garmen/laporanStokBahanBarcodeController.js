@@ -31,14 +31,22 @@ const getKeteranganList = async (req, res) => {
 const updateKeteranganList = async (req, res) => {
   try {
     await service.updateKeteranganList(req.body.items);
-    res
-      .status(200)
-      .json({
-        success: true,
-        message: "Keterangan barcode berhasil disimpan.",
-      });
+    res.status(200).json({
+      success: true,
+      message: "Keterangan barcode berhasil disimpan.",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMkbBelumRealisasiDetail = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    const data = await service.getMkbBelumRealisasiDetail(kode);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -47,4 +55,5 @@ module.exports = {
   getBrowseDetail,
   getKeteranganList,
   updateKeteranganList,
+  getMkbBelumRealisasiDetail,
 };

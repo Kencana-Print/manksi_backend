@@ -16,6 +16,13 @@ router.get(
   controller.getBrowse,
 );
 
+router.get(
+  "/:kode/mkb-belum-realisasi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getMkbBelumRealisasiDetail,
+);
+
 // Detail Grid (Saat di-expand / diexport)
 router.get(
   "/detail/:kode",

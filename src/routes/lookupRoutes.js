@@ -206,4 +206,9 @@ router.get("/packing-tersedia", verifyToken, controller.getPackingTersedia);
 
 router.get("/inv-proforma", verifyToken, controller.searchInvProforma);
 
+// Endpoint: /api/lookups/bpb-po
+// Digunakan di BpbSearchModal.vue (form Retur Pembelian Bahan) — cuma
+// BPB yang asalnya dari PO (bpb_po_nomor<>"")
+router.get("/bpb-po", verifyToken, controller.searchBpbPo);
+
 module.exports = router;

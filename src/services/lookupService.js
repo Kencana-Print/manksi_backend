@@ -2352,6 +2352,51 @@ const searchInvProforma = async (
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
+// --- SEARCH BPB (khusus dari PO) — untuk modal Retur Pembelian Bahan ---
+const searchBpbPo = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  // ✅ Replikasi filter Delphi: WHERE bpb_po_nomor<>"" — cuma BPB
+  // yang asalnya dari PO yang boleh dipakai buat Retur Pembelian.
+  let whereClause = `WHERE h.bpb_po_nomor <> ""`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.bpb_nomor LIKE ? OR s.sup_nama LIKE ? OR h.bpb_keterangan LIKE ?)`;
+    const k = `%${keyword}%`;
+    params.push(k, k, k);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM tbpb_hdr h
+     INNER JOIN tsupplier s ON s.sup_kode = h.bpb_sup_kode
+     ${whereClause}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT h.bpb_nomor AS Nomor,
+            DATE_FORMAT(h.bpb_tanggal, '%d-%m-%Y') AS Tanggal,
+            h.bpb_sup_kode AS KdSup,
+            s.sup_nama AS Supplier,
+            h.bpb_keterangan AS Keterangan
+     FROM tbpb_hdr h
+     INNER JOIN tsupplier s ON s.sup_kode = h.bpb_sup_kode
+     ${whereClause}
+     ORDER BY h.bpb_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -2405,6 +2450,7 @@ module.exports = {
   getMkbDetail,
   searchGudangBahan,
   searchPoBahanBuka,
+  searchBpbPo,
   searchPermintaanBeliGarmen,
   searchPoGarmenBuka,
   searchKaryawan,

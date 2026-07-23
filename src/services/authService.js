@@ -130,8 +130,8 @@ const loginUser = async (username, password) => {
       lihatHarga: user.user_lihat_harga,
       lihatSup: user.user_lihat_sup,
       lihatCus: user.user_lihat_cus,
-      cmo: user.user_cmo, // <--- DITAMBAHKAN
-      cmo3: user.user_cmo3, // <--- DITAMBAHKAN
+      cmo: user.user_cmo, 
+      cmo3: user.user_cmo3, 
       isManager: user.user_manager,
       accKor: user.user_acckor,
     },
