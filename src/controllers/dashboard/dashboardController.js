@@ -478,6 +478,106 @@ const getMutasiBarangJadiList = async (req, res) => {
   }
 };
 
+const getPipelinePenyelesaianSpk = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getPipelinePenyelesaianSpk(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkVsStbjSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getSpkVsStbjSummary(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkVsStbjList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0, startDate, endDate } = req.query;
+    const data = await service.getSpkVsStbjList(
+      req.user,
+      Number(limit),
+      Number(offset),
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkVsSjSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getSpkVsSjSummary(req.user, startDate, endDate);
+    res.json({ success: true, data: data || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkVsSjList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0, startDate, endDate } = req.query;
+    const data = await service.getSpkVsSjList(
+      req.user,
+      Number(limit),
+      Number(offset),
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkTerkirimBelumTagihSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getSpkTerkirimBelumTagihSummary(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getSpkTerkirimBelumTagihList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0, startDate, endDate } = req.query;
+    const data = await service.getSpkTerkirimBelumTagihList(
+      req.user,
+      Number(limit),
+      Number(offset),
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -518,4 +618,11 @@ module.exports = {
   getBarangJadiMetric,
   getStokBarangJadiList,
   getMutasiBarangJadiList,
+  getPipelinePenyelesaianSpk,
+  getSpkVsStbjSummary,
+  getSpkVsStbjList,
+  getSpkVsSjSummary,
+  getSpkVsSjList,
+  getSpkTerkirimBelumTagihSummary,
+  getSpkTerkirimBelumTagihList,
 };

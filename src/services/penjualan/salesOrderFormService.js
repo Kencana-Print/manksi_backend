@@ -846,7 +846,7 @@ const normalizeKeys = (obj) => {
 
 const getMemoDetail = async (nomor) => {
   const [header] = await db.query(
-    `SELECT m.*, e.sal_nama, j.jo_nama, c.cus_nama, p.perush_nama, 
+    `SELECT m.*, e.sal_nama, j.jo_nama, c.cus_nama, c.cus_perfect, p.perush_nama, 
             p1.pab_nama AS workshop, p2.pab_nama AS workshop2 
      FROM tmemospk m 
      LEFT JOIN tsales e ON e.sal_kode = m.mspk_sal_kode 

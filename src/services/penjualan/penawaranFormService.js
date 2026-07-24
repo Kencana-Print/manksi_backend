@@ -100,7 +100,21 @@ const getById = async (nomor) => {
 };
 
 // --- SAVE TRANSAKSI ---
-const save = async (data, userKode, isNewMode) => {
+const save = async (data, user, isNewMode) => {
+  const userKode = user.kode;
+
+  // ✅ BARU: validasi hak CMO sebelum mengizinkan Digital Sign = Y
+  if (data.DigitalSign === "Y") {
+    const divisiStr = String(data.Divisi).charAt(0);
+    const punyaHakCmo =
+      divisiStr === "3" ? user.flags?.cmo3 === 1 : user.flags?.cmo === 1;
+    if (!punyaHakCmo) {
+      throw new Error(
+        "Anda tidak memiliki hak CMO untuk mengaktifkan Digital Sign.",
+      );
+    }
+  }
+
   // Validasi Tutup Buku
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
   const tglInput = new Date(data.Tanggal);
@@ -277,8 +291,10 @@ const save = async (data, userKode, isNewMode) => {
 const getMintaHargaDetail = async (nomorMintaHarga) => {
   const query = `
     SELECT m.mh_nomor, m.mh_nama, m.mh_kain, m.mh_ukuran, m.mh_panjang, m.mh_lebar, 
-           m.mh_harga_kalkulasi, m.mh_jmlorder, m.mh_status
+           m.mh_harga_kalkulasi, m.mh_jmlorder, m.mh_status,
+           m.mh_cus_kode, c.cus_nama, c.cus_aktif
     FROM tmintaharga m
+    LEFT JOIN tcustomer c ON c.cus_kode = m.mh_cus_kode
     WHERE m.mh_nomor = ?
   `;
   const [rows] = await db.query(query, [nomorMintaHarga]);
@@ -302,7 +318,9 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
     panjang: Number(mh.mh_panjang) || 0,
     lebar: Number(mh.mh_lebar) || 0,
     qty: Number(mh.mh_jmlorder) || 0,
-    harga: Number(mh.mh_harga_kalkulasi) || 0, // Akan bernilai 0
+    harga: Number(mh.mh_harga_kalkulasi) || 0,
+    custKode: mh.mh_cus_kode || "",
+    custNama: mh.cus_nama || "",
   };
 };
 

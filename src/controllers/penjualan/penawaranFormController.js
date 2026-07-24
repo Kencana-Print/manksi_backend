@@ -23,7 +23,6 @@ const getById = async (req, res) => {
 const save = async (req, res) => {
   try {
     const { isNewMode, data } = req.body;
-    const userKode = req.user.kode; // Dari token JWT
 
     if (
       !data.PerushKode ||
@@ -40,7 +39,7 @@ const save = async (req, res) => {
 
     const nomorSaved = await penawaranFormService.save(
       data,
-      userKode,
+      req.user, // ✅ kirim objek user lengkap (bukan cuma kode) — dibutuhkan untuk cek hak CMO di service
       isNewMode,
     );
 

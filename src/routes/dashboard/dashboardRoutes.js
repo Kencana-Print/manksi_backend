@@ -136,5 +136,24 @@ router.get(
   verifyToken,
   controller.getMutasiBarangJadiList,
 );
+router.get(
+  "/pipeline-penyelesaian-spk",
+  verifyToken,
+  controller.getPipelinePenyelesaianSpk,
+);
+router.get("/spk-vs-stbj-summary", verifyToken, controller.getSpkVsStbjSummary);
+router.get("/spk-vs-stbj-list", verifyToken, controller.getSpkVsStbjList);
+router.get("/spk-vs-sj-summary", verifyToken, controller.getSpkVsSjSummary);
+router.get("/spk-vs-sj-list", verifyToken, controller.getSpkVsSjList);
+router.get(
+  "/spk-terkirim-belum-tagih-summary",
+  verifyToken,
+  controller.getSpkTerkirimBelumTagihSummary,
+);
+router.get(
+  "/spk-terkirim-belum-tagih-list",
+  verifyToken,
+  controller.getSpkTerkirimBelumTagihList,
+);
 
 module.exports = router;

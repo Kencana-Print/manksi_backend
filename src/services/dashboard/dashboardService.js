@@ -1859,6 +1859,367 @@ const getMutasiBarangJadiList = async (user, limit = 20, offset = 0) => {
   }));
 };
 
+// ── Pipeline Penyelesaian SPK (SPK Aktif -> STBJ -> Kirim -> Full Invoice) ──
+const getPipelinePenyelesaianSpk = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT s.spk_nomor) AS TotalAktif,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS SudahStbj,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN s.spk_nomor END) AS SudahKirim,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0
+        AND IFNULL(inv.TotalInvoice, 0) >= kirim.TotalKirim
+        THEN s.spk_nomor END) AS FullInvoice
+    FROM tspk s
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) kirim ON kirim.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) inv ON inv.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+// ── SPK vs STBJ (summary + list SPK belum STBJ) ──
+const getSpkVsStbjSummary = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      COUNT(*) AS TotalAktif,
+      SUM(CASE WHEN stbj.TglJadi IS NOT NULL THEN 1 ELSE 0 END) AS SudahStbj,
+      SUM(CASE WHEN stbj.TglJadi IS NULL THEN 1 ELSE 0 END) AS BelumStbj,
+      ROUND(AVG(CASE WHEN stbj.TglJadi IS NOT NULL
+            THEN DATEDIFF(stbj.TglJadi, s.spk_tanggal) END), 1) AS RataRataHari
+    FROM tspk s
+    LEFT JOIN (
+      SELECT d.STBJD_SPK_Nomor AS Nomor, MAX(h.stbj_tanggal) AS TglJadi
+      FROM tstbj_dtl d
+      INNER JOIN tstbj_hdr h ON h.stbj_nomor = d.STBJD_STBJ_Nomor
+      GROUP BY d.STBJD_SPK_Nomor
+    ) stbj ON stbj.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+const getSpkVsStbjList = async (
+  user,
+  limit = 20,
+  offset = 0,
+  startDate,
+  endDate,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+  params.push(limit, offset);
+
+  const sql = `
+    SELECT
+      s.spk_nomor AS Nomor,
+      s.spk_nama AS Nama,
+      DATE_FORMAT(s.spk_tanggal, '%d-%m-%Y') AS Tanggal,
+      DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
+      DATEDIFF(s.spk_dateline, CURDATE()) AS SisaHari
+    FROM tspk s
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereExtra}
+      AND NOT EXISTS (
+        SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
+      )
+    ORDER BY s.spk_dateline ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+// ── SPK vs SJ (summary + list SPK belum/sebagian kirim) ──
+const getSpkVsSjSummary = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      COUNT(*) AS TotalAktif,
+      SUM(CASE WHEN IFNULL(kirim.TotalKirim, 0) = 0 THEN 1 ELSE 0 END) AS BelumKirim,
+      SUM(CASE WHEN IFNULL(kirim.TotalKirim, 0) > 0
+            AND IFNULL(kirim.TotalKirim, 0) < s.spk_jumlah THEN 1 ELSE 0 END) AS SebagianKirim,
+      SUM(CASE WHEN IFNULL(kirim.TotalKirim, 0) >= s.spk_jumlah THEN 1 ELSE 0 END) AS LunasKirim,
+      IFNULL(SUM(s.spk_jumlah), 0) AS TotalQtyOrder,
+      IFNULL(SUM(IFNULL(kirim.TotalKirim, 0)), 0) AS TotalQtyKirim
+    FROM tspk s
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) kirim ON kirim.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+const getSpkVsSjList = async (
+  user,
+  limit = 20,
+  offset = 0,
+  startDate,
+  endDate,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+  params.push(limit, offset);
+
+  const sql = `
+    SELECT
+      s.spk_nomor AS Nomor,
+      s.spk_nama AS Nama,
+      c.cus_nama AS NamaCustomer,
+      DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
+      s.spk_jumlah AS QtyOrder,
+      IFNULL(kirim.TotalKirim, 0) AS QtyKirim
+    FROM tspk s
+    INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) kirim ON kirim.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereExtra}
+      AND IFNULL(kirim.TotalKirim, 0) < s.spk_jumlah
+    ORDER BY s.spk_dateline ASC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+// ── SPK Terkirim Belum Ditagih (SPK vs SJ vs Invoice) — Finance ──
+const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd];
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN s.spk_nomor END) AS TotalTerkirim,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) = 0
+            THEN s.spk_nomor END) AS BelumInvoice,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) > 0
+            AND IFNULL(inv.TotalInvoice, 0) < kirim.TotalKirim
+            THEN s.spk_nomor END) AS SebagianInvoice,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0
+            AND IFNULL(inv.TotalInvoice, 0) >= kirim.TotalKirim
+            THEN s.spk_nomor END) AS FullInvoice,
+      IFNULL(SUM(CASE WHEN kirim.TotalKirim > 0
+            THEN GREATEST(kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0), 0)
+            ELSE 0 END), 0) AS TotalQtyBelumDitagih
+    FROM tspk s
+    INNER JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) kirim ON kirim.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) inv ON inv.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows[0] || {};
+};
+
+const getSpkTerkirimBelumTagihList = async (
+  user,
+  limit = 20,
+  offset = 0,
+  startDate,
+  endDate,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const params = [dStart, dEnd, limit, offset];
+
+  const sql = `
+    SELECT
+      s.spk_nomor AS Nomor,
+      s.spk_nama AS Nama,
+      c.cus_nama AS NamaCustomer,
+      kirim.TotalKirim AS QtyKirim,
+      IFNULL(inv.TotalInvoice, 0) AS QtyInvoice,
+      (kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0)) AS QtyBelumDitagih,
+      DATE_FORMAT(kirim.TglKirimTerakhir, '%d-%m-%Y') AS TglKirimTerakhir,
+      DATEDIFF(CURDATE(), kirim.TglKirimTerakhir) AS UmurHari
+    FROM tspk s
+    INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+    INNER JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim,
+             MAX(h.sj_tanggal) AS TglKirimTerakhir
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) kirim ON kirim.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) inv ON inv.Nomor = s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      AND kirim.TotalKirim > IFNULL(inv.TotalInvoice, 0)
+    ORDER BY UmurHari DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -1900,4 +2261,11 @@ module.exports = {
   getBarangJadiMetric,
   getStokBarangJadiList,
   getMutasiBarangJadiList,
+  getPipelinePenyelesaianSpk,
+  getSpkVsStbjSummary,
+  getSpkVsStbjList,
+  getSpkVsSjSummary,
+  getSpkVsSjList,
+  getSpkTerkirimBelumTagihSummary,
+  getSpkTerkirimBelumTagihList,
 };
