@@ -1228,10 +1228,11 @@ const getSpkBelumMkbCount = async (user) => {
 };
 
 // ── 2. Aktivitas Hari Ini (SPK baru + penawaran baru + invoice baru) ──
+// ── 2. Aktivitas Hari Ini (SPK baru + SO baru + MAP baru + SJ baru + penawaran baru + invoice baru) ──
 const getAktivitasHariIni = async (limit = 20, offset = 0) => {
   const sql = `
     SELECT * FROM (
-      -- SPK baru hari ini
+      -- SPK baru hari ini (data historis Delphi)
       SELECT
         'SPK'                                                          AS jenis,
         s.spk_nomor                                                    AS nomor,
@@ -1243,6 +1244,21 @@ const getAktivitasHariIni = async (limit = 20, offset = 0) => {
       LEFT JOIN tdivisi d ON d.kode = s.spk_divisi
       WHERE DATE(s.date_create) = CURDATE()
         AND s.spk_aktif = 'Y'
+
+      UNION ALL
+
+      -- SO baru hari ini (jalur baru pasca migrasi tspk -> tsalesorder)
+      SELECT
+        'SO'                                                            AS jenis,
+        so.so_nomor                                                     AS nomor,
+        so.so_nama                                                      AS nama,
+        d.divisi                                                        AS divisi,
+        DATE_FORMAT(so.date_create, '%H:%i')                           AS jam,
+        so.date_create                                                  AS waktu
+      FROM tsalesorder so
+      LEFT JOIN tdivisi d ON d.kode = so.so_divisi
+      WHERE DATE(so.date_create) = CURDATE()
+        AND so.so_aktif = 'Y'
 
       UNION ALL
 
@@ -1258,6 +1274,20 @@ const getAktivitasHariIni = async (limit = 20, offset = 0) => {
       LEFT JOIN tdivisi d ON d.kode = m.mspk_divisi
       WHERE DATE(m.date_create) = CURDATE()
         AND m.mspk_aktif = 'Y'
+
+      UNION ALL
+
+      -- Surat Jalan baru hari ini
+      SELECT
+        'SJ'                                                            AS jenis,
+        h.sj_nomor                                                      AS nomor,
+        h.sj_keterangan                                                 AS nama,
+        d.divisi                                                        AS divisi,
+        DATE_FORMAT(h.date_create, '%H:%i')                            AS jam,
+        h.date_create                                                   AS waktu
+      FROM tsj_hdr h
+      LEFT JOIN tdivisi d ON d.kode = h.sj_divisi
+      WHERE DATE(h.date_create) = CURDATE()
 
       UNION ALL
 
@@ -1301,8 +1331,13 @@ const getAktivitasHariIniCount = async () => {
       SELECT COUNT(*) AS cnt FROM tspk
         WHERE (DATE(spk_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND spk_aktif = 'Y'
       UNION ALL
+      SELECT COUNT(*) FROM tsalesorder
+        WHERE (DATE(so_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND so_aktif = 'Y'
+      UNION ALL
       SELECT COUNT(*) FROM tmemospk
         WHERE (DATE(mspk_tanggal) = CURDATE() OR DATE(date_create) = CURDATE()) AND mspk_aktif = 'Y'
+      UNION ALL
+      SELECT COUNT(*) FROM tsj_hdr WHERE DATE(date_create) = CURDATE()
       UNION ALL
       SELECT COUNT(*) FROM tpenawaran_hdr WHERE DATE(date_create) = CURDATE()
       UNION ALL
