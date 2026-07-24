@@ -38,13 +38,10 @@ const getBrowseList = async (filters) => {
       x.mspk_revisi_no AS Revisi, x.mspk_referensi AS NoReferensi,
       IF(x.mspk_estimasijadi="1899-12-30", "", x.mspk_estimasijadi) AS EstimasiJadi, 
       x.mspk_close AS CloseStatus,
-      IFNULL((
-        SELECT u.Nomor FROM (
-          SELECT spk_nomor AS Nomor, spk_tanggal AS Tgl FROM tspk WHERE spk_memo = x.mspk_nomor
-          UNION ALL
-          SELECT so_nomor AS Nomor, so_tanggal AS Tgl FROM tsalesorder WHERE so_memo = x.mspk_nomor
-        ) u ORDER BY u.Tgl DESC LIMIT 1
-      ), "") AS SPK,
+      IFNULL(
+        (SELECT so_nomor FROM tsalesorder WHERE so_memo = x.mspk_nomor ORDER BY so_tanggal DESC LIMIT 1),
+        (SELECT spk_nomor FROM tspk WHERE spk_memo = x.mspk_nomor ORDER BY spk_tanggal DESC LIMIT 1)
+      ) AS SPK, 
       IF(x.mspk_divisi=5, m.lpr_tanggal, z.lds_tgl) AS Design_Tanggal,
       z.lds_user AS Design_User, z.lds_note AS Design_Note, 
       IFNULL((
