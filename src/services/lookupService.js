@@ -2397,6 +2397,87 @@ const searchBpbPo = async (keyword, page = 1, limit = 50) => {
   };
 };
 
+// --- SEARCH BPB (TANPA batasan PO) — buat Pembuatan Barcode Bahan ---
+const searchBpb = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE 1=1`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.bpb_nomor LIKE ? OR s.sup_nama LIKE ? OR h.bpb_keterangan LIKE ?)`;
+    const k = `%${keyword}%`;
+    params.push(k, k, k);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM tbpb_hdr h
+     LEFT JOIN tsupplier s ON s.sup_kode = h.bpb_sup_kode
+     ${whereClause}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT h.bpb_nomor AS Nomor,
+            DATE_FORMAT(h.bpb_tanggal, '%d-%m-%Y') AS Tanggal,
+            s.sup_nama AS Supplier,
+            h.bpb_keterangan AS Keterangan
+     FROM tbpb_hdr h
+     LEFT JOIN tsupplier s ON s.sup_kode = h.bpb_sup_kode
+     ${whereClause}
+     ORDER BY h.bpb_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
+// --- SEARCH RETUR PRODUKSI — buat Pembuatan Barcode Bahan ---
+// ⚠️ Belum ketemu filter status pasti dari source Delphi F2-nya,
+// jadi sementara tanpa filter tambahan — konfirmasi kalau perlu.
+const searchProduksiRetur = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE 1=1`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.proret_nomor LIKE ? OR h.proret_keterangan LIKE ?)`;
+    const k = `%${keyword}%`;
+    params.push(k, k);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tproduksiretur_hdr h ${whereClause}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT h.proret_nomor AS Nomor,
+            DATE_FORMAT(h.proret_tanggal, '%d-%m-%Y') AS Tanggal,
+            h.proret_keterangan AS Keterangan
+     FROM tproduksiretur_hdr h
+     ${whereClause}
+     ORDER BY h.proret_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -2466,4 +2547,6 @@ module.exports = {
   getGudangProduksiKoli,
   getPackingTersedia,
   searchInvProforma,
+  searchBpb,
+  searchProduksiRetur,
 };

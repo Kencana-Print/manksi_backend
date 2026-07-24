@@ -211,4 +211,7 @@ router.get("/inv-proforma", verifyToken, controller.searchInvProforma);
 // BPB yang asalnya dari PO (bpb_po_nomor<>"")
 router.get("/bpb-po", verifyToken, controller.searchBpbPo);
 
+router.get("/bpb", verifyToken, controller.searchBpb);
+router.get("/produksi-retur", verifyToken, controller.searchProduksiRetur);
+
 module.exports = router;

@@ -28,12 +28,12 @@ const getBrowse = async (tglAwal, tglAkhir) => {
   const [rows] = await db.query(
     `SELECT
        k.kui_inv_nomor    AS Nomor_Inv,
-       k.kui_tanggal      AS Tanggal_Inv,
+       DATE_FORMAT(k.kui_tanggal, '%Y-%m-%d') AS Tanggal_Inv,
        k.kui_perush_kode  AS PerusahaanKode,
        p.perush_nama      AS Perusahaan,
        k.kui_cus_kode     AS Cus_kode,
        c.cus_nama         AS cus_nama,
-       k.kui_date_create  AS Date_Create,
+       DATE_FORMAT(k.kui_date_create, '%Y-%m-%d %H:%i:%s') AS Date_Create,
        k.kui_user_Create  AS User_Create
      FROM tkuitansi k
      LEFT JOIN tcustomer c ON c.cus_kode = k.kui_cus_kode

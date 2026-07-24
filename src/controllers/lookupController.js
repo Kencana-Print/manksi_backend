@@ -943,6 +943,26 @@ const searchBpbPo = async (req, res) => {
   }
 };
 
+const searchBpb = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchBpb(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchProduksiRetur = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchProduksiRetur(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1012,4 +1032,6 @@ module.exports = {
   getGudangProduksiKoli,
   getPackingTersedia,
   searchInvProforma,
+  searchBpb,
+  searchProduksiRetur,
 };

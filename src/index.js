@@ -196,6 +196,9 @@ const laporanPemakaianObatRoutes = require("./routes/laporan/produksi-garmen/lap
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
+const spkVsStbjRoutes = require("./routes/laporan/penjualan/spkVsStbjRoutes");
+const spkVsSjRoutes = require("./routes/laporan/penjualan/spkVsSjRoutes");
+const spkVsSjVsInvRoutes = require("./routes/laporan/penjualan/spkVsSjVsInvRoutes");
 const mapVsSjRoutes = require("./routes/laporan/penjualan/mapVsSjRoutes");
 const mapVsSpkRoutes = require("./routes/laporan/penjualan/mapVsSpkRoutes");
 
@@ -494,6 +497,9 @@ app.use(
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
+app.use("/api/laporan/penjualan/spk-vs-stbj", spkVsStbjRoutes);
+app.use("/api/laporan/penjualan/spk-vs-sj", spkVsSjRoutes);
+app.use("/api/laporan/penjualan/spk-vs-sj-vs-inv", spkVsSjVsInvRoutes);
 app.use("/api/laporan/penjualan/map-vs-sj", mapVsSjRoutes);
 app.use("/api/laporan/penjualan/map-vs-spk", mapVsSpkRoutes);
 
