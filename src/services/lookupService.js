@@ -2478,6 +2478,44 @@ const searchProduksiRetur = async (keyword, page = 1, limit = 50) => {
   };
 };
 
+// --- SEARCH JASA (internal) ---
+// Sesuai Delphi F1 edtjasa (ufrmPOinternal.pas): WHERE jasa_internal="Y"
+const searchJasa = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE jasa_internal = "Y"`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (jasa_kode LIKE ? OR jasa_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total FROM tjasa ${whereClause}`,
+    params,
+  );
+
+  let query = `
+    SELECT jasa_kode AS Kode, jasa_nama AS Nama
+    FROM tjasa
+    ${whereClause}
+    ORDER BY jasa_kode ASC
+  `;
+  if (limitNum > 0) {
+    query += ` LIMIT ? OFFSET ?`;
+    params.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, params);
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -2549,4 +2587,5 @@ module.exports = {
   searchInvProforma,
   searchBpb,
   searchProduksiRetur,
+  searchJasa,
 };

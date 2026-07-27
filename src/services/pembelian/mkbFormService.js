@@ -437,10 +437,69 @@ const getPrintData = async (nomor) => {
   return { header, details: rows };
 };
 
+// --- FREE STOK per kode bahan ---
+// Stok saat ini dikurangi total kebutuhan MKB LAIN (bukan MKB yang
+// sedang dibuka) yang belum terealisasi untuk bahan tsb. Replikasi
+// persis formula "Kurang" dari checkSpkDetails/laporan stok bahan
+// barcode (MkbBelumRealisasi), di-scope ke 1 kode bahan + exclude
+// nomor MKB yang aktif supaya kebutuhan MKB ini sendiri tidak
+// dihitung sebagai "kompetitor" atas stoknya sendiri.
+const getBahanFree = async (kodeBahan, excludeMkbNomor) => {
+  const dEnd = new Date().toISOString().substring(0, 10);
+
+  const [stokRows] = await db.query(
+    `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS Stok
+     FROM tmasterstok_barcode
+     WHERE mst_aktif = 'Y'
+       AND mst_tanggal <= ?
+       AND LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7) = ?`,
+    [dEnd, kodeBahan],
+  );
+  const stok = parseFloat(stokRows[0]?.Stok || 0);
+
+  const [mkbRows] = await db.query(
+    `SELECT IFNULL(SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs - (
+        IFNULL((
+          SELECT SUM(i.pod_jumlah) FROM tpo_dtl i
+          WHERE i.pod_mkb_nomor = h.mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode
+        ), 0)
+        + IFNULL((
+          SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tpo_dtl p
+          LEFT JOIN tbpb_dtl2 i ON i.bpbd2_po_nomor = p.pod_po_nomor AND i.bpbd2_nourut = p.pod_nourut
+          WHERE p.pod_mkb_nomor = d.mkbd_mkb_nomor AND p.pod_bhn_kode = d.mkbd_bhn_kode
+          GROUP BY p.pod_bhn_kode, p.pod_mkb_nomor
+        ), 0)
+        + IFNULL((
+          SELECT IF(k.mkbd2_qty <= SUM(p.bpbd2_jumlah), k.mkbd2_qty, SUM(p.bpbd2_jumlah))
+          FROM tbpb_dtl2 p
+          INNER JOIN tmkb_dtl2 k ON k.mkbd2_po_nomor = p.bpbd2_po_nomor AND k.mkbd2_pourut = p.bpbd2_nourut
+          WHERE k.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND k.mkbd2_nourut = d.mkbd_nourut
+        ), 0)
+        + IFNULL((
+          SELECT SUM(i.bpbd_jumlah) FROM tbpb_dtl i
+          WHERE i.bpbd_mkb = h.mkb_nomor AND i.bpbd_bhn_kode = d.mkbd_bhn_kode AND i.bpbd_nourut = d.mkbd_nourut
+        ), 0)
+      ), 0)), 0) AS MkbBelumRealisasi
+     FROM tmkb_dtl d
+     LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+     WHERE d.mkbd_bhn_kode = ?
+       AND d.mkbd_mkb_nomor <> ?`,
+    [kodeBahan, excludeMkbNomor || ""],
+  );
+  const mkbBelumRealisasi = parseFloat(mkbRows[0]?.MkbBelumRealisasi || 0);
+
+  return {
+    stok,
+    mkbBelumRealisasi,
+    free: stok - mkbBelumRealisasi,
+  };
+};
+
 module.exports = {
   getDetailForm,
   saveData,
   checkSpkDetails,
   getLinkablePo,
   getPrintData,
+  getBahanFree,
 };

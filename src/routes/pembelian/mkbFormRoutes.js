@@ -45,4 +45,11 @@ router.get(
   mkbFormController.getLinkablePo,
 );
 
+router.get(
+  "/bahan-free",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mkbFormController.getBahanFree,
+);
+
 module.exports = router;

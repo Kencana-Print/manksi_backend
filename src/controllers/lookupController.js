@@ -963,6 +963,16 @@ const searchProduksiRetur = async (req, res) => {
   }
 };
 
+const searchJasa = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchJasa(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   searchSpk,
   searchSpkProduksi,
@@ -1034,4 +1044,5 @@ module.exports = {
   searchInvProforma,
   searchBpb,
   searchProduksiRetur,
+  searchJasa,
 };

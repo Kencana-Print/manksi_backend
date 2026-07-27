@@ -214,4 +214,8 @@ router.get("/bpb-po", verifyToken, controller.searchBpbPo);
 router.get("/bpb", verifyToken, controller.searchBpb);
 router.get("/produksi-retur", verifyToken, controller.searchProduksiRetur);
 
+// Endpoint: /api/lookups/jasa
+// Digunakan di JasaSearchModal.vue (filter jasa_internal="Y", sesuai F1 edtjasa Delphi)
+router.get("/jasa", verifyToken, controller.searchJasa);
+
 module.exports = router;

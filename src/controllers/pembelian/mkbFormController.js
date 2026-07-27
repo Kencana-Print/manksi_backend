@@ -82,10 +82,26 @@ const getLinkablePo = async (req, res) => {
   }
 };
 
+const getBahanFree = async (req, res) => {
+  try {
+    const { kode, mkb } = req.query;
+    if (!kode) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Kode bahan wajib ada." });
+    }
+    const data = await mkbFormService.getBahanFree(kode, mkb || "");
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getById,
   save,
   getPrintData,
   checkSpk,
   getLinkablePo,
+  getBahanFree,
 };
