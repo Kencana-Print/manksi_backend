@@ -656,61 +656,103 @@ const importLayoutProses = async (spkNomor, filePath) => {
   const ws = workbook.worksheets[0];
 
   const getCell = (addr) => ws.getCell(addr).value;
-  const toStr = (v) => (v === null || v === undefined ? "" : String(v).trim());
+
+  // Unwrap formula cell -> ambil cached .result. Kalau formula belum
+  // sempat dihitung ulang oleh Excel (gak ada cached result, misal
+  // gara-gara dependency-nya kosong), treat sebagai kosong (null),
+  // JANGAN kembalikan object formula mentah (bisa ke-stringify jadi
+  // "[object Object]").
+  const unwrapFormula = (v) => {
+    if (v && typeof v === "object") {
+      return "result" in v ? v.result : null;
+    }
+    return v;
+  };
+
+  const toStr = (v) => {
+    const val = unwrapFormula(v);
+    if (val === null || val === undefined) return "";
+    // Angka dibulatkan 2 desimal — cegah string kepanjangan
+    // (float presisi tinggi) masuk ke kolom VARCHAR pendek di DB.
+    if (typeof val === "number") return String(Math.round(val * 100) / 100);
+    return String(val).trim();
+  };
+
   const toNum = (v) => {
-    if (v === null || v === undefined || v === "") return 0;
-    const n = Number(String(v).replace(",", "."));
+    const val = unwrapFormula(v);
+    if (val === null || val === undefined || val === "") return 0;
+    const n =
+      typeof val === "number" ? val : Number(String(val).replace(",", "."));
     return isNaN(n) ? 0 : n;
   };
 
+  // ── HEADER — posisi sesuai template AKTUAL (bukan template lama) ──
   const header = {
-    no_memo: toStr(getCell("B2")),
-    nama_memo: toStr(getCell("B3")),
-    line: toStr(getCell("B4")),
-    poj: toStr(getCell("E2")),
-    mp: toStr(getCell("E3")),
-    jk: toStr(getCell("E4")),
-    efisiensi: toStr(getCell("L2")),
-    target_hari: toStr(getCell("L3")),
+    no_memo: toStr(getCell("D3")),
+    nama_memo: toStr(getCell("D4")),
+    line: toStr(getCell("D5")),
+    poj: toStr(getCell("J3")),
+    mp: toStr(getCell("J4")),
+    jk: toStr(getCell("J5")),
+    efisiensi: toStr(getCell("Q3")),
+    target_hari: toStr(getCell("Q4")),
   };
 
-  const startRow = 7;
+  // ── DETAIL — Proof di kolom C-J, Sewing di kolom N-U. Data mulai
+  // baris 8 (baris 7 = header kolom). Berhenti begitu ketemu penanda
+  // footer (SUMMARY/TOTAL/TERTANDA/MENGETAHUI) di kolom C atau N. ──
+  const FOOTER_MARKERS = ["SUMMARY", "TOTAL", "TERTANDA", "MENGETAHUI"];
+  const isFooterRow = (val) => {
+    const s = toStr(val).toUpperCase();
+    return FOOTER_MARKERS.some((m) => s.startsWith(m));
+  };
+
+  const startRow = 8;
   const endRow = ws.rowCount;
   const proofRows = [];
   const sewingRows = [];
+  let proofCounter = 0;
+  let sewingCounter = 0;
 
   for (let r = startRow; r <= endRow; r++) {
     const row = ws.getRow(r);
 
-    const proofProses = toStr(row.getCell(6).value);
-    const proofMp = toNum(row.getCell(2).value);
-    if (proofProses || proofMp) {
+    if (
+      isFooterRow(row.getCell(3).value) ||
+      isFooterRow(row.getCell(14).value)
+    ) {
+      break; // sisa baris di bawah pasti bukan detail proses lagi
+    }
+
+    const proofProses = toStr(row.getCell(10).value); // J
+    if (proofProses) {
+      proofCounter++;
       proofRows.push({
-        no_urut: toNum(row.getCell(7).value),
+        no_urut: proofCounter,
         proses: proofProses,
-        mc: toStr(row.getCell(5).value),
-        sepatu: toStr(row.getCell(4).value),
-        kjarum: toStr(row.getCell(4).value),
-        ct_jam: toNum(row.getCell(4).value),
-        ct_dt: toNum(row.getCell(3).value),
-        mp: proofMp,
-        nama_op: toStr(row.getCell(1).value),
+        nama_op: toStr(row.getCell(3).value), // C
+        mp: toNum(row.getCell(4).value), // D
+        ct_dt: toNum(row.getCell(5).value), // E
+        ct_jam: toNum(row.getCell(6).value), // F
+        sepatu: toStr(row.getCell(7).value), // G
+        kjarum: toStr(row.getCell(8).value), // H (Uk. Jarum sisi Proof)
+        mc: toStr(row.getCell(9).value), // I
       });
     }
 
-    const sewingProses = toStr(row.getCell(9).value);
-    const sewingMp = toNum(row.getCell(16).value);
-    if (sewingProses || sewingMp) {
+    const sewingProses = toStr(row.getCell(14).value); // N
+    if (sewingProses) {
+      sewingCounter++;
       sewingRows.push({
-        no_urut: toNum(row.getCell(8).value),
+        no_urut: sewingCounter,
         proses: sewingProses,
-        mc: toStr(row.getCell(10).value),
-        ukjarum: toStr(row.getCell(11).value),
-        sepatu: toStr(row.getCell(12).value),
-        ct_jam: toNum(row.getCell(13).value),
-        ct_dt: toNum(row.getCell(14).value),
-        mp: sewingMp,
-        nama_op: toStr(row.getCell(15).value),
+        mc: toStr(row.getCell(15).value), // O
+        ukjarum: toStr(row.getCell(16).value), // P
+        sepatu: toStr(row.getCell(17).value), // Q
+        ct_jam: toNum(row.getCell(18).value), // R
+        ct_dt: toNum(row.getCell(19).value), // S
+        mp: toNum(row.getCell(20).value), // T
+        nama_op: toStr(row.getCell(21).value), // U
       });
     }
   }
