@@ -56,7 +56,8 @@ router.get(
 router.post(
   "/layout-proses/import",
   verifyToken,
-  upload.single("file"),
+  checkPermission(MENU_ID, "insert"),
+  upload.excel.single("file"),
   controller.importLayoutProses,
 );
 router.get("/layout-proses", verifyToken, controller.getLayoutProses);
