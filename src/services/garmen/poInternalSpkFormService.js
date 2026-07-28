@@ -2,17 +2,48 @@ const db = require("../../config/database");
 const fs = require("fs");
 const path = require("path");
 
-// ─────────────────────────────────────────────────────────
-// HELPER: cek gambar SPK — replikasi ckGambar.Checked di Delphi.
-// Delphi cek 1 folder flat global (apathimage), BUKAN per-cabang.
-// Folder itu di web ini setara VPS legacy /mnt/image (di-serve via
-// static route /file-gambar di index.js). ⚠️ Asumsi: kalau ternyata
-// ada folder per-cabang yang lebih akurat, perlu disesuaikan.
-// ─────────────────────────────────────────────────────────
-const checkGambarSpk = (nomorSpk) => {
+// ⚠️ FIX: sebelumnya cuma cek 1 folder flat legacy (/mnt/image), jadi
+// SELALU balikin false untuk gambar yang tersimpan di folder
+// per-cabang (public/images/<cab>/) atau folder map/ (public/images/
+// <cab>/map/<nomorMap>.jpg) — pola penyimpanan yang sekarang justru
+// paling umum dipakai project ini (lihat SpkPrintView.resolveDesignImage
+// & PoInternalSpkPrintView.resolveDesignImage). mapNomor opsional —
+// diisi kalau SPK ini originasinya dari MAP (beda dari nomorSpk itu
+// sendiri).
+const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
+
+const checkGambarSpk = (nomorSpk, mapNomor = "") => {
   if (!nomorSpk) return false;
-  const legacyPath = path.join("/mnt/image", `${nomorSpk}.jpg`);
-  return fs.existsSync(legacyPath);
+
+  // 1. Folder flat legacy (VPS lama)
+  if (fs.existsSync(path.join("/mnt/image", `${nomorSpk}.jpg`))) return true;
+
+  // 2. Scan semua folder cabang di public/images/, cek 2 kemungkinan
+  // per cabang: file nomorSpk langsung, atau file mapNomor di
+  // subfolder map/.
+  let cabFolders = [];
+  try {
+    cabFolders = fs
+      .readdirSync(IMAGES_ROOT, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    cabFolders = [];
+  }
+
+  for (const cab of cabFolders) {
+    if (fs.existsSync(path.join(IMAGES_ROOT, cab, `${nomorSpk}.jpg`))) {
+      return true;
+    }
+    if (
+      mapNomor &&
+      fs.existsSync(path.join(IMAGES_ROOT, cab, "map", `${mapNomor}.jpg`))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 // ─────────────────────────────────────────────────────────
@@ -132,16 +163,19 @@ const checkSpk = async (nomor) => {
   if (!nomor) throw new Error("Nomor SPK wajib diisi.");
   // ✅ FIX: tambah union tsalesorder (SO baru pasca migrasi) — nomor
   // format lama (tanpa prefix "SPK-") sekarang hidup di sana, bukan
-  // lagi di tspk.
+  // lagi di tspk. Juga resolve map_nomor (nomor MAP terkait) untuk
+  // dipakai checkGambarSpk, karena gambar SPK yang berasal dari MAP
+  // sering tersimpan di folder map/ dengan nama file = nomor MAP,
+  // bukan nomor SPK itu sendiri.
   const [rows] = await db.query(
     `SELECT * FROM (
-       SELECT so_nomor AS Nomor, so_nama AS Nama, so_kain AS Bahan, so_ukuran AS Ukuran, so_jumlah AS Jumlah, so_cmo AS cmo
+       SELECT so_nomor AS Nomor, so_nama AS Nama, so_kain AS Bahan, so_ukuran AS Ukuran, so_jumlah AS Jumlah, so_cmo AS cmo, so_memo AS MapNomor
        FROM tsalesorder WHERE so_divisi IN (3,4,6) AND so_aktif = 'Y'
        UNION ALL
-       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_kain AS Bahan, spk_ukuran AS Ukuran, spk_jumlah AS Jumlah, spk_cmo AS cmo
+       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_kain AS Bahan, spk_ukuran AS Ukuran, spk_jumlah AS Jumlah, spk_cmo AS cmo, spk_memo AS MapNomor
        FROM tspk WHERE spk_divisi IN (3,4,6) AND spk_aktif = 'Y'
        UNION ALL
-       SELECT mspk_nomor, mspk_nama, mspk_kain, mspk_ukuran, mspk_jumlah, mspk_cmo
+       SELECT mspk_nomor, mspk_nama, mspk_kain, mspk_ukuran, mspk_jumlah, mspk_cmo, mspk_nomor AS MapNomor
        FROM tmemospk WHERE mspk_divisi IN (3,4,6)
      ) final WHERE Nomor = ?`,
     [nomor],
@@ -157,7 +191,7 @@ const checkSpk = async (nomor) => {
     Bahan: spk.Bahan,
     Ukuran: spk.Ukuran,
     Jumlah: spk.Jumlah,
-    adaGambar: checkGambarSpk(spk.Nomor),
+    adaGambar: checkGambarSpk(spk.Nomor, spk.MapNomor || ""),
   };
 };
 
@@ -344,8 +378,6 @@ const loadBahan = async ({
 // GET DETAIL FORM (mode edit) — replikasi loaddataall().
 // ─────────────────────────────────────────────────────────
 const getDetailForm = async (nomor) => {
-  // ✅ FIX: tambah LEFT JOIN tsalesorder, prioritas IFNULL:
-  // tsalesorder (SO baru) -> tspk (SPK PPIC / SO legacy) -> tmemospk (MAP)
   const [hdrRows] = await db.query(
     `SELECT h.poi_nomor, DATE_FORMAT(h.poi_tanggal, '%Y-%m-%d') AS poi_tanggal,
             DATE_FORMAT(h.poi_dateline, '%Y-%m-%d') AS poi_dateline,
@@ -360,7 +392,8 @@ const getDetailForm = async (nomor) => {
             h.poi_ket, h.poi_close,
             h.poi_plan_nomor,
             DATE_FORMAT(h.poi_plan_tanggal, '%Y-%m-%d') AS poi_plan_tanggal,
-            h.poi_plan_jumlah
+            h.poi_plan_jumlah,
+            IFNULL(so.so_memo, IFNULL(s.spk_memo, m.mspk_nomor)) AS map_nomor
      FROM tpointernal_hdr h
      LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
      LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
@@ -379,7 +412,10 @@ const getDetailForm = async (nomor) => {
     throw new Error("PO ini sudah Close.");
   }
 
-  header.adaGambar = checkGambarSpk(header.poi_spk_nomor);
+  header.adaGambar = checkGambarSpk(
+    header.poi_spk_nomor,
+    header.map_nomor || "",
+  );
 
   const [dtlRows] = await db.query(
     `SELECT d.poid_bhn_kode, b.bhn_name, b.bhn_satuan, d.poid_size, d.poid_jumlah
