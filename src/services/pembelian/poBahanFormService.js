@@ -173,7 +173,7 @@ const getDetail = async (nomor) => {
     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
     LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
-    WHERE d.pod_po_nomor = ? ORDER BY d.pod_nourut
+    WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ORDER BY d.pod_nourut
   `,
     [nomor],
   );
@@ -355,9 +355,16 @@ const saveData = async (payload, userKode) => {
     }
 
     // C. INSERT DETAIL 1 (Item PO) & AUTO BPB DETAIL
-    if (items && items.length > 0) {
+    // ⚠️ FIX: filter baris kode kosong sebagai jaring pengaman
+    // server-side — jangan cuma percaya frontend sudah bersih (race
+    // condition watcher auto-trailing-row pernah bikin baris kosong
+    // lolos, walau sudah difilter di validateSave).
+    const validItemsToInsert = (items || []).filter(
+      (item) => item.kode && String(item.kode).trim() !== "",
+    );
+    if (validItemsToInsert.length > 0) {
       let nourut = 1;
-      for (const item of items) {
+      for (const item of validItemsToInsert) {
         const namaExt = item.namaext ? item.namaext : item.nama;
         await conn.query(
           `
