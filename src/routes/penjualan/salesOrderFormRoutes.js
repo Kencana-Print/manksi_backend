@@ -45,5 +45,8 @@ router.get(
   verifyToken,
   controller.getKatalogCustomer,
 );
+// di routes
+router.get("/sj-memo-map-list", verifyToken, controller.getSjMemoMapList);
+router.get("/sj-memo-by-map", verifyToken, controller.findSjMemoByMap);
 
 module.exports = router;

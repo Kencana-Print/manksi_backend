@@ -322,6 +322,16 @@ const searchPoInternal = async (req, res) => {
   }
 };
 
+const searchPoInternalSpk = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await lookupService.searchPoInternalSpk(q, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const searchAccesories = async (req, res) => {
   try {
     const data = await lookupService.searchAccesories();
@@ -997,6 +1007,7 @@ module.exports = {
   searchMapGarmen,
   validateMapGarmen,
   searchPoInternal,
+  searchPoInternalSpk,
   searchAccesories,
   getKomponen,
   searchMintaBahan,

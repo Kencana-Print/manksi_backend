@@ -58,7 +58,7 @@ const getBrowseList = async (query, userCabang) => {
         h.poi_tanggal AS Tanggal,
         h.poi_dateline AS Dateline,
         h.poi_spk_nomor AS SPK,
-        IFNULL(s.spk_nama, m.Mspk_nama) AS NamaSPK,
+        IFNULL(so.so_nama, IFNULL(s.spk_nama, m.Mspk_nama)) AS NamaSPK,
         j.jasa_nama AS Jasa,
         h.poi_cab AS Cab,
         h.poi_sup AS Tujuan,
@@ -77,8 +77,9 @@ const getBrowseList = async (query, userCabang) => {
           WHERE a.poisj_nomorpo = h.poi_nomor
         ), 0) AS BS,
         h.poi_close AS Closed
-      FROM tpointernal_hdr h
+     FROM tpointernal_hdr h
       INNER JOIN tpointernal_dtl d ON d.poid_nomor = h.poi_nomor
+      LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
       LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
       LEFT JOIN tmemospk m ON m.mspk_nomor = h.poi_spk_nomor
       LEFT JOIN tjasa j ON j.jasa_kode = h.poi_jasa_kode

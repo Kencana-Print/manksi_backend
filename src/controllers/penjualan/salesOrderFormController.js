@@ -175,6 +175,23 @@ const getKomponenMaster = async (req, res) => {
   }
 };
 
+const getSjMemoMapList = async (req, res) => {
+  try {
+    const data = await service.getSjMemoMapList(req.query.nomor);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+const findSjMemoByMap = async (req, res) => {
+  try {
+    const data = await service.findSjMemoByMap(req.query.nomor);
+    res.json({ data });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getDetail,
   save,
@@ -187,4 +204,6 @@ module.exports = {
   getStandarUkuran,
   getKatalogCustomer,
   getKomponenMaster,
+  getSjMemoMapList,
+  findSjMemoByMap,
 };

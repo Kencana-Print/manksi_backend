@@ -130,8 +130,14 @@ const checkPabrik = async (kode, other) => {
 // ─────────────────────────────────────────────────────────
 const checkSpk = async (nomor) => {
   if (!nomor) throw new Error("Nomor SPK wajib diisi.");
+  // ✅ FIX: tambah union tsalesorder (SO baru pasca migrasi) — nomor
+  // format lama (tanpa prefix "SPK-") sekarang hidup di sana, bukan
+  // lagi di tspk.
   const [rows] = await db.query(
     `SELECT * FROM (
+       SELECT so_nomor AS Nomor, so_nama AS Nama, so_kain AS Bahan, so_ukuran AS Ukuran, so_jumlah AS Jumlah, so_cmo AS cmo
+       FROM tsalesorder WHERE so_divisi IN (3,4,6) AND so_aktif = 'Y'
+       UNION ALL
        SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_kain AS Bahan, spk_ukuran AS Ukuran, spk_jumlah AS Jumlah, spk_cmo AS cmo
        FROM tspk WHERE spk_divisi IN (3,4,6) AND spk_aktif = 'Y'
        UNION ALL
@@ -249,11 +255,19 @@ const loadBahan = async ({
   let whereBordir = "";
   if (jasa === "J08") whereBordir = " AND bhn_bordir = 1";
 
+  // ✅ FIX: suffix match (persis Delphi bhn_kode LIKE '%'+akode), bukan
+  // exact match — supaya user bisa ketik cuma "400" dan otomatis
+  // ke-resolve ke kode lengkap "LL-000400". Kalau ada beberapa kode
+  // yang match suffix sama, ambil 1 yang pertama urut kode (paling
+  // deterministik), konsisten sama perilaku "if not Eof" Delphi yang
+  // juga cuma ambil baris pertama tanpa validasi keunikan.
   const [bahanRows] = await db.query(
     `SELECT bhn_kode, bhn_name, bhn_satuan
      FROM tbahan
-     WHERE bhn_aktif = 0 AND bhn_jb_kode = 'LL' AND bhn_kode = ? ${whereBordir}`,
-    [kode],
+     WHERE bhn_aktif = 0 AND bhn_jb_kode = 'LL' AND bhn_kode LIKE ? ${whereBordir}
+     ORDER BY bhn_kode
+     LIMIT 1`,
+    [`%${kode}`],
   );
   if (bahanRows.length === 0) {
     throw new Error("Kode tsb tidak ditemukan di jasa tsb.");
@@ -330,14 +344,16 @@ const loadBahan = async ({
 // GET DETAIL FORM (mode edit) — replikasi loaddataall().
 // ─────────────────────────────────────────────────────────
 const getDetailForm = async (nomor) => {
+  // ✅ FIX: tambah LEFT JOIN tsalesorder, prioritas IFNULL:
+  // tsalesorder (SO baru) -> tspk (SPK PPIC / SO legacy) -> tmemospk (MAP)
   const [hdrRows] = await db.query(
     `SELECT h.poi_nomor, DATE_FORMAT(h.poi_tanggal, '%Y-%m-%d') AS poi_tanggal,
             DATE_FORMAT(h.poi_dateline, '%Y-%m-%d') AS poi_dateline,
             h.poi_spk_nomor,
-            IFNULL(s.spk_nama, m.mspk_nama) AS namaspk,
-            IFNULL(s.spk_kain, m.mspk_kain) AS bahan,
-            IFNULL(s.spk_ukuran, m.mspk_ukuran) AS ukuran,
-            IFNULL(s.spk_jumlah, m.mspk_jumlah) AS jumlah,
+            IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS namaspk,
+            IFNULL(so.so_kain, IFNULL(s.spk_kain, m.mspk_kain)) AS bahan,
+            IFNULL(so.so_ukuran, IFNULL(s.spk_ukuran, m.mspk_ukuran)) AS ukuran,
+            IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS jumlah,
             h.poi_jasa_kode, j.jasa_nama,
             h.poi_cab, c.pab_nama AS namacab,
             h.poi_sup, u.pab_nama AS namasup,
@@ -346,6 +362,7 @@ const getDetailForm = async (nomor) => {
             DATE_FORMAT(h.poi_plan_tanggal, '%Y-%m-%d') AS poi_plan_tanggal,
             h.poi_plan_jumlah
      FROM tpointernal_hdr h
+     LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
      LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
      LEFT JOIN tmemospk m ON m.mspk_nomor = h.poi_spk_nomor
      LEFT JOIN tjasa j ON j.jasa_kode = h.poi_jasa_kode
@@ -392,15 +409,31 @@ const getDetailForm = async (nomor) => {
     });
   }
 
-  // ⚠️ Replikasi persis Delphi: planning di mode edit CUMA nampilin 1
-  // baris dari data yg sudah tersimpan (poi_plan_nomor/tanggal/jumlah),
-  // BUKAN re-fetch daftar lengkap dari tplan_ppic — walau nomor itu
-  // kosong sekalipun tetap 1 baris (ambil=true).
+  // ⚠️ tpointernal_hdr cuma nyimpen 3 field planning (nomor/tanggal/
+  // jumlah) — persis skema Delphi asli, tidak ada kolom Line/Status
+  // di header. Supaya kolom "Line/Status" di tabel Planning gak
+  // kosong pas mode edit, kita re-lookup ke tplan_ppic_dtl2 (sumber
+  // yang masih nyimpen plan_line_kelompok) berdasarkan kombinasi
+  // nomor+SPK+tanggal jadwal yang tersimpan — ini murni enrichment
+  // tampilan, TIDAK mengubah apa yang disimpan saat save.
+  let planningStatus = "";
+  if (header.poi_plan_nomor) {
+    const [statusRows] = await db.query(
+      `SELECT plan_line_kelompok
+       FROM tplan_ppic_dtl2
+       WHERE plan_pl_nomor = ? AND plan_spk = ? AND plan_tgl_jadwal = ?
+       LIMIT 1`,
+      [header.poi_plan_nomor, header.poi_spk_nomor, header.poi_plan_tanggal],
+    );
+    planningStatus = statusRows[0]?.plan_line_kelompok || "";
+  }
+
   const planning = [
     {
       noPlanning: header.poi_plan_nomor || "",
       tanggal: header.poi_plan_tanggal || "",
       jumlah: parseFloat(header.poi_plan_jumlah) || 0,
+      status: planningStatus,
       ambil: true,
     },
   ];
@@ -547,14 +580,15 @@ const saveData = async (payload, user) => {
 // GET DATA CETAK — replikasi cetak().
 // ─────────────────────────────────────────────────────────
 const getPrintData = async (nomor) => {
+  // ✅ FIX: tambah LEFT JOIN tsalesorder, sama pola prioritas seperti getDetailForm
   const [rows] = await db.query(
     `SELECT h.poi_nomor, DATE_FORMAT(h.poi_tanggal, '%Y-%m-%d') AS poi_tanggal,
             DATE_FORMAT(h.poi_dateline, '%Y-%m-%d') AS poi_dateline,
             h.poi_spk_nomor, h.user_create,
-            IFNULL(s.spk_nama, m.mspk_nama) AS namaspk,
-            IFNULL(s.spk_kain, m.mspk_kain) AS bahan,
-            IFNULL(s.spk_ukuran, m.mspk_ukuran) AS ukuran,
-            IFNULL(s.spk_jumlah, m.mspk_jumlah) AS jumlah,
+            IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS namaspk,
+            IFNULL(so.so_kain, IFNULL(s.spk_kain, m.mspk_kain)) AS bahan,
+            IFNULL(so.so_ukuran, IFNULL(s.spk_ukuran, m.mspk_ukuran)) AS ukuran,
+            IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS jumlah,
             h.poi_jasa_kode, j.jasa_nama,
             h.poi_cab, c.pab_nama AS namacab,
             h.poi_sup, u.pab_nama AS namasup,
@@ -562,6 +596,7 @@ const getPrintData = async (nomor) => {
             d.poid_bhn_kode, b.bhn_name, b.bhn_satuan, d.poid_size, d.poid_jumlah
      FROM tpointernal_hdr h
      LEFT JOIN tpointernal_dtl d ON d.poid_nomor = h.poi_nomor
+     LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
      LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
      LEFT JOIN tmemospk m ON m.mspk_nomor = h.poi_spk_nomor
      LEFT JOIN tjasa j ON j.jasa_kode = h.poi_jasa_kode

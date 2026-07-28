@@ -73,6 +73,12 @@ router.get(
 // Digunakan untuk mencari referensi PO di Form Surat Jalan MAP
 router.get("/po-internal", verifyToken, controller.searchPoInternal);
 
+// Endpoint: /api/lookups/po-internal-spk
+// Digunakan di PoInternalSpkSearchModal.vue (F1 "Nomor PO" di form
+// Surat Jalan PO Internal SPK) — BEDA dari /po-internal yang query
+// tpointernalmap_hdr (modul SJ MAP)
+router.get("/po-internal-spk", verifyToken, controller.searchPoInternalSpk);
+
 // Endpoint: /api/lookups/accesories
 router.get("/accesories", verifyToken, controller.searchAccesories);
 

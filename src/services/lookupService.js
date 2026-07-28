@@ -729,6 +729,67 @@ const searchPoInternal = async (cabangTujuan) => {
   return { items: rows };
 };
 
+// --- SEARCH PO INTERNAL SPK (beda dari searchPoInternal yang query
+// tpointernalmap_hdr — ini query tpointernal_hdr, dipakai modal F1
+// "Nomor PO" di form Surat Jalan PO Internal SPK) ---
+const searchPoInternalSpk = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  let params = [];
+  let whereClause = `WHERE h.poi_close = 'N'`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (
+      h.poi_nomor LIKE ? OR h.poi_spk_nomor LIKE ?
+      OR IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) LIKE ?
+    )`;
+    const k = `%${keyword}%`;
+    params.push(k, k, k);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM tpointernal_hdr h
+     LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
+     LEFT JOIN tmemospk m ON m.mspk_nomor = h.poi_spk_nomor
+     ${whereClause}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       h.poi_nomor AS Nomor,
+       DATE_FORMAT(h.poi_tanggal, '%d-%m-%Y') AS Tanggal,
+       h.poi_spk_nomor AS SPK,
+       IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS NamaSPK,
+       j.jasa_nama AS Jasa,
+       h.poi_cab AS Cab,
+       c.pab_nama AS NamaCab,
+       h.poi_sup AS Sup,
+       u.pab_nama AS NamaSup,
+       h.poi_ket AS Keterangan
+     FROM tpointernal_hdr h
+     LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = h.poi_spk_nomor
+     LEFT JOIN tmemospk m ON m.mspk_nomor = h.poi_spk_nomor
+     LEFT JOIN tjasa j ON j.jasa_kode = h.poi_jasa_kode
+     LEFT JOIN tpabrik c ON c.pab_kode = h.poi_cab
+     LEFT JOIN tpabrik u ON u.pab_kode = h.poi_sup
+     ${whereClause}
+     ORDER BY h.date_create DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
+};
+
 // --- GET ACCESORIES (Dari tgarmen_brg) ---
 const searchAccesories = async () => {
   const query = `
@@ -2540,6 +2601,7 @@ module.exports = {
   searchMapGarmen,
   validateMapGarmen,
   searchPoInternal,
+  searchPoInternalSpk,
   searchAccesories,
   getKomponen,
   searchMintaBahan,

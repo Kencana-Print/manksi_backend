@@ -1126,6 +1126,37 @@ const getKatalogCustomer = async (
   return { items: rows, total };
 };
 
+// --- CROSS-REFERENCE SJ MEMO <-> MAP (untuk auto-fill & lock di SO Form) ---
+
+// Ambil daftar MAP yang tercakup dalam 1 SJ Memo
+const getSjMemoMapList = async (nomorSj) => {
+  const [rows] = await db.query(
+    `SELECT d.sjd_mspk_nomor AS kode, m.mspk_nama AS nama,
+            d.sjd_jumlah AS jumlah, d.sjd_ukuran AS ukuran
+     FROM tsj_dtl_memo d
+     LEFT JOIN tmemospk m ON m.mspk_nomor = d.sjd_mspk_nomor
+     WHERE d.sjd_sj_nomor = ?`,
+    [nomorSj],
+  );
+  if (rows.length === 0) {
+    throw new Error(
+      "SJ Memo tersebut tidak ditemukan atau tidak memiliki detail MAP.",
+    );
+  }
+  return rows;
+};
+
+// Reverse lookup: cari SJ Memo yang mereferensikan 1 nomor MAP tertentu
+const findSjMemoByMap = async (nomorMap) => {
+  const [rows] = await db.query(
+    `SELECT DISTINCT d.sjd_sj_nomor AS nomor
+     FROM tsj_dtl_memo d
+     WHERE d.sjd_mspk_nomor = ?`,
+    [nomorMap],
+  );
+  return rows;
+};
+
 module.exports = {
   getDetail,
   saveData,
@@ -1138,4 +1169,6 @@ module.exports = {
   getStandarUkuran,
   getKatalogCustomer,
   getKomponenMaster,
+  getSjMemoMapList,
+  findSjMemoByMap,
 };

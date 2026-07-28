@@ -93,6 +93,10 @@ const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
 const approveSjRoutes = require("./routes/garmen/poInternalMapApproveRoutes");
 const poInternalSpkRoutes = require("./routes/garmen/poInternalSpkRoutes");
 const poInternalSpkFormRoutes = require("./routes/garmen/poInternalSpkFormRoutes");
+const sjPoInternalSpkRoutes = require("./routes/garmen/sjPoInternalSpkRoutes");
+const sjPoInternalSpkFormRoutes = require("./routes/garmen/sjPoInternalSpkFormRoutes");
+const approvePoInternalSpkRoutes = require("./routes/garmen/approvePoInternalSpkRoutes");
+const approvePoInternalSpkFormRoutes = require("./routes/garmen/approvePoInternalSpkFormRoutes");
 
 const mutasiProduksiRoutes = require("./routes/garmen/mutasiProduksiRoutes");
 const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRoutes");
@@ -356,6 +360,16 @@ app.use("/api/garmen/po-internal-spk/po-internal", poInternalSpkRoutes);
 app.use(
   "/api/garmen/po-internal-spk/po-internal-form",
   poInternalSpkFormRoutes,
+);
+app.use("/api/garmen/po-internal-spk/sj-po-internal", sjPoInternalSpkRoutes);
+app.use(
+  "/api/garmen/po-internal-spk/sj-po-internal-form",
+  sjPoInternalSpkFormRoutes,
+);
+app.use("/api/garmen/po-internal-spk/approve-sj", approvePoInternalSpkRoutes);
+app.use(
+  "/api/garmen/po-internal-spk/approve-sj-form",
+  approvePoInternalSpkFormRoutes,
 );
 
 app.use("/api/garmen/mutasi-produksi", mutasiProduksiRoutes);
