@@ -52,14 +52,14 @@ const getDetail = async (nomor) => {
   const [hdrRows] = await db.query(
     `SELECT h.pf_nomor, h.pf_tanggal, h.pf_jam, h.pf_cab, h.pf_lini,
             h.pf_spk_nomor, h.pf_petugas,
-            x.spk_nama AS NamaSpk, x.spk_jumlah AS JumlahSpk
+            x.spk_nama AS NamaSpk, x.spk_jumlah AS JumlahSpk, x.spk_ukuran AS Ukuran
      FROM tproofgarmen_hdr h
      LEFT JOIN (
-       SELECT spk_nomor, spk_nama, spk_jumlah FROM tspk WHERE spk_aktif = 'Y'
+       SELECT spk_nomor, spk_nama, spk_jumlah, spk_ukuran FROM tspk WHERE spk_aktif = 'Y'
        UNION ALL
-       SELECT mspk_nomor, mspk_nama, mspk_jumlah FROM tmemospk
+       SELECT mspk_nomor, mspk_nama, mspk_jumlah, mspk_ukuran FROM tmemospk
        UNION ALL
-       SELECT so_nomor, so_nama, so_jumlah FROM tsalesorder WHERE so_aktif = 'Y'
+       SELECT so_nomor, so_nama, so_jumlah, so_ukuran FROM tsalesorder WHERE so_aktif = 'Y'
      ) x ON x.spk_nomor = h.pf_spk_nomor
      WHERE h.pf_nomor = ?`,
     [nomor],
@@ -96,13 +96,13 @@ const getDetail = async (nomor) => {
 // ============================================================
 const getSpkInfoForBlur = async (nomor) => {
   const [rows] = await db.query(
-    `SELECT x.nomor, x.nama, x.jml, x.cmo FROM (
-       SELECT mspk_nomor AS nomor, mspk_nama AS nama, mspk_jumlah AS jml, mspk_cmo AS cmo
+    `SELECT x.nomor, x.nama, x.jml, x.cmo, x.ukuran FROM (
+       SELECT mspk_nomor AS nomor, mspk_nama AS nama, mspk_jumlah AS jml, mspk_cmo AS cmo, mspk_ukuran AS ukuran
        FROM tmemospk
        UNION ALL
-       SELECT spk_nomor, spk_nama, spk_jumlah, spk_cmo FROM tspk WHERE spk_aktif = 'Y'
+       SELECT spk_nomor, spk_nama, spk_jumlah, spk_cmo, spk_ukuran FROM tspk WHERE spk_aktif = 'Y'
        UNION ALL
-       SELECT so_nomor, so_nama, so_jumlah, so_cmo FROM tsalesorder WHERE so_aktif = 'Y'
+       SELECT so_nomor, so_nama, so_jumlah, so_cmo, so_ukuran FROM tsalesorder WHERE so_aktif = 'Y'
      ) x WHERE x.nomor = ?`,
     [nomor],
   );
@@ -113,7 +113,13 @@ const getSpkInfoForBlur = async (nomor) => {
   if (!row.cmo) {
     return { found: true, approved: false };
   }
-  return { found: true, approved: true, nama: row.nama, jumlah: row.jml };
+  return {
+    found: true,
+    approved: true,
+    nama: row.nama,
+    jumlah: row.jml,
+    ukuran: row.ukuran || "",
+  };
 };
 
 // --- Cek duplikat Lini+SPK — sesuai pengecekan di edtNomorSPKExit & F10 ---
