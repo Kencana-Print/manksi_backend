@@ -593,6 +593,10 @@ const getPrintData = async (nomor) => {
             h.poi_cab, c.pab_nama AS namacab,
             h.poi_sup, u.pab_nama AS namasup,
             h.poi_ket,
+            -- ⚠️ TAMBAHAN: resolve nomor MAP terkait, dipakai frontend
+            -- buat kandidat path gambar di folder .../map/<nomorMap>.jpg
+            -- (beda dari poi_spk_nomor kalau SPK-nya originasi dari MAP).
+            IFNULL(so.so_memo, IFNULL(s.spk_memo, m.mspk_nomor)) AS map_nomor,
             d.poid_bhn_kode, b.bhn_name, b.bhn_satuan, d.poid_size, d.poid_jumlah
      FROM tpointernal_hdr h
      LEFT JOIN tpointernal_dtl d ON d.poid_nomor = h.poi_nomor
@@ -614,6 +618,7 @@ const getPrintData = async (nomor) => {
     Dateline: rows[0].poi_dateline,
     UserCreate: rows[0].user_create,
     NomorSPK: rows[0].poi_spk_nomor,
+    MapNomor: rows[0].map_nomor || "",
     NamaSpk: rows[0].namaspk,
     Bahan: rows[0].bahan,
     Ukuran: rows[0].ukuran,
