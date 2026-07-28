@@ -137,14 +137,31 @@ const getBastFormData = async (nomorMap, userCabang) => {
     [nomorMap],
   );
   if (aksesoris.length === 0) {
-    [aksesoris] = await db.query(
-      `SELECT DISTINCT d.mind_acc_kode AS kode, b.brg_nama AS acc_nama, b.brg_satuan AS acc_satuan, b.brg_note AS acc_note, 0 AS qty
-        FROM taccmintabahan_hdr h
-       LEFT JOIN taccmintabahan_dtl d ON d.mind_nomor = h.min_nomor
-       LEFT JOIN tgarmen_brg b ON TRIM(b.brg_kode) = TRIM(d.mind_acc_kode) AND b.brg_jenis = 'ACCESORIES'
-       WHERE h.min_spk_nomor = ? ORDER BY b.brg_nama`,
+    // ⚠️ FIX: fallback SEBELUMNYA query ke taccmintabahan_hdr/dtl —
+    // tabel itu bukan tempat Permintaan Accesories beneran disimpan.
+    // Sesuai mintaBarangFormService (modul "Permintaan Barang"),
+    // ACCESORIES juga tersimpan di tgarmenminta_hdr/tgarmenminta_dtl
+    // dengan min_jenis='ACCESORIES', persis sama seperti jenis ATK/RTK/
+    // OBAT/SPAREPART, cuma beda filter jenis. qty sebelumnya juga
+    // di-hardcode 0 — sekarang diambil dari SUM(mind_jumlah) yang
+    // sebenarnya diinput user di form Permintaan Barang (bisa lebih
+    // dari 1 transaksi permintaan untuk MAP yang sama, jadi dijumlah).
+    const [mintaRows] = await db.query(
+      `SELECT
+         d.mind_brg_kode AS kode,
+         b.brg_nama AS acc_nama,
+         b.brg_satuan AS acc_satuan,
+         b.brg_note AS acc_note,
+         SUM(d.mind_jumlah) AS qty
+       FROM tgarmenminta_hdr h
+       INNER JOIN tgarmenminta_dtl d ON d.mind_nomor = h.min_nomor
+       LEFT JOIN tgarmen_brg b ON TRIM(b.brg_kode) = TRIM(d.mind_brg_kode) AND b.brg_jenis = 'ACCESORIES'
+       WHERE h.min_jenis = 'ACCESORIES' AND h.min_spk_nomor = ?
+       GROUP BY d.mind_brg_kode
+       ORDER BY b.brg_nama`,
       [nomorMap],
     );
+    aksesoris = mintaRows;
   }
 
   // 5. Load Obat

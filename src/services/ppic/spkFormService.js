@@ -655,29 +655,16 @@ const importLayoutProses = async (spkNomor, filePath) => {
   await workbook.xlsx.readFile(filePath);
   const ws = workbook.worksheets[0];
 
-  const getCell = (addr) => ws.getCell(addr).value;
-
-  // Unwrap formula cell -> ambil cached .result. Kalau formula belum
-  // sempat dihitung ulang oleh Excel (gak ada cached result, misal
-  // gara-gara dependency-nya kosong), treat sebagai kosong (null),
-  // JANGAN kembalikan object formula mentah (bisa ke-stringify jadi
-  // "[object Object]").
   const unwrapFormula = (v) => {
-    if (v && typeof v === "object") {
-      return "result" in v ? v.result : null;
-    }
+    if (v && typeof v === "object") return "result" in v ? v.result : null;
     return v;
   };
-
   const toStr = (v) => {
     const val = unwrapFormula(v);
     if (val === null || val === undefined) return "";
-    // Angka dibulatkan 2 desimal — cegah string kepanjangan
-    // (float presisi tinggi) masuk ke kolom VARCHAR pendek di DB.
     if (typeof val === "number") return String(Math.round(val * 100) / 100);
     return String(val).trim();
   };
-
   const toNum = (v) => {
     const val = unwrapFormula(v);
     if (val === null || val === undefined || val === "") return 0;
@@ -685,22 +672,136 @@ const importLayoutProses = async (spkNomor, filePath) => {
       typeof val === "number" ? val : Number(String(val).replace(",", "."));
     return isNaN(n) ? 0 : n;
   };
+  // Normalisasi teks label header: uppercase, buang spasi & tanda titik/titik-dua.
+  // Dipakai buat matching label yang gak selalu identik persis antar
+  // versi template ("EFFISEENSI :" vs "EFFISEENSI:" dst).
+  const norm = (s) =>
+    toStr(s).toUpperCase().replace(/\s+/g, "").replace(/[.:]/g, "");
 
-  // ── HEADER — posisi sesuai template AKTUAL (bukan template lama) ──
-  const header = {
-    no_memo: toStr(getCell("D3")),
-    nama_memo: toStr(getCell("D4")),
-    line: toStr(getCell("D5")),
-    poj: toStr(getCell("J3")),
-    mp: toStr(getCell("J4")),
-    jk: toStr(getCell("J5")),
-    efisiensi: toStr(getCell("Q3")),
-    target_hari: toStr(getCell("Q4")),
+  // ─────────────────────────────────────────────────────────────
+  // HEADER — dibaca DINAMIS dari label di baris 3-6, bukan alamat sel
+  // hardcode. Ada ≥2 varian template beredar dengan posisi kolom
+  // header yang beda-beda (kadang value tepat di sebelah kanan label,
+  // kadang ada beberapa kolom penyekat kosong) — scan toleran sampai
+  // 5 kolom ke kanan, tapi berhenti kalau ketemu teks label lain
+  // (tandanya field ini memang kosong, bukan nyerempet ke field
+  // sebelah).
+  // ─────────────────────────────────────────────────────────────
+  const buildHeaderInfo = () => {
+    const targets = {
+      no_memo: "NOMEMO",
+      nama_memo: "NAMAMEMO",
+      line: "LINE",
+      poj: "POJ",
+      mp: "MP",
+      jk: "JK",
+      efisiensi: "EFFISEENSI",
+      target_hari: "TARGETHARI",
+    };
+    const stopOnlyLabels = ["TANGGAL"];
+    const labelSet = new Set([...Object.values(targets), ...stopOnlyLabels]);
+
+    const result = {};
+    for (let r = 3; r <= 6; r++) {
+      const row = ws.getRow(r);
+      for (let c = 1; c <= 20; c++) {
+        const label = norm(row.getCell(c).value);
+        if (!label || !Object.values(targets).includes(label)) continue;
+        const key = Object.keys(targets).find((k) => targets[k] === label);
+        if (result[key] !== undefined) continue;
+
+        let val = "";
+        for (let off = 1; off <= 5; off++) {
+          const candidateRaw = toStr(row.getCell(c + off).value);
+          const candidateNorm = norm(row.getCell(c + off).value);
+          if (labelSet.has(candidateNorm)) break; // ketemu label lain -> field ini kosong
+          if (candidateRaw) {
+            val = candidateRaw;
+            break;
+          }
+        }
+        result[key] = val;
+      }
+    }
+    for (const key of Object.keys(targets)) {
+      if (result[key] === undefined) result[key] = "";
+    }
+    return result;
   };
 
-  // ── DETAIL — Proof di kolom C-J, Sewing di kolom N-U. Data mulai
-  // baris 8 (baris 7 = header kolom). Berhenti begitu ketemu penanda
-  // footer (SUMMARY/TOTAL/TERTANDA/MENGETAHUI) di kolom C atau N. ──
+  // ─────────────────────────────────────────────────────────────
+  // KOLOM DETAIL — dibaca DINAMIS dari label di baris 7 (header
+  // tabel), dipisah dua blok (Proof / Sewing) memakai kolom
+  // "SELESAI" sebagai batas. Sebagian varian template punya kolom
+  // SEPATU/UK.JARUM tambahan, sebagian tidak — pendekatan dinamis ini
+  // otomatis menyesuaikan berapa pun & di posisi mana pun kolom itu
+  // berada, tanpa perlu hardcode per-varian template.
+  // ─────────────────────────────────────────────────────────────
+  const buildColumnMap = (headerRow) => {
+    const row = ws.getRow(headerRow);
+    const labels = {};
+    let selesaiCol = null;
+    for (let c = 1; c <= 30; c++) {
+      const raw = norm(row.getCell(c).value);
+      if (!raw) continue;
+      if (raw === "SELESAI") {
+        selesaiCol = c;
+        continue;
+      }
+      labels[c] = raw;
+    }
+    if (!selesaiCol) {
+      throw new Error(
+        "Format Excel tidak dikenali: kolom 'SELESAI' (pemisah Proof/Sewing) tidak ditemukan di baris header.",
+      );
+    }
+
+    const findCol = (range, target) => {
+      for (const [c, label] of Object.entries(labels)) {
+        const ci = Number(c);
+        if (ci >= range[0] && ci <= range[1] && label === target) return ci;
+      }
+      return null;
+    };
+
+    const proofRange = [1, selesaiCol - 1];
+    const sewingRange = [selesaiCol + 1, 30];
+
+    return {
+      proof: {
+        nama_op: findCol(proofRange, "NAMAOP"),
+        mp: findCol(proofRange, "MP"),
+        ct_dt: findCol(proofRange, "CT(DT)"),
+        ct_jam: findCol(proofRange, "CT(JAM)"),
+        sepatu: findCol(proofRange, "SEPATU"),
+        kjarum: findCol(proofRange, "UKJARUM"),
+        mc: findCol(proofRange, "M/C"),
+        proses: findCol(proofRange, "PROSES"),
+      },
+      sewing: {
+        proses: findCol(sewingRange, "PROSES"),
+        mc: findCol(sewingRange, "M/C"),
+        ukjarum: findCol(sewingRange, "UKJARUM"),
+        sepatu: findCol(sewingRange, "SEPATU"),
+        ct_jam: findCol(sewingRange, "CT(JAM)"),
+        ct_dt: findCol(sewingRange, "CT(DT)"),
+        mp: findCol(sewingRange, "MP"),
+        nama_op: findCol(sewingRange, "NAMAOP"),
+      },
+    };
+  };
+
+  const header = buildHeaderInfo();
+  const cols = buildColumnMap(7);
+
+  if (!cols.proof.proses || !cols.sewing.proses) {
+    throw new Error(
+      "Format Excel tidak dikenali: kolom PROSES untuk Proof/Sewing tidak ditemukan.",
+    );
+  }
+
+  const getVal = (row, col) => (col ? row.getCell(col).value : null);
+
   const FOOTER_MARKERS = ["SUMMARY", "TOTAL", "TERTANDA", "MENGETAHUI"];
   const isFooterRow = (val) => {
     const s = toStr(val).toUpperCase();
@@ -717,42 +818,39 @@ const importLayoutProses = async (spkNomor, filePath) => {
   for (let r = startRow; r <= endRow; r++) {
     const row = ws.getRow(r);
 
-    if (
-      isFooterRow(row.getCell(3).value) ||
-      isFooterRow(row.getCell(14).value)
-    ) {
-      break; // sisa baris di bawah pasti bukan detail proses lagi
-    }
+    // Kolom C (nama_op sisi Proof) konsisten dipakai sebagai penanda
+    // baris SUMMARY/TOTAL/TERTANDA/MENGETAHUI di kedua varian template.
+    if (isFooterRow(row.getCell(3).value)) break;
 
-    const proofProses = toStr(row.getCell(10).value); // J
+    const proofProses = toStr(getVal(row, cols.proof.proses));
     if (proofProses) {
       proofCounter++;
       proofRows.push({
         no_urut: proofCounter,
         proses: proofProses,
-        nama_op: toStr(row.getCell(3).value), // C
-        mp: toNum(row.getCell(4).value), // D
-        ct_dt: toNum(row.getCell(5).value), // E
-        ct_jam: toNum(row.getCell(6).value), // F
-        sepatu: toStr(row.getCell(7).value), // G
-        kjarum: toStr(row.getCell(8).value), // H (Uk. Jarum sisi Proof)
-        mc: toStr(row.getCell(9).value), // I
+        nama_op: toStr(getVal(row, cols.proof.nama_op)),
+        mp: toNum(getVal(row, cols.proof.mp)),
+        ct_dt: toNum(getVal(row, cols.proof.ct_dt)),
+        ct_jam: toNum(getVal(row, cols.proof.ct_jam)),
+        sepatu: toStr(getVal(row, cols.proof.sepatu)),
+        kjarum: toStr(getVal(row, cols.proof.kjarum)),
+        mc: toStr(getVal(row, cols.proof.mc)),
       });
     }
 
-    const sewingProses = toStr(row.getCell(14).value); // N
+    const sewingProses = toStr(getVal(row, cols.sewing.proses));
     if (sewingProses) {
       sewingCounter++;
       sewingRows.push({
         no_urut: sewingCounter,
         proses: sewingProses,
-        mc: toStr(row.getCell(15).value), // O
-        ukjarum: toStr(row.getCell(16).value), // P
-        sepatu: toStr(row.getCell(17).value), // Q
-        ct_jam: toNum(row.getCell(18).value), // R
-        ct_dt: toNum(row.getCell(19).value), // S
-        mp: toNum(row.getCell(20).value), // T
-        nama_op: toStr(row.getCell(21).value), // U
+        mc: toStr(getVal(row, cols.sewing.mc)),
+        ukjarum: toStr(getVal(row, cols.sewing.ukjarum)),
+        sepatu: toStr(getVal(row, cols.sewing.sepatu)),
+        ct_jam: toNum(getVal(row, cols.sewing.ct_jam)),
+        ct_dt: toNum(getVal(row, cols.sewing.ct_dt)),
+        mp: toNum(getVal(row, cols.sewing.mp)),
+        nama_op: toStr(getVal(row, cols.sewing.nama_op)),
       });
     }
   }
@@ -821,6 +919,12 @@ const importLayoutProses = async (spkNomor, filePath) => {
     throw e;
   } finally {
     conn.release();
+  }
+
+  if (proofRows.length === 0 && sewingRows.length === 0) {
+    throw new Error(
+      "Tidak ada baris proses yang terdeteksi di file ini. Pastikan file sudah terisi (bukan form kosong) dan formatnya sesuai template.",
+    );
   }
 
   return {
