@@ -85,7 +85,7 @@ const validateField = async (type, value) => {
        LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
        LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
-       WHERE d.pod_po_nomor = ?
+       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> ''
        ORDER BY d.pod_bhn_kode, d.pod_spk_nomor`,
       [value],
     );
@@ -113,7 +113,7 @@ const validateField = async (type, value) => {
           WHERE hh.bpb_po_nomor = h.po_nomor AND dd.bpbd_bhn_kode = d.pod_bhn_kode
         ), 0) AS terima
        FROM tpo_hdr h
-       INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0
+       INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0 AND d.pod_bhn_kode <> ''
        LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
        WHERE h.po_nomor = ?
        GROUP BY h.po_nomor, h.po_tanggal, d.pod_bhn_kode, d.pod_bhn_satuan, b.bhn_name, b.bhn_satuan, d.pod_hargabeli`,
@@ -213,7 +213,7 @@ const getDetail = async (nomor) => {
      INNER JOIN tbpb_hdr h ON h.bpb_nomor = d.bpbd_bpb_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.bpbd_bhn_kode
      LEFT JOIN tspk k ON k.spk_nomor = d.bpbd_spk_nomor
-     WHERE d.bpbd_bpb_nomor = ?
+     WHERE d.bpbd_bpb_nomor = ? AND d.bpbd_bhn_kode <> ''
      ORDER BY d.bpbd_nourut`,
     [nomor],
   );
@@ -251,7 +251,7 @@ const getDetail = async (nomor) => {
        LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
        LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
-       WHERE d.pod_po_nomor = ?
+       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> ''
        ORDER BY d.pod_bhn_kode, d.pod_spk_nomor`,
       [nomor, nomor, poNomor],
     );
@@ -377,11 +377,20 @@ const saveData = async (payload, userKode) => {
     }
 
     // D. INSERT DETAIL 1 (tbpb_dtl)
+    // ⚠️ FIX: filter baris kode kosong SEBELUM insert — sebelumnya semua
+    // baris di array `items` (termasuk baris trailing/kosong yang
+    // mungkin lolos dari frontend) ikut ke-insert ke tbpb_dtl, bikin
+    // baris hantu ber-kode '' yang muncul duluan di urutan tampilan
+    // (string kosong < kode manapun secara alfabet).
+    const validItemsToInsert = items.filter(
+      (item) => item.kode && String(item.kode).trim() !== "",
+    );
+
     let nourut1 = 1;
     let totalPoSisa = 0;
     let totalBpb = 0;
 
-    for (const item of items) {
+    for (const item of validItemsToInsert) {
       // Kalkulasi sinkronisasi PO (Sesuai tpo, tbpb Delphi di simpandata)
       totalPoSisa += Number(item.totalpo || 0);
       const jmlTrmPlusBpb = Number(item.terima || 0) + Number(item.jumlah || 0);
