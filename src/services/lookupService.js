@@ -652,12 +652,15 @@ const searchPenawaranDetail = async (penawaranNomor) => {
 };
 
 // --- FUNGSI UNTUK MODAL SEARCH MAP GARMEN ---
-const searchMapGarmen = async (keyword, cusKode, perushKode, divisi) => {
+const searchMapGarmen = async (
+  keyword,
+  cusKode,
+  perushKode,
+  divisi,
+  includeClosed = false,
+) => {
   let params = [];
 
-  // Menerima divisi tunggal ("4") maupun multi ("3,4,6"), dipecah
-  // jadi IN(...) supaya kompatibel dengan pemanggil yang mengirim
-  // beberapa divisi sekaligus (mis. form Proof Garmen: divisi 3,4,6).
   const divisiList = divisi
     ? String(divisi)
         .split(",")
@@ -667,7 +670,17 @@ const searchMapGarmen = async (keyword, cusKode, perushKode, divisi) => {
 
   // Sumber HANYA tmemospk — field ini murni "Pilih MAP Garmen",
   // bukan pengganti union SPK+SO+MAP.
-  let whereClause = `WHERE mspk_cmo <> "" AND mspk_close = 'N'`;
+  let whereClause = `WHERE mspk_cmo <> ""`;
+
+  // Default: sembunyikan MAP yang sudah closed (mspk_close='Y') —
+  // dipakai halaman-halaman yang butuh validasi MAP masih "aktif"
+  // secara penjualan (misal bikin SO baru). Proof Garmen dan
+  // kebutuhan sejenis (dokumentasi teknis produksi, bukan urusan
+  // status penjualan) kirim includeClosed=true untuk skip filter ini.
+  if (!includeClosed) {
+    whereClause += ` AND mspk_close = 'N'`;
+  }
+
   if (divisiList.length > 0) {
     whereClause += ` AND mspk_divisi IN (${divisiList.map(() => "?").join(",")})`;
     params.push(...divisiList);

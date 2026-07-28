@@ -273,16 +273,15 @@ const searchPenawaranDetail = async (req, res) => {
 
 const searchMapGarmen = async (req, res) => {
   try {
-    const { q, cus_kode, perush_kode, divisi } = req.query;
-
+    const { q, cus_kode, perush_kode, divisi, includeClosed } = req.query;
     const data = await lookupService.searchMapGarmen(
       q,
       cus_kode,
       perush_kode,
       divisi,
+      includeClosed === "true" || includeClosed === "1",
     );
-
-    res.status(200).json({ success: true, data });
+    res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
