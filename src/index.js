@@ -99,6 +99,8 @@ const approvePoInternalSpkRoutes = require("./routes/garmen/approvePoInternalSpk
 const approvePoInternalSpkFormRoutes = require("./routes/garmen/approvePoInternalSpkFormRoutes");
 const inputPlanningSpkRoutes = require("./routes/garmen/inputPlanningSpkRoutes");
 const inputPlanningSpkFormRoutes = require("./routes/garmen/inputPlanningSpkFormRoutes");
+const planningPerTanggalRoutes = require("./routes/garmen/planningPerTanggalRoutes");
+const planSpkVsRealisasiRoutes = require("./routes/garmen/planSpkVsRealisasiRoutes");
 
 const mutasiProduksiRoutes = require("./routes/garmen/mutasiProduksiRoutes");
 const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRoutes");
@@ -191,6 +193,7 @@ const browseSpkRoutes = require("./routes/laporan/gudang-garmen/browseSpkRoutes"
 const browseMapRoutes = require("./routes/laporan/gudang-garmen/browseMapRoutes");
 
 // Laporan Produksi Garmen
+const monitoringProofRoutes = require("./routes/laporan/produksi-garmen/monitoringProofRoutes");
 const monitoringProduksiRoutes = require("./routes/laporan/produksi-garmen/monitoringProduksiRoutes");
 const monitoringKekuranganProduksiRoutes = require("./routes/laporan/produksi-garmen/monitoringKekuranganProduksiRoutes");
 const monitoringKekuranganProduksiJahitRoutes = require("./routes/laporan/produksi-garmen/monitoringKekuranganProduksiJahitRoutes");
@@ -199,6 +202,10 @@ const monitoringKedatanganBahanRoutes = require("./routes/laporan/produksi-garme
 const monitoringBsRoutes = require("./routes/laporan/produksi-garmen/monitoringBsRoutes");
 const stokProduksibyLineRoutes = require("./routes/laporan/produksi-garmen/stokProduksibyLineRoutes");
 const outstandingBordirRoutes = require("./routes/laporan/produksi-garmen/outstandingBordirRoutes");
+const standarBabaranProofRoutes = require("./routes/laporan/produksi-garmen/standarBabaranProofRoutes");
+const studyTimeProofJahitRoutes = require("./routes/laporan/produksi-garmen/studyTimeProofJahitRoutes");
+const studyTimeProofCetakRoutes = require("./routes/laporan/produksi-garmen/studyTimeProofCetakRoutes");
+const studyTimeProofBordirRoutes = require("./routes/laporan/produksi-garmen/studyTimeProofBordirRoutes");
 const laporanPemakaianObatRoutes = require("./routes/laporan/produksi-garmen/laporanPemakaianObatRoutes");
 
 // Laporan Penjualan
@@ -378,6 +385,14 @@ app.use(
   "/api/garmen/planning-per-spk/input-planning-form",
   inputPlanningSpkFormRoutes,
 );
+app.use(
+  "/api/garmen/planning-per-spk/planning-per-tgl",
+  planningPerTanggalRoutes,
+);
+app.use(
+  "/api/garmen/planning-per-spk/plan-vs-realisasi",
+  planSpkVsRealisasiRoutes,
+);
 
 app.use("/api/garmen/mutasi-produksi", mutasiProduksiRoutes);
 app.use("/api/garmen/mutasi-produksi-form", mutasiProduksiFormRoutes);
@@ -492,6 +507,7 @@ app.use(
 app.use("/api/laporan/gudang-garmen/browse-spk", browseSpkRoutes);
 app.use("/api/laporan/gudang-garmen/browse-map", browseMapRoutes);
 
+app.use("/api/laporan/produksi-garmen/monitoring-proof", monitoringProofRoutes);
 app.use(
   "/api/laporan/produksi-garmen/monitoring-produksi",
   monitoringProduksiRoutes,
@@ -517,6 +533,22 @@ app.use("/api/laporan/produksi-garmen/stok-by-line", stokProduksibyLineRoutes);
 app.use(
   "/api/laporan/produksi-garmen/outstanding-bordir",
   outstandingBordirRoutes,
+);
+app.use(
+  "/api/laporan/produksi-garmen/std-babaran-proof",
+  standarBabaranProofRoutes,
+);
+app.use(
+  "/api/laporan/produksi-garmen/study-time-proof-jahit",
+  studyTimeProofJahitRoutes,
+);
+app.use(
+  "/api/laporan/produksi-garmen/study-time-proof-cetak",
+  studyTimeProofCetakRoutes,
+);
+app.use(
+  "/api/laporan/produksi-garmen/study-time-proof-bordir",
+  studyTimeProofBordirRoutes,
 );
 app.use(
   "/api/laporan/produksi-garmen/pemakaian-obat",
