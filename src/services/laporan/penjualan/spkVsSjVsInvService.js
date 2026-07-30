@@ -96,9 +96,12 @@ const getExportData = async (query) => {
   // ✅ Replikasi persis: TANPA IF(status_otomatis,...) kayak modul SPK
   // vs SJ — di sini sj_nomor selalu diambil apa adanya. TANPA filter
   // perush_kode juga (konsisten sama fix SPK vs SJ kemarin).
-  // ⚠️ Kondisi LEFT(sjd_spk_nomor,2)=MID(sj_nomor,4,2) direplikasi
-  // persis dari source meski alasan bisnisnya gak eksplisit — semacam
-  // validasi integritas nomor SPK vs nomor SJ.
+  // ✅ FIXED: kondisi cross-check kode cabang SPK vs SJ semula pakai
+  // LEFT(sjd_spk_nomor,2) — itu valid untuk format nomor SPK LAMA tanpa
+  // prefix ("KP-KO-000003"). Format SPK SEKARANG & SETERUSNYA selalu
+  // pakai prefix "SPK-" (4 karakter) sebelum kode cabang, jadi diganti
+  // MID(sjd_spk_nomor,5,2) supaya ambil kode cabang yang benar
+  // ("SPK-KP-KO-000003" -> "KP", bukan "SP").
   const sjSql = `
     SELECT
       d.sjd_spk_nomor AS SpkNomor,
@@ -114,7 +117,7 @@ const getExportData = async (query) => {
     INNER JOIN tsj_dtl d ON d.sjd_sj_nomor = h.sj_nomor
     WHERE h.sj_approve <> 2
       AND d.sjd_spk_nomor IN (?)
-      AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      AND MID(d.sjd_spk_nomor, 5, 2) = MID(h.sj_nomor, 4, 2)
     ORDER BY d.sjd_spk_nomor, h.sj_tanggal
   `;
   const [sjDetails] = await db.query(sjSql, [nomorList]);
@@ -158,7 +161,7 @@ const getDetailByNomor = async (nomor) => {
     INNER JOIN tsj_dtl d ON d.sjd_sj_nomor = h.sj_nomor
     WHERE h.sj_approve <> 2
       AND d.sjd_spk_nomor = ?
-      AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+      AND MID(d.sjd_spk_nomor, 5, 2) = MID(h.sj_nomor, 4, 2)
     ORDER BY h.sj_tanggal
   `;
   const invSql = `

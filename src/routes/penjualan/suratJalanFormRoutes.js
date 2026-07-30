@@ -26,6 +26,12 @@ router.post(
   checkPermission(MENU_ID, "view"),
   ctrl.getSpkDetail,
 );
+router.post(
+  "/spk-detail-jadwal",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getSpkDetailFromJadwal,
+);
 router.get(
   "/jadwal-kirim",
   verifyToken,

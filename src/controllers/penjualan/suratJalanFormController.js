@@ -31,6 +31,30 @@ const getSpkDetail = async (req, res) => {
   }
 };
 
+const getSpkDetailFromJadwal = async (req, res) => {
+  try {
+    const {
+      spkNomor,
+      divisi,
+      excludeNomor = "",
+      noKirim = "",
+      idKirim = 0,
+      uraian = "",
+    } = req.body;
+    const data = await svc.getSpkDetailFromJadwal(
+      spkNomor,
+      divisi,
+      excludeNomor,
+      noKirim,
+      idKirim,
+      uraian,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 const getSpkList = async (req, res) => {
   try {
     const { cusKode, perushKode, divisi, invPro = "", q = "" } = req.query;
@@ -184,6 +208,7 @@ const submitOtorisasi = async (req, res) => {
 module.exports = {
   getById,
   getSpkDetail,
+  getSpkDetailFromJadwal,
   getSpkList,
   getJadwalKirimList,
   cekPiutang,

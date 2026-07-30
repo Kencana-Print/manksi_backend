@@ -352,6 +352,109 @@ const getSpkDetail = async (
 };
 
 // ─────────────────────────────────────────────────────────
+// GET SPK DETAIL — dari pilihan Jadwal Kirim (F2 di grid)
+// Beda dari getSpkDetail (F1): input di sini SUDAH nomor turunan
+// (tjadwalkirim.spk_nomor menyimpan nomor turunan, bukan nomor SO),
+// jadi TIDAK boleh divalidasi ulang ke tsalesorder/tspk(is_so=1) —
+// itu yang bikin error "SO Tidak ditemukan" waktu user pilih dari F2,
+// karena nomor turunan memang tidak pernah ada di kolom so_nomor.
+// noKirim/idKirim dibawa dari baris jadwal yang dipilih user, supaya
+// tersimpan ke sjd_nokirim/sjd_idkirim persis kayak jalur lama.
+// ─────────────────────────────────────────────────────────
+const getSpkDetailFromJadwal = async (
+  spkNomorTurunan,
+  divisi,
+  excludeNomor = "",
+  noKirim = "",
+  idKirim = 0,
+) => {
+  const [[spkCheck]] = await db.query(
+    `SELECT spk_nomor FROM tspk
+     WHERE spk_nomor = ? AND spk_is_so = 0 AND spk_aktif = 'Y'`,
+    [spkNomorTurunan],
+  );
+  if (!spkCheck) {
+    throw new Error("SPK turunan tidak ditemukan atau sudah tidak aktif.");
+  }
+  const spkNomor = spkCheck.spk_nomor;
+  const divisiStr = String(divisi).charAt(0);
+
+  const [[sizeCheck]] = await db.query(
+    `SELECT COUNT(*) AS cnt FROM tspk_size WHERE spks_nomor = ?`,
+    [spkNomor],
+  );
+
+  let rows = [];
+  if (sizeCheck.cnt > 0) {
+    const [sizes] = await db.query(
+      `SELECT z.spks_nomor, z.spks_size, z.spks_qty,
+              s.spk_nama2, s.spk_ukuran, s.spk_jo_kode, s.spk_harga, s.spk_jumlah
+       FROM tspk_size z
+       INNER JOIN tspk s ON s.spk_nomor = z.spks_nomor
+       WHERE z.spks_nomor = ?`,
+      [spkNomor],
+    );
+    for (const r of sizes) {
+      const ukuran =
+        divisiStr === "3" || divisiStr === "4" ? r.spks_size : r.spk_ukuran;
+      const sudah = await getSudah(spkNomor, r.spks_size, excludeNomor);
+      rows.push({
+        SpkNomor: r.spks_nomor,
+        NamaSpk: r.spk_nama2,
+        Ukuran: ukuran,
+        Size: r.spks_size,
+        Jenis: r.spk_jo_kode,
+        Harga: r.spk_harga,
+        SpkJumlah: r.spk_jumlah,
+        QtyOrder: r.spks_qty,
+        Jumlah: 0,
+        Koli: 0,
+        Sudah: sudah,
+        Kurang: r.spks_qty - sudah,
+        Keterangan: "",
+        Uraian: "",
+        NoKirim: noKirim,
+        IdKirim: idKirim,
+      });
+    }
+  } else {
+    const [[spkInfo]] = await db.query(
+      `SELECT spk_nomor, spk_nama2, spk_ukuran, spk_jo_kode, spk_harga,
+              spk_jumlah,
+              (spk_prasj + spk_jumlah_kirim) AS sudah,
+              (spk_jumlah - spk_prasj - spk_jumlah_kirim) AS kurang
+       FROM tspk
+       WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
+      [spkNomor],
+    );
+    if (!spkInfo) throw new Error("SPK tidak ditemukan.");
+
+    const ukuran =
+      divisiStr === "3" || divisiStr === "4" ? "" : spkInfo.spk_ukuran;
+    rows.push({
+      SpkNomor: spkInfo.spk_nomor,
+      NamaSpk: spkInfo.spk_nama2,
+      Ukuran: ukuran,
+      Size: "",
+      Jenis: spkInfo.spk_jo_kode,
+      Harga: spkInfo.spk_harga,
+      SpkJumlah: spkInfo.spk_jumlah,
+      QtyOrder: spkInfo.spk_jumlah,
+      Jumlah: 0,
+      Koli: 0,
+      Sudah: spkInfo.sudah,
+      Kurang: spkInfo.kurang,
+      Keterangan: "",
+      Uraian: "",
+      NoKirim: noKirim,
+      IdKirim: idKirim,
+    });
+  }
+
+  return rows;
+};
+
+// ─────────────────────────────────────────────────────────
 // GET SPK LIST untuk modal (F1 di grid)
 // Filter per customer, perusahaan, divisi
 // ─────────────────────────────────────────────────────────
@@ -422,7 +525,13 @@ const getJadwalKirimList = async (
   const offset = (Number(page) - 1) * limitNum;
   const divisiStr = String(divisi).charAt(0);
   const like = `%${q}%`;
-  let where = `s.spk_aktif = 'Y' AND s.spk_cmo <> ''
+
+  // ⚠️ FIX: tjadwalkirim.spk_nomor merujuk ke SPK PPIC TURUNAN (sama
+  // seperti sjd_spk_nomor di tsj_dtl / getSpkDetail), BUKAN nomor SO.
+  // Join sebelumnya salah pakai soUnion (SO baru + SO legacy saja) —
+  // turunan gak pernah ada di situ, jadi jadwal kirim yang sudah
+  // dibuat atas SPK turunan selalu 0 baris walau datanya ada.
+  let where = `s.spk_aktif = 'Y' AND s.spk_is_so = 0 AND s.spk_cmo <> ''
     AND s.spk_divisi = ? AND s.spk_perush_kode = ? AND s.spk_cus_kode = ?`;
   const params = [divisiStr, perushKode, cusKode];
   if (invProNomor) {
@@ -435,26 +544,16 @@ const getJadwalKirimList = async (
     where += ` AND (a.spk_nomor LIKE ? OR s.spk_nama LIKE ? OR b.nomor_kirim LIKE ?)`;
     params.push(like, like, like);
   }
-  // Sumber SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1
-  // (lama, pre-migrasi), digunakan sebagai subquery inline karena
-  // di-JOIN dengan kondisi dinamis (${where}).
-  const soUnion = `
-    SELECT so_nomor AS spk_nomor, so_nama AS spk_nama, so_divisi AS spk_divisi,
-           so_perush_kode AS spk_perush_kode, so_cus_kode AS spk_cus_kode,
-           so_aktif AS spk_aktif, so_cmo AS spk_cmo
-    FROM tsalesorder
-    UNION ALL
-    SELECT spk_nomor, spk_nama, spk_divisi, spk_perush_kode, spk_cus_kode, spk_aktif, spk_cmo
-    FROM tspk
-    WHERE spk_is_so = 1
-  `;
+
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total
      FROM tjadwalkirim a
-     INNER JOIN (${soUnion}) s ON s.spk_nomor = a.spk_nomor AND ${where}
-     LEFT JOIN tjadwalkirim_dtl b ON b.nomor_kirim = a.Nomor_Kirim`,
+     INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
+     LEFT JOIN tjadwalkirim_dtl b ON b.nomor_kirim = a.Nomor_Kirim
+     WHERE ${where}`,
     params,
   );
+
   const [rows] = await db.query(
     `SELECT a.spk_nomor AS SPK, s.spk_nama AS Nama,
             DATE_FORMAT(a.Tanggal, '%Y-%m-%d') AS Jadwal,
@@ -463,8 +562,9 @@ const getJadwalKirimList = async (
             b.uraian     AS Uraian,
             b.jumlah     AS QtyJadwal
      FROM tjadwalkirim a
-     INNER JOIN (${soUnion}) s ON s.spk_nomor = a.spk_nomor AND ${where}
+     INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
      LEFT JOIN tjadwalkirim_dtl b ON b.nomor_kirim = a.Nomor_Kirim
+     WHERE ${where}
      ORDER BY a.Tanggal DESC, b.nomor_kirim, b.No_urut
      LIMIT ? OFFSET ?`,
     [...params, limitNum, offset],
@@ -1058,6 +1158,7 @@ module.exports = {
   getById,
   getSudah,
   getSpkDetail,
+  getSpkDetailFromJadwal,
   getSpkList,
   getJadwalKirimList,
   cekPiutang,
