@@ -1,6 +1,6 @@
 const db = require("../../../config/database");
 
-const getBrowse = async (gudang = "") => {
+const getBrowse = async (gudang = "", canLihatCus = false) => {
   let where = `WHERE b.brg_divisi IN (3,4,6)`;
   const params = [];
   if (gudang) {
@@ -8,8 +8,12 @@ const getBrowse = async (gudang = "") => {
     params.push(`%${gudang}%`);
   }
 
+  const custCols = canLihatCus
+    ? "c.Cus_nama AS Customer, c.Cus_alamat AS Alamat"
+    : `"" AS Customer, "" AS Alamat`;
+
   const sql = `
-    SELECT x.*, c.Cus_nama AS Customer, c.Cus_alamat AS Alamat
+    SELECT x.*, ${custCols}
     FROM (
       SELECT
         b.brg_kode AS Kode,
@@ -37,7 +41,11 @@ const getBrowse = async (gudang = "") => {
   return rows;
 };
 
-const getExportData = async (gudang = "") => {
+const getExportData = async (gudang = "", canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? "c.Cus_nama AS Customer, c.Cus_alamat AS Alamat"
+    : `"" AS Customer, "" AS Alamat`;
+
   const sql = `
     SELECT
       x.Gudang,
@@ -48,8 +56,7 @@ const getExportData = async (gudang = "") => {
       x.Finishing,
       x.Stok,
       x.Kodecus,
-      c.Cus_nama AS Customer,
-      c.Cus_alamat AS Alamat
+      ${custCols}
     FROM (
       SELECT
         ? AS Gudang,

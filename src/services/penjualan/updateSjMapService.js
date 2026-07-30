@@ -3,15 +3,21 @@ const db = require("../../config/database");
 /**
  * Ambil data browse SJ Map untuk update status
  */
-const getBrowseData = async (startDate, endDate) => {
+const getBrowseData = async (startDate, endDate, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const query = `
     SELECT 
       h.sj_nomor AS Nomor,
       h.sj_tanggal AS Tanggal,
       d.divisi AS Divisi,
-      c.cus_nama AS Customer,
-      h.sj_alamat_customer AS Alamat,
-      h.sj_kota_customer AS Kota,
+      ${custCols}
       s.stssj_nama AS Status,
       h.sj_stssj_kode AS StatusCode,
       h.expedisi AS Expedisi,
@@ -93,11 +99,15 @@ const updateStatusSj = async (nomorSj, payload, userKode) => {
   return result;
 };
 
-const getSjDetailForUpdate = async (nomor) => {
+const getSjDetailForUpdate = async (nomor, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `c.cus_nama, c.cus_alamat, c.cus_kota,`
+    : `"" AS cus_nama, "" AS cus_alamat, "" AS cus_kota,`;
+
   const [header] = await db.query(
     `SELECT 
       a.sj_nomor, a.sj_tanggal, a.sj_keterangan, a.sj_perush_kode, a.sj_alamat_customer, a.sj_kota_customer, p.perush_nama,
-      a.sj_cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota,
+      a.sj_cus_kode, ${custCols}
       a.sj_stssj_kode, a.expedisi, a.biaya_kirim, a.kurir, a.tanggal_kirim, a.nomor_resi, 
       a.tanggal_kembali, a.contact_person, a.tanggal_konfirmasi, a.tanggal_terima, 
       a.tanggal_terima_sj, a.tanggal_serahterima, a.penerima_barang, a.pic_acc

@@ -8,8 +8,9 @@ const getBrowse = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tanggal wajib diisi." });
     }
-    const data = await svc.getBrowse(startDate, endDate);
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBrowse(startDate, endDate, canLihatCus);
+    res.json({ success: true, data, canLihatCus });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -33,7 +34,8 @@ const getAllDetail = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tanggal wajib diisi." });
     }
-    const data = await svc.getAllDetail(startDate, endDate);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getAllDetail(startDate, endDate, canLihatCus);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

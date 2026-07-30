@@ -2,11 +2,8 @@ const db = require("../../../config/database");
 
 // ─────────────────────────────────────────────────────────
 // MASTER — replikasi persis query btnRefreshClick
-// ⚠️ zcus (flag Delphi nentuin tampil-gaknya Kode/Nama Customer)
-// selalu TRUE — konsisten sama keputusan established di modul
-// laporan lain (SPK vs STBJ, Stok Barang Jadi).
 // ─────────────────────────────────────────────────────────
-const getBrowseList = async (query) => {
+const getBrowseList = async (query, canLihatCus = false) => {
   const today = new Date();
   const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1)
     .toISOString()
@@ -15,7 +12,7 @@ const getBrowseList = async (query) => {
 
   const startDate = query.startDate || defaultStart;
   const endDate = query.endDate || defaultEnd;
-  const divisi = query.divisi || "4"; // ✅ default divisi 4 - GARMEN
+  const divisi = query.divisi || "4";
 
   const params = [startDate, endDate];
   let divisiFilter = "";
@@ -24,13 +21,18 @@ const getBrowseList = async (query) => {
     params.push(divisi);
   }
 
+  const custCols = canLihatCus
+    ? `s.spk_cus_kode AS KodeCustomer,
+       c.cus_nama AS NamaCustomer,`
+    : `"" AS KodeCustomer,
+       "" AS NamaCustomer,`;
+
   const sql = `
     SELECT
       s.spk_nomor AS Nomor,
       DATE_FORMAT(s.spk_tanggal, '%Y-%m-%d') AS Tanggal,
       v.divisi AS Divisi,
-      s.spk_cus_kode AS KodeCustomer,
-      c.cus_nama AS NamaCustomer,
+      ${custCols}
       s.spk_nama AS Nama,
       s.spk_ukuran AS Ukuran,
       s.spk_panjang AS Panjang,

@@ -11,13 +11,17 @@ const tutupBukuService = require("../tutupBukuService");
 // ─────────────────────────────────────────────────────────
 // BROWSE — Sesuai Delphi btnRefreshClick (SQLMaster)
 // ─────────────────────────────────────────────────────────
-const getBrowse = async (tglAwal, tglAkhir) => {
+const getBrowse = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+
   const [rows] = await db.query(
     `SELECT
        a.inv_nomor                                    AS Nomor,
        DATE_FORMAT(a.inv_tanggal,'%Y-%m-%d')          AS Tanggal,
        v.divisi                                        AS Divisi,
-       c.cus_nama                                       AS NamaCustomer,
+       ${custCol}
        a.inv_keterangan                                 AS Keterangan,
        IF(a.inv_sts_pro=0,'Normal', IF(a.inv_sts_pro=1,'Proforma','Tidak Normal')) AS Status,
        IF(a.inv_status_otomatis=1,'Otomatis','Normal') AS Otomatis,
@@ -219,15 +223,12 @@ const deleteData = async (nomor) => {
       await conn.query(`UPDATE tinv_hdr SET inv_flag = 0 WHERE inv_nomor = ?`, [
         row.invf_normal,
       ]);
-      await conn.query(
-        `UPDATE piutang_debet SET flag = 0 WHERE nota = ?`,
-        [row.invf_normal],
-      );
+      await conn.query(`UPDATE piutang_debet SET flag = 0 WHERE nota = ?`, [
+        row.invf_normal,
+      ]);
     }
 
-    await conn.query(`DELETE FROM tinv_flag WHERE invf_taknormal = ?`, [
-      nomor,
-    ]);
+    await conn.query(`DELETE FROM tinv_flag WHERE invf_taknormal = ?`, [nomor]);
 
     await conn.commit();
   } catch (err) {
@@ -283,9 +284,8 @@ const cekPerluPengajuan = async (nomor) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const zCloseManual = await tutupBukuService.getManualTutupBuku(
-    "INV TAKNORMAL",
-  );
+  const zCloseManual =
+    await tutupBukuService.getManualTutupBuku("INV TAKNORMAL");
 
   let perlu = false;
   if (zCloseManual) {
@@ -361,7 +361,8 @@ const cekBisaUbah = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 // EXPORT
 // ─────────────────────────────────────────────────────────
-const getExportData = async (tglAwal, tglAkhir) => getBrowse(tglAwal, tglAkhir);
+const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
+  getBrowse(tglAwal, tglAkhir, canLihatCus);
 const getExportDetail = async (tglAwal, tglAkhir) =>
   getBrowseDetailBarang(tglAwal, tglAkhir);
 

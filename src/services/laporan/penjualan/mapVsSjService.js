@@ -3,10 +3,9 @@ const db = require("../../../config/database");
 /**
  * 1. MENGAMBIL DAFTAR MAP (MASTER)
  */
-const getMasterMap = async (query) => {
+const getMasterMap = async (query, canLihatCus = false) => {
   const { startDate, endDate, divisi } = query;
 
-  // Default: Awal bulan ini s.d Hari ini
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -17,18 +16,21 @@ const getMasterMap = async (query) => {
   let filterDivisi = "";
   const params = [dStart, dEnd];
 
-  // Memisahkan logika divisi (karena di Frontend dikirim '0' untuk ALL)
   if (divisi && divisi !== "0") {
     filterDivisi = " AND mspk_divisi = ? ";
     params.push(divisi);
   }
+
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
 
   const sql = `
     SELECT 
       m.mspk_nomor AS Nomor,
       DATE_FORMAT(m.mspk_tanggal, "%d-%m-%Y") AS Tanggal,
       d.Divisi AS Divisi,
-      c.cus_nama AS NamaCustomer,
+      ${custCol}
       m.mspk_nama AS Nama,
       m.mspk_ukuran AS Ukuran,
       m.mspk_jo_kode AS Jenis,
@@ -75,7 +77,7 @@ const getDetailSj = async (mapNomor) => {
 /**
  * 3. MENGAMBIL SELURUH DETAIL UNTUK EXPORT KE EXCEL
  */
-const getAllDetailSj = async (query) => {
+const getAllDetailSj = async (query, canLihatCus = false) => {
   const { startDate, endDate, divisi } = query;
 
   const dStart =
@@ -93,13 +95,16 @@ const getAllDetailSj = async (query) => {
     params.push(divisi);
   }
 
-  // Menggabungkan Master dan Detail untuk Export All (mirip PenawaranVsSPK)
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+
   const sql = `
     SELECT 
       m.mspk_nomor AS NomorMAP,
       m.mspk_tanggal AS TglMAP,
       v.Divisi AS Divisi,
-      c.cus_nama AS NamaCustomer,
+      ${custCol}
       m.mspk_nama AS NamaMAP,
       h.sj_nomor AS NomorSJ,
       h.sj_tanggal AS TglSJ,

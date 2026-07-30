@@ -4,8 +4,9 @@ const svc = require("../../../services/laporan/gudang-garmen/stokBarangJadiServi
 const getBrowse = async (req, res) => {
   try {
     const { gudang = "" } = req.query;
-    const data = await svc.getBrowse(gudang);
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBrowse(gudang, canLihatCus);
+    res.json({ success: true, data, canLihatCus });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -14,7 +15,8 @@ const getBrowse = async (req, res) => {
 const getExportData = async (req, res) => {
   try {
     const { gudang = "" } = req.query;
-    const data = await svc.getExportData(gudang);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getExportData(gudang, canLihatCus);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

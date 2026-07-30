@@ -2,8 +2,6 @@ const db = require("../../../config/database");
 
 // ─────────────────────────────────────────────────────────
 // Replikasi ufrmLapRealisasiKirimSpk.btnRefreshClick.
-// ⚠️ zcus selalu TRUE (konsisten keputusan established sebelumnya) —
-// kolom Cus_nama/Cus_alamat selalu diikutkan, gak perlu toggle.
 // Filter divisi: Delphi ambil KARAKTER PERTAMA dari cbdivisi.Text
 // (misal "4 - GARMEN" -> "4"); '0' (ALL) berarti tidak difilter sama
 // sekali. Di sini `divisi` cukup dikirim sebagai angka biasa (0 = ALL).

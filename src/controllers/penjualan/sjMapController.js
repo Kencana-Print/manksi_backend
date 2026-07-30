@@ -2,7 +2,6 @@ const sjMapService = require("../../services/penjualan/sjMapService");
 
 const getBrowseData = async (req, res) => {
   try {
-    // Helper sederhana untuk format YYYY-MM-DD
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -11,13 +10,17 @@ const getBrowseData = async (req, res) => {
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Ambil dari query param, jika kosong gunakan default bulan ini
     const startDate = req.query.start_date || formatDate(firstDayOfMonth);
     const endDate = req.query.end_date || formatDate(today);
 
-    const data = await sjMapService.getSjMapList(startDate, endDate);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1; // <-- TAMBAHAN
+    const data = await sjMapService.getSjMapList(
+      startDate,
+      endDate,
+      canLihatCus,
+    );
 
-    res.status(200).json({ success: true, data });
+    res.status(200).json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

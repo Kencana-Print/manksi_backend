@@ -3,8 +3,9 @@ const svc = require("../../services/penjualan/invoiceTakNormalService");
 const getBrowse = async (req, res) => {
   try {
     const { tglAwal, tglAkhir } = req.query;
-    const data = await svc.getBrowse(tglAwal, tglAkhir);
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBrowse(tglAwal, tglAkhir, canLihatCus);
+    res.json({ success: true, data, canLihatCus });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -111,7 +112,8 @@ const cekBisaUbah = async (req, res) => {
 const getExportData = async (req, res) => {
   try {
     const { tglAwal, tglAkhir } = req.query;
-    const data = await svc.getExportData(tglAwal, tglAkhir);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getExportData(tglAwal, tglAkhir, canLihatCus);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

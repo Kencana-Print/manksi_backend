@@ -1,10 +1,9 @@
 const db = require("../../../config/database");
 
 // --- 1. GET BROWSE HEADER (Master Penawaran) ---
-const getBrowse = async (query) => {
+const getBrowse = async (query, canLihatCus = false) => {
   const { startDate, endDate, divisi } = query;
 
-  // Default tanggal: Awal bulan s/d Hari ini
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -12,12 +11,16 @@ const getBrowse = async (query) => {
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+
   let sql = `
     SELECT 
       h.pen_nomor AS Nomor,
       h.pen_tanggal AS Tanggal,
       v.Divisi AS Divisi,
-      c.cus_nama AS NamaCustomer,
+      ${custCol}
       h.pen_keterangan AS Keterangan,
       IFNULL((
         SELECT COUNT(s.spk_pen_nomor) 
@@ -32,7 +35,6 @@ const getBrowse = async (query) => {
 
   const params = [dStart, dEnd];
 
-  // Logika Delphi: if leftstr(cbdivisi.Text,1)<>'0'
   if (divisi && divisi !== "0") {
     sql += ` AND h.pen_divisi = ?`;
     params.push(divisi);
@@ -64,7 +66,7 @@ const getBrowseDetail = async (nomorPenawaran) => {
 };
 
 // --- 3. GET SEMUA DETAIL (untuk export tanpa expand dulu) ---
-const getAllDetail = async (query) => {
+const getAllDetail = async (query, canLihatCus = false) => {
   const { startDate, endDate, divisi } = query;
 
   const dStart =
@@ -74,12 +76,16 @@ const getAllDetail = async (query) => {
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+
   let sql = `
     SELECT 
       h.pen_nomor       AS NomorPenawaran,
       h.pen_tanggal     AS TglPenawaran,
       v.Divisi          AS Divisi,
-      c.cus_nama        AS NamaCustomer,
+      ${custCol}
       h.pen_keterangan  AS Keterangan,
       s.spk_nomor       AS NomorSPK,
       s.spk_tanggal     AS TglSPK,

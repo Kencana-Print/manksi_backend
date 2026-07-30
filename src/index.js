@@ -229,7 +229,10 @@ const rekapMapRoutes = require("./routes/laporan/marketing/rekapMapRoutes");
 const rekapPenawaranRoutes = require("./routes/laporan/marketing/rekapPenawaranRoutes");
 const revisiMemoSpkRoutes = require("./routes/laporan/marketing/revisiMemoSpkRoutes");
 const realisasiPengirimanSpkRoutes = require("./routes/laporan/marketing/realisasiPengirimanSpkRoutes");
+const realisasiPengirimanMemoRoutes = require("./routes/laporan/marketing/realisasiPengirimanMemoRoutes");
+const proyeksiBulananRoutes = require("./routes/laporan/marketing/proyeksiBulananRoutes");
 const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
+const targetVsAchievementRoutes = require("./routes/laporan/marketing/targetVsAchievementRoutes");
 
 // Laporan Piutang
 const detailPiutangRoutes = require("./routes/laporan/piutang/detailPiutangRoutes");
@@ -585,7 +588,16 @@ app.use(
   "/api/laporan/marketing/realisasi-kirim-spk",
   realisasiPengirimanSpkRoutes,
 );
+app.use(
+  "/api/laporan/marketing/realisasi-kirim-memo",
+  realisasiPengirimanMemoRoutes,
+);
+app.use("/api/laporan/marketing/proyeksi-bulanan", proyeksiBulananRoutes);
 app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
+app.use(
+  "/api/laporan/marketing/target-vs-achievement",
+  targetVsAchievementRoutes,
+);
 
 app.use("/api/laporan/piutang/detail-piutang", detailPiutangRoutes);
 app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);

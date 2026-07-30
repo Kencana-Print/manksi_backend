@@ -11,16 +11,23 @@ const db = require("../../config/database");
 // ─────────────────────────────────────────────────────────
 // BROWSE — Sesuai Delphi btnRefreshClick (SQLMaster)
 // ─────────────────────────────────────────────────────────
-const getBrowse = async (tglAwal, tglAkhir) => {
+const getBrowse = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `a.sj_cus_kode AS KdCus,
+       c.cus_nama AS Customer,
+       a.sj_alamat_customer AS Alamat,
+       a.sj_kota_customer AS Kota,`
+    : `"" AS KdCus,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const [rows] = await db.query(
     `SELECT
        a.sj_nomor                                     AS Nomor,
        DATE_FORMAT(a.sj_tanggal,'%Y-%m-%d')            AS Tanggal,
        v.divisi                                        AS Divisi,
-       a.sj_cus_kode                                    AS KdCus,
-       c.cus_nama                                       AS Customer,
-       a.sj_alamat_customer                             AS Alamat,
-       a.sj_kota_customer                               AS Kota,
+       ${custCols}
        a.sj_keterangan                                  AS Keterangan,
        g.gdg_nama                                       AS Gudang,
        SUM(d.sjd_jumlah)                                AS QtyKirim,
@@ -123,7 +130,8 @@ const deleteData = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 // EXPORT
 // ─────────────────────────────────────────────────────────
-const getExportData = async (tglAwal, tglAkhir) => getBrowse(tglAwal, tglAkhir);
+const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
+  getBrowse(tglAwal, tglAkhir, canLihatCus);
 const getExportDetail = async (tglAwal, tglAkhir) =>
   getBrowseDetail(tglAwal, tglAkhir);
 

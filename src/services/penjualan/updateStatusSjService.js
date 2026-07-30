@@ -6,7 +6,17 @@ const MENU_ID = "155";
 // BROWSE
 // ═══════════════════════════════════════════════════════════
 
-const getBrowse = async (tglAwal, tglAkhir) => {
+const getBrowse = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `c.cus_kode AS KodeCustomer,
+       c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS KodeCustomer,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const [rows] = await db.query(
     `SELECT
        Nomor, Tanggal, Divisi,
@@ -21,10 +31,7 @@ const getBrowse = async (tglAwal, tglAkhir) => {
          h.sj_nomor                                  AS Nomor,
          DATE_FORMAT(h.sj_tanggal, '%Y-%m-%d')        AS Tanggal,
          d.divisi                                     AS Divisi,
-         c.cus_kode                                   AS KodeCustomer,
-         c.cus_nama                                    AS Customer,
-         h.sj_alamat_customer                          AS Alamat,
-         h.sj_kota_customer                            AS Kota,
+         ${custCols}
          s.stssj_nama                                  AS Status,
          h.expedisi                                    AS Expedisi,
          h.kurir                                       AS Kurir,
@@ -91,7 +98,8 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
   return rows;
 };
 
-const getExportData = async (tglAwal, tglAkhir) => getBrowse(tglAwal, tglAkhir);
+const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
+  getBrowse(tglAwal, tglAkhir, canLihatCus);
 const getExportDetail = async (tglAwal, tglAkhir) =>
   getBrowseDetail(tglAwal, tglAkhir);
 
@@ -109,15 +117,22 @@ const getStatusList = async () => {
   return rows;
 };
 
-const getFormById = async (nomor) => {
+const getFormById = async (nomor, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `h.sj_alamat_customer, h.sj_kota_customer,
+       h.sj_cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota,`
+    : `h.sj_alamat_customer, h.sj_kota_customer,
+       h.sj_cus_kode, "" AS cus_nama, "" AS cus_alamat, "" AS cus_kota,`;
+  // sj_alamat_customer/sj_kota_customer tetap tampil — itu snapshot SJ,
+  // bukan cus_nama/cus_alamat/cus_kota dari tabel customer
+
   const [[hdr]] = await db.query(
     `SELECT
        h.sj_nomor, DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d') AS sj_tanggal,
        h.sj_keterangan,
        h.sj_perush_kode, p.perush_nama,
        h.sj_gdg_kode, g.gdg_nama,
-       h.sj_alamat_customer, h.sj_kota_customer,
-       h.sj_cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota,
+       ${custCols}
        h.sj_inv_pro,
        h.sj_stssj_kode,
        h.expedisi, h.kurir, h.biaya_kirim,

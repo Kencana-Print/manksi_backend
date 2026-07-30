@@ -8,8 +8,13 @@ const getBrowse = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Parameter tanggal diperlukan." });
     }
-    const data = await updateSjService.getBrowseData(startDate, endDate);
-    res.status(200).json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await updateSjService.getBrowseData(
+      startDate,
+      endDate,
+      canLihatCus,
+    );
+    res.status(200).json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -21,13 +26,14 @@ const getBrowse = async (req, res) => {
 const getDetail = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await updateSjService.getSjDetailForUpdate(nomor);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await updateSjService.getSjDetailForUpdate(nomor, canLihatCus);
     if (!data.header) {
       return res
         .status(404)
         .json({ success: false, message: "Data tidak ditemukan." });
     }
-    res.status(200).json({ success: true, data });
+    res.status(200).json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

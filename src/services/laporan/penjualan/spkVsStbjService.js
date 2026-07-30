@@ -2,12 +2,8 @@ const db = require("../../../config/database");
 
 // ─────────────────────────────────────────────────────────
 // MASTER — replikasi persis query btnRefreshClick
-// ⚠️ zcus (flag Delphi nentuin tampil-gaknya Customer/Alamat) selalu
-// TRUE di sini — mengikuti keputusan established sebelumnya di modul
-// laporan lain (Stok Barang Jadi), berdasarkan bukti kolom itu selalu
-// kelihatan di screenshot production.
 // ─────────────────────────────────────────────────────────
-const getBrowseList = async (query) => {
+const getBrowseList = async (query, canLihatCus = false) => {
   const today = new Date();
   const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1)
     .toISOString()
@@ -16,7 +12,7 @@ const getBrowseList = async (query) => {
 
   const startDate = query.startDate || defaultStart;
   const endDate = query.endDate || defaultEnd;
-  const divisi = query.divisi || "4"; // ✅ default divisi 4 - GARMEN
+  const divisi = query.divisi || "4";
 
   const params = [startDate, endDate];
   let divisiFilter = "";
@@ -24,6 +20,14 @@ const getBrowseList = async (query) => {
     divisiFilter = ` AND s.spk_divisi = ?`;
     params.push(divisi);
   }
+
+  const custCols = canLihatCus
+    ? `s.spk_cus_kode AS Kode,
+       c.cus_nama AS Customer,
+       c.cus_alamat AS Alamat`
+    : `"" AS Kode,
+       "" AS Customer,
+       "" AS Alamat`;
 
   const sql = `
     SELECT
@@ -55,9 +59,7 @@ const getBrowseList = async (query) => {
         s.spk_nama AS Nama,
         s.spk_jumlah AS Jumlah,
         s.spk_jumlah_jadi AS JumlahJadi,
-        s.spk_cus_kode AS Kode,
-        c.cus_nama AS Customer,
-        c.cus_alamat AS Alamat
+        ${custCols}
       FROM tspk s
       LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
       LEFT JOIN tdivisi v ON v.kode = s.spk_divisi

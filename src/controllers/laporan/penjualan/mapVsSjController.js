@@ -2,8 +2,9 @@ const service = require("../../../services/laporan/penjualan/mapVsSjService");
 
 const getMasterMap = async (req, res) => {
   try {
-    const data = await service.getMasterMap(req.query);
-    res.status(200).json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await service.getMasterMap(req.query, canLihatCus);
+    res.status(200).json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -29,7 +30,8 @@ const getDetailSj = async (req, res) => {
 
 const getAllDetailSj = async (req, res) => {
   try {
-    const data = await service.getAllDetailSj(req.query);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await service.getAllDetailSj(req.query, canLihatCus);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

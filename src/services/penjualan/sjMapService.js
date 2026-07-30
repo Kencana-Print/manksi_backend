@@ -4,14 +4,15 @@ const db = require("../../config/database");
  * Mengambil daftar Surat Jalan MAP (Header & Detail) berdasarkan rentang tanggal
  * Sama persis dengan query di btnRefreshClick Delphi
  */
-const getSjMapList = async (startDate, endDate) => {
-  // Query Master (Header)
+const getSjMapList = async (startDate, endDate, canLihatCus = false) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
+
   const headerQuery = `
     SELECT 
       a.sj_nomor AS Nomor,
       a.sj_tanggal AS Tanggal,
       v.Divisi AS Divisi,
-      c.cus_nama AS Customer,
+      ${custCol}
       a.sj_keterangan AS Keterangan,
       SUM(d.sjd_jumlah) AS QtyKirim,
       DATE_FORMAT(a.date_create, '%d-%m-%Y %T') AS Created,
@@ -40,7 +41,6 @@ const getSjMapList = async (startDate, endDate) => {
     ORDER BY a.sj_tanggal DESC, a.sj_nomor DESC
   `;
 
-  // Query Detail (Sub-grid)
   const detailQuery = `
     SELECT 
       d.sjd_sj_nomor AS Nomor,
@@ -55,15 +55,12 @@ const getSjMapList = async (startDate, endDate) => {
     ORDER BY d.sjd_sj_nomor
   `;
 
-  // Eksekusi secara paralel untuk performa
   const [[headers], [details]] = await Promise.all([
     db.query(headerQuery, [startDate, endDate]),
     db.query(detailQuery, [startDate, endDate]),
   ]);
 
-  // Transformasi data menjadi bentuk bersarang (nested) untuk TreeTable Vuetify
   const nestedData = headers.map((header) => {
-    // Cari detail yang Nomor-nya sama dengan Nomor Header
     const rowDetails = details.filter((d) => d.Nomor === header.Nomor);
     return {
       ...header,
