@@ -2,8 +2,9 @@ const service = require("../../../services/laporan/penjualan/spkVsSjVsInvService
 
 const getBrowse = async (req, res) => {
   try {
-    const data = await service.getBrowseList(req.query);
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await service.getBrowseList(req.query, canLihatCus);
+    res.json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -11,7 +12,8 @@ const getBrowse = async (req, res) => {
 
 const getExportData = async (req, res) => {
   try {
-    const data = await service.getExportData(req.query);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await service.getExportData(req.query, canLihatCus);
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

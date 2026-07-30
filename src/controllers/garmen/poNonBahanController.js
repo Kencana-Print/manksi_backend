@@ -5,12 +5,10 @@ const getBrowse = async (req, res) => {
     const { startDate, endDate, jenis, cabang } = req.query;
 
     if (!startDate || !endDate) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Parameter startDate dan endDate diperlukan.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "Parameter startDate dan endDate diperlukan.",
+      });
     }
 
     const data = await poNonBahanService.getBrowse(
@@ -20,7 +18,12 @@ const getBrowse = async (req, res) => {
       cabang,
       req.user,
     );
-    res.status(200).json({ success: true, data });
+    res.status(200).json({
+      success: true,
+      data,
+      canLihatSup: Number(req.user?.flags?.lihatSup) === 1,
+      canLihatBeli: Number(req.user?.flags?.lihatBeli) === 1,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

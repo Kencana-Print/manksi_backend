@@ -27,7 +27,8 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   }
 
   // --- MASTER QUERY ---
-  let selectSup = user.flags?.lihatSup
+  const canLihatSup = Number(user.flags?.lihatSup) === 1;
+  let selectSup = canLihatSup
     ? `h.bpb_sup_kode AS KdSup, s.sup_nama AS Supplier,`
     : `"" AS KdSup, "" AS Supplier,`;
 

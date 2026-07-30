@@ -18,6 +18,7 @@ const getBrowse = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tanggal wajib diisi." });
     }
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1; // <-- TAMBAHAN
     const data = await svc.getBrowse(
       startDate,
       endDate,
@@ -26,8 +27,9 @@ const getBrowse = async (req, res) => {
       status,
       divisi,
       parseIsMap(map),
+      canLihatCus,
     );
-    res.json({ success: true, data });
+    res.json({ success: true, data, canLihatCus }); // <-- lempar juga ke response
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -59,6 +61,7 @@ const getAllDetail = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tanggal wajib diisi." });
     }
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1; // <-- TAMBAHAN
     const data = await svc.getAllDetail(
       startDate,
       endDate,
@@ -67,6 +70,7 @@ const getAllDetail = async (req, res) => {
       status,
       divisi,
       parseIsMap(map),
+      canLihatCus,
     );
     res.json({ success: true, data });
   } catch (err) {

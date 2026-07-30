@@ -5,12 +5,19 @@ const getBrowseList = async (req, res) => {
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
-      cabang: req.user.cabang, // Diambil dari JWT Token
-      isKaosan: req.user.cabKaos, // Diambil dari JWT Token jika ada
+      cabang: req.user.cabang,
+      isKaosan: req.user.cabKaos,
     };
 
-    const data = await mapService.getBrowseList(filters);
-    res.status(200).json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const canLihatHarga = Number(req.user?.flags?.lihatHarga) === 1;
+
+    const data = await mapService.getBrowseList(
+      filters,
+      canLihatCus,
+      canLihatHarga,
+    );
+    res.status(200).json({ success: true, data, canLihatCus, canLihatHarga });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

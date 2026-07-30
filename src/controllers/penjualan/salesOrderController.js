@@ -2,15 +2,19 @@ const service = require("../../services/penjualan/salesOrderService");
 
 const getBrowse = async (req, res) => {
   try {
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const canLihatHarga = Number(req.user?.flags?.lihatHarga) === 1;
     const filters = {
       startDate: req.query.startDate,
       endDate: req.query.endDate,
       workshop: req.query.workshop,
       customer: req.query.customer,
       userCabang: req.user.cabang,
+      canLihatCus,
+      canLihatHarga,
     };
     const data = await service.getBrowseList(filters);
-    res.json({ success: true, data });
+    res.json({ success: true, data, canLihatCus, canLihatHarga });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

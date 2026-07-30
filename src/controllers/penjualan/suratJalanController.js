@@ -3,8 +3,14 @@ const svc = require("../../services/penjualan/suratJalanService");
 const getBrowse = async (req, res) => {
   try {
     const { tglAwal, tglAkhir, divisi = 0 } = req.query;
-    const data = await svc.getBrowse(tglAwal, tglAkhir, Number(divisi));
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBrowse(
+      tglAwal,
+      tglAkhir,
+      Number(divisi),
+      canLihatCus,
+    );
+    res.json({ success: true, data, canLihatCus });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -81,7 +87,13 @@ const cekSjKemarinBelumApprove = async (req, res) => {
 const getExportData = async (req, res) => {
   try {
     const { tglAwal, tglAkhir, divisi = 0 } = req.query;
-    const data = await svc.getExportData(tglAwal, tglAkhir, Number(divisi));
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getExportData(
+      tglAwal,
+      tglAkhir,
+      Number(divisi),
+      canLihatCus,
+    );
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

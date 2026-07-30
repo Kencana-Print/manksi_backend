@@ -11,16 +11,20 @@ const browseData = async (req, res) => {
       });
     }
 
+    const canLihatSup = Number(req.user?.flags?.lihatSup) === 1;
+
     const data = await bpbBahanService.getBrowse(
       startDate,
       endDate,
       isPo,
       gudang,
+      canLihatSup,
     );
 
     res.status(200).json({
       success: true,
       data,
+      canLihatSup,
     });
   } catch (error) {
     console.error("Error Browse BPB Bahan:", error);

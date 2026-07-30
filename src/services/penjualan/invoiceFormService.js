@@ -259,11 +259,19 @@ const loadBarangDetail = async (kode, perushKode) => {
   );
   if (!barang) throw new Error("Barang Tidak di temukan.");
 
-  // Coba tsalesorder (SO baru) dulu
+  // Coba tsalesorder (SO baru) dulu — jumlah_inv dihitung on-the-fly
+  // dari tinv_dtl karena tsalesorder TIDAK punya kolom so_jumlah_inv
   const [[soNew]] = await db.query(
-    `SELECT so_jumlah AS jumlah_total, so_jumlah_inv AS jumlah_inv,
-            so_perush_kode, so_cus_kode
-     FROM tsalesorder WHERE so_nomor = ? AND so_aktif = 'Y'`,
+    `SELECT
+        so.so_jumlah AS jumlah_total,
+        IFNULL((
+          SELECT SUM(d.invd_jumlah)
+          FROM tinv_dtl d
+          WHERE d.invd_spk_nomor = so.so_nomor
+        ), 0) AS jumlah_inv,
+        so.so_perush_kode, so.so_cus_kode
+     FROM tsalesorder so
+     WHERE so.so_nomor = ? AND so.so_aktif = 'Y'`,
     [kode],
   );
   // Fallback ke tspk legacy

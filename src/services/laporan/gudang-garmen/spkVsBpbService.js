@@ -5,13 +5,14 @@ const db = require("../../../config/database");
 // tbpb_hdr ON pod_po_nomor=bpb_po_nomor). Beda dari SPK vs PO (520)
 // yang menampilkan SPK meski PO-nya belum ada BPB sama sekali.
 // ─────────────────────────────────────────────
-const getBrowse = async (startDate, endDate) => {
+const getBrowse = async (startDate, endDate, canLihatCus = false) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   const sql = `
     SELECT DISTINCT
       IFNULL(sp.spk_nomor, mm.mspk_nomor) AS SpkNomor,
       DATE_FORMAT(IFNULL(sp.spk_tanggal, mm.mspk_tanggal), '%Y-%m-%d') AS Tanggal,
       DATE_FORMAT(IFNULL(sp.spk_dateline, mm.mspk_dateline), '%Y-%m-%d') AS Dateline,
-      c.cus_nama AS Customer,
+      ${custCol}
       IFNULL(sp.spk_nama, mm.mspk_nama) AS SpkNama,
       IFNULL(sp.spk_kain, mm.mspk_kain) AS Kain,
       IFNULL(sp.spk_finishing, mm.mspk_finishing) AS Finishing,
@@ -60,8 +61,8 @@ const getDetail = async (spkNomor) => {
 // ─────────────────────────────────────────────
 // ALL DETAIL — gabungan detail semua SPK sesuai filter master
 // ─────────────────────────────────────────────
-const getAllDetail = async (startDate, endDate) => {
-  const master = await getBrowse(startDate, endDate);
+const getAllDetail = async (startDate, endDate, canLihatCus = false) => {
+  const master = await getBrowse(startDate, endDate, canLihatCus);
   const result = [];
   for (const m of master) {
     const dtl = await getDetail(m.SpkNomor);

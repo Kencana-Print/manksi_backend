@@ -3,7 +3,6 @@ const db = require("../../../config/database");
 // ─────────────────────────────────────────────────────────
 // Helper — bangun klausa WHERE + params yang sama dipakai baik buat
 // browse maupun export (biar 2 fungsi ini gak bisa "ketuker" filter)
-// ⚠️ zcus selalu TRUE (konsisten keputusan established sebelumnya).
 // ─────────────────────────────────────────────────────────
 const buildMasterWhere = (query) => {
   const today = new Date().toISOString().substring(0, 10);
@@ -46,31 +45,36 @@ const buildMasterWhere = (query) => {
   return { where, params };
 };
 
-const MASTER_SELECT = `
-  SELECT
-    s.spk_nomor AS Nomor,
-    DATE_FORMAT(s.spk_tanggal, '%Y-%m-%d') AS Tanggal,
-    v.divisi AS Divisi,
-    c.cus_nama AS NamaCustomer,
-    s.spk_nama AS Nama,
-    s.spk_ukuran AS Ukuran,
-    s.spk_jo_kode AS Jenis,
-    s.spk_jumlah AS Jumlah,
-    s.spk_prasj AS Prasj,
-    s.spk_jumlah_kirim AS Kirim,
-    DATE_FORMAT(s.spk_dateline, '%Y-%m-%d') AS Dateline,
-    s.spk_nomor_po AS NomorPO
-  FROM tspk s
-  INNER JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
-  LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
-`;
+const buildMasterSelect = (canLihatCus) => {
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+  return `
+    SELECT
+      s.spk_nomor AS Nomor,
+      DATE_FORMAT(s.spk_tanggal, '%Y-%m-%d') AS Tanggal,
+      v.divisi AS Divisi,
+      ${custCol}
+      s.spk_nama AS Nama,
+      s.spk_ukuran AS Ukuran,
+      s.spk_jo_kode AS Jenis,
+      s.spk_jumlah AS Jumlah,
+      s.spk_prasj AS Prasj,
+      s.spk_jumlah_kirim AS Kirim,
+      DATE_FORMAT(s.spk_dateline, '%Y-%m-%d') AS Dateline,
+      s.spk_nomor_po AS NomorPO
+    FROM tspk s
+    INNER JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
+    LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
+  `;
+};
 
 // ─────────────────────────────────────────────────────────
 // BROWSE — buat tabel di layar (master doang, tanpa detail)
 // ─────────────────────────────────────────────────────────
-const getBrowseList = async (query) => {
+const getBrowseList = async (query, canLihatCus = false) => {
   const { where, params } = buildMasterWhere(query);
-  const sql = `${MASTER_SELECT} ${where} ORDER BY s.spk_tanggal`;
+  const sql = `${buildMasterSelect(canLihatCus)} ${where} ORDER BY s.spk_tanggal`;
   const [rows] = await db.query(sql, params);
   return rows;
 };
@@ -82,9 +86,9 @@ const getBrowseList = async (query) => {
 // (kalau SJ 3 baris tapi Invoice 1 baris, baris ke-2/3 kolom
 // Invoice-nya dikosongin — persis pola Delphi aslinya).
 // ─────────────────────────────────────────────────────────
-const getExportData = async (query) => {
+const getExportData = async (query, canLihatCus = false) => {
   const { where, params } = buildMasterWhere(query);
-  const masterSql = `${MASTER_SELECT} ${where} ORDER BY s.spk_tanggal`;
+  const masterSql = `${buildMasterSelect(canLihatCus)} ${where} ORDER BY s.spk_tanggal`;
   const [master] = await db.query(masterSql, params);
 
   if (master.length === 0) {

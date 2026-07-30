@@ -23,7 +23,15 @@ const resolveSoLocation = async (nomor) => {
 // (tsalesorder), kolom di-alias supaya namanya identik dengan tspk
 // asli — sehingga seluruh JOIN & SELECT di bawah TIDAK perlu diubah.
 const getBrowseList = async (filters) => {
-  const { startDate, endDate, workshop, customer, userCabang } = filters;
+  const {
+    startDate,
+    endDate,
+    workshop,
+    customer,
+    userCabang,
+    canLihatCus,
+    canLihatHarga,
+  } = filters;
   let params = [startDate, endDate];
 
   let whereClause = `WHERE s.spk_tanggal >= CONCAT(?, ' 00:00:00') AND s.spk_tanggal <= CONCAT(?, ' 23:59:59')`;
@@ -46,17 +54,30 @@ const getBrowseList = async (filters) => {
     params.push(userCabang);
   }
 
+  // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus) —
+  // replikasi `if zcus=1` di ufrmBrowseSPK.btnRefreshClick.
+  const custNameCol = canLihatCus
+    ? "c.cus_nama AS Customer,"
+    : "NULL AS Customer,";
+  const groupCusCol = canLihatCus
+    ? 'IFNULL(c1.cus_nama, "") AS GroupCustomer,'
+    : "NULL AS GroupCustomer,";
+  // ⚠️ BARU: kolom Harga digated flag lihatHarga (user_lihat_harga) —
+  // replikasi `if zLihatHarga=1` di source yang sama, kolom terpisah
+  // dari zcus (2 flag berbeda, jangan digabung jadi 1 kondisi).
+  const hargaCol = canLihatHarga ? "s.spk_harga AS Harga," : "NULL AS Harga,";
+
   const query = `
     SELECT 
       s.spk_nomor AS Nomor, s.user_create AS MO, s.spk_cmo AS CMO, s.spk_tanggal AS Tanggal, 
       s.spk_dateline AS Dateline, s.spk_statuskerja AS Kepentingan, v.divisi AS Divisi,
-      s.spk_cus_kode AS KodeCustomer, c.cus_nama AS Customer, s.spk_nama AS Nama,
+      s.spk_cus_kode AS KodeCustomer, ${custNameCol} s.spk_nama AS Nama,
       s.spk_ukuran AS Ukuran, s.spk_cab AS Cab, TRIM(s.spk_workshop) AS Workshop,
       s.spk_pending AS Pending, s.spk_ketpending AS KetPending, s.spk_tipe AS Tipe,
       s.spk_panjang AS Panjang, s.spk_lebar AS Lebar, s.spk_gramasi AS Gramasi,
-      s.spk_kain AS Kain, s.spk_finishing AS Finishing, s.spk_harga AS Harga,
+      s.spk_kain AS Kain, s.spk_finishing AS Finishing, ${hargaCol}
       s.date_create AS Created, s.spk_jumlah AS Pesan,
-      sl.sal_nama AS Sales, IFNULL(c1.cus_nama, "") AS GroupCustomer,
+      sl.sal_nama AS Sales, ${groupCusCol}
       s.spk_nomor_po AS PO, s.spk_ketpo AS KetPO, s.spk_tgl_po AS DatePO,
       s.spk_DatelinePO AS DatelinePO, IF(s.spk_close=1, "Closed", "Open") AS Status,
       s.spk_close_alasan AS AlasanClose, s.spk_pen_nomor AS NoPenawaran,
@@ -113,9 +134,6 @@ const getBrowseList = async (filters) => {
     LEFT JOIN tspk_pin j ON j.pin_nomor = s.spk_nomor
     LEFT JOIN (SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk) k ON k.lds_spk = s.spk_nomor
     LEFT JOIN (SELECT lcd_spk_nomor, MIN(lch_tanggal) AS lch_tanggal FROM tlhk_cetakmmt_dtl INNER JOIN tlhk_cetakmmt_hdr ON (lch_nomor=lcd_lch_nomor) GROUP BY 1) l ON l.lcd_spk_nomor = s.spk_nomor
-
-    -- SPK PPIC tetap hidup di tspk asli — TIDAK ikut migrasi, join ini
-    -- tidak berubah sama sekali.
     LEFT JOIN tspk ppic ON ppic.spk_so_ref = s.spk_nomor AND ppic.spk_is_so = 0
 
     ${whereClause}

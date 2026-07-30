@@ -9,7 +9,13 @@ const db = require("../../../config/database");
 // ⚠️ Kolom `Divisi` (td.Divisi) belum terverifikasi — cek
 // `SHOW COLUMNS FROM tdivisi` sebelum dipakai di production.
 // ─────────────────────────────────────────────
-const getBrowseMap = async (startDate, endDate, spkPrefix) => {
+const getBrowseMap = async (
+  startDate,
+  endDate,
+  spkPrefix,
+  canLihatCus = false,
+) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   const sql = `
     SELECT x.*, (x.TotMinta - x.TotRetur) AS NetMinta, (x.Lhk + x.Cmt) AS TotLhk
     FROM (
@@ -20,7 +26,7 @@ const getBrowseMap = async (startDate, endDate, spkPrefix) => {
         DATE_FORMAT(s.mspk_dateline, '%d-%m-%Y') AS Dateline,
         s.mspk_nama AS Nama,
         s.mspk_ukuran AS Ukuran,
-        c.cus_nama AS Customer,
+        ${custCol}
         s.mspk_jo_kode AS Jenis,
         s.mspk_kain AS Kain,
         s.mspk_jumlah AS JmlOrder,
@@ -57,7 +63,13 @@ const getBrowseMap = async (startDate, endDate, spkPrefix) => {
   return rows.map(({ _sortTgl, ...r }) => r);
 };
 
-const getBrowseSpk = async (startDate, endDate, spkPrefix) => {
+const getBrowseSpk = async (
+  startDate,
+  endDate,
+  spkPrefix,
+  canLihatCus = false,
+) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   const sql = `
     SELECT x.*, (x.TotMinta - x.TotRetur) AS NetMinta, (x.Lhk + x.Cmt) AS TotLhk
     FROM (
@@ -68,7 +80,7 @@ const getBrowseSpk = async (startDate, endDate, spkPrefix) => {
         DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
         s.spk_nama AS Nama,
         s.spk_ukuran AS Ukuran,
-        c.cus_nama AS Customer,
+        ${custCol}
         s.spk_jo_kode AS Jenis,
         s.spk_kain AS Kain,
         s.spk_jumlah AS JmlOrder,
@@ -106,10 +118,16 @@ const getBrowseSpk = async (startDate, endDate, spkPrefix) => {
   return rows.map(({ _sortTgl, ...r }) => r);
 };
 
-const getBrowse = async (startDate, endDate, spk = "", isMap = false) =>
+const getBrowse = async (
+  startDate,
+  endDate,
+  spk = "",
+  isMap = false,
+  canLihatCus = false,
+) =>
   isMap
-    ? getBrowseMap(startDate, endDate, spk)
-    : getBrowseSpk(startDate, endDate, spk);
+    ? getBrowseMap(startDate, endDate, spk, canLihatCus)
+    : getBrowseSpk(startDate, endDate, spk, canLihatCus);
 
 // ─────────────────────────────────────────────
 // DETAIL — per (NoMinta, KodeBahan) untuk satu SPK, dengan mutasi
@@ -120,7 +138,10 @@ const getBrowse = async (startDate, endDate, spk = "", isMap = false) =>
 // yang di-comment-out di Delphi. QtyMkb/BabaranMkb = TOTAL SEMUA
 // bahan di SPK tsb, bukan per-bahan. Jangan "diperbaiki".
 // ─────────────────────────────────────────────
-const getDetail = async (spk) => {
+const getDetail = async (spk, canLihatCus = false) => {
+  const supplierCol = canLihatCus
+    ? "x.Sup_nama AS Supplier,"
+    : `"" AS Supplier,`;
   const sql = `
     SELECT
       x.Spk,
@@ -141,7 +162,7 @@ const getDetail = async (spk) => {
       ((x.Jumlah - x.retur) - IFNULL(m.berat, 0)) AS SisaBahan,
       IF(m.jml IS NULL OR m.berat IS NULL, 0,
         IF(m.sat = 'KG', m.jml / m.berat, m.berat / m.jml)) AS Babaran,
-      x.Sup_nama AS Supplier,
+      ${supplierCol}
       y.Mkb AS NoMkb,
       DATE_FORMAT(y.TglMkb, '%Y-%m-%d') AS TglMkb,
       IFNULL(y.QtyMkb, 0) AS QtyMkb,
@@ -203,11 +224,17 @@ const getDetail = async (spk) => {
 // ─────────────────────────────────────────────
 // ALL DETAIL — gabungan detail semua SPK sesuai filter master
 // ─────────────────────────────────────────────
-const getAllDetail = async (startDate, endDate, spk = "", isMap = false) => {
-  const master = await getBrowse(startDate, endDate, spk, isMap);
+const getAllDetail = async (
+  startDate,
+  endDate,
+  spk = "",
+  isMap = false,
+  canLihatCus = false,
+) => {
+  const master = await getBrowse(startDate, endDate, spk, isMap, canLihatCus);
   const result = [];
   for (const m of master) {
-    const dtl = await getDetail(m.Spk);
+    const dtl = await getDetail(m.Spk, canLihatCus);
     for (const d of dtl) {
       result.push({
         Divisi: m.Divisi,

@@ -1,15 +1,28 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService"); // Asumsi file ini ada di root services
 
-const getBrowse = async (startDate, endDate, isPo, gudang) => {
-  // Pastikan isPo ditangani baik sebagai boolean maupun string "true"/"false" dari query params
+const getBrowse = async (
+  startDate,
+  endDate,
+  isPo,
+  gudang,
+  canLihatSup = false,
+) => {
   const isPoBool = String(isPo).toLowerCase() === "true";
   const jenisPoStr = isPoBool ? "PO" : "NON PO";
 
-  // Sesuai event rbNonPOClick di Delphi
   const gudangFilter = jenisPoStr === "NON PO" ? "GB001" : gudang;
 
-  // 1. Ambil Data Master (Header) Saja
+  // ⚠️ Kolom Supplier digated flag lihatSup (user_lihat_sup) —
+  // replikasi `if zlihatsup<>0` di ufrmBrowseBPB.btnRefreshClick.
+  // ⚠️ Tidak ada zLihatBeli di modul ini — SQLDetail Delphi asli tidak
+  // pernah menyertakan kolom harga sama sekali (Kode,Nama,Satuan,
+  // Jumlah,Roll,Gramasi,Warna,Setting saja), jadi tidak perlu gating
+  // harga di sini.
+  const supCol = canLihatSup
+    ? 'IFNULL(s.sup_nama, "") AS Supplier,'
+    : '"" AS Supplier,';
+
   const masterQuery = `
     SELECT 
       h.bpb_nomor AS Nomor,
@@ -18,7 +31,7 @@ const getBrowse = async (startDate, endDate, isPo, gudang) => {
       DATE_FORMAT(h.bpb_jatuhtempo, "%Y-%m-%d") AS Jatuhtempo,
       IF(h.bpb_create_barcode = "", "BELUM", h.bpb_create_barcode) AS BuatBarcode,
       h.bpb_keterangan AS Keterangan,
-      IFNULL(s.sup_nama, "") AS Supplier,
+      ${supCol}
       IF(h.bpb_status_inv = 1, "True", "False") AS Voucher_bayar,
       IF(h.bpb_bayar_realisasi = 1, "Lunas", "Belum") AS Lunas,
       IF(? = 'PO', 
@@ -52,12 +65,6 @@ const getBrowse = async (startDate, endDate, isPo, gudang) => {
     ORDER BY h.bpb_nomor DESC
   `;
 
-  // Urutan Parameter Parameter (Tanda '?'):
-  // 1. Ket_PO condition -> jenisPoStr
-  // 2. BETWEEN start -> startDate
-  // 3. BETWEEN end -> endDate
-  // 4. bpb_gdg_kode = -> gudangFilter
-  // 5. Kondisi PO/NON PO di WHERE -> jenisPoStr
   const queryParams = [
     jenisPoStr,
     startDate,
@@ -67,8 +74,6 @@ const getBrowse = async (startDate, endDate, isPo, gudang) => {
   ];
 
   const [master] = await db.query(masterQuery, queryParams);
-
-  // Return data master langsung tanpa memproses detail
   return master;
 };
 

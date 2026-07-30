@@ -4,7 +4,6 @@ const getBrowse = async (req, res) => {
   try {
     let { startDate, endDate } = req.query;
 
-    // Default: Awal bulan ini s/d hari ini
     if (!startDate || !endDate) {
       const now = new Date();
       startDate = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -13,8 +12,9 @@ const getBrowse = async (req, res) => {
       endDate = now.toISOString().split("T")[0];
     }
 
-    const data = await mkbService.getBrowseMkb(startDate, endDate);
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await mkbService.getBrowseMkb(startDate, endDate, canLihatCus);
+    res.json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

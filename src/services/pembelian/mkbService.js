@@ -2,7 +2,15 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
 // --- QUERY BROWSE MKB ---
-const getBrowseMkb = async (startDate, endDate) => {
+const getBrowseMkb = async (startDate, endDate, canLihatCus = false) => {
+  // ⚠️ Kolom customer cuma diikutkan kalau user punya flag lihatCus
+  // (user_lihat_cus di tuser) — replikasi kondisi `if zcus=1` di
+  // Delphi ufrmBrowseMKB.btnRefreshClick. zcus BUKAN konstanta global,
+  // itu per-user permission flag dari hasil login.
+  const custCols = canLihatCus
+    ? `c.cus_nama AS Customer, c.cus_alamat AS Alamat,`
+    : `NULL AS Customer, NULL AS Alamat,`;
+
   const query = `
     SELECT 
       h.mkb_nomor AS Nomor, 
@@ -15,8 +23,7 @@ const getBrowseMkb = async (startDate, endDate) => {
       IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS JumlahSPK, 
       IFNULL(so.so_kain, IFNULL(s.spk_kain, m.mspk_kain)) AS Kain, 
       IFNULL(so.so_finishing, IFNULL(s.spk_finishing, m.mspk_finishing)) AS Finishing,
-      c.cus_nama AS Customer, 
-      c.cus_alamat AS Alamat,
+      ${custCols}
       
       IF((z.readyterima) >= z.butuh, 'Stok ready',
         IF(z.crs = z.item AND z.ready >= z.butuh, 'Stok ready',

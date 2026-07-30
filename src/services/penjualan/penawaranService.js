@@ -4,8 +4,17 @@ const db = require("../../config/database");
  * Mendapatkan daftar Penawaran (Browse Master)
  */
 const getPenawaranList = async (startDate, endDate, status, user) => {
-  // Tangkap akses khusus dari flags user (seperti logika zcus di Delphi)
-  const isCusRestricted = !user.flags?.lihatCus; // Asumsi dari flag lihatCus
+  const canLihatCus = Number(user.flags?.lihatCus) === 1;
+  const isCusRestricted = !canLihatCus;
+
+  const custCols = canLihatCus
+    ? `p.perush_nama AS Perusahaan,
+       IF(h.pen_cetaktotal = 1,
+         (SELECT SUM(d.pend_qty * d.pend_harga) FROM tpenawaran_dtl d WHERE d.pend_pen_nomor = h.pen_nomor),
+         (SELECT MIN(d.pend_qty * d.pend_harga) FROM tpenawaran_dtl d WHERE d.pend_pen_nomor = h.pen_nomor)
+       ) AS Nominal,
+       c.cus_nama AS NamaCustomer,`
+    : `"" AS Perusahaan, NULL AS Nominal, "" AS NamaCustomer,`;
 
   let query = `
     SELECT 
@@ -13,22 +22,13 @@ const getPenawaranList = async (startDate, endDate, status, user) => {
       h.pen_tanggal AS Tanggal,
       v.divisi AS Divisi,
       h.pen_tipe AS Tipe,
-      p.perush_nama AS Perusahaan,
-      c.cus_nama AS NamaCustomer,
+      ${custCols}
       h.pen_keterangan AS Keterangan,
       s.sal_nama AS Sales,
       h.pen_fu1 AS Fu1, 
       h.pen_fu2 AS Fu2, 
       h.pen_fu3 AS Fu3,
       h.pen_proyeksi AS Proyeksi,
-      
-      -- Menghitung Nominal Total
-      IF(h.pen_cetaktotal = 1,
-        (SELECT SUM(d.pend_qty * d.pend_harga) FROM tpenawaran_dtl d WHERE d.pend_pen_nomor = h.pen_nomor),
-        (SELECT MIN(d.pend_qty * d.pend_harga) FROM tpenawaran_dtl d WHERE d.pend_pen_nomor = h.pen_nomor)
-      ) AS Nominal,
-
-      -- Mendapatkan status Approval/PIN5 (Ngedit)
       IFNULL((
         SELECT 
           IFNULL(
@@ -44,8 +44,6 @@ const getPenawaranList = async (startDate, endDate, status, user) => {
         WHERE pin_trs = "PENAWARAN" AND pin_nomor = h.pen_nomor 
         ORDER BY pin_urut DESC LIMIT 1
       ), "") AS StatusApproval,
-
-      -- Menghitung jumlah detail sesuai filter status
       (SELECT COUNT(*) FROM tpenawaran_dtl WHERE pend_pen_nomor = h.pen_nomor 
         ${status && status !== "ALL" ? (status === "OPEN" ? `AND pend_status = ''` : `AND pend_status = '${status}'`) : ""}
       ) AS jumlahDetail
@@ -58,12 +56,10 @@ const getPenawaranList = async (startDate, endDate, status, user) => {
     WHERE h.pen_tanggal >= ? AND h.pen_tanggal <= ?
   `;
 
-  // Implementasi filter zcus Delphi (Hanya tampilkan jika ada proyeksi)
   if (isCusRestricted) {
     query += ` AND h.pen_proyeksi <> '' `;
   }
 
-  // Filter Having: Hanya tampilkan header yang memiliki minimal 1 detail yang sesuai dengan status
   query += ` HAVING jumlahDetail > 0 `;
   query += ` ORDER BY h.pen_tanggal DESC, h.pen_nomor DESC`;
 
@@ -74,7 +70,12 @@ const getPenawaranList = async (startDate, endDate, status, user) => {
 /**
  * Mendapatkan detail dari Penawaran tertentu (Browse Detail)
  */
-const getPenawaranDetail = async (nomor) => {
+
+const getPenawaranDetail = async (nomor, canLihatCus = false) => {
+  const hargaCols = canLihatCus
+    ? `pend_harga AS Harga, (pend_qty * pend_harga) AS Nominal,`
+    : `NULL AS Harga, NULL AS Nominal,`;
+
   const query = `
     SELECT 
       pend_id AS ID,
@@ -85,16 +86,12 @@ const getPenawaranDetail = async (nomor) => {
       pend_ukuran AS Ukuran,
       pend_panjang AS Panjang,
       pend_lebar AS Lebar,
-      
-      -- Menghitung QtyMeter berdasarkan Divisi (1=Pjg*Qty, 5=Pjg*Lbr*Qty)
       IF(pen_divisi = 1, (pend_qty * pend_panjang), 
          IF(pen_divisi = 5, (pend_qty * pend_lebar * pend_panjang), 0)
       ) AS QtyMeter,
-      
       pend_satuan AS Satuan,
       pend_qty AS Qty,
-      pend_harga AS Harga,
-      (pend_qty * pend_harga) AS Nominal,
+      ${hargaCols}
       pend_status AS Status,
       pend_batal AS KetBatal,
       pend_confirm AS KetConfirm

@@ -23,7 +23,9 @@ const getBrowseMap = async (
   perushPrefix,
   status,
   divisi,
+  canLihatCus,
 ) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   let sql = `
     SELECT
       td.divisi AS Divisi,
@@ -33,7 +35,7 @@ const getBrowseMap = async (
       LEFT(s.mspk_ukuran, LOCATE('X', s.mspk_ukuran) - 1) AS Panjang,
       REPLACE(REPLACE(SUBSTRING(s.mspk_ukuran, LOCATE('X', s.mspk_ukuran), LENGTH(s.mspk_ukuran)), 'X', ''), 'M', '') AS Lebar,
       s.mspk_nomor AS Nomor,
-      c.cus_nama AS Customer,
+      ${custCol}
       s.mspk_jo_kode AS Jenis,
       s.mspk_kain AS Kain,
       s.mspk_jumlah AS JmlOrder,
@@ -71,7 +73,9 @@ const getBrowseSpk = async (
   perushPrefix,
   status,
   divisi,
+  canLihatCus,
 ) => {
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   let sql = `
     SELECT
       td.divisi AS Divisi,
@@ -81,7 +85,7 @@ const getBrowseSpk = async (
       LEFT(s.spk_ukuran, LOCATE('X', s.spk_ukuran) - 1) AS Panjang,
       REPLACE(REPLACE(SUBSTRING(s.spk_ukuran, LOCATE('X', s.spk_ukuran), LENGTH(s.spk_ukuran)), 'X', ''), 'M', '') AS Lebar,
       s.spk_nomor AS Nomor,
-      c.cus_nama AS Customer,
+      ${custCol}
       s.spk_jo_kode AS Jenis,
       s.spk_kain AS Kain,
       s.spk_jumlah AS JmlOrder,
@@ -137,10 +141,27 @@ const getBrowse = async (
   status = "ALL",
   divisi = "ALL",
   isMap = false,
+  canLihatCus = false,
 ) =>
   isMap
-    ? getBrowseMap(startDate, endDate, spk, perusahaan, status, divisi)
-    : getBrowseSpk(startDate, endDate, spk, perusahaan, status, divisi);
+    ? getBrowseMap(
+        startDate,
+        endDate,
+        spk,
+        perusahaan,
+        status,
+        divisi,
+        canLihatCus,
+      )
+    : getBrowseSpk(
+        startDate,
+        endDate,
+        spk,
+        perusahaan,
+        status,
+        divisi,
+        canLihatCus,
+      );
 
 // ─────────────────────────────────────────────
 // DETAIL STBJ — per SPK. ⚠️ QUIRK: Delphi selalu INNER JOIN ke tspk
@@ -209,6 +230,7 @@ const getAllDetail = async (
   status = "ALL",
   divisi = "ALL",
   isMap = false,
+  canLihatCus = false,
 ) => {
   const master = await getBrowse(
     startDate,
@@ -218,6 +240,7 @@ const getAllDetail = async (
     status,
     divisi,
     isMap,
+    canLihatCus,
   );
   const stbjResult = [];
   const sjResult = [];

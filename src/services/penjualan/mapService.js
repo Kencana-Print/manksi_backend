@@ -2,14 +2,16 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
 // --- GET BROWSE LIST ---
-const getBrowseList = async (filters) => {
+const getBrowseList = async (
+  filters,
+  canLihatCus = false,
+  canLihatHarga = false,
+) => {
   const { startDate, endDate, cabang, isKaosan } = filters;
 
-  // Format tanggal agar full 1 hari (00:00:00 s/d 23:59:59)
   let params = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   let whereClause = `WHERE x.mspk_tanggal >= ? AND x.mspk_tanggal <= ?`;
 
-  // Filter Divisi: Dilonggarkan agar data muncul semua (kecuali spesifik P02 / Kaosan)
   if (cabang === "P02") {
     whereClause += ` AND x.mspk_divisi IN (1,5)`;
   }
@@ -18,6 +20,11 @@ const getBrowseList = async (filters) => {
   } else if (cabang === "P03" && isKaosan === "KDC") {
     whereClause += ` AND x.mspk_divisi IN (3,6)`;
   }
+
+  const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
+  const hargaCol = canLihatHarga
+    ? "x.mspk_harga AS Harga, x.mspk_hargariil AS HargaRiil,"
+    : `NULL AS Harga, NULL AS HargaRiil,`;
 
   const query = `
     SELECT 
@@ -32,9 +39,9 @@ const getBrowseList = async (filters) => {
       (SELECT sjd_sj_nomor FROM tsj_dtl_memo INNER JOIN tsj_hdr_memo ON sj_nomor=sjd_sj_nomor WHERE sjd_mspk_nomor=x.mspk_nomor ORDER BY sj_tanggal DESC LIMIT 1) AS Surat_Jalan,
       x.mspk_ukuran AS Ukuran, x.mspk_panjang AS Panjang, x.mspk_lebar AS Lebar, 
       x.mspk_gramasi AS Gramasi, x.mspk_kain AS Kain, x.mspk_finishing AS Finishing,
-      x.mspk_jumlah AS Jumlah, x.mspk_jumlah_kirim AS Kirim, c.cus_nama AS Customer,
-      x.mspk_rencana_order AS Rencana, x.mspk_tipe AS Tipe, x.mspk_harga AS Harga, 
-      x.mspk_hargariil AS HargaRiil, s.sal_nama AS Salesman, x.date_create AS Created, 
+      x.mspk_jumlah AS Jumlah, x.mspk_jumlah_kirim AS Kirim, ${custCol}
+      x.mspk_rencana_order AS Rencana, x.mspk_tipe AS Tipe, ${hargaCol}
+      s.sal_nama AS Salesman, x.date_create AS Created, 
       x.mspk_revisi_no AS Revisi, x.mspk_referensi AS NoReferensi,
       IF(x.mspk_estimasijadi="1899-12-30", "", x.mspk_estimasijadi) AS EstimasiJadi, 
       x.mspk_close AS CloseStatus,

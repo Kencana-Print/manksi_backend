@@ -1,10 +1,16 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
-// Reuse query dari salesOrderService tapi tanpa filter is_so
-// SPK = semua tspk (termasuk yang bukan SO)
 const getBrowseList = async (filters) => {
-  const { startDate, endDate, workshop, customer, userCabang } = filters;
+  const {
+    startDate,
+    endDate,
+    workshop,
+    customer,
+    userCabang,
+    canLihatCus,
+    canLihatHarga,
+  } = filters;
 
   let params = [startDate, endDate];
   let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ? AND x.IsSO = 0`;
@@ -26,6 +32,19 @@ const getBrowseList = async (filters) => {
     whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL)`;
     params.push(userCabang);
   }
+
+  // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus), dan
+  // Harga digated flag lihatHarga (user_lihat_harga) — replikasi
+  // `if zcus=1` / `if zLihatHarga=1` di ufrmBrowseSPK.btnRefreshClick.
+  // Pola sama persis dengan salesOrderService (SPK PPIC = form yang
+  // sama, cuma filter is_so beda).
+  const custNameCol = canLihatCus
+    ? "c.cus_nama AS Customer,"
+    : "NULL AS Customer,";
+  const groupCusCol = canLihatCus
+    ? 'IFNULL(c1.cus_nama, "") AS GroupCustomer,'
+    : "NULL AS GroupCustomer,";
+  const hargaCol = canLihatHarga ? "s.spk_harga AS Harga," : "NULL AS Harga,";
 
   const query = `
     SELECT x.*,
@@ -49,19 +68,19 @@ const getBrowseList = async (filters) => {
         s.spk_nomor AS Nomor, s.user_create AS MO, s.spk_cmo AS CMO,
         s.spk_tanggal AS Tanggal, s.spk_dateline AS Dateline,
         s.spk_statuskerja AS Kepentingan, v.divisi AS Divisi,
-        s.spk_cus_kode AS KodeCustomer, c.cus_nama AS Customer,
+        s.spk_cus_kode AS KodeCustomer, ${custNameCol}
         s.spk_nama AS Nama, s.spk_ukuran AS Ukuran,
         s.spk_cab AS Cab, TRIM(s.spk_workshop) AS Workshop,
         s.spk_pending AS Pending, s.spk_ketpending AS KetPending,
         s.spk_tipe AS Tipe, s.spk_panjang AS Panjang,
         s.spk_lebar AS Lebar, s.spk_gramasi AS Gramasi,
         s.spk_kain AS Kain, s.spk_finishing AS Finishing,
-        s.spk_harga AS Harga, s.spk_prasj AS Prasj,
+        ${hargaCol} s.spk_prasj AS Prasj,
         s.date_create AS Created, s.spk_jumlah AS Pesan,
         s.spk_jumlah_kirim AS Kirim,
         (s.spk_jumlah - s.spk_jumlah_kirim) AS Kurang,
         sl.sal_nama AS Sales,
-        IFNULL(c1.cus_nama, "") AS GroupCustomer,
+        ${groupCusCol}
         s.spk_nomor_po AS PO, s.spk_ketpo AS KetPO,
         s.spk_tgl_po AS DatePO, s.spk_DatelinePO AS DatelinePO,
         IF(s.spk_close=1, "Closed", "Open") AS Status,

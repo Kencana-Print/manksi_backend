@@ -3,6 +3,7 @@ const svc = require("../../services/penjualan/approvalSjService");
 const getBrowse = async (req, res) => {
   try {
     const { tglAwal, tglAkhir, cabang = "" } = req.query;
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
     const data = await svc.getBrowse(tglAwal, tglAkhir, cabang);
     res.json({ success: true, data });
   } catch (err) {
@@ -22,6 +23,7 @@ const getBrowseDetail = async (req, res) => {
 
 const getAllNotApproved = async (req, res) => {
   try {
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
     const data = await svc.getAllNotApproved();
     res.json({ success: true, data });
   } catch (err) {
@@ -82,6 +84,7 @@ const approveBulk = async (req, res) => {
 const getExportData = async (req, res) => {
   try {
     const { tglAwal, tglAkhir, cabang = "" } = req.query;
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
     const data = await svc.getExportData(tglAwal, tglAkhir, cabang);
     res.json({ success: true, data });
   } catch (err) {

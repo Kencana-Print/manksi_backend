@@ -14,7 +14,12 @@ const CABANG_GUDANG_MAP = {
 // BROWSE
 // Sesuai Delphi btnRefreshClick — filter gudang berdasar cabang user
 // ═══════════════════════════════════════════════════════════
-const getBrowse = async (tglAwal, tglAkhir, cabang = "") => {
+const getBrowse = async (
+  tglAwal,
+  tglAkhir,
+  cabang = "",
+  canLihatCus = false,
+) => {
   let gudangFilter = "";
   const params = [tglAwal, tglAkhir];
 
@@ -24,6 +29,16 @@ const getBrowse = async (tglAwal, tglAkhir, cabang = "") => {
     params.push(gdgKode);
   }
 
+  const custCols = canLihatCus
+    ? `h.sj_cus_kode AS KodeCustomer,
+       c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS KodeCustomer,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const [rows] = await db.query(
     `SELECT
        IF(h.sj_approve=1,'Sudah', IF(h.sj_approve=2,'Batal','')) AS Approved,
@@ -32,10 +47,7 @@ const getBrowse = async (tglAwal, tglAkhir, cabang = "") => {
        DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d')      AS Tanggal,
        h.sj_gdg_kode                              AS KodeGdg,
        g.gdg_nama                                 AS Gudang,
-       h.sj_cus_kode                              AS KodeCustomer,
-       c.cus_nama                                  AS Customer,
-       h.sj_alamat_customer                        AS Alamat,
-       h.sj_kota_customer                          AS Kota,
+       ${custCols}
        h.sj_keterangan                             AS Keterangan,
        h.sj_perush_kode                            AS ID
      FROM tsj_hdr h
@@ -98,7 +110,17 @@ const getBrowseDetail = async (tglAwal, tglAkhir, cabang = "", nomor = "") => {
 // SHOW ALL NOT APPROVED
 // Sesuai Delphi btnShowClick — tanpa filter gudang/cabang, tanpa filter tanggal
 // ═══════════════════════════════════════════════════════════
-const getAllNotApproved = async () => {
+const getAllNotApproved = async (canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `h.sj_cus_kode AS KodeCustomer,
+       c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS KodeCustomer,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const [rows] = await db.query(
     `SELECT
        IF(h.sj_approve=1,'Sudah', IF(h.sj_approve=2,'Batal','')) AS Approved,
@@ -107,10 +129,7 @@ const getAllNotApproved = async () => {
        DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d')      AS Tanggal,
        h.sj_gdg_kode                              AS KodeGdg,
        g.gdg_nama                                 AS Gudang,
-       h.sj_cus_kode                              AS KodeCustomer,
-       c.cus_nama                                  AS Customer,
-       h.sj_alamat_customer                        AS Alamat,
-       h.sj_kota_customer                          AS Kota,
+       ${custCols}
        h.sj_keterangan                             AS Keterangan,
        h.sj_perush_kode                            AS ID
      FROM tsj_hdr h
@@ -369,8 +388,12 @@ const approveBulk = async (nomorList) => {
 // ═══════════════════════════════════════════════════════════
 // EXPORT
 // ═══════════════════════════════════════════════════════════
-const getExportData = async (tglAwal, tglAkhir, cabang = "") =>
-  getBrowse(tglAwal, tglAkhir, cabang);
+const getExportData = async (
+  tglAwal,
+  tglAkhir,
+  cabang = "",
+  canLihatCus = false,
+) => getBrowse(tglAwal, tglAkhir, cabang, canLihatCus);
 const getExportDetail = async (tglAwal, tglAkhir, cabang = "") =>
   getBrowseDetail(tglAwal, tglAkhir, cabang);
 

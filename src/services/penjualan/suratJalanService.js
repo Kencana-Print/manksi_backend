@@ -7,10 +7,25 @@ const MENU_ID = "153";
 // BROWSE
 // Sesuai Delphi btnRefreshClick
 // ─────────────────────────────────────────────────────────
-const getBrowse = async (tglAwal, tglAkhir, divisi = 0) => {
+const getBrowse = async (
+  tglAwal,
+  tglAkhir,
+  divisi = 0,
+  canLihatCus = false,
+) => {
   let divisiFilter = "";
   if (divisi === 1) divisiFilter = " AND gdg_jadi = 1";
   if (divisi === 4) divisiFilter = " AND gdg_jadi = 4";
+
+  const custCols = canLihatCus
+    ? `a.sj_cus_kode AS KdCus,
+       c.cus_nama AS Customer,
+       a.sj_alamat_customer AS Alamat,
+       a.sj_kota_customer AS Kota,`
+    : `"" AS KdCus,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
 
   const [rows] = await db.query(
     `SELECT
@@ -18,10 +33,7 @@ const getBrowse = async (tglAwal, tglAkhir, divisi = 0) => {
        DATE_FORMAT(a.sj_tanggal, '%Y-%m-%d')              AS Tanggal,
        d.divisi                                            AS Divisi,
        a.sj_inv_sm                                        AS Invoice,
-       a.sj_cus_kode                                      AS KdCus,
-       c.cus_nama                                         AS Customer,
-       a.sj_alamat_customer                               AS Alamat,
-       a.sj_kota_customer                                 AS Kota,
+       ${custCols}
        a.sj_keterangan                                    AS Keterangan,
        g.gdg_nama                                         AS Gudang,
        SUM(sjd.sjd_jumlah)                                AS QtyKirim,
@@ -208,8 +220,13 @@ const cekSjKemarinBelumApprove = async () => {
 // ─────────────────────────────────────────────────────────
 // EXPORT DATA
 // ─────────────────────────────────────────────────────────
-const getExportData = async (tglAwal, tglAkhir, divisi = 0) => {
-  return getBrowse(tglAwal, tglAkhir, divisi);
+const getExportData = async (
+  tglAwal,
+  tglAkhir,
+  divisi = 0,
+  canLihatCus = false,
+) => {
+  return getBrowse(tglAwal, tglAkhir, divisi, canLihatCus);
 };
 
 const getExportDetail = async (tglAwal, tglAkhir) => {

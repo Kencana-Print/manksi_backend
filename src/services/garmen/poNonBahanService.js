@@ -27,9 +27,10 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   }
 
   // --- MASTER QUERY ---
-  let selectSup = user.flags?.lihatSup
-    ? `h.po_sup_kode AS KdSup, s.sup_nama AS Supplier,`
-    : `"" AS KdSup, "" AS Supplier,`;
+  let selectSup =
+    Number(user.flags?.lihatSup) === 1
+      ? `h.po_sup_kode AS KdSup, s.sup_nama AS Supplier,`
+      : `"" AS KdSup, "" AS Supplier,`;
 
   const queryMaster = `
     SELECT 
@@ -61,9 +62,10 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
       ? `d.pod_ket AS Spesifikasi, d.pod_kegunaan AS Kegunaan,`
       : `"" AS Spesifikasi, "" AS Kegunaan,`;
 
-  let selectBeli = user.flags?.lihatBeli
-    ? `, d.pod_harga AS Harga, (d.pod_jumlah * d.pod_harga) AS Total`
-    : `, 0 AS Harga, 0 AS Total`;
+  let selectBeli =
+    Number(user.flags?.lihatBeli) === 1
+      ? `, d.pod_harga AS Harga, (d.pod_jumlah * d.pod_harga) AS Total`
+      : `, 0 AS Harga, 0 AS Total`;
 
   const queryDetail = `
     SELECT 

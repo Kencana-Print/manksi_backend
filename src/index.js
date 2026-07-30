@@ -219,11 +219,16 @@ const mapVsSpkRoutes = require("./routes/laporan/penjualan/mapVsSpkRoutes");
 
 // Laporan Marketing
 const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
+const targetSpkRoutes = require("./routes/laporan/marketing/targetSpkRoutes");
+const targetVsRealisasiRoutes = require("./routes/laporan/marketing/targetVsRealisasiRoutes");
+const proyeksiVsRealisasiRoutes = require("./routes/laporan/marketing/proyeksiVsRealisasiRoutes");
 const mapBelumRealisasiRoutes = require("./routes/laporan/marketing/mapBelumRealisasiRoutes");
 const spkBelumClosingRoutes = require("./routes/laporan/marketing/spkBelumClosingRoutes");
 const realisasiPenjualanRoutes = require("./routes/laporan/marketing/realisasiPenjualanRoutes");
 const rekapMapRoutes = require("./routes/laporan/marketing/rekapMapRoutes");
 const rekapPenawaranRoutes = require("./routes/laporan/marketing/rekapPenawaranRoutes");
+const revisiMemoSpkRoutes = require("./routes/laporan/marketing/revisiMemoSpkRoutes");
+const realisasiPengirimanSpkRoutes = require("./routes/laporan/marketing/realisasiPengirimanSpkRoutes");
 const kunjunganSalesRoutes = require("./routes/laporan/marketing/kunjunganSalesRoutes");
 
 // Laporan Piutang
@@ -564,11 +569,22 @@ app.use("/api/laporan/penjualan/map-vs-sj", mapVsSjRoutes);
 app.use("/api/laporan/penjualan/map-vs-spk", mapVsSpkRoutes);
 
 app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
+app.use("/api/laporan/marketing/target-spk", targetSpkRoutes);
+app.use("/api/laporan/marketing/target-vs-realisasi", targetVsRealisasiRoutes);
+app.use(
+  "/api/laporan/marketing/proyeksi-vs-realisasi",
+  proyeksiVsRealisasiRoutes,
+);
 app.use("/api/laporan/marketing/map-belum-realisasi", mapBelumRealisasiRoutes);
 app.use("/api/laporan/marketing/spk-belum-closing", spkBelumClosingRoutes);
 app.use("/api/laporan/marketing/realisasi-penjualan", realisasiPenjualanRoutes);
 app.use("/api/laporan/marketing/rekap-map", rekapMapRoutes);
 app.use("/api/laporan/marketing/rekap-penawaran", rekapPenawaranRoutes);
+app.use("/api/laporan/marketing/revisi-map", revisiMemoSpkRoutes);
+app.use(
+  "/api/laporan/marketing/realisasi-kirim-spk",
+  realisasiPengirimanSpkRoutes,
+);
 app.use("/api/laporan/marketing/kunjungan-sales", kunjunganSalesRoutes);
 
 app.use("/api/laporan/piutang/detail-piutang", detailPiutangRoutes);

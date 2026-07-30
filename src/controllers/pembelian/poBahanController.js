@@ -2,8 +2,9 @@ const poBahanService = require("../../services/pembelian/poBahanService");
 
 const getBrowse = async (req, res) => {
   try {
-    const data = await poBahanService.getBrowse(req.query);
-    res.status(200).json({ success: true, data });
+    const canLihatSup = Number(req.user?.flags?.lihatSup) === 1;
+    const data = await poBahanService.getBrowse(req.query, canLihatSup);
+    res.status(200).json({ success: true, data, canLihatSup });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -11,8 +12,12 @@ const getBrowse = async (req, res) => {
 
 const getBrowseDetail = async (req, res) => {
   try {
-    const data = await poBahanService.getBrowseDetail(req.params.nomor);
-    res.status(200).json({ success: true, data });
+    const canLihatBeli = Number(req.user?.flags?.lihatBeli) === 1;
+    const data = await poBahanService.getBrowseDetail(
+      req.params.nomor,
+      canLihatBeli,
+    );
+    res.status(200).json({ success: true, data, canLihatBeli });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

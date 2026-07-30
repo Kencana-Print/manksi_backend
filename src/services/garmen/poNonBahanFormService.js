@@ -106,8 +106,14 @@ const getDetailForm = async (nomor, user) => {
       d.sudah = await getQtySudah(nomor, header.po_mb_nomor, d.Kode, conn);
       d.belum = Number(d.minta || 0) - d.sudah;
       d.bpb = await getQtyBpb(nomor, d.Kode, conn);
-      d.Harga = user.flags?.lihatBeli ? d.pod_harga : 0;
-      d.Total = user.flags?.lihatBeli ? d.pod_jumlah * d.pod_harga : 0;
+      // ⚠️ d.harga TETAP mentah/ungated di sini (bukan dihilangkan) —
+      // sama seperti CDS.FieldByName('harga') di Delphi
+      // ufrmPOGarmen.loaddataall yang jalan tanpa syarat zLihatBeli.
+      // Field ini dipakai ulang saat SAVE (edit lalu simpan lagi),
+      // jadi kalau di-null-kan di sini, edit oleh user tanpa izin
+      // lihatBeli bisa menimpa harga asli jadi 0. Gating yang benar
+      // ada di level KOLOM GRID (frontend v-if="canSeeBeli"), persis
+      // pola cxGrdMain.Columns[9/10].Visible di Delphi FormCreate.
       if (d.bpb > 0) header.hasBpb = true; // Kunci input supplier jika ada BPB
     }
 

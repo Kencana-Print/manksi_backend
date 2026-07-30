@@ -2,16 +2,21 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
 // --- 1. GET BROWSE HEADER ---
-const getBrowse = async (query) => {
+const getBrowse = async (query, canLihatSup = false) => {
   const { startDate, endDate, search } = query;
 
-  // Default tanggal: Awal bulan s/d Hari ini
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  // ⚠️ Kolom KodeSupplier/Supplier digated flag lihatSup (user_lihat_sup)
+  // — replikasi `if zLihatSup<>0` di ufrmBrowsePO.btnRefreshClick.
+  const supCols = canLihatSup
+    ? "s.sup_kode AS KodeSupplier, s.sup_nama AS Supplier,"
+    : "NULL AS KodeSupplier, NULL AS Supplier,";
 
   let sql = `
     SELECT DISTINCT 
@@ -42,8 +47,7 @@ const getBrowse = async (query) => {
       ), 0) AS QtyRetur,
 
       h.po_keterangan AS Keterangan,
-      s.sup_kode AS KodeSupplier,
-      s.sup_nama AS Supplier,
+      ${supCols}
       h.po_note AS Note,
       
       IF(h.po_close = 1, "CLOSE", IF(h.po_close = 0, "OPEN", IF(h.po_close = 9, "DICLOSE", "ONPROSES"))) AS Status,
@@ -89,7 +93,13 @@ const getBrowse = async (query) => {
 };
 
 // --- 2. GET BROWSE DETAIL (Sesuai SQLDetail Delphi) ---
-const getBrowseDetail = async (nomorPO) => {
+const getBrowseDetail = async (nomorPO, canLihatBeli = false) => {
+  // ⚠️ Kolom Harga/Disc digated flag lihatBeli (user_lihat_beli) —
+  // replikasi `if zLihatBeli=1` di ufrmBrowsePO.btnRefreshClick.
+  const hargaCols = canLihatBeli
+    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS Disc,";
+
   const sql = `
     SELECT 
       d.pod_po_nomor AS Nomor,
@@ -112,8 +122,7 @@ const getBrowseDetail = async (nomorPO) => {
         WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode
       ), 0) AS QtyRetur,
 
-      d.pod_hargabeli AS Harga,
-      d.pod_disc AS Disc,
+      ${hargaCols}
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
       d.pod_spk_nomor AS SPK,
@@ -132,10 +141,10 @@ const getBrowseDetail = async (nomorPO) => {
   return rows;
 };
 
-// --- 3. DELETE DATA ---
+// --- 3, 4, 5: deleteData, toggleClose, requestPinEdit — tidak berubah ---
 const deleteData = async (nomor) => {
   const conn = await db.getConnection();
-  let deletedGreige = null; // simpan info greige sebelum commit
+  let deletedGreige = null;
   let deletedJenis = null;
 
   try {
@@ -159,7 +168,6 @@ const deleteData = async (nomor) => {
       throw new Error("PO Sudah di-Close. Tidak bisa dihapus.");
     }
 
-    // Simpan info untuk sinkronisasi setelah commit
     if (header.po_jenis === 2 && header.po_greige) {
       deletedGreige = header.po_greige;
       deletedJenis = header.po_jenis;
@@ -175,7 +183,6 @@ const deleteData = async (nomor) => {
     conn.release();
   }
 
-  // Sinkronisasi status PO Greige SETELAH commit & release koneksi
   if (deletedGreige) {
     try {
       const [greigePo] = await db.query(
@@ -212,7 +219,6 @@ const deleteData = async (nomor) => {
   return true;
 };
 
-// --- 4. TOGGLE CLOSE (MANUAL) ---
 const toggleClose = async (nomor, payload, userKode) => {
   const { isClose, alasan } = payload;
   const conn = await db.getConnection();
@@ -225,7 +231,6 @@ const toggleClose = async (nomor, payload, userKode) => {
         [alasan, userKode, nomor],
       );
     } else {
-      // Batal Close (Buka Kembali)
       await conn.query(
         `UPDATE tpo_hdr SET po_close=0, po_alasanclose="", po_userclose="", po_tglclose=NULL WHERE po_nomor=?`,
         [nomor],
@@ -237,11 +242,9 @@ const toggleClose = async (nomor, payload, userKode) => {
   }
 };
 
-// --- 5. PENGAJUAN PIN PERUBAHAN DATA ---
 const requestPinEdit = async (nomor, alasan, userKode) => {
   const conn = await db.getConnection();
   try {
-    // 1. Ambil data Header untuk Tanggal dan JenisPO
     const [headers] = await conn.query(
       `SELECT po_tanggal, IF(po_jenis=1,"GREIGE",IF(po_jenis=2,"CELUP","BAHAN")) AS JenisPO FROM tpo_hdr WHERE po_nomor=?`,
       [nomor],
@@ -249,7 +252,6 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
     if (headers.length === 0) throw new Error("Data PO tidak ditemukan.");
     const header = headers[0];
 
-    // 2. Cek Urutan Terakhir
     const [lastPin] = await conn.query(
       `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="PO BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
       [nomor],
@@ -266,7 +268,6 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
       }
     }
 
-    // 3. Insert Pengajuan PIN
     await conn.query(
       `
       INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan) 

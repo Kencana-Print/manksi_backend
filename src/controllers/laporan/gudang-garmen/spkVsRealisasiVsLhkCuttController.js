@@ -10,8 +10,15 @@ const getBrowse = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tgl SPK wajib diisi." });
     }
-    const data = await svc.getBrowse(startDate, endDate, spk, parseIsMap(map));
-    res.json({ success: true, data });
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBrowse(
+      startDate,
+      endDate,
+      spk,
+      parseIsMap(map),
+      canLihatCus,
+    );
+    res.json({ success: true, data, canLihatCus });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -20,7 +27,8 @@ const getBrowse = async (req, res) => {
 const getDetail = async (req, res) => {
   try {
     const { spk } = req.params;
-    const data = await svc.getDetail(spk);
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getDetail(spk, canLihatCus);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -35,11 +43,13 @@ const getAllDetail = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Tgl SPK wajib diisi." });
     }
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
     const data = await svc.getAllDetail(
       startDate,
       endDate,
       spk,
       parseIsMap(map),
+      canLihatCus,
     );
     res.json({ success: true, data });
   } catch (err) {
