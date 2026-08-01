@@ -245,6 +245,7 @@ const cekGagalLinkRoutes = require("./routes/laporan/piutang/cekGagalLinkRoutes"
 const userRoutes = require("./routes/tools/userRoutes");
 const userFormRoutes = require("./routes/tools/userFormRoutes");
 const approvalRoutes = require("./routes/tools/approvalRoutes");
+const relationshipMapRoutes = require("./routes/tools/relationshipMapRoutes");
 
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
@@ -608,6 +609,7 @@ app.use("/api/laporan/piutang/cek-gagal-link", cekGagalLinkRoutes);
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
 app.use("/api/tools/approval", approvalRoutes);
+app.use("/api/tools/relationship-map", relationshipMapRoutes);
 
 const PORT = process.env.PORT || 3088;
 app.listen(PORT, () => {
