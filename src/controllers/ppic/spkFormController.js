@@ -107,14 +107,11 @@ const importLayoutProses = async (req, res) => {
     if (!req.file) throw new Error("File Excel tidak ditemukan.");
     const { spkNomor } = req.body;
     if (!spkNomor) throw new Error("Nomor SPK wajib diisi.");
-
     const result = await service.importLayoutProses(spkNomor, req.file.path);
-
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-
     res.status(200).json({
       success: true,
-      message: `Berhasil import: ${result.totalProof} baris proof, ${result.totalSewing} baris sewing.`,
+      message: `Berhasil import: ${result.total} baris proses.`,
       data: result,
     });
   } catch (error) {

@@ -846,14 +846,17 @@ const searchMintaBahan = async (keyword, page = 1, limit = 50) => {
 
   let query = `
     SELECT 
-      min_nomor AS Nomor, 
-      min_tanggal AS Tanggal, 
-      min_spk_nomor AS SPK, 
-      min_ket AS Keterangan, 
-      min_apv AS Approve
-    FROM tmintabahan_hdr 
-    ${whereClause} 
-    ORDER BY min_tanggal DESC, min_nomor DESC
+      h.min_nomor AS Nomor, 
+      h.min_tanggal AS Tanggal, 
+      h.min_spk_nomor AS SPK, 
+      COALESCE(spk.spk_nama, map.mspk_nama, '') AS NamaSpk,
+      h.min_ket AS Keterangan, 
+      h.min_apv AS Approve
+    FROM tmintabahan_hdr h
+    LEFT JOIN tspk spk ON spk.spk_nomor = h.min_spk_nomor
+    LEFT JOIN tmemospk map ON map.mspk_nomor = h.min_spk_nomor
+    ${whereClause.replace(/\bmin_/g, "h.min_")} 
+    ORDER BY h.min_tanggal DESC, h.min_nomor DESC
   `;
 
   if (limitNum > 0) {

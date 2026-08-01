@@ -755,7 +755,6 @@ const importLayoutProses = async (spkNomor, filePath) => {
         "Format Excel tidak dikenali: kolom 'SELESAI' (pemisah Proof/Sewing) tidak ditemukan di baris header.",
       );
     }
-
     const findCol = (range, target) => {
       for (const [c, label] of Object.entries(labels)) {
         const ci = Number(c);
@@ -763,10 +762,8 @@ const importLayoutProses = async (spkNomor, filePath) => {
       }
       return null;
     };
-
     const proofRange = [1, selesaiCol - 1];
     const sewingRange = [selesaiCol + 1, 30];
-
     return {
       proof: {
         nama_op: findCol(proofRange, "NAMAOP"),
@@ -788,64 +785,115 @@ const importLayoutProses = async (spkNomor, filePath) => {
         mp: findCol(sewingRange, "MP"),
         nama_op: findCol(sewingRange, "NAMAOP"),
       },
+      // ✅ BARU: kolom angka urutan proses global, TEPAT mengapit kolom
+      // SELESAI/panah (kiri=urutan blok Proof, kanan=urutan blok Sewing).
+      // Dikonfirmasi dari template Excel asli — bukan header berlabel
+      // teks, jadi dicari lewat posisi relatif, bukan pencarian label.
+      orderCols: {
+        proof: selesaiCol - 1,
+        sewing: selesaiCol + 1,
+      },
     };
+  };
+
+  // ✅ BARU: baca baris SUMMARY 1 / SUMMARY 2 / TOTAL / TOTAL DALAM MENIT
+  // di footer template. Dibaca dari KOLOM YANG SAMA dengan kolom data
+  // (cols.proof.mp/ct_dt/ct_jam untuk sisi kiri, cols.sewing.* untuk
+  // sisi kanan) — bukan alamat sel hardcode, supaya tetap toleran
+  // terhadap pergeseran kolom antar varian template seperti header info.
+  const parseFooterSummary = (footerStartRow, colsRef) => {
+    const summary = {
+      summary1: { mp: 0, ctDt: 0, ctJam: 0 },
+      summary2: { mp: 0, ctDt: 0, ctJam: 0 },
+      total: { mp: 0, ctDt: 0, ctJam: 0 },
+      totalMenit: 0,
+    };
+    const scanEnd = Math.min(footerStartRow + 8, ws.rowCount);
+    for (let r = footerStartRow; r <= scanEnd; r++) {
+      const row = ws.getRow(r);
+      for (let c = 1; c <= 20; c++) {
+        const label = norm(row.getCell(c).value);
+        if (!label) continue;
+        if (label === "SUMMARY1") {
+          summary.summary1.mp = toNum(getVal(row, colsRef.proof.mp));
+          summary.summary1.ctDt = toNum(getVal(row, colsRef.proof.ct_dt));
+          summary.summary1.ctJam = toNum(getVal(row, colsRef.proof.ct_jam));
+        } else if (label === "SUMMARY2") {
+          summary.summary2.ctJam = toNum(getVal(row, colsRef.sewing.ct_jam));
+          summary.summary2.ctDt = toNum(getVal(row, colsRef.sewing.ct_dt));
+          summary.summary2.mp = toNum(getVal(row, colsRef.sewing.mp));
+        } else if (label === "TOTAL") {
+          summary.total.mp = toNum(getVal(row, colsRef.proof.mp));
+          summary.total.ctDt = toNum(getVal(row, colsRef.proof.ct_dt));
+          summary.total.ctJam = toNum(getVal(row, colsRef.proof.ct_jam));
+        } else if (label === "TOTALDALAMMENIT") {
+          for (let cc = c + 1; cc <= c + 6; cc++) {
+            const v = toNum(row.getCell(cc).value);
+            if (v) {
+              summary.totalMenit = v;
+              break;
+            }
+          }
+        }
+      }
+    }
+    return summary;
   };
 
   const header = buildHeaderInfo();
   const cols = buildColumnMap(7);
-
   if (!cols.proof.proses || !cols.sewing.proses) {
     throw new Error(
       "Format Excel tidak dikenali: kolom PROSES untuk Proof/Sewing tidak ditemukan.",
     );
   }
-
   const getVal = (row, col) => (col ? row.getCell(col).value : null);
-
   const FOOTER_MARKERS = ["SUMMARY", "TOTAL", "TERTANDA", "MENGETAHUI"];
   const isFooterRow = (val) => {
     const s = toStr(val).toUpperCase();
     return FOOTER_MARKERS.some((m) => s.startsWith(m));
   };
-
   const startRow = 8;
   const endRow = ws.rowCount;
-  const proofRows = [];
-  const sewingRows = [];
-  let proofCounter = 0;
-  let sewingCounter = 0;
-
+  // ✅ BARU: satu list GABUNGAN (bukan proof/sewing terpisah) — sesuai
+  // instruksi user, Proof dan Sewing itu SATU rangkaian proses yang
+  // sama, cuma template Excel-nya kebetulan dipecah jadi 2 blok kolom.
+  // Urutan finalnya dibaca dari angka eksplisit di orderCols, BUKAN
+  // dari posisi baris — karena angka itu bolak-balik kanan-kiri
+  // (1=kanan, 2=kiri, 3=kanan, dst), tidak bisa ditebak dari urutan baca.
+  const collected = [];
+  let footerStartRow = null;
   for (let r = startRow; r <= endRow; r++) {
     const row = ws.getRow(r);
-
-    // Kolom C (nama_op sisi Proof) konsisten dipakai sebagai penanda
-    // baris SUMMARY/TOTAL/TERTANDA/MENGETAHUI di kedua varian template.
-    if (isFooterRow(row.getCell(3).value)) break;
-
+    if (isFooterRow(row.getCell(3).value)) {
+      footerStartRow = r; // ✅ BARU — simpan baris tempat footer mulai
+      break;
+    }
     const proofProses = toStr(getVal(row, cols.proof.proses));
     if (proofProses) {
-      proofCounter++;
-      proofRows.push({
-        no_urut: proofCounter,
+      collected.push({
+        sisi: "PROOF",
+        urutan: toNum(getVal(row, cols.orderCols.proof)),
         proses: proofProses,
-        nama_op: toStr(getVal(row, cols.proof.nama_op)),
-        mp: toNum(getVal(row, cols.proof.mp)),
-        ct_dt: toNum(getVal(row, cols.proof.ct_dt)),
-        ct_jam: toNum(getVal(row, cols.proof.ct_jam)),
-        sepatu: toStr(getVal(row, cols.proof.sepatu)),
-        kjarum: toStr(getVal(row, cols.proof.kjarum)),
         mc: toStr(getVal(row, cols.proof.mc)),
+        ukjarum: "",
+        kjarum: toStr(getVal(row, cols.proof.kjarum)),
+        sepatu: toStr(getVal(row, cols.proof.sepatu)),
+        ct_jam: toNum(getVal(row, cols.proof.ct_jam)),
+        ct_dt: toNum(getVal(row, cols.proof.ct_dt)),
+        mp: toNum(getVal(row, cols.proof.mp)),
+        nama_op: toStr(getVal(row, cols.proof.nama_op)),
       });
     }
-
     const sewingProses = toStr(getVal(row, cols.sewing.proses));
     if (sewingProses) {
-      sewingCounter++;
-      sewingRows.push({
-        no_urut: sewingCounter,
+      collected.push({
+        sisi: "SEWING",
+        urutan: toNum(getVal(row, cols.orderCols.sewing)),
         proses: sewingProses,
         mc: toStr(getVal(row, cols.sewing.mc)),
         ukjarum: toStr(getVal(row, cols.sewing.ukjarum)),
+        kjarum: "",
         sepatu: toStr(getVal(row, cols.sewing.sepatu)),
         ct_jam: toNum(getVal(row, cols.sewing.ct_jam)),
         ct_dt: toNum(getVal(row, cols.sewing.ct_dt)),
@@ -854,20 +902,45 @@ const importLayoutProses = async (spkNomor, filePath) => {
       });
     }
   }
-
+  // Urutkan berdasar angka eksplisit dari Excel. Kalau semua angka
+  // 0/tidak kebaca (template lama tanpa kolom nomor ini), fallback ke
+  // urutan baca-alami supaya import tidak gagal total — tapi hasilnya
+  // TIDAK terjamin sesuai proses asli, cuma jaring pengaman terakhir.
+  const hasValidOrder = collected.some((r) => r.urutan > 0);
+  const orderedRows = hasValidOrder
+    ? [...collected].sort((a, b) => a.urutan - b.urutan)
+    : collected;
+  orderedRows.forEach((r, i) => {
+    r.no_urut = i + 1;
+  });
+  const footerSummary = footerStartRow
+    ? parseFooterSummary(footerStartRow, cols)
+    : {
+        summary1: { mp: 0, ctDt: 0, ctJam: 0 },
+        summary2: { mp: 0, ctDt: 0, ctJam: 0 },
+        total: { mp: 0, ctDt: 0, ctJam: 0 },
+        totalMenit: 0,
+      };
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-
     await conn.query(
       `INSERT INTO tspk_layout_header
-       (lh_spk_nomor, lh_no_memo, lh_nama_memo, lh_line, lh_poj, lh_mp, lh_jk, lh_efisiensi, lh_target_hari, lh_uploaded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-       ON DUPLICATE KEY UPDATE
-         lh_no_memo=VALUES(lh_no_memo), lh_nama_memo=VALUES(lh_nama_memo),
-         lh_line=VALUES(lh_line), lh_poj=VALUES(lh_poj), lh_mp=VALUES(lh_mp),
-         lh_jk=VALUES(lh_jk), lh_efisiensi=VALUES(lh_efisiensi),
-         lh_target_hari=VALUES(lh_target_hari), lh_uploaded_at=NOW()`,
+      (lh_spk_nomor, lh_no_memo, lh_nama_memo, lh_line, lh_poj, lh_mp, lh_jk, lh_efisiensi, lh_target_hari,
+        lh_summary1_mp, lh_summary1_ct_dt, lh_summary1_ct_jam,
+        lh_summary2_mp, lh_summary2_ct_dt, lh_summary2_ct_jam,
+        lh_total_mp, lh_total_ct_dt, lh_total_ct_jam, lh_total_menit,
+        lh_uploaded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      ON DUPLICATE KEY UPDATE
+        lh_no_memo=VALUES(lh_no_memo), lh_nama_memo=VALUES(lh_nama_memo),
+        lh_line=VALUES(lh_line), lh_poj=VALUES(lh_poj), lh_mp=VALUES(lh_mp),
+        lh_jk=VALUES(lh_jk), lh_efisiensi=VALUES(lh_efisiensi),
+        lh_target_hari=VALUES(lh_target_hari),
+        lh_summary1_mp=VALUES(lh_summary1_mp), lh_summary1_ct_dt=VALUES(lh_summary1_ct_dt), lh_summary1_ct_jam=VALUES(lh_summary1_ct_jam),
+        lh_summary2_mp=VALUES(lh_summary2_mp), lh_summary2_ct_dt=VALUES(lh_summary2_ct_dt), lh_summary2_ct_jam=VALUES(lh_summary2_ct_jam),
+        lh_total_mp=VALUES(lh_total_mp), lh_total_ct_dt=VALUES(lh_total_ct_dt), lh_total_ct_jam=VALUES(lh_total_ct_jam), lh_total_menit=VALUES(lh_total_menit),
+        lh_uploaded_at=NOW()`,
       [
         spkNomor,
         header.no_memo,
@@ -878,20 +951,23 @@ const importLayoutProses = async (spkNomor, filePath) => {
         header.jk,
         header.efisiensi,
         header.target_hari,
+        footerSummary.summary1.mp,
+        footerSummary.summary1.ctDt,
+        footerSummary.summary1.ctJam,
+        footerSummary.summary2.mp,
+        footerSummary.summary2.ctDt,
+        footerSummary.summary2.ctJam,
+        footerSummary.total.mp,
+        footerSummary.total.ctDt,
+        footerSummary.total.ctJam,
+        footerSummary.totalMenit,
       ],
     );
-
     await conn.query(`DELETE FROM tspk_layout_proses WHERE lp_spk_nomor = ?`, [
       spkNomor,
     ]);
-
-    const allRows = [
-      ...proofRows.map((r) => ({ ...r, sisi: "PROOF" })),
-      ...sewingRows.map((r) => ({ ...r, sisi: "SEWING" })),
-    ];
-
-    if (allRows.length > 0) {
-      const vals = allRows.map((r) => [
+    if (orderedRows.length > 0) {
+      const vals = orderedRows.map((r) => [
         spkNomor,
         r.sisi,
         r.no_urut,
@@ -907,12 +983,11 @@ const importLayoutProses = async (spkNomor, filePath) => {
       ]);
       await conn.query(
         `INSERT INTO tspk_layout_proses
-         (lp_spk_nomor, lp_sisi, lp_no_urut, lp_proses, lp_mc, lp_ukjarum, lp_sepatu, lp_kjarum, lp_ct_jam, lp_ct_dt, lp_mp, lp_nama_op)
-         VALUES ?`,
+       (lp_spk_nomor, lp_sisi, lp_no_urut, lp_proses, lp_mc, lp_ukjarum, lp_sepatu, lp_kjarum, lp_ct_jam, lp_ct_dt, lp_mp, lp_nama_op)
+       VALUES ?`,
         [vals],
       );
     }
-
     await conn.commit();
   } catch (e) {
     await conn.rollback();
@@ -920,17 +995,14 @@ const importLayoutProses = async (spkNomor, filePath) => {
   } finally {
     conn.release();
   }
-
-  if (proofRows.length === 0 && sewingRows.length === 0) {
+  if (orderedRows.length === 0) {
     throw new Error(
       "Tidak ada baris proses yang terdeteksi di file ini. Pastikan file sudah terisi (bukan form kosong) dan formatnya sesuai template.",
     );
   }
-
   return {
     header,
-    totalProof: proofRows.length,
-    totalSewing: sewingRows.length,
+    total: orderedRows.length,
   };
 };
 
@@ -945,10 +1017,15 @@ const getLayoutProses = async (spkNomor) => {
             lp_ct_jam AS ct_jam, lp_ct_dt AS ct_dt, lp_mp AS mp, lp_nama_op AS nama_op
      FROM tspk_layout_proses
      WHERE lp_spk_nomor = ?
-     ORDER BY lp_sisi, lp_no_urut`,
+     ORDER BY lp_no_urut ASC`,
     [spkNomor],
   );
-
+  // ✅ Dipisah kembali per sisi buat tampilan 2 kolom (mirip Excel),
+  // TAPI no_urut tetap nomor asli dari Excel (ganjil di kanan/SEWING,
+  // genap di kiri/PROOF) — bukan di-nomor ulang 1..N per sisi. Karena
+  // sort global sebelumnya sudah pakai angka Excel asli, no_urut per
+  // baris di sini otomatis persis sama dengan nomor yang tertera di
+  // template (1,3,5,... di kanan / 2,4,6,... di kiri).
   return {
     header: headerRows[0] || null,
     proof: detailRows.filter((r) => r.sisi === "PROOF"),
