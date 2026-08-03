@@ -506,18 +506,22 @@ const save = async (data, userKode, isNewMode) => {
   }
 };
 
-// --- UPLOAD IMAGE (MAIN & EMAIL) ---
-const processImage = async (tempFilePath, cabang, type, mapNomor) => {
+// --- UPLOAD IMAGE/PDF (MAIN, PO, ACC) ---
+// ⚠️ type "EMAIL" diganti "PO" — sekarang bisa menerima gambar ATAU PDF.
+// PDF disimpan apa adanya (tidak diproses sharp, karena bukan gambar).
+const processImage = async (tempFilePath, cabang, type, mapNomor, mimetype) => {
   if (!fs.existsSync(tempFilePath))
     throw new Error("File sumber sementara tidak ditemukan.");
 
-  // Format Nama: MAP-JA-KO-001001.jpg ATAU MAP-JA-KO-001001-email.jpg
-  let finalFileName;
-  if (type === "EMAIL") finalFileName = `${mapNomor}-email.jpg`;
-  else if (type === "ACC") finalFileName = `${mapNomor}-acc.jpg`;
-  else finalFileName = `${mapNomor}.jpg`;
+  const isPdf = mimetype === "application/pdf";
+  const ext = isPdf ? "pdf" : "jpg";
 
-  // Sesuai aturan: public/images/cabang/map
+  let finalFileName;
+  if (type === "PO") finalFileName = `${mapNomor}-po.${ext}`;
+  else if (type === "ACC")
+    finalFileName = `${mapNomor}-acc.jpg`; // ACC tetap wajib gambar
+  else finalFileName = `${mapNomor}.jpg`; // MAIN tetap wajib gambar
+
   const branchFolderPath = path.join(
     process.cwd(),
     "public",
@@ -528,21 +532,25 @@ const processImage = async (tempFilePath, cabang, type, mapNomor) => {
   if (!fs.existsSync(branchFolderPath)) {
     fs.mkdirSync(branchFolderPath, { recursive: true });
   }
-
   const finalPath = path.join(branchFolderPath, finalFileName);
 
   try {
-    await sharp(tempFilePath)
-      .flatten({ background: { r: 255, g: 255, b: 255 } })
-      .toFormat("jpeg")
-      .jpeg({ quality: 80 })
-      .toFile(finalPath);
-
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (isPdf) {
+      // PDF: pindahkan file apa adanya, tidak lewat sharp
+      fs.copyFileSync(tempFilePath, finalPath);
+      fs.unlinkSync(tempFilePath);
+    } else {
+      await sharp(tempFilePath)
+        .flatten({ background: { r: 255, g: 255, b: 255 } })
+        .toFormat("jpeg")
+        .jpeg({ quality: 80 })
+        .toFile(finalPath);
+      if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    }
     return finalFileName;
   } catch (error) {
     if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    throw new Error(`Gagal memproses gambar ${type} ke format JPG.`);
+    throw new Error(`Gagal memproses file ${type}.`);
   }
 };
 

@@ -80,6 +80,22 @@ const generateNomor = async (perushKode, joKode, conn = db) => {
   return `${prefix}${String(nextVal).padStart(6, "0")}`;
 };
 
+// --- GENERATE NOMOR SPK LEGACY (format: {perush}-{jo}-000001) ---
+// Sama persis pola/algoritma dengan generateNomor SPK PPIC, hanya
+// tanpa literal prefix "SPK-" di depan.
+const generateNomorLegacy = async (perushKode, joKode, conn) => {
+  const prefix = `${perushKode}-${joKode}-`;
+  const [rows] = await conn.query(
+    `SELECT IFNULL(MAX(CAST(SUBSTR(spk_nomor, ?, 6) AS UNSIGNED)), 0) AS jumlah
+     FROM tspk
+     WHERE spk_perush_kode = ? AND spk_jo_kode = ? AND spk_nomor LIKE ?
+     FOR UPDATE`,
+    [prefix.length + 1, perushKode, joKode, `${prefix}%`],
+  );
+  const nextVal = Number(rows[0].jumlah) + 1;
+  return `${prefix}${String(nextVal).padStart(6, "0")}`;
+};
+
 // ============================================================
 // GET DETAIL — untuk mode Ubah (edit SPK PPIC yang sudah ada)
 // ============================================================
@@ -96,32 +112,47 @@ const getDetail = async (nomor) => {
   );
   if (header.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");
 
-  const [dtlSize, komponenSpk, layoutProses, keteranganKhusus] =
+  const isPremium = isPremiumWorkshop(header[0].spk_cab);
+
+  // ⚠️ Tab Komponen/Layout Proses/Keterangan HANYA relevan untuk P04.
+  // Untuk legacy (P01/P02/P05), query-query ini tetap dipanggil supaya
+  // shape response konsisten (array kosong), tapi TIDAK ditampilkan
+  // di frontend. Alokasi sebaliknya: selalu diambil, dominan dipakai
+  // di legacy tapi tidak ada ruginya kalau kosong di premium.
+  const [dtlSize, komponenSpk, layoutProses, keteranganKhusus, alokasi] =
     await Promise.all([
       getSizeList(nomor),
-      getKomponenSpk(nomor),
-      getLayoutProses(nomor),
-      getKeteranganKhusus(nomor),
+      isPremium
+        ? getKomponenSpk(nomor)
+        : { ListPotong: [], ListCetakBordir: [] },
+      isPremium
+        ? getLayoutProses(nomor)
+        : { header: null, proof: [], sewing: [] },
+      isPremium ? getKeteranganKhusus(nomor) : [],
+      getAlokasi(nomor),
     ]);
 
-  // Ambil checklist keterangan komponen (semua kode A-O dengan flag checked)
-  const [masterKet] = await db.query(
-    `SELECT k.kode, k.nama,
-          IF(s.skk_kode IS NOT NULL, TRUE, FALSE) AS checked,
-          IFNULL(s.skk_ket, '') AS ket
-     FROM tketkomponen k
-     LEFT JOIN tspk_ketkomponen s ON s.skk_kode = k.kode AND s.skk_spk = ?
-     ORDER BY k.kode ASC`,
-    [nomor],
-  );
+  const [masterKet] = isPremium
+    ? await db.query(
+        `SELECT k.kode, k.nama,
+              IF(s.skk_kode IS NOT NULL, TRUE, FALSE) AS checked,
+              IFNULL(s.skk_ket, '') AS ket
+         FROM tketkomponen k
+         LEFT JOIN tspk_ketkomponen s ON s.skk_kode = k.kode AND s.skk_spk = ?
+         ORDER BY k.kode ASC`,
+        [nomor],
+      )
+    : [[]];
 
   return {
     header: header[0],
+    isPremiumFlow: isPremium, // ← baru, dipakai frontend switch tab
     dtlSize,
     komponenSpk,
     layoutProses,
     keteranganKhusus,
     ketKomponenList: masterKet,
+    alokasi,
   };
 };
 
@@ -158,7 +189,16 @@ const getSoSourceDetail = async (soNomor) => {
   header.cus_perfect = cusRow[0]?.cus_perfect || "N";
 
   const dtlSize = await getSoSizeListUnified(soNomor);
-  return { header, dtlSize, _soSource: source };
+  const isPremium = isPremiumWorkshop(header.spk_cab);
+  const soAlokasi = isPremium ? [] : await getSoAlokasiReference(soNomor);
+
+  return {
+    header,
+    dtlSize,
+    _soSource: source,
+    isPremiumFlow: isPremium,
+    soAlokasi, // referensi saja, untuk tombol "copy dari SO" di frontend
+  };
 };
 
 // --- Ambil tspk_size (dipakai baik untuk SO sumber maupun SPK) ---
@@ -282,6 +322,81 @@ const refreshKomponenFromProof = async (
   return { ListPotong, ListCetakBordir };
 };
 
+// ─────────────────────────────────────────────────────────
+// ROUTING SPK LEGACY vs SPK PPIC BARU
+// Hanya divisi 1 (Spanduk) & 5 (MMT) yang pakai format nomor lama
+// (tanpa prefix "SPK-") dan alur/tampilan mirip form SO.
+// Divisi 4 (Garmen) — baik medium (P01) maupun premium (P04) —
+// tetap pakai format SPK-{perush}-{jo}-000001 seperti sekarang.
+// ─────────────────────────────────────────────────────────
+const isLegacySpkFlow = (divisi) => {
+  const d = String(divisi).charAt(0);
+  return d === "1" || d === "5";
+};
+
+// ─────────────────────────────────────────────────────────
+// PREMIUM vs LEGACY FLOW — berdasarkan WORKSHOP (spk_cab), BUKAN
+// divisi. Ini independen dari isLegacySpkFlow (yang urus format nomor).
+// P04 = garmen premium → tab Komponen/Layout Proses/Keterangan.
+// P01/P02/P05 = medium/spanduk/MMT → tab Order ala-SO + Alokasi.
+// ─────────────────────────────────────────────────────────
+const isPremiumWorkshop = (cab) => String(cab).toUpperCase() === "P04";
+
+// --- ALOKASI SPK (tspk_alokasi) — mirip tsalesorder_alokasi, tapi
+// milik SPK sendiri (bisa beda dari alokasi SO sumbernya). ---
+const getAlokasi = async (spkNomor) => {
+  const [rows] = await db.query(
+    `SELECT spka_urut AS urut, spka_alamat AS alamat, spka_kota AS kota,
+            spka_person AS person, spka_hp AS hp, spka_jumlah AS jumlah
+     FROM tspk_alokasi WHERE spka_spk_nomor = ? ORDER BY spka_urut`,
+    [spkNomor],
+  );
+  return rows;
+};
+
+const saveAlokasi = async (conn, spkNomor, list) => {
+  await conn.query(`DELETE FROM tspk_alokasi WHERE spka_spk_nomor = ?`, [
+    spkNomor,
+  ]);
+  const rows = (list || []).filter((item) => item.alamat || item.kota);
+  if (rows.length === 0) return;
+
+  const vals = rows.map((item, i) => [
+    spkNomor,
+    i + 1,
+    item.alamat || "",
+    item.kota || "",
+    item.person || "",
+    item.hp || "",
+    item.jumlah || 0,
+  ]);
+  await conn.query(
+    `INSERT INTO tspk_alokasi
+       (spka_spk_nomor, spka_urut, spka_alamat, spka_kota, spka_person, spka_hp, spka_jumlah)
+     VALUES ?`,
+    [vals],
+  );
+};
+
+// --- Ambil alokasi milik SO sumber, sebagai REFERENSI awal saja
+// (tombol "copy dari SO" di frontend, bukan auto-copy) — SO-aware
+// karena SO bisa hidup di tsalesorder (baru) atau tspk legacy. ---
+const getSoAlokasiReference = async (soNomor) => {
+  const [newRows] = await db.query(
+    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
+            soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
+     FROM tsalesorder_alokasi WHERE soa_so_nomor = ? ORDER BY soa_urut`,
+    [soNomor],
+  );
+  if (newRows.length > 0) return newRows;
+
+  // ⚠️ ASUMSI: SO legacy (pre-migrasi, hidup di tspk) alokasinya juga
+  // di tsalesorder_alokasi dengan key so_nomor lama, BUKAN tabel
+  // terpisah — karena tsalesorder_alokasi baru dibuat saat migrasi SO.
+  // Kalau ternyata SO legacy alokasinya di tabel lain, kasih tau.
+  return [];
+};
+
 // ============================================================
 // SAVE DATA — create & edit SPK PPIC
 // ============================================================
@@ -295,6 +410,7 @@ const saveData = async (payload, user) => {
     dtlSize,
     komponenSpk,
     keteranganKhusus,
+    alokasi,
   } = payload;
 
   const conn = await db.getConnection();
@@ -302,6 +418,8 @@ const saveData = async (payload, user) => {
     await conn.beginTransaction();
 
     let nomor;
+    let cabForFlow; // dipakai untuk tentukan premium/legacy setelah header ada
+
     if (!isEdit) {
       // --- CREATE: copy header dari SO terpilih ---
       // UNION-aware: SO sumber bisa berasal dari tsalesorder (baru)
@@ -316,10 +434,15 @@ const saveData = async (payload, user) => {
           "SO ini belum aktif/approved, tidak bisa dibuatkan SPK.",
         );
       }
-      nomor = await generateNomor(
-        soHeader.spk_perush_kode,
-        soHeader.spk_jo_kode,
-      );
+
+      nomor = isLegacySpkFlow(soHeader.spk_divisi)
+        ? await generateNomorLegacy(
+            soHeader.spk_perush_kode,
+            soHeader.spk_jo_kode,
+            conn,
+          )
+        : await generateNomor(soHeader.spk_perush_kode, soHeader.spk_jo_kode);
+
       const newHeader = { ...soHeader };
       delete newHeader.spk_nomor;
       delete newHeader.spk_is_so;
@@ -345,8 +468,19 @@ const saveData = async (payload, user) => {
           : await getSoSizeListUnified(so_nomor);
       await saveSizeList(conn, nomor, sizeSource);
 
-      // Pindahkan layout proses yang sempat diupload sebelum SPK tersimpan
-      // (saat itu tersimpan sementara pakai key so_nomor) ke nomor SPK final
+      // ⚠️ BARU: auto-copy alokasi dari SO sumber (kalau ada) saat create.
+      // Hanya relevan untuk legacy flow, tapi dijalankan apa adanya untuk
+      // semua cab — kalau SO tidak punya alokasi, otomatis no-op (array kosong).
+      // Payload.alokasi (kalau user sudah edit manual di form sebelum submit
+      // pertama) diprioritaskan; kalau kosong, baru fallback copy dari SO.
+      const alokasiSource =
+        alokasi && alokasi.length > 0
+          ? alokasi
+          : await getSoAlokasiReference(so_nomor);
+      if (alokasiSource.length > 0) {
+        await saveAlokasi(conn, nomor, alokasiSource);
+      }
+
       await migrateLayoutProses(conn, so_nomor, nomor);
     } else {
       // --- EDIT: hanya update field produksi ---
@@ -370,28 +504,34 @@ const saveData = async (payload, user) => {
       }
     }
 
-    // --- Komponen (potong + cetak/bordir) — Kode/Nama full otomatis
-    // dari Proof Garmen; Proses/Penempatan/Ukuran manual dari user
-    // dipertahankan lewat merge di refreshKomponenFromProof. ---
-    await refreshKomponenFromProof(conn, nomor, komponenSpk || {});
-
-    // --- Keterangan khusus ---
-    if (keteranganKhusus !== undefined) {
-      await saveKeteranganKhusus(conn, nomor, keteranganKhusus);
-    }
-
-    if (payload.ketKomponenList !== undefined) {
-      await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
-        nomor,
-      ]);
-      const checked = (payload.ketKomponenList || []).filter((k) => k.checked);
-      if (checked.length > 0) {
-        const vals = checked.map((k) => [nomor, k.kode, k.ket || ""]);
-        await conn.query(
-          `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES ?`,
-          [vals],
-        );
+    // ─────────────────────────────────────────────
+    // CABANG PREMIUM vs LEGACY — hanya P04 yang proses
+    // Komponen/Layout-Proses(Excel)/Keterangan; selain itu simpan Alokasi.
+    // ─────────────────────────────────────────────
+    if (isPremiumWorkshop(cabForFlow)) {
+      await refreshKomponenFromProof(conn, nomor, komponenSpk || {});
+      if (keteranganKhusus !== undefined) {
+        await saveKeteranganKhusus(conn, nomor, keteranganKhusus);
       }
+      if (payload.ketKomponenList !== undefined) {
+        await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
+          nomor,
+        ]);
+        const checked = (payload.ketKomponenList || []).filter(
+          (k) => k.checked,
+        );
+        if (checked.length > 0) {
+          const vals = checked.map((k) => [nomor, k.kode, k.ket || ""]);
+          await conn.query(
+            `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES ?`,
+            [vals],
+          );
+        }
+      }
+    } else if (isEdit && alokasi !== undefined) {
+      // Create sudah di-handle di atas (auto-copy dari SO / payload awal).
+      // Blok ini khusus edit, supaya user bisa update alokasi manual.
+      await saveAlokasi(conn, nomor, alokasi);
     }
 
     await conn.commit();
@@ -1164,4 +1304,10 @@ module.exports = {
   getMkaFromMap,
   getKomponenFromProof,
   refreshKomponenFromProof,
+  isLegacySpkFlow,
+  generateNomorLegacy,
+  isPremiumWorkshop,
+  getAlokasi,
+  saveAlokasi,
+  getSoAlokasiReference,
 };

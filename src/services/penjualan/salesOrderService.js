@@ -86,6 +86,7 @@ const getBrowseList = async (filters) => {
       s.spk_pinjo AS AccJO, s.spk_accpending AS AccPending, s.spk_mppb AS MPPB,
       s.spk_newdesign AS Design_Baru, s.spk_designdone AS Design_Done,
       s.spk_keterangan AS Keterangan, s.spk_invdc AS 'Pesanan/Invoice',
+      s.spk_ketbatal AS StsPembatalan,
       s.spk_is_so AS is_so,
 
       IFNULL(ppic.spk_nomor, "") AS SpkPpic,
@@ -105,7 +106,8 @@ const getBrowseList = async (filters) => {
         spk_kain, spk_finishing, spk_harga, date_create, spk_jumlah, spk_sal_kode,
         spk_nomor_po, spk_ketpo, spk_tgl_po, spk_DatelinePO, spk_close, spk_close_alasan,
         spk_pen_nomor, spk_memo, spk_repeat, spk_aktif, spk_pinjo, spk_accpending,
-        spk_mppb, spk_newdesign, spk_designdone, spk_keterangan, spk_invdc, spk_is_so
+        spk_mppb, spk_newdesign, spk_designdone, spk_keterangan, spk_invdc, spk_is_so,
+        spk_ketbatal 
       FROM tspk
       WHERE spk_is_so = 1 AND spk_nomor LIKE 'SO-%'
       UNION ALL
@@ -123,7 +125,8 @@ const getBrowseList = async (filters) => {
         so_pen_nomor AS spk_pen_nomor, so_memo AS spk_memo, so_repeat AS spk_repeat,
         so_aktif AS spk_aktif, so_pinjo AS spk_pinjo, so_accpending AS spk_accpending,
         so_mppb AS spk_mppb, so_newdesign AS spk_newdesign, so_designdone AS spk_designdone,
-        so_keterangan AS spk_keterangan, so_invdc AS spk_invdc, 1 AS spk_is_so
+        so_keterangan AS spk_keterangan, so_invdc AS spk_invdc, 1 AS spk_is_so,
+        so_ketbatal AS spk_ketbatal
       FROM tsalesorder
     ) s
     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
@@ -371,6 +374,299 @@ const updateDesignStatus = async (nomorList) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// PEMBATALAN SPK/SO — sesuai Delphi ufrmPembatalanSpk.pas ✅
+// Diakses dari klik-kanan browse SO → "Form Pembatalan SPK".
+// ─────────────────────────────────────────────────────────
+
+// LOAD DATA — dua mode:
+//  - spkNomor diisi → mulai pengajuan baru (checkbox kosong semua)
+//  - fbNomor diisi  → buka pengajuan yang sudah ada (mode approval/readonly)
+const getPembatalanDetail = async (fbNomor, spkNomor) => {
+  if (spkNomor) {
+    const loc = await resolveSoLocation(spkNomor);
+    if (!loc) throw new Error("Data SPK/SO tidak ditemukan.");
+
+    const [rows] =
+      loc === "new"
+        ? await db.query(
+            `SELECT so_nomor AS spk_nomor, so_tanggal AS spk_tanggal,
+                    so_cus_kode AS spk_cus_kode, so_nama AS spk_nama,
+                    so_jumlah AS spk_jumlah, c.cus_nama AS cus_nama
+             FROM tsalesorder s
+             LEFT JOIN tcustomer c ON c.Cus_kode = s.so_cus_kode
+             WHERE s.so_nomor = ?`,
+            [spkNomor],
+          )
+        : await db.query(
+            `SELECT s.spk_nomor, s.spk_tanggal, s.spk_cus_kode, s.spk_nama,
+                    s.spk_jumlah, c.cus_nama
+             FROM tspk s
+             LEFT JOIN tcustomer c ON c.Cus_kode = s.spk_cus_kode
+             WHERE s.spk_nomor = ?`,
+            [spkNomor],
+          );
+    if (!rows[0]) throw new Error("Data SPK/SO tidak ditemukan.");
+
+    return {
+      fb_nomor: "",
+      ...rows[0],
+      fb_abubah: "",
+      fb_abmap: "",
+      fb_abbahan: "",
+      fb_abqty: "",
+      fb_ablain: "",
+      fb_ablain2: "",
+      fb_abket: "",
+      fb_spbelum: "",
+      fb_spcuting: "",
+      fb_spsewing: "",
+      fb_spfinishing: "",
+      fb_spsudah: "",
+      fb_sbbeli: "",
+      fb_sbdireksi: "",
+      fb_sbsup: "",
+      fb_sbsudah: "",
+      fb_dampak: "",
+      fb_rtbatal: "",
+      fb_rtalih: "",
+      fb_rtsisa: "",
+      fb_rtlain: "",
+      fb_rtlain2: "",
+      fb_user_create: "",
+      Created: "",
+      fb_apv: "",
+      fb_apv_user: "",
+      Approved: "",
+    };
+  }
+
+  const [fbRows] = await db.query(
+    `SELECT * FROM tspk_formbatal WHERE fb_nomor = ?`,
+    [fbNomor],
+  );
+  if (!fbRows[0]) throw new Error("Data pengajuan tidak ditemukan.");
+  const fb = fbRows[0];
+
+  const loc = await resolveSoLocation(fb.fb_spk);
+  const [soRows] =
+    loc === "new"
+      ? await db.query(
+          `SELECT so_nomor AS spk_nomor, so_tanggal AS spk_tanggal,
+                  so_cus_kode AS spk_cus_kode, so_nama AS spk_nama,
+                  so_jumlah AS spk_jumlah, c.cus_nama AS cus_nama
+           FROM tsalesorder s
+           LEFT JOIN tcustomer c ON c.Cus_kode = s.so_cus_kode
+           WHERE s.so_nomor = ?`,
+          [fb.fb_spk],
+        )
+      : await db.query(
+          `SELECT s.spk_nomor, s.spk_tanggal, s.spk_cus_kode, s.spk_nama,
+                  s.spk_jumlah, c.cus_nama
+           FROM tspk s
+           LEFT JOIN tcustomer c ON c.Cus_kode = s.spk_cus_kode
+           WHERE s.spk_nomor = ?`,
+          [fb.fb_spk],
+        );
+
+  return {
+    ...fb,
+    ...(soRows[0] || {}),
+    Created: fb.fb_date_create,
+    Approved: fb.fb_apv_tgl,
+  };
+};
+
+// GENERATE NOMOR — sesuai Delphi getmaxnomor() ✅
+// ⚠️ diperbaiki: prefix length dinamis (bukan hardcode 11 seperti source
+// asli), karena panjang nomor SPK/SO sekarang variatif.
+const getMaxNomorBatal = async (spkNomor, conn) => {
+  const runner = conn || db;
+  const prefixLen = spkNomor.length;
+  const [[row]] = await runner.query(
+    `SELECT IFNULL(MAX(RIGHT(fb_nomor, 2)), 0) AS jumlah
+     FROM tspk_formbatal
+     WHERE LEFT(fb_nomor, ?) = ?`,
+    [prefixLen, spkNomor],
+  );
+  const next = 101 + Number(row.jumlah);
+  return `${spkNomor}-${String(next).slice(-2)}`;
+};
+
+// AJUKAN PEMBATALAN — sesuai Delphi simpandata() cabang APV=false ✅
+const ajukanPembatalan = async (payload, userKode) => {
+  const {
+    spkNomor,
+    tanggal,
+    abUbah,
+    abMap,
+    abBahan,
+    abQty,
+    abLain,
+    abLain2,
+    abKet,
+    spBelum,
+    spCuting,
+    spSewing,
+    spFinishing,
+    spSudah,
+    sbBeli,
+    sbDireksi,
+    sbSup,
+    sbSudah,
+    dampak,
+    rtBatal,
+    rtAlih,
+    rtSisa,
+    rtLain,
+    rtLain2,
+  } = payload;
+
+  if (!spkNomor) throw new Error("Nomor SPK/SO wajib diisi.");
+  const y = (v) => (v ? "Y" : "N");
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const fbNomor = await getMaxNomorBatal(spkNomor, conn);
+
+    await conn.query(
+      `INSERT INTO tspk_formbatal
+         (fb_nomor, fb_tanggal, fb_spk, fb_abubah, fb_abmap, fb_abbahan, fb_abqty,
+          fb_ablain, fb_ablain2, fb_abket,
+          fb_spbelum, fb_spcuting, fb_spsewing, fb_spfinishing, fb_spsudah,
+          fb_sbbeli, fb_sbdireksi, fb_sbsup, fb_sbsudah, fb_dampak,
+          fb_rtbatal, fb_rtalih, fb_rtsisa, fb_rtlain, fb_rtlain2,
+          fb_user_create, fb_date_create)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         fb_abubah=VALUES(fb_abubah), fb_abmap=VALUES(fb_abmap), fb_abbahan=VALUES(fb_abbahan),
+         fb_abqty=VALUES(fb_abqty), fb_ablain=VALUES(fb_ablain), fb_ablain2=VALUES(fb_ablain2),
+         fb_abket=VALUES(fb_abket), fb_spbelum=VALUES(fb_spbelum), fb_spcuting=VALUES(fb_spcuting),
+         fb_spsewing=VALUES(fb_spsewing), fb_spfinishing=VALUES(fb_spfinishing),
+         fb_spsudah=VALUES(fb_spsudah), fb_sbbeli=VALUES(fb_sbbeli), fb_sbdireksi=VALUES(fb_sbdireksi),
+         fb_sbsup=VALUES(fb_sbsup), fb_sbsudah=VALUES(fb_sbsudah), fb_dampak=VALUES(fb_dampak),
+         fb_rtbatal=VALUES(fb_rtbatal), fb_rtalih=VALUES(fb_rtalih), fb_rtsisa=VALUES(fb_rtsisa),
+         fb_rtlain=VALUES(fb_rtlain), fb_rtlain2=VALUES(fb_rtlain2),
+         fb_user_create=VALUES(fb_user_create), fb_date_modified=NOW()`,
+      [
+        fbNomor,
+        tanggal,
+        spkNomor,
+        y(abUbah),
+        y(abMap),
+        y(abBahan),
+        y(abQty),
+        y(abLain),
+        abLain2 || "",
+        abKet || "",
+        y(spBelum),
+        y(spCuting),
+        y(spSewing),
+        y(spFinishing),
+        y(spSudah),
+        y(sbBeli),
+        y(sbDireksi),
+        y(sbSup),
+        y(sbSudah),
+        dampak || "",
+        y(rtBatal),
+        y(rtAlih),
+        y(rtSisa),
+        y(rtLain),
+        rtLain2 || "",
+        userKode,
+      ],
+    );
+
+    const loc = await resolveSoLocation(spkNomor);
+    if (!loc) throw new Error("SPK/SO tidak ditemukan.");
+    if (loc === "new") {
+      await conn.query(
+        `UPDATE tsalesorder SET so_aktif = "N", so_ketbatal = "PENGAJUAN" WHERE so_nomor = ?`,
+        [spkNomor],
+      );
+    } else {
+      await conn.query(
+        `UPDATE tspk SET spk_aktif = "N", spk_ketbatal = "PENGAJUAN" WHERE spk_nomor = ?`,
+        [spkNomor],
+      );
+    }
+
+    await conn.commit();
+    return { fbNomor };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+// GET STATUS PENGAJUAN GANTI QTY/KAIN TERAKHIR — sesuai Delphi
+// PengajuanGantiQtydanJenisKain1Click, dipakai frontend buat prefill
+// form (kalau ada pengajuan pending, tampilkan urut & alasan lama)
+const getGantiQtyKainStatus = async (nomor) => {
+  const [[lastPin]] = await db.query(
+    `SELECT pin_urut, pin_dipakai, pin_alasan
+     FROM tspk_pin5
+     WHERE pin_trs = "SO" AND pin_nomor = ? AND pin_jenis = "GANTI"
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+
+  if (!lastPin) {
+    return { urut: 1, alasan: "" };
+  }
+  if (lastPin.pin_dipakai === "") {
+    // masih pending, belum di-approve → reuse urut yang sama, prefill alasan
+    return { urut: lastPin.pin_urut, alasan: lastPin.pin_alasan || "" };
+  }
+  // sudah pernah dipakai → pengajuan baru, urut naik
+  return { urut: lastPin.pin_urut + 1, alasan: "" };
+};
+
+// AJUKAN GANTI QTY/KAIN — sesuai Delphi btnSimpanClick cabang
+// "Pengajuan Ganti Qty dan Jeni Kain" ✅
+const ajukanGantiQtyKain = async (nomor, alasan, userKode) => {
+  if (!alasan?.trim()) throw new Error("Alasan harus diisi.");
+
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) throw new Error("Data SPK/SO tidak ditemukan.");
+
+  const [header] =
+    loc === "new"
+      ? await db.query(
+          `SELECT so_tanggal AS tanggal, so_nama AS nama FROM tsalesorder WHERE so_nomor = ?`,
+          [nomor],
+        )
+      : await db.query(
+          `SELECT spk_tanggal AS tanggal, spk_nama AS nama FROM tspk WHERE spk_nomor = ?`,
+          [nomor],
+        );
+  if (!header[0]) throw new Error("Data SPK/SO tidak ditemukan.");
+
+  const { urut } = await getGantiQtyKainStatus(nomor);
+
+  await db.query(
+    `INSERT INTO tspk_pin5
+       (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket,
+        pin_tgl_minta, pin_user_minta, pin_alasan)
+     VALUES ("SO", ?, ?, "GANTI", ?, ?, NOW(), ?, ?)
+     ON DUPLICATE KEY UPDATE
+       pin_tgl_trs = VALUES(pin_tgl_trs),
+       pin_ket = VALUES(pin_ket),
+       pin_acc = "",
+       pin_tgl_minta = NOW(),
+       pin_user_minta = VALUES(pin_user_minta),
+       pin_alasan = VALUES(pin_alasan)`,
+    [nomor, urut, header[0].tanggal, header[0].nama, userKode, alasan],
+  );
+
+  return { urut };
+};
+
 module.exports = {
   getBrowseList,
   getSizes,
@@ -380,4 +676,9 @@ module.exports = {
   approveCmo,
   getPendingDesigns,
   updateDesignStatus,
+  resolveSoLocation,
+  getPembatalanDetail,
+  ajukanPembatalan,
+  getGantiQtyKainStatus,
+  ajukanGantiQtyKain,
 };

@@ -60,4 +60,30 @@ router.put(
   controller.updateDesignStatus,
 );
 
+router.get(
+  "/pembatalan-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getPembatalanDetail,
+);
+router.post(
+  "/pembatalan-ajukan",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.ajukanPembatalan,
+);
+
+router.get(
+  "/ganti-qty-kain-status",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getGantiQtyKainStatus,
+);
+router.post(
+  "/ganti-qty-kain-ajukan",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.ajukanGantiQtyKain,
+);
+
 module.exports = router;

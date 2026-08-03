@@ -167,4 +167,32 @@ router.post(
   controller.submitSpkCetakUlangOtorisasi,
 );
 
+// --- APPROVAL PEMBATALAN SPK/SO (MENU_ID: 262) ---
+router.get(
+  "/pembatalan-spk",
+  verifyToken,
+  checkPermission(262, "view"),
+  controller.getPembatalanSpkList,
+);
+router.post(
+  "/pembatalan-spk/otorisasi",
+  verifyToken,
+  checkPermission(262, "edit"),
+  controller.submitPembatalanSpkOtorisasi,
+);
+
+// --- APPROVAL SPK GANTI QTY & JENIS KAIN (MENU_ID: 265) ---
+router.get(
+  "/ganti-qty-kain",
+  verifyToken,
+  checkPermission(265, "view"),
+  controller.getGantiQtyKainList,
+);
+router.post(
+  "/ganti-qty-kain/otorisasi",
+  verifyToken,
+  checkPermission(265, "edit"),
+  controller.submitGantiQtyKainOtorisasi,
+);
+
 module.exports = router;

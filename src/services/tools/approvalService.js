@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const { resolveSoLocation } = require("../penjualan/salesOrderService");
 
 // --- 1. GET DATA MASTER (CUSTOMER YANG MINTA ACC) ---
 const getApprovalPiutangMaster = async (query) => {
@@ -980,6 +981,188 @@ const submitSpkCetakUlangOtorisasi = async (nomor, statusAcc, userKode) => {
   };
 };
 
+// =========================================================================
+// APPROVAL PEMBATALAN SPK/SO (MENU_ID: 262)
+// =========================================================================
+
+const getPembatalanSpkList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE DATE(f.fb_tanggal) >= ? AND DATE(f.fb_tanggal) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND f.fb_apv_user = "" `;
+  }
+
+  const sql = `
+    SELECT
+      f.fb_nomor      AS Nomor,
+      DATE_FORMAT(f.fb_tanggal, "%d-%m-%Y") AS TglPengajuan,
+      f.fb_spk        AS Spk,
+      COALESCE(s1.spk_nama, s2.so_nama)     AS NamaSpk,
+      COALESCE(s1.spk_jumlah, s2.so_jumlah) AS JmlSpk,
+      f.fb_user_create AS Dibuat,
+      DATE_FORMAT(f.fb_date_create, "%Y-%m-%d %H:%i:%s") AS Created,
+      f.fb_apv        AS Approved,
+      f.fb_apv_user   AS ApvUser,
+      DATE_FORMAT(f.fb_apv_tgl, "%Y-%m-%d %H:%i:%s") AS ApvTgl,
+      COALESCE(s1.spk_cus_kode, s2.so_cus_kode) AS KdCus,
+      c.Cus_nama      AS Customer
+    FROM tspk_formbatal f
+    LEFT JOIN tspk s1 ON s1.spk_nomor = f.fb_spk
+    LEFT JOIN tsalesorder s2 ON s2.so_nomor = f.fb_spk
+    LEFT JOIN tcustomer c ON c.Cus_kode = COALESCE(s1.spk_cus_kode, s2.so_cus_kode)
+    ${sqlCondition}
+    ORDER BY f.fb_nomor
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// EKSEKUSI OTORISASI — sesuai Delphi simpandata() cabang APV=true
+// ⚠️ DIPERBAIKI: source Delphi asli update tspk pakai fb_nomor (bug —
+// harusnya pakai spk_nomor asli / fb_spk). Di sini pakai fb_spk yang benar.
+const submitPembatalanSpkOtorisasi = async (fbNomor, statusAcc, userKode) => {
+  if (!["Y", "N"].includes(statusAcc)) {
+    throw new Error("Status ACC harus Y atau N.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[fb]] = await conn.query(
+      `SELECT fb_spk, fb_user_create FROM tspk_formbatal WHERE fb_nomor = ? FOR UPDATE`,
+      [fbNomor],
+    );
+    if (!fb) throw new Error("Data pengajuan tidak ditemukan.");
+
+    await conn.query(
+      `UPDATE tspk_formbatal SET fb_apv = ?, fb_apv_user = ?, fb_apv_tgl = NOW()
+       WHERE fb_nomor = ?`,
+      [statusAcc, userKode, fbNomor],
+    );
+
+    const loc = await resolveSoLocation(fb.fb_spk);
+    if (!loc) throw new Error("SPK/SO terkait tidak ditemukan.");
+
+    if (statusAcc === "Y") {
+      if (loc === "new") {
+        await conn.query(
+          `UPDATE tsalesorder SET so_close = 1, so_ketbatal = "APPROVAL" WHERE so_nomor = ?`,
+          [fb.fb_spk],
+        );
+      } else {
+        await conn.query(
+          `UPDATE tspk SET spk_close = 1, spk_ketbatal = "APPROVAL" WHERE spk_nomor = ?`,
+          [fb.fb_spk],
+        );
+      }
+    } else {
+      if (loc === "new") {
+        await conn.query(
+          `UPDATE tsalesorder SET so_aktif = "Y", so_ketbatal = "TOLAK" WHERE so_nomor = ?`,
+          [fb.fb_spk],
+        );
+      } else {
+        await conn.query(
+          `UPDATE tspk SET spk_aktif = "Y", spk_ketbatal = "TOLAK" WHERE spk_nomor = ?`,
+          [fb.fb_spk],
+        );
+      }
+    }
+
+    await conn.commit();
+    return { fbNomor, spkNomor: fb.fb_spk, peminta: fb.fb_user_create };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+// =========================================================================
+// APPROVAL SPK GANTI QTY & JENIS KAIN (MENU_ID: 265)
+// ⚠️ sesuai Delphi ufrmBrowPinSpkGantiQty.pas: browse murni dari tspk_pin5,
+// TIDAK join ke tspk/customer (beda dengan Pembatalan SPK yang join).
+// pin_trs tidak difilter (bisa "SPK" legacy atau "SO" konvensi web).
+// =========================================================================
+const getGantiQtyKainList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_jenis = "GANTI" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT
+      IF(p.pin_program = "", "MANKSI", p.pin_program) AS Program,
+      p.pin_trs AS Transaksi,
+      p.pin_nomor AS Nomor,
+      DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
+      p.pin_ket AS Keterangan,
+      p.pin_urut AS AjuanKe,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+      p.pin_user_pin AS Otorisasi,
+      p.pin_acc AS Acc,
+      p.pin_dipakai AS Dipakai,
+      p.pin_alasan AS Alasan
+    FROM tspk_pin5 p
+    ${sqlCondition}
+    ORDER BY p.pin_trs, p.pin_nomor
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// EKSEKUSI OTORISASI — sesuai Delphi cxButton5Click ✅
+// Hanya update tspk_pin5, tidak menyentuh tspk/tsalesorder sama sekali
+// (perubahan qty/kain aktual dilakukan manual terpisah setelah ACC).
+const submitGantiQtyKainOtorisasi = async (
+  nomor,
+  transaksi,
+  urut,
+  statusAcc,
+  userKode,
+) => {
+  if (!["Y", "N"].includes(statusAcc)) {
+    throw new Error("Status ACC harus Y atau N.");
+  }
+
+  const [[pin]] = await db.query(
+    `SELECT pin_user_minta FROM tspk_pin5
+     WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"`,
+    [transaksi, nomor, urut],
+  );
+  if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
+
+  await db.query(
+    `UPDATE tspk_pin5 SET
+       pin_tgl_pin = NOW(),
+       pin_user_pin = ?,
+       pin_acc = ?
+     WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"`,
+    [userKode, statusAcc, transaksi, nomor, urut],
+  );
+
+  return { nomor, transaksi, urut, peminta: pin.pin_user_minta };
+};
+
 module.exports = {
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
@@ -1002,4 +1185,8 @@ module.exports = {
   submitMutasiNoPlanOtorisasi,
   getSpkCetakUlangList,
   submitSpkCetakUlangOtorisasi,
+  getPembatalanSpkList,
+  submitPembatalanSpkOtorisasi,
+  getGantiQtyKainList,
+  submitGantiQtyKainOtorisasi,
 };

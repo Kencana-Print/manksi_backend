@@ -458,6 +458,7 @@ const getPerusahaan = async () => {
   const query = `
     SELECT 
       p.perush_kode, p.perush_nama, p.perush_alamat,
+      p.perush_kota, p.perush_telp, p.perush_fax,
       d.nama AS ttd_nama, d.jabatan AS ttd_jabatan
     FROM tperusahaan p
     LEFT JOIN tdigitalsign d ON d.kode = p.perush_kode

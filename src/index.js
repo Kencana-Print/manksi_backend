@@ -64,6 +64,7 @@ const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcod
 
 const stbjRoutes = require("./routes/garmen/stbjRoutes");
 const stbjFormRoutes = require("./routes/garmen/stbjFormRoutes");
+const cetakBkbjRoutes = require("./routes/garmen/cetakBkbjRoutes");
 
 const mintaBarangRoutes = require("./routes/garmen/mintaBarangRoutes");
 const mintaBarangFormRoutes = require("./routes/garmen/mintaBarangFormRoutes");
@@ -344,6 +345,7 @@ app.use(
 
 app.use("/api/garmen/stbj", stbjRoutes);
 app.use("/api/garmen/stbj-form", stbjFormRoutes);
+app.use("/api/garmen/bahan-jadi/cetak-bkbj", cetakBkbjRoutes);
 
 app.use("/api/garmen/barang/permintaan", mintaBarangRoutes);
 app.use("/api/garmen/barang/permintaan/form", mintaBarangFormRoutes);

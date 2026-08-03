@@ -67,5 +67,11 @@ router.get(
   verifyToken,
   controller.getKetKomponenMaster,
 );
+router.get(
+  "/alokasi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getAlokasi,
+);
 
 module.exports = router;

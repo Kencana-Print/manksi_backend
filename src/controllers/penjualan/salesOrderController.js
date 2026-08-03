@@ -120,6 +120,71 @@ const updateDesignStatus = async (req, res) => {
   }
 };
 
+const getPembatalanDetail = async (req, res) => {
+  try {
+    const { fbNomor, spkNomor } = req.query;
+    if (!fbNomor && !spkNomor) {
+      return res.status(400).json({
+        success: false,
+        message: "fbNomor atau spkNomor wajib diisi.",
+      });
+    }
+    const data = await service.getPembatalanDetail(fbNomor, spkNomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const ajukanPembatalan = async (req, res) => {
+  try {
+    const userKode = req.user?.kode || req.user?.user_kode || "";
+    const result = await service.ajukanPembatalan(req.body, userKode);
+    res.json({
+      success: true,
+      data: result,
+      message: "Pengajuan pembatalan berhasil disimpan.",
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const getGantiQtyKainStatus = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    if (!nomor) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Nomor wajib diisi." });
+    }
+    const data = await service.getGantiQtyKainStatus(nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const ajukanGantiQtyKain = async (req, res) => {
+  try {
+    const { nomor, alasan } = req.body;
+    if (!nomor) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Nomor wajib diisi." });
+    }
+    const userKode = req.user?.kode || req.user?.user_kode || "";
+    const result = await service.ajukanGantiQtyKain(nomor, alasan, userKode);
+    res.json({
+      success: true,
+      data: result,
+      message: "Pengajuan berhasil. Menunggu ACC.",
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getSizes,
@@ -129,4 +194,8 @@ module.exports = {
   approveCmo,
   getPendingDesigns,
   updateDesignStatus,
+  getPembatalanDetail,
+  ajukanPembatalan,
+  getGantiQtyKainStatus,
+  ajukanGantiQtyKain,
 };

@@ -58,13 +58,18 @@ const save = async (req, res) => {
 
 const uploadImage = async (req, res) => {
   try {
-    if (!req.file) throw new Error("File gambar tidak ditemukan.");
-    const { mapNomor, cabang, type } = req.body; // type: 'MAIN' atau 'EMAIL'
+    if (!req.file) throw new Error("File tidak ditemukan.");
+    const { mapNomor, cabang, type } = req.body; // type: 'MAIN' | 'PO' | 'ACC'
 
     if (!mapNomor || !cabang || !type) {
       throw new Error(
-        "Nomor MAP, Cabang, dan Tipe gambar (MAIN/EMAIL) harus disertakan.",
+        "Nomor MAP, Cabang, dan Tipe file (MAIN/PO/ACC) harus disertakan.",
       );
+    }
+
+    // ⚠️ PO boleh gambar/pdf; MAIN & ACC tetap wajib gambar
+    if (type !== "PO" && req.file.mimetype === "application/pdf") {
+      throw new Error("Tipe file ini hanya menerima gambar, bukan PDF.");
     }
 
     const filename = await mapFormService.processImage(
@@ -72,10 +77,11 @@ const uploadImage = async (req, res) => {
       cabang,
       type,
       mapNomor,
+      req.file.mimetype, // ← baru
     );
     res
       .status(200)
-      .json({ success: true, message: "Gambar berhasil diupload.", filename });
+      .json({ success: true, message: "File berhasil diupload.", filename });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }

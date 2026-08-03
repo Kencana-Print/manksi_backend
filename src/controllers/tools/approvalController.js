@@ -403,6 +403,84 @@ const submitSpkCetakUlangOtorisasi = async (req, res) => {
   }
 };
 
+// =========================================================================
+// APPROVAL PEMBATALAN SPK/SO (MENU_ID: 262)
+// =========================================================================
+const getPembatalanSpkList = async (req, res) => {
+  try {
+    const data = await service.getPembatalanSpkList(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const submitPembatalanSpkOtorisasi = async (req, res) => {
+  try {
+    const { nomor, status_acc } = req.body;
+    const userKode = req.user.kode;
+    if (!nomor || !status_acc) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor dan Status ACC wajib diisi",
+      });
+    }
+    const result = await service.submitPembatalanSpkOtorisasi(
+      nomor,
+      status_acc,
+      userKode,
+    );
+    res.status(200).json({
+      success: true,
+      message: `Berhasil.\nSilahkan info ke ${result.peminta}`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// =========================================================================
+// APPROVAL SPK GANTI QTY & JENIS KAIN (MENU_ID: 265)
+// =========================================================================
+const getGantiQtyKainList = async (req, res) => {
+  try {
+    const data = await service.getGantiQtyKainList(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const submitGantiQtyKainOtorisasi = async (req, res) => {
+  try {
+    const { nomor, transaksi, urut, status_acc } = req.body;
+    const userKode = req.user.kode;
+
+    if (!nomor || !transaksi || !urut || !status_acc) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor, Transaksi, Urutan, dan Status ACC wajib diisi",
+      });
+    }
+
+    const result = await service.submitGantiQtyKainOtorisasi(
+      nomor,
+      transaksi,
+      urut,
+      status_acc,
+      userKode,
+    );
+    res.status(200).json({
+      success: true,
+      message: `Berhasil.\nSilahkan info ke ${result.peminta}`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMasterData,
   getPengajuanDtl,
@@ -425,4 +503,8 @@ module.exports = {
   submitMutasiNoPlanOtorisasi,
   getSpkCetakUlangList,
   submitSpkCetakUlangOtorisasi,
+  getPembatalanSpkList,
+  submitPembatalanSpkOtorisasi,
+  getGantiQtyKainList,
+  submitGantiQtyKainOtorisasi,
 };

@@ -168,6 +168,21 @@ const getKomponenFromProof = async (req, res) => {
   }
 };
 
+const getAlokasi = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    if (!nomor) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Nomor SPK wajib diisi." });
+    }
+    const data = await service.getAlokasi(nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getDetail,
   getSoSource,
@@ -182,4 +197,5 @@ module.exports = {
   getKetKomponenMaster,
   getMkaFromMap,
   getKomponenFromProof,
+  getAlokasi,
 };
