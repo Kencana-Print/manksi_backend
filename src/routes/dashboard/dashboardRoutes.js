@@ -155,5 +155,23 @@ router.get(
   verifyToken,
   controller.getSpkTerkirimBelumTagihList,
 );
+router.get(
+  "/achievement-summary",
+  verifyToken,
+  controller.getAchievementSummary,
+);
+router.get("/growth-yoy", verifyToken, controller.getGrowthYoy);
+router.get("/penawaran-funnel", verifyToken, controller.getPenawaranFunnel);
+router.get("/map-funnel", verifyToken, controller.getMapFunnel);
+router.get(
+  "/proyeksi-vs-realisasi-summary",
+  verifyToken,
+  controller.getProyeksiVsRealisasiSummary,
+);
+router.get(
+  "/pipeline-menggantung",
+  verifyToken,
+  controller.getPipelineMenggantung,
+);
 
 module.exports = router;

@@ -578,6 +578,120 @@ const getSpkTerkirimBelumTagihList = async (req, res) => {
   }
 };
 
+const getAchievementSummary = async (req, res) => {
+  try {
+    const { tahun, bulanAwal, bulanAkhir } = req.query;
+    const data = await service.getAchievementSummary(
+      req.user,
+      tahun ? Number(tahun) : undefined,
+      bulanAwal ? Number(bulanAwal) : undefined,
+      bulanAkhir ? Number(bulanAkhir) : undefined,
+    );
+    res.status(200).json({
+      success: true,
+      data: data || {
+        totalTarget: 0,
+        totalRealisasi: 0,
+        totalAch: 0,
+        byDivisi: [],
+        topSales: [],
+        bottomSales: [],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getGrowthYoy = async (req, res) => {
+  try {
+    const { tahun } = req.query;
+    const data = await service.getGrowthYoy(
+      req.user,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPenawaranFunnel = async (req, res) => {
+  try {
+    const { bulan, tahun } = req.query;
+    const data = await service.getPenawaranFunnel(
+      req.user,
+      bulan ? Number(bulan) : undefined,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({
+      success: true,
+      data: data || { byDivisi: [], grandTotal: {} },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMapFunnel = async (req, res) => {
+  try {
+    const { bulan, tahun } = req.query;
+    const data = await service.getMapFunnel(
+      req.user,
+      bulan ? Number(bulan) : undefined,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getProyeksiVsRealisasiSummary = async (req, res) => {
+  try {
+    const { startDate, endDate, page, limit } = req.query;
+    const data = await service.getProyeksiVsRealisasiSummary(
+      req.user,
+      startDate,
+      endDate,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
+    res.status(200).json({
+      success: true,
+      data: data || {
+        totalMemo: 0,
+        totalRealisasiMemo: 0,
+        totalRealisasiAll: 0,
+        gapCustomer: [],
+        totalGapCount: 0,
+        hasMore: false,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPipelineMenggantung = async (req, res) => {
+  try {
+    const { startDate, endDate, page, limit } = req.query;
+    const data = await service.getPipelineMenggantung(
+      req.user,
+      startDate,
+      endDate,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 20,
+    );
+    res.status(200).json({
+      success: true,
+      data: data || { totalItem: 0, totalNilai: 0, items: [], hasMore: false },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -625,4 +739,10 @@ module.exports = {
   getSpkVsSjList,
   getSpkTerkirimBelumTagihSummary,
   getSpkTerkirimBelumTagihList,
+  getAchievementSummary,
+  getGrowthYoy,
+  getPenawaranFunnel,
+  getMapFunnel,
+  getProyeksiVsRealisasiSummary,
+  getPipelineMenggantung,
 };

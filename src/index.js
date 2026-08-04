@@ -248,6 +248,8 @@ const userFormRoutes = require("./routes/tools/userFormRoutes");
 const approvalRoutes = require("./routes/tools/approvalRoutes");
 const relationshipMapRoutes = require("./routes/tools/relationshipMapRoutes");
 
+const versionRoutes = require("./routes/system/versionRoutes");
+
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
 app.use(
@@ -612,6 +614,8 @@ app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
 app.use("/api/tools/approval", approvalRoutes);
 app.use("/api/tools/relationship-map", relationshipMapRoutes);
+
+app.use("/api/system/version", versionRoutes);
 
 const PORT = process.env.PORT || 3088;
 app.listen(PORT, () => {

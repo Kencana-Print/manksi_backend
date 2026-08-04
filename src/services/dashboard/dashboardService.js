@@ -4,6 +4,11 @@ const standartBabaranVsRealisasiService = require("../laporan/gudang-garmen/stan
 const stokAccVsMkaService = require("../laporan/gudang-garmen/stokAccVsMkaService");
 const stokBarangJadiService = require("../laporan/gudang-garmen/stokBarangJadiService");
 const mutasiStokBarangJadiService = require("../laporan/gudang-garmen/mutasiStokBarangJadiService");
+const targetVsAchievementService = require("../laporan/marketing/targetVsAchievementService");
+const rekapPenawaranService = require("../laporan/marketing/rekapPenawaranService");
+const rekapMapService = require("../laporan/marketing/rekapMapService");
+const proyeksiVsRealisasiService = require("../laporan/marketing/proyeksiVsRealisasiService");
+const proyeksiBulananService = require("../laporan/marketing/proyeksiBulananService");
 
 const RANGE_DAYS = 90;
 
@@ -356,6 +361,237 @@ const getKunjunganSalesSummary = async (user) => {
 
   const [rows] = await db.query(sql);
   return rows;
+};
+
+// ══════════════════════════════════════════════
+// DASHBOARD MARKETING — TAMBAHAN
+// ══════════════════════════════════════════════
+
+// 1. Achievement Ringkas — reuse getByDivisi + getBySales, filter Urut=1
+const getAchievementSummary = async (user, tahun, bulanAwal, bulanAkhir) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const thn = tahun || new Date().getFullYear();
+  const bAwal = bulanAwal || new Date().getMonth() + 1;
+  const bAkhir = bulanAkhir || new Date().getMonth() + 1;
+
+  const [byDivisi, bySalesRaw] = await Promise.all([
+    targetVsAchievementService.getByDivisi(thn, bAwal, bAkhir),
+    targetVsAchievementService.getBySales(thn, bAwal, bAkhir),
+  ]);
+
+  const bySalesOnly = bySalesRaw.filter((r) => r.Urut === 1);
+  const sortedByAch = [...bySalesOnly].sort(
+    (a, b) => Number(b.Ach || 0) - Number(a.Ach || 0),
+  );
+
+  const totalTarget = byDivisi.reduce((s, r) => s + Number(r.Target || 0), 0);
+  const totalRealisasi = byDivisi.reduce(
+    (s, r) => s + Number(r.Realisasi || 0),
+    0,
+  );
+
+  return {
+    totalTarget,
+    totalRealisasi,
+    totalAch: totalTarget > 0 ? (totalRealisasi / totalTarget) * 100 : 0,
+    byDivisi,
+    topSales: sortedByAch.slice(0, 5),
+    bottomSales: sortedByAch.slice(-5).reverse(),
+  };
+};
+
+// 2. Growth YoY — reuse getSalesPerformance apa adanya
+const getGrowthYoy = async (user, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const thn = tahun || new Date().getFullYear();
+  const rows = await targetVsAchievementService.getSalesPerformance(thn);
+  return rows.map((r) => ({
+    bulan: r.bulan,
+    namaBulan: r.nama_bulan,
+    aktual: Number(r.aktual) || 0,
+    ly: Number(r.ly) || 0,
+    yoy: Number(r.yoy) || 0,
+    runAktual: Number(r.run_aktual) || 0,
+    runYoy: Number(r.run_yoy) || 0,
+    runGrowthPersen: Number(r.run_growth_persen) || 0,
+    persenProyeksi: Number(r.persen_proyeksi) || 0,
+  }));
+};
+
+// 3. Funnel Penawaran → Realisasi (+ Batal/Confirm), summarize per divisi
+const getPenawaranFunnel = async (user, bulan, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const rows = await rekapPenawaranService.getRekap({ bulan, tahun });
+
+  const byDivisi = {};
+  for (const r of rows) {
+    const key = r.Divisi;
+    if (!byDivisi[key]) {
+      byDivisi[key] = {
+        Divisi: key,
+        JmlPenawaran: 0,
+        Nominal: 0,
+        Realisasi: 0,
+        Batal: 0,
+        Confirm: 0,
+      };
+    }
+    byDivisi[key].JmlPenawaran += Number(r.JmlPenawaran || 0);
+    byDivisi[key].Nominal += Number(r.Nominal || 0);
+    byDivisi[key].Realisasi += Number(r.Realisasi || 0);
+    byDivisi[key].Batal += Number(r.Batal || 0);
+    byDivisi[key].Confirm += Number(r.Confirm || 0);
+  }
+
+  const result = Object.values(byDivisi).map((d) => ({
+    ...d,
+    PresentaseRealisasi:
+      d.Nominal > 0 ? Math.round((d.Realisasi / d.Nominal) * 10000) / 100 : 0,
+    PresentaseBatal:
+      d.Nominal > 0 ? Math.round((d.Batal / d.Nominal) * 10000) / 100 : 0,
+    PresentaseConfirm:
+      d.Nominal > 0 ? Math.round((d.Confirm / d.Nominal) * 10000) / 100 : 0,
+  }));
+
+  const grandTotal = result.reduce(
+    (acc, d) => ({
+      Nominal: acc.Nominal + d.Nominal,
+      Realisasi: acc.Realisasi + d.Realisasi,
+      Batal: acc.Batal + d.Batal,
+      Confirm: acc.Confirm + d.Confirm,
+    }),
+    { Nominal: 0, Realisasi: 0, Batal: 0, Confirm: 0 },
+  );
+
+  return { byDivisi: result, grandTotal };
+};
+
+// 4. Funnel MAP → Realisasi, summarize per divisi
+const getMapFunnel = async (user, bulan, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const rows = await rekapMapService.getRekap({ bulan, tahun });
+
+  const byDivisi = {};
+  for (const r of rows) {
+    const key = r.Divisi;
+    if (!byDivisi[key]) {
+      byDivisi[key] = { Divisi: key, JmlMAP: 0, Nominal: 0, Realisasi: 0 };
+    }
+    byDivisi[key].JmlMAP += Number(r.JmlMAP || 0);
+    byDivisi[key].Nominal += Number(r.Nominal || 0);
+    byDivisi[key].Realisasi += Number(r.Realisasi || 0);
+  }
+
+  return Object.values(byDivisi).map((d) => ({
+    ...d,
+    Presentase:
+      d.Nominal > 0 ? Math.round((d.Realisasi / d.Nominal) * 10000) / 100 : 0,
+  }));
+};
+
+// 5. Proyeksi vs Realisasi — reuse getBrowse, summarize + top-N gap customer
+const getProyeksiVsRealisasiSummary = async (
+  user,
+  startDate,
+  endDate,
+  page = 1,
+  limit = 20,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const rows = await proyeksiVsRealisasiService.getBrowse(dStart, dEnd);
+
+  const totalMemo = rows.reduce((s, r) => s + (r.TotalMemo || 0), 0);
+  const totalRealisasiMemo = rows.reduce(
+    (s, r) => s + (r.RealisasiMemo || 0),
+    0,
+  );
+  const totalRealisasiAll = rows.reduce((s, r) => s + (r.RealisasiAll || 0), 0);
+
+  const withGap = rows
+    .map((r) => ({
+      CusKode: r.CUS_KODE ?? r.CusKode,
+      CusNama: r.CUS_NAMA ?? r.CusNama,
+      JoKode: r.JO_KODE ?? r.JoKode,
+      JoNama: r.JO_NAMA ?? r.JoNama,
+      TotalMemo: r.TotalMemo || r.TOTAL_MEMO || 0,
+      RealisasiMemo: r.RealisasiMemo ?? r.REALISASI_MEMO ?? null,
+      gap:
+        (r.TotalMemo || r.TOTAL_MEMO || 0) -
+        (r.RealisasiMemo || r.REALISASI_MEMO || 0),
+    }))
+    .filter((r) => r.gap > 0)
+    .sort((a, b) => b.gap - a.gap);
+
+  const start = (page - 1) * limit;
+  const paged = withGap.slice(start, start + limit);
+
+  return {
+    totalMemo,
+    totalRealisasiMemo,
+    totalRealisasiAll,
+    gapCustomer: paged,
+    totalGapCount: withGap.length,
+    hasMore: start + limit < withGap.length,
+  };
+};
+
+// 6. Pipeline Menggantung (Memo belum SPK + Penawaran belum Memo/SPK) —
+// reuse getProyeksi mode 1
+const getPipelineMenggantung = async (
+  user,
+  startDate,
+  endDate,
+  page = 1,
+  limit = 20,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const rows = await proyeksiBulananService.getProyeksi(dStart, dEnd);
+  const totalNilai = rows.reduce((s, r) => s + Number(r.Jumlah || 0), 0);
+  const sorted = [...rows].sort(
+    (a, b) => Number(b.Jumlah || 0) - Number(a.Jumlah || 0),
+  );
+
+  const start = (page - 1) * limit;
+  const paged = sorted.slice(start, start + limit).map((r) => ({
+    Customer: r.Customer,
+    NamaSpk: r.NamaSpk,
+    Sales: r.Sales,
+    Divisi: r.Divisi,
+    Jumlah: Number(r.Jumlah) || 0,
+  }));
+
+  return {
+    totalItem: rows.length,
+    totalNilai,
+    items: paged,
+    hasMore: start + limit < sorted.length,
+  };
 };
 
 // ── Dashboard Piutang (AR) ──
@@ -2268,4 +2504,10 @@ module.exports = {
   getSpkVsSjList,
   getSpkTerkirimBelumTagihSummary,
   getSpkTerkirimBelumTagihList,
+  getAchievementSummary,
+  getGrowthYoy,
+  getPenawaranFunnel,
+  getMapFunnel,
+  getProyeksiVsRealisasiSummary,
+  getPipelineMenggantung,
 };
