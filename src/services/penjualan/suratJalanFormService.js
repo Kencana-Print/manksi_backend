@@ -41,6 +41,15 @@ const generateNomorInvoice = async (kodePerush, tanggal, conn) => {
   return `${prefix}/${String(next).padStart(5, "0")}/${tahun}`;
 };
 
+const buildNomorPo = (validDetail) => {
+  const unique = [
+    ...new Set(
+      validDetail.map((r) => (r.KetPo || "").trim()).filter((v) => v !== ""),
+    ),
+  ];
+  return unique.join(", ");
+};
+
 // ─────────────────────────────────────────────────────────
 // GET BY NOMOR (load edit — loaddataall)
 // ─────────────────────────────────────────────────────────
@@ -48,7 +57,7 @@ const getById = async (nomor) => {
   const [[hdr]] = await db.query(
     `SELECT
        h.sj_nomor, DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d') AS sj_tanggal,
-       h.sj_divisi, h.sj_keterangan,
+        h.sj_divisi, h.sj_keterangan, h.sj_no_po,
        h.sj_perush_kode, p.perush_nama,
        h.sj_cus_kode, c.cus_nama, c.cus_alamat, c.cus_kota,
        h.sj_alamat_customer, h.sj_kota_customer,
@@ -234,15 +243,15 @@ const getSpkDetail = async (
   //    (spk_is_so=1, data lama pre-migrasi). SO baru sudah tidak
   //    lagi hidup di tspk.
   const [[soNew]] = await db.query(
-    `SELECT so_nomor AS spk_nomor, so_cmo AS spk_cmo
-     FROM tsalesorder
+    `SELECT so_nomor AS spk_nomor, so_cmo AS spk_cmo, so_nomor_po AS nomorpo
+      FROM tsalesorder
      WHERE so_aktif = 'Y' AND so_nomor = ? AND so_cus_kode = ?`,
     [soNomor, cusKode],
   );
   let soRow = soNew;
   if (!soRow) {
     const [[soLegacy]] = await db.query(
-      `SELECT spk_nomor, spk_cmo FROM tspk
+      `SELECT spk_nomor, spk_cmo, spk_nomor_po AS nomorpo FROM tspk
        WHERE spk_aktif = 'Y' AND spk_nomor = ? AND spk_cus_kode = ? AND spk_is_so = 1`,
       [soNomor, cusKode],
     );
@@ -250,6 +259,7 @@ const getSpkDetail = async (
   }
   if (!soRow) throw new Error("SO Tidak ditemukan di Customer tsb.");
   if (!soRow.spk_cmo) throw new Error("SO tsb belum di Approve oleh CMO.");
+  const nomorPo = soRow.nomorpo || "";
 
   // 2. Jembatani ke SPK PPIC turunan — WAJIB, karena SJ harus nyimpen
   //    nomor turunan (sjd_spk_nomor), bukan nomor SO
@@ -277,8 +287,8 @@ const getSpkDetail = async (
   if (sizeCheck.cnt > 0) {
     const [sizes] = await db.query(
       `SELECT z.spks_nomor, z.spks_size, z.spks_qty,
-              s.spk_nama2, s.spk_ukuran, s.spk_jo_kode, s.spk_harga, s.spk_jumlah
-       FROM tspk_size z
+      s.spk_nama2, s.spk_ukuran, s.spk_jo_kode, s.spk_harga, s.spk_jumlah, s.spk_nomor_po
+        FROM tspk_size z
        INNER JOIN tspk s ON s.spk_nomor = z.spks_nomor
        WHERE z.spks_nomor = ?`,
       [spkNomor],
@@ -288,7 +298,7 @@ const getSpkDetail = async (
         divisiStr === "3" || divisiStr === "4" ? r.spks_size : r.spk_ukuran;
       const sudah = await getSudah(spkNomor, r.spks_size, excludeNomor);
       rows.push({
-        SpkNomor: r.spks_nomor, // ← nomor turunan — inilah yang akan tersimpan ke sjd_spk_nomor
+        SpkNomor: r.spks_nomor,
         NamaSpk: r.spk_nama2,
         Ukuran: ukuran,
         Size: r.spks_size,
@@ -304,6 +314,7 @@ const getSpkDetail = async (
         Uraian: "",
         NoKirim: "",
         IdKirim: 0,
+        KetPo: r.spk_nomor_po || "",
       });
     }
   } else {
@@ -345,6 +356,7 @@ const getSpkDetail = async (
       Uraian: "",
       NoKirim: "",
       IdKirim: 0,
+      KetPo: nomorPo,
     });
   }
 
@@ -388,7 +400,7 @@ const getSpkDetailFromJadwal = async (
   if (sizeCheck.cnt > 0) {
     const [sizes] = await db.query(
       `SELECT z.spks_nomor, z.spks_size, z.spks_qty,
-              s.spk_nama2, s.spk_ukuran, s.spk_jo_kode, s.spk_harga, s.spk_jumlah
+          s.spk_nama2, s.spk_ukuran, s.spk_jo_kode, s.spk_harga, s.spk_jumlah, s.spk_nomor_po
        FROM tspk_size z
        INNER JOIN tspk s ON s.spk_nomor = z.spks_nomor
        WHERE z.spks_nomor = ?`,
@@ -415,16 +427,17 @@ const getSpkDetailFromJadwal = async (
         Uraian: "",
         NoKirim: noKirim,
         IdKirim: idKirim,
+        KetPo: r.spk_nomor_po || "",
       });
     }
   } else {
     const [[spkInfo]] = await db.query(
       `SELECT spk_nomor, spk_nama2, spk_ukuran, spk_jo_kode, spk_harga,
-              spk_jumlah,
-              (spk_prasj + spk_jumlah_kirim) AS sudah,
-              (spk_jumlah - spk_prasj - spk_jumlah_kirim) AS kurang
-       FROM tspk
-       WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
+      spk_jumlah, spk_nomor_po,
+      (spk_prasj + spk_jumlah_kirim) AS sudah,
+      (spk_jumlah - spk_prasj - spk_jumlah_kirim) AS kurang
+      FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
       [spkNomor],
     );
     if (!spkInfo) throw new Error("SPK tidak ditemukan.");
@@ -448,6 +461,7 @@ const getSpkDetailFromJadwal = async (
       Uraian: "",
       NoKirim: noKirim,
       IdKirim: idKirim,
+      KetPo: spkInfo.spk_nomor_po || "",
     });
   }
 
@@ -801,6 +815,8 @@ const save = async (data, userKode, isNew) => {
   const totalJumlah = validDetail.reduce((s, r) => s + Number(r.Jumlah), 0);
   if (totalJumlah === 0) throw new Error("Jumlah SJ masih kosong semua.");
 
+  const nomorPo = buildNomorPo(validDetail);
+
   // Cek tutup buku
   const tutupBuku = await cekTutupBuku(Tanggal, Xminta5);
   if (!tutupBuku.boleh) {
@@ -843,16 +859,17 @@ const save = async (data, userKode, isNew) => {
     if (isNew) {
       await conn.query(
         `INSERT INTO tsj_hdr
-           (sj_nomor, sj_divisi, sj_tanggal, sj_keterangan,
+          (sj_nomor, sj_divisi, sj_tanggal, sj_keterangan, sj_no_po,
             sj_perush_kode, sj_cus_kode, sj_gdg_kode,
             sj_alamat_customer, sj_kota_customer,
             sj_inv_pro, sj_inv_sm, date_create, user_create)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`,
         [
           nomor,
           divisiStr,
           Tanggal,
           Keterangan,
+          nomorPo,
           KodePerush,
           KodeCus,
           GudangKode,
@@ -869,16 +886,17 @@ const save = async (data, userKode, isNew) => {
         : `user_modified = ?, date_modified = NOW()`;
       await conn.query(
         `UPDATE tsj_hdr SET
-           sj_tanggal = ?, sj_keterangan = ?,
-           sj_perush_kode = ?, sj_cus_kode = ?,
-           sj_gdg_kode = ?,
-           sj_alamat_customer = ?, sj_kota_customer = ?,
-           sj_inv_pro = ?,
-           ${updateField}
+          sj_tanggal = ?, sj_keterangan = ?, sj_no_po = ?,
+          sj_perush_kode = ?, sj_cus_kode = ?,
+          sj_gdg_kode = ?,
+          sj_alamat_customer = ?, sj_kota_customer = ?,
+          sj_inv_pro = ?,
+          ${updateField}
          WHERE sj_nomor = ?`,
         [
           Tanggal,
           Keterangan,
+          nomorPo,
           KodePerush,
           KodeCus,
           GudangKode,
@@ -1078,6 +1096,11 @@ const getDataCetak = async (nomor) => {
   if (!normalizedHdr.sj_keterangan && normalizedHdr.sj_ket !== undefined) {
     normalizedHdr.sj_keterangan = normalizedHdr.sj_ket;
   }
+
+  normalizedHdr.keterangan_cetak =
+    (normalizedHdr.sj_keterangan || "").trim() !== ""
+      ? normalizedHdr.sj_keterangan
+      : normalizedHdr.sj_no_po || "";
 
   const [dtl] = await db.query(
     `SELECT d.sjd_spk_nomor, d.sjd_ukuran, d.sjd_jumlah,

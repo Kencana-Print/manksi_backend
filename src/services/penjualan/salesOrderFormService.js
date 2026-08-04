@@ -412,8 +412,8 @@ const saveData = async (payload, user) => {
       if (header.kepentingan_acc === "MINTA ACC") {
         await conn.query(
           `INSERT INTO tspk_pin_prioritas (pin_nomor, pin_tgl_minta, pin_user_minta)
-     VALUES (?, NOW(), ?)
-     ON DUPLICATE KEY UPDATE pin_tgl_minta=NOW(), pin_user_minta=?`,
+            VALUES (?, NOW(), ?)
+            ON DUPLICATE KEY UPDATE pin_tgl_minta=NOW(), pin_user_minta=?`,
           [nomor, user.kode, user.kode],
         );
       } else if (!header.kepentingan_acc) {
@@ -444,8 +444,8 @@ const saveData = async (payload, user) => {
     if (piutang > 100) {
       await conn.query(
         `INSERT INTO tcustomer_pin (cusp_kode, cusp_nomor, cusp_tgl_minta, cusp_user_minta) 
-     VALUES (?, ?, NOW(), ?) 
-     ON DUPLICATE KEY UPDATE cusp_tgl_minta=NOW(), cusp_user_minta=?`,
+          VALUES (?, ?, NOW(), ?) 
+          ON DUPLICATE KEY UPDATE cusp_tgl_minta=NOW(), cusp_user_minta=?`,
         [kodeCusUtama, nomor, user.kode, user.kode],
       );
     } else {
@@ -458,7 +458,7 @@ const saveData = async (payload, user) => {
     await conn.query(`DELETE FROM tbarang WHERE brg_kode = ?`, [nomor]);
     await conn.query(
       `INSERT INTO tbarang (brg_kode, brg_name, brg_ukuran, brg_kain, brg_finishing, brg_harga, brg_divisi, user_create, date_create) 
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         nomor,
         header.spk_nama,

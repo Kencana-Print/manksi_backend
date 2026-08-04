@@ -70,6 +70,8 @@ const mintaBarangRoutes = require("./routes/garmen/mintaBarangRoutes");
 const mintaBarangFormRoutes = require("./routes/garmen/mintaBarangFormRoutes");
 const realisasiBarangRoutes = require("./routes/garmen/realisasiBarangRoutes");
 const realisasiBarangFormRoutes = require("./routes/garmen/realisasiBarangFormRoutes");
+const returBarangRoutes = require("./routes/garmen/returBarangRoutes");
+const returBarangFormRoutes = require("./routes/garmen/returBarangFormRoutes");
 const permintaanPembelianRoutes = require("./routes/garmen/permintaanPembelianRoutes");
 const permintaanPembelianFormRoutes = require("./routes/garmen/permintaanPembelianFormRoutes");
 const mutasiOutBarangRoutes = require("./routes/garmen/mutasiOutBarangRoutes");
@@ -353,6 +355,8 @@ app.use("/api/garmen/barang/permintaan", mintaBarangRoutes);
 app.use("/api/garmen/barang/permintaan/form", mintaBarangFormRoutes);
 app.use("/api/garmen/barang/realisasi", realisasiBarangRoutes);
 app.use("/api/garmen/barang/realisasi/form", realisasiBarangFormRoutes);
+app.use("/api/garmen/barang/retur-barang", returBarangRoutes);
+app.use("/api/garmen/barang/retur-barang/form", returBarangFormRoutes);
 app.use("/api/garmen/barang/permintaan-pembelian", permintaanPembelianRoutes);
 app.use(
   "/api/garmen/barang/permintaan-pembelian/form",
