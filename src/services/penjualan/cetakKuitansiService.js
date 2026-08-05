@@ -86,18 +86,20 @@ const searchInvoice = async (q = "", page = 1, limit = 50) => {
 // HITUNG TOTAL — sesuai Invoice.hitung() (disc/PPN/PPh), direplikasi
 // identik dgn logic yg sudah ada di InvoiceFormView/invoiceFormService.
 // ─────────────────────────────────────────────────────────
+const round = (v) => Math.round(Number(v) || 0);
+
 const computeTotal = (detail, disc, stsPpn, ppn, pph) => {
   const totalBarang = detail.reduce(
-    (s, r) => s + Number(r.invd_harga) * Number(r.invd_jumlah),
+    (s, r) => s + round(Number(r.invd_harga) * Number(r.invd_jumlah)),
     0,
   );
-  const discVal = Number(disc || 0);
+  const discVal = round(disc);
   if (!stsPpn) return totalBarang - discVal;
   if (pph === "PPh") {
-    return totalBarang - discVal + (totalBarang * Number(ppn)) / 100;
+    return totalBarang - discVal + round((totalBarang * Number(ppn)) / 100);
   }
   const baseAfterDisc = totalBarang - discVal;
-  return baseAfterDisc + (baseAfterDisc * Number(ppn)) / 100;
+  return baseAfterDisc + round((baseAfterDisc * Number(ppn)) / 100);
 };
 
 // ─────────────────────────────────────────────────────────

@@ -336,7 +336,7 @@ const generateXlsxBuffer = async (
     "Email Pembeli",
     "ID TKU Pembeli",
   ];
-  shFaktur.getRow(3).values = [null, ...fakturHeaders];
+  shFaktur.getRow(3).values = fakturHeaders;
 
   const detailRows = [];
   invoices.forEach((inv, idx) => {
@@ -357,9 +357,9 @@ const generateXlsxBuffer = async (
       : "04";
 
     const row = shFaktur.getRow(4 + idx);
-    row.getCell(1).value = baris;
+    row.getCell(1).value = String(baris);
     row.getCell(2).value = new Date(inv.inv_tanggal);
-    row.getCell(2).numFmt = "dd/mm/yyyy";
+    row.getCell(2).numFmt = "mm-dd-yy";
     row.getCell(3).value = "Normal";
     row.getCell(4).value = kodeTransaksi;
     row.getCell(5).value = " ";
@@ -432,15 +432,15 @@ const generateXlsxBuffer = async (
     row.getCell(3).numFmt = "@";
     row.getCell(4).value = d.nama;
     row.getCell(5).value = d.satuan;
-    row.getCell(6).value = d.hargaSatuan;
-    row.getCell(7).value = d.jumlah;
-    row.getCell(8).value = d.diskon;
-    row.getCell(9).value = d.dpp;
-    row.getCell(10).value = d.dppNilaiLain;
-    row.getCell(11).value = d.tarifPpn;
-    row.getCell(12).value = d.ppn;
-    row.getCell(13).value = d.tarifPpnbm;
-    row.getCell(14).value = d.ppnbm;
+    row.getCell(6).value = Number(d.hargaSatuan);
+    row.getCell(7).value = Number(d.jumlah);
+    row.getCell(8).value = Number(d.diskon) || 0;
+    row.getCell(9).value = Number(d.dpp);
+    row.getCell(10).value = Number(d.dppNilaiLain);
+    row.getCell(11).value = Number(d.tarifPpn) || 0;
+    row.getCell(12).value = Number(d.ppn);
+    row.getCell(13).value = Number(d.tarifPpnbm) || 0;
+    row.getCell(14).value = Number(d.ppnbm) || 0;
   });
 
   shDetail.getRow(2 + detailRows.length).getCell(1).value = "END";

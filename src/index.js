@@ -65,6 +65,8 @@ const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcod
 const stbjRoutes = require("./routes/garmen/stbjRoutes");
 const stbjFormRoutes = require("./routes/garmen/stbjFormRoutes");
 const cetakBkbjRoutes = require("./routes/garmen/cetakBkbjRoutes");
+const koreksiStokBarangJadiRoutes = require("./routes/garmen/koreksiStokBarangJadiRoutes");
+const koreksiStokBarangJadiFormRoutes = require("./routes/garmen/koreksiStokBarangJadiFormRoutes");
 
 const mintaBarangRoutes = require("./routes/garmen/mintaBarangRoutes");
 const mintaBarangFormRoutes = require("./routes/garmen/mintaBarangFormRoutes");
@@ -85,6 +87,7 @@ const poNonBahanFormRoutes = require("./routes/garmen/poNonBahanFormRoutes");
 const bpbNonBahanRoutes = require("./routes/garmen/bpbNonBahanRoutes");
 const bpbNonBahanFormRoutes = require("./routes/garmen/bpbNonBahanFormRoutes");
 const returPembelianBarangRoutes = require("./routes/garmen/returPembelianBarangRoutes");
+const returPembelianFormRoutes = require("./routes/garmen/returPembelianFormRoutes");
 
 const poJasaRoutes = require("./routes/garmen/poJasaRoutes");
 const poJasaFormRoutes = require("./routes/garmen/poJasaFormRoutes");
@@ -111,6 +114,11 @@ const planSpkVsRealisasiRoutes = require("./routes/garmen/planSpkVsRealisasiRout
 
 const mutasiProduksiRoutes = require("./routes/garmen/mutasiProduksiRoutes");
 const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRoutes");
+
+const pemakaianObatRoutes = require("./routes/garmen/pemakaianObatRoutes");
+const pemakaianObatFormRoutes = require("./routes/garmen/pemakaianObatFormRoutes");
+const poPaperprintRoutes = require("./routes/garmen/poPaperprintRoutes");
+const poPaperprintFormRoutes = require("./routes/garmen/poPaperprintFormRoutes");
 
 const lhkPolaRoutes = require("./routes/garmen/lhkPolaRoutes");
 const lhkPolaFormRoutes = require("./routes/garmen/lhkPolaFormRoutes");
@@ -354,6 +362,11 @@ app.use(
 app.use("/api/garmen/stbj", stbjRoutes);
 app.use("/api/garmen/stbj-form", stbjFormRoutes);
 app.use("/api/garmen/bahan-jadi/cetak-bkbj", cetakBkbjRoutes);
+app.use("/api/garmen/bahan-jadi/koreksi-stok", koreksiStokBarangJadiRoutes);
+app.use(
+  "/api/garmen/bahan-jadi/koreksi-stok/form",
+  koreksiStokBarangJadiFormRoutes,
+);
 
 app.use("/api/garmen/barang/permintaan", mintaBarangRoutes);
 app.use("/api/garmen/barang/permintaan/form", mintaBarangFormRoutes);
@@ -377,6 +390,7 @@ app.use("/api/garmen/barang/po-nonbahan-form", poNonBahanFormRoutes);
 app.use("/api/garmen/barang/bpb-nonbahan", bpbNonBahanRoutes);
 app.use("/api/garmen/barang/bpb-nonbahan/form", bpbNonBahanFormRoutes);
 app.use("/api/garmen/barang/retur-pembelian", returPembelianBarangRoutes);
+app.use("/api/garmen/barang/retur-pembelian/form", returPembelianFormRoutes);
 
 app.use("/api/garmen/po-jasa", poJasaRoutes);
 app.use("/api/garmen/po-jasa-form", poJasaFormRoutes);
@@ -421,6 +435,11 @@ app.use(
 
 app.use("/api/garmen/mutasi-produksi", mutasiProduksiRoutes);
 app.use("/api/garmen/mutasi-produksi-form", mutasiProduksiFormRoutes);
+
+app.use("/api/garmen/pemakaian-obat", pemakaianObatRoutes);
+app.use("/api/garmen/pemakaian-obat/form", pemakaianObatFormRoutes);
+app.use("/api/garmen/po-paperprint", poPaperprintRoutes);
+app.use("/api/garmen/po-paperprint/form", poPaperprintFormRoutes);
 
 app.use("/api/garmen/lhk-pola", lhkPolaRoutes);
 app.use("/api/garmen/lhk-pola-form", lhkPolaFormRoutes);
