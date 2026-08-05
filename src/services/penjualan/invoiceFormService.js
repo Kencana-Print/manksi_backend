@@ -314,8 +314,8 @@ const loadBarangDetail = async (kode, perushKode) => {
 const cekAdaSjSemua = (detail) => {
   for (const row of detail) {
     const namaSpk = row.NamaSpk || row.spk_nama2 || "";
-    const sjNomor = row.SjNomor || "";
-    if (namaSpk && (!sjNomor || sjNomor === "" || sjNomor === "-")) {
+    const sjNomor = row.SjNomor ?? "";
+    if (namaSpk && sjNomor === "") {
       return false;
     }
   }
@@ -756,21 +756,23 @@ const getDataCetak = async (nomor) => {
     [nomor],
   );
 
+  const round = (v) => Math.round(Number(v) || 0);
+
   const totalBarang = dtl.reduce(
-    (s, r) => s + Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0),
+    (s, r) => s + round(Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0)),
     0,
   );
-  const disc = Number(hdr.inv_disc || 0);
+  const disc = round(hdr.inv_disc || 0);
 
   let totalPpn = 0;
   let grandTotal;
   if (hdr.inv_sts_ppn === 1) {
     if (hdr.inv_pph === "PPh") {
-      totalPpn = totalBarang * (Number(hdr.inv_ppn) / 100);
+      totalPpn = round(totalBarang * (Number(hdr.inv_ppn) / 100));
       grandTotal = totalBarang - disc + totalPpn;
     } else {
       const baseAfterDisc = totalBarang - disc;
-      totalPpn = baseAfterDisc * (Number(hdr.inv_ppn) / 100);
+      totalPpn = round(baseAfterDisc * (Number(hdr.inv_ppn) / 100));
       grandTotal = baseAfterDisc + totalPpn;
     }
   } else {
@@ -781,7 +783,7 @@ const getDataCetak = async (nomor) => {
     `SELECT kredit FROM piutang_debet WHERE nota = ?`,
     [nomor],
   );
-  const uangMuka = debetRow ? Number(debetRow.kredit) || 0 : 0;
+  const uangMuka = round(debetRow ? debetRow.kredit : 0);
   const nilaiPiutang = grandTotal - uangMuka;
 
   return {

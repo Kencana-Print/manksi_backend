@@ -84,6 +84,7 @@ const poNonBahanRoutes = require("./routes/garmen/poNonBahanRoutes");
 const poNonBahanFormRoutes = require("./routes/garmen/poNonBahanFormRoutes");
 const bpbNonBahanRoutes = require("./routes/garmen/bpbNonBahanRoutes");
 const bpbNonBahanFormRoutes = require("./routes/garmen/bpbNonBahanFormRoutes");
+const returPembelianBarangRoutes = require("./routes/garmen/returPembelianBarangRoutes");
 
 const poJasaRoutes = require("./routes/garmen/poJasaRoutes");
 const poJasaFormRoutes = require("./routes/garmen/poJasaFormRoutes");
@@ -375,6 +376,7 @@ app.use("/api/garmen/barang/po-nonbahan", poNonBahanRoutes);
 app.use("/api/garmen/barang/po-nonbahan-form", poNonBahanFormRoutes);
 app.use("/api/garmen/barang/bpb-nonbahan", bpbNonBahanRoutes);
 app.use("/api/garmen/barang/bpb-nonbahan/form", bpbNonBahanFormRoutes);
+app.use("/api/garmen/barang/retur-pembelian", returPembelianBarangRoutes);
 
 app.use("/api/garmen/po-jasa", poJasaRoutes);
 app.use("/api/garmen/po-jasa-form", poJasaFormRoutes);

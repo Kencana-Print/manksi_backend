@@ -672,19 +672,21 @@ const getDataCetak = async (nomor) => {
     [nomor],
   );
 
+  const round = (v) => Math.round(Number(v) || 0);
+
   const totalBarang = dtl.reduce(
-    (s, r) => s + Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0),
+    (s, r) => s + round(Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0)),
     0,
   );
 
   let totalPpn = 0;
   let grandTotal = totalBarang;
   if (Number(hdr.inv_sts_ppn) === 1) {
-    totalPpn = totalBarang * (Number(hdr.inv_ppn) / 100);
-    grandTotal = totalBarang * ((100 + Number(hdr.inv_ppn)) / 100);
+    totalPpn = round(totalBarang * (Number(hdr.inv_ppn) / 100));
+    grandTotal = totalBarang + totalPpn;
   }
 
-  const uangMuka = await getDebet(nomor);
+  const uangMuka = round(await getDebet(nomor));
   const nilaiPiutang = grandTotal - uangMuka;
 
   return {
