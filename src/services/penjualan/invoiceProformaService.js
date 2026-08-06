@@ -134,7 +134,7 @@ const deleteData = async (nomor) => {
     const tglTrs = new Date(hdr[0].inv_tanggal);
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
 
-    if (zdtClose && tglTrs <= zdtClose) {
+    if (zdtClose && tglTrs < zdtClose) {
       throw new Error(
         "Transaksi tersebut sudah close (Tutup Buku). Tidak bisa dihapus.",
       );
