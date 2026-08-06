@@ -222,13 +222,15 @@ const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
   const baseQuery = `
     FROM (
       SELECT 
-        spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
+        spk_nomor AS Nomor, spk_nama AS Nama,
+        DATE_FORMAT(spk_tanggal, '%d-%m-%Y') AS Tanggal,
         spk_jumlah AS Jumlah, spk_ukuran AS Ukuran, spk_kain AS Kain,
         spk_finishing AS Finishing, spk_aktif AS Aktif
       FROM tspk
       UNION ALL
       SELECT 
-        mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_tanggal AS Tanggal,
+        mspk_nomor AS Nomor, mspk_nama AS Nama,
+        DATE_FORMAT(mspk_tanggal, '%d-%m-%Y') AS Tanggal,
         mspk_jumlah AS Jumlah, mspk_ukuran AS Ukuran, mspk_kain AS Kain,
         mspk_finishing AS Finishing, "Y" AS Aktif
       FROM tmemospk
