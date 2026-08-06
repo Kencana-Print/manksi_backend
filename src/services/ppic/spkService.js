@@ -8,6 +8,7 @@ const getBrowseList = async (filters) => {
     workshop,
     customer,
     userCabang,
+    userKode,
     canLihatCus,
     canLihatHarga,
   } = filters;
@@ -29,8 +30,8 @@ const getBrowseList = async (filters) => {
     userCabang !== "ADMIN" &&
     userCabang !== ""
   ) {
-    whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL)`;
-    params.push(userCabang);
+    whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?)`;
+    params.push(userCabang, userKode || "");
   }
 
   // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus), dan
