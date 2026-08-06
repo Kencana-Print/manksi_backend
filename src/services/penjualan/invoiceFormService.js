@@ -403,10 +403,10 @@ const save = async (data, userKode, isNew) => {
     NomorInv = "",
     Xminta5 = "",
     Xurut5 = 0,
-    ApvOverride, // 'N' | '' | undefined — hasil keputusan frontend soal approval
+    ApvOverride,
   } = data;
 
-  const Disc = Math.round(Number(DiscRaw) || 0);
+  const Disc = Number(DiscRaw) || 0;
 
   // ── Validasi dasar ──────────────────────────────────────
   if (!KodePerush) throw new Error("Perusahaan belum di isi.");
@@ -544,16 +544,16 @@ const save = async (data, userKode, isNew) => {
 
       await conn.query(
         `INSERT INTO tinv_dtl
-           (invd_inv_nomor, invd_sj_nomor, invd_spk_nomor,
+          (invd_inv_nomor, invd_sj_nomor, invd_spk_nomor,
             invd_ukuran, invd_jumlah, invd_harga, invd_nourut)
-         VALUES (?,?,?,?,?,?,?)`,
+        VALUES (?,?,?,?,?,?,?)`,
         [
           nomor,
           sjNomor,
           row.Kode,
           row.Ukuran || "",
           Number(row.Jumlah),
-          Math.round(Number(row.Harga || 0)),
+          Number(row.Harga || 0), // ⚠️ FIX: simpan apa adanya, jangan dibulatkan
           urut,
         ],
       );

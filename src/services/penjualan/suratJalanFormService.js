@@ -593,10 +593,18 @@ const getJadwalKirimList = async (
 const cekPiutang = async (spkNomor, cusKode) => {
   // Cek korporasi dulu
   const [[cus]] = await db.query(
-    `SELECT cus_korporasi FROM tcustomer WHERE cus_kode = ?`,
+    `SELECT cus_korporasi, cus_nama FROM tcustomer WHERE cus_kode = ?`,
     [cusKode],
   );
   if (cus?.cus_korporasi === "Y") return { lunas: true, korporasi: true };
+
+  // ⚠️ Customer RITAILER dan DARI WEB dideteksi dari Cus_nama (tidak
+  // ada kolom tipe khusus di tcustomer) — kedua kanal ini dilewati
+  // dari validasi piutang + otorisasi, sama seperti korporasi.
+  const namaUpper = (cus?.cus_nama || "").toUpperCase();
+  if (namaUpper.includes("RITAILER") || namaUpper.includes("DARI WEB")) {
+    return { lunas: true, korporasi: false, skipAlasan: "RITAILER/WEB" };
+  }
 
   const [rows] = await db.query(
     `SELECT flag, flag2 FROM v_cekpiutang
