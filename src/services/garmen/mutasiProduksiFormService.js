@@ -300,6 +300,54 @@ const LINI_TO_DIVISI = {
   6: "KOLI", // Lipat ke Koli
 };
 
+// ─────────────────────────────────────────────────────────
+// GET PLANNING PER SPK (sumber ke-2, selain Planning SPK PPIC)
+// Baca dari tplanningspk (menu Garmen > Planning per SPK).
+// Kolom granular (cutting/cetak/sublim/bordir/jahit/finishing/kirim)
+// dipetakan ke jenisMutasi/kelompok yang setara dengan divisiMap PPIC.
+// ⚠️ Tidak ada kolom setara utk kelompok "DTF" di tplanningspk — DTF
+// tetap hanya divalidasi dari sumber PPIC.
+// ─────────────────────────────────────────────────────────
+const JENIS_TO_KOLOM_PLANSPK = {
+  1: "cutting",
+  5: "jahit",
+  6: "finishing", // Lipat ke Koli → planning "finishing" per SPK
+};
+const getPlanningPerSpk = async (
+  nomorSpk,
+  jenisMutasi,
+  kelompok = "",
+  tglDibuat = "",
+) => {
+  let kolom = JENIS_TO_KOLOM_PLANSPK[Number(jenisMutasi)];
+  if (kelompok === "BORDIR") kolom = "bordir";
+  if (!kolom) return [];
+  const params = [nomorSpk];
+  let tglFilter = "";
+  // Sama seperti PPIC: filter cutting dgn tanggal SPK dibuat, cegah
+  // planning yg target-nya lebih awal dari SPK-nya eksis.
+  if (kolom === "cutting" && tglDibuat) {
+    tglFilter = `AND plan_tanggal >= ?`;
+    params.push(tglDibuat);
+  }
+  const [rows] = await db.query(
+    `SELECT plan_tanggal AS tanggal, plan_${kolom} AS jumlah
+     FROM tplanningspk
+     WHERE plan_spk = ? AND plan_${kolom} <> 0 ${tglFilter}
+     ORDER BY plan_tanggal`,
+    params,
+  );
+  return rows.map((r) => ({
+    no_planning: "", // tidak ada nomor header di tplanningspk
+    tanggal: r.tanggal
+      ? new Date(r.tanggal).toISOString().substring(0, 10)
+      : "",
+    jumlah: Number(r.jumlah) || 0,
+    status: "PLANNING SPK", // penanda sumber, biar frontend bisa bedakan
+    line_kelompok: null,
+  }));
+};
+
 const getPlanningPpic = async (
   nomorSpk,
   jenisMutasi,
@@ -307,53 +355,62 @@ const getPlanningPpic = async (
   tglDibuat = "",
 ) => {
   const divisiMap = {
-    1: "CUTTING", // Potong ke QC Ptg
-    2: "", // QC Ptg ke Cetak → tidak ada planning
-    3: "", // Cetak ke QC Cetak → tidak ada planning
-    4: "", // DC ke Jahit → tidak ada planning
-    5: "SEWING", // Jahit ke Lipat
-    6: "KOLI", // Lipat ke Koli
+    1: "CUTTING",
+    2: "",
+    3: "",
+    4: "",
+    5: "SEWING",
+    6: "KOLI",
   };
   let divisi = divisiMap[String(jenisMutasi)];
   if (kelompok === "BORDIR") divisi = "BORDIR";
   if (kelompok === "PRES DTF" || kelompok === "DTF") divisi = "DTF";
-  if (!divisi) return [];
 
-  const params = [nomorSpk, divisi];
-  let kelompokFilter = "";
-  if (divisi === "SEWING" && kelompok && kelompok.startsWith("LINE")) {
-    kelompokFilter = `AND d.plan_line_kelompok = ?`;
-    params.push(kelompok);
+  let ppicRows = [];
+  if (divisi) {
+    const params = [nomorSpk, divisi];
+    let kelompokFilter = "";
+    if (divisi === "SEWING" && kelompok && kelompok.startsWith("LINE")) {
+      kelompokFilter = `AND d.plan_line_kelompok = ?`;
+      params.push(kelompok);
+    }
+    let tglFilter = "";
+    if (divisi === "CUTTING" && tglDibuat) {
+      tglFilter = `AND d.plan_tgl_jadwal >= ?`;
+      params.push(tglDibuat);
+    }
+    const [rows] = await db.query(
+      `SELECT
+         d.plan_pl_nomor                             AS no_planning,
+         DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d')  AS tanggal,
+         d.plan_qty_jadwal                           AS jumlah,
+         'PLANNING PPIC'                             AS status,
+         d.plan_line_kelompok                        AS line_kelompok
+       FROM tplan_ppic_dtl2 d
+       INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
+       WHERE h.pl_close = 'N'
+         AND d.plan_spk = ?
+         AND d.plan_divisi = ?
+         AND d.plan_qty_jadwal <> 0
+         ${kelompokFilter}
+         ${tglFilter}
+       ORDER BY d.plan_tgl_jadwal`,
+      params,
+    );
+    ppicRows = rows;
   }
 
-  // Khusus Cutting (Potong ke QC Potong): planning yang target tanggalnya
-  // lebih awal dari tanggal SPK dibuat tidak masuk akal ditampilkan
-  // (target cutting sebelum SPK-nya eksis) — disembunyikan dari daftar.
-  let tglFilter = "";
-  if (divisi === "CUTTING" && tglDibuat) {
-    tglFilter = `AND d.plan_tgl_jadwal >= ?`;
-    params.push(tglDibuat);
-  }
-
-  const [rows] = await db.query(
-    `SELECT
-       d.plan_pl_nomor                             AS no_planning,
-       DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d')  AS tanggal,
-       d.plan_qty_jadwal                           AS jumlah,
-       d.plan_divisi                               AS status,
-       d.plan_line_kelompok                        AS line_kelompok
-     FROM tplan_ppic_dtl2 d
-     INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
-     WHERE h.pl_close = 'N'
-       AND d.plan_spk = ?
-       AND d.plan_divisi = ?
-       AND d.plan_qty_jadwal <> 0
-       ${kelompokFilter}
-       ${tglFilter}
-     ORDER BY d.plan_tgl_jadwal`,
-    params,
+  // ← TAMBAHAN: union dengan Planning per SPK (tplanningspk)
+  const perSpkRows = await getPlanningPerSpk(
+    nomorSpk,
+    jenisMutasi,
+    kelompok,
+    tglDibuat,
   );
-  return rows;
+
+  return [...ppicRows, ...perSpkRows].sort((a, b) =>
+    (a.tanggal || "").localeCompare(b.tanggal || ""),
+  );
 };
 
 // ─────────────────────────────────────────────────────────
@@ -709,6 +766,24 @@ const cekKomponen = async (nomorSpk, lini) => {
   return true; // Lini tidak dikenal → lewati
 };
 
+// ⚠️ FIX: sebelumnya cuma baca tplan_ppic_dtl2 (Planning SPK PPIC).
+// Sekarang union dengan tplanningspk (Planning per SPK, menu Garmen)
+// utk divisi CUTTING & KOLI — 2 divisi yg punya kolom setara jelas
+// (plan_cutting, plan_finishing). Ini fungsi BLOCKING yg dipanggil dari
+// cekGudangAsal (POST /cek-gudang-asal) saat pilih Jenis Mutasi/Lini
+// Asal — sumber pesan error di screenshot.
+const DIVISI_TO_KOLOM_PLANSPK = {
+  CUTTING: "cutting",
+  KOLI: "finishing",
+  // ⚠️ "SEWING" SENGAJA TIDAK dipetakan — divisi ini dipakai untuk 2
+  // gudang berbeda konteksnya (GP002/GP017 = Cetak, GP003/GP018 =
+  // Jahit), sementara tplanningspk punya kolom terpisah utk keduanya
+  // (plan_cetak vs plan_jahit). Saya tidak berani nebak yang mana tanpa
+  // konfirmasi — kalau nanti muncul kasus serupa utk gudang Cetak/Jahit,
+  // kasih tahu supaya saya pisahkan mapping-nya per gudang bukan per
+  // string "SEWING" generik.
+};
+
 // ─────────────────────────────────────────────────────────
 // CEK PLANNING SUDAH ADA (isplanning_*)
 // Sesuai Delphi — cek per jenis lini di tplan_ppic_dtl2
@@ -722,7 +797,16 @@ const cekPlanning = async (nomorSpk, divisi) => {
        AND d.plan_qty_jadwal <> 0`,
     [nomorSpk, divisi],
   );
-  return Number(row.jml) > 0;
+  if (Number(row.jml) > 0) return true;
+
+  const kolom = DIVISI_TO_KOLOM_PLANSPK[divisi];
+  if (!kolom) return false;
+
+  const [[row2]] = await db.query(
+    `SELECT COUNT(*) AS jml FROM tplanningspk WHERE plan_spk = ? AND plan_${kolom} <> 0`,
+    [nomorSpk],
+  );
+  return Number(row2.jml) > 0;
 };
 
 // ─────────────────────────────────────────────────────────
@@ -1482,4 +1566,5 @@ module.exports = {
   cekPlanningKosong,
   syncApprovalNoPlan,
   getApprovalNoPlanStatus,
+  getPlanningPerSpk,
 };
