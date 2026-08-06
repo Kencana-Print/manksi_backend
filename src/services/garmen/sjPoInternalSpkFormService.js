@@ -466,20 +466,41 @@ const loadBahan = async ({ kode, nomorSpk, existingRows = [] }) => {
 // CEK KOMPONEN IDENTIFIKASI — replikasi cekkomponen(). Cuma dipakai
 // internal saat validasi F10 (tidak diekspos endpoint sendiri, sama
 // seperti Delphi yang cuma nge-gate saat simpan, bukan interaktif).
+// ⚠️ FIX: tabel identitas Cetak & Bordir SUDAH DIGABUNG jadi satu
+// (tspk_komponen_cetak_bordir), dibedakan lewat kolom kcb_proses
+// ('SABLON'/'SUBLIM' = cetak, 'BORDIR' = bordir). Tabel lama
+// tspk_komponen_cetak & tspk_komponen_bordir yang dicek sebelumnya
+// SUDAH TIDAK DIPAKAI LAGI — itu sebabnya validasi selalu gagal
+// walau user sudah mengisi identitas komponen lewat form barunya.
 // ─────────────────────────────────────────────────────────
 const cekKomponenIdentifikasi = async (nomorSpk, jenis) => {
-  const tableMap = {
-    POTONG: "tspk_komponen_potong",
-    CETAK: "tspk_komponen_cetak",
-    BORDIR: "tspk_komponen_bordir",
-  };
-  const table = tableMap[jenis];
-  if (!table) return true;
-  const [rows] = await db.query(
-    `SELECT COUNT(*) AS jml FROM ${table} WHERE sk_nomor = ?`,
-    [nomorSpk],
-  );
-  return Number(rows[0]?.jml) > 0;
+  if (jenis === "POTONG") {
+    const [rows] = await db.query(
+      `SELECT COUNT(*) AS jml FROM tspk_komponen_potong WHERE sk_nomor = ?`,
+      [nomorSpk],
+    );
+    return Number(rows[0]?.jml) > 0;
+  }
+
+  if (jenis === "CETAK") {
+    const [rows] = await db.query(
+      `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
+       WHERE kcb_nomor = ? AND kcb_proses IN ('SABLON', 'SUBLIM')`,
+      [nomorSpk],
+    );
+    return Number(rows[0]?.jml) > 0;
+  }
+
+  if (jenis === "BORDIR") {
+    const [rows] = await db.query(
+      `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
+       WHERE kcb_nomor = ? AND kcb_proses = 'BORDIR'`,
+      [nomorSpk],
+    );
+    return Number(rows[0]?.jml) > 0;
+  }
+
+  return true;
 };
 
 // ─────────────────────────────────────────────────────────

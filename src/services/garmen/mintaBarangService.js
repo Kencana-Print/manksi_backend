@@ -142,20 +142,18 @@ const deleteData = async (nomor, userCabang) => {
 
     const data = rows[0];
 
-    // Validasi Cabang
     if (userCabang && data.min_cab !== userCabang) {
       throw new Error("Bukan cabang Anda.");
     }
 
-    // Validasi Status
     if (data.sts !== "OPEN") {
       throw new Error(`Sudah ${data.sts}. Tidak bisa dihapus.`);
     }
 
-    // Validasi Tutup Buku
     const tglTrs = new Date(data.min_tanggal);
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    if (tglTrs <= zdtClose) {
+    if (tglTrs < zdtClose) {
+      // ⬅ FIX: sebelumnya <=, konsisten dgn modul lain (SJ, Invoice, Mutasi Produksi)
       throw new Error(
         "Transaksi tsb sudah close (Tutup Buku). Tidak bisa dihapus.",
       );
@@ -164,7 +162,6 @@ const deleteData = async (nomor, userCabang) => {
     await conn.query(`DELETE FROM tgarmenminta_hdr WHERE min_nomor = ?`, [
       nomor,
     ]);
-    // Note: Detail terhapus otomatis jika ada cascade di database, jika tidak:
     await conn.query(`DELETE FROM tgarmenminta_dtl WHERE mind_nomor = ?`, [
       nomor,
     ]);
