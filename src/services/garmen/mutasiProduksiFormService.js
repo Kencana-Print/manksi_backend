@@ -941,6 +941,7 @@ const getById = async (nomor) => {
   );
 
   let finalDetail = dtlRows;
+  let dcHasProof = true;
 
   if (hdr.MPH_gdgasal === "GP032") {
     // Load komponen proof + terima + sudah DC
@@ -950,40 +951,49 @@ const getById = async (nomor) => {
       getSudahGp032(hdr.MPH_SPK_nomor),
     ]);
 
-    finalDetail = kompoRows.map((r) => {
-      const saved = dtlRows.find(
-        (d) => d.mpd_bhn_kode === r.kode && d.mpd_size === r.size,
-      );
-      const terima = terimaRows.find(
-        (t) => t.kode === r.kode && t.size === r.size,
-      );
-      const sudah = sudahRows.find(
-        (s) => s.kode === r.kode && s.size === r.size,
-      );
-      const tq = Number(terima?.qty) || 0;
-      const sq = Number(sudah?.qty) || 0;
+    dcHasProof = kompoRows.length > 0;
 
-      return {
-        mpd_bhn_kode: r.kode,
-        mpd_nama: r.nama,
-        mpd_satuan: r.satuan,
-        mpd_size: r.size || "",
-        qtyorder: Number(r.qtyorder) || 0,
-        mpd_lhk: 0,
-        mpd_jumlah: Number(saved?.mpd_jumlah) || 0,
-        mpd_jumlah_bs: 0,
-        mpd_jumlah_sablon: 0,
-        mpd_jumlah_kain: 0,
-        mpd_gantibs: 0,
-        mpd_panjang: 0,
-        mpd_lebar: 0,
-        terima: tq,
-        // sudah = sudah DC - jumlah yang tersimpan (sesuai Delphi: sudah - jumlah)
-        sudah: sq - (Number(saved?.mpd_jumlah) || 0),
-        kurang: (Number(r.qtyorder) || 0) - sq,
-        stok: tq - sq,
-      };
-    });
+    // ⚠️ FIX: kalau Proof Garmen kosong, JANGAN timpa finalDetail jadi
+    // array kosong — biarkan tetap dtlRows (baris manual yang sudah
+    // tersimpan sebelumnya). Sebelumnya finalDetail SELALU di-replace
+    // dengan hasil .map() dari kompoRows, walau kompoRows = [] — jadi
+    // baris manual yang sudah diisi user hilang setiap kali dibuka edit.
+    if (dcHasProof) {
+      finalDetail = kompoRows.map((r) => {
+        const saved = dtlRows.find(
+          (d) => d.mpd_bhn_kode === r.kode && d.mpd_size === r.size,
+        );
+        const terima = terimaRows.find(
+          (t) => t.kode === r.kode && t.size === r.size,
+        );
+        const sudah = sudahRows.find(
+          (s) => s.kode === r.kode && s.size === r.size,
+        );
+        const tq = Number(terima?.qty) || 0;
+        const sq = Number(sudah?.qty) || 0;
+
+        return {
+          mpd_bhn_kode: r.kode,
+          mpd_nama: r.nama,
+          mpd_satuan: r.satuan,
+          mpd_size: r.size || "",
+          qtyorder: Number(r.qtyorder) || 0,
+          mpd_lhk: 0,
+          mpd_jumlah: Number(saved?.mpd_jumlah) || 0,
+          mpd_jumlah_bs: 0,
+          mpd_jumlah_sablon: 0,
+          mpd_jumlah_kain: 0,
+          mpd_gantibs: 0,
+          mpd_panjang: 0,
+          mpd_lebar: 0,
+          terima: tq,
+          sudah: sq - (Number(saved?.mpd_jumlah) || 0),
+          kurang: (Number(r.qtyorder) || 0) - sq,
+          stok: tq - sq,
+        };
+      });
+    }
+    // else: finalDetail tetap dtlRows (baris manual apa adanya)
   }
 
   // Planning tersimpan
@@ -1074,6 +1084,7 @@ const getById = async (nomor) => {
     isClose,
     pin5Status,
     noPlanStatus, // ← tambahan: "", "MINTA", "ACC", "TOLAK"
+    dcHasProof,
   };
 };
 
