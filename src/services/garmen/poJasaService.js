@@ -326,7 +326,7 @@ const save = async (data, userKode, isNew) => {
 // ─────────────────────────────────────────────────────────
 const deleteData = async (nomor, userCab) => {
   const [[row]] = await db.query(
-    `SELECT pojh_cab, DATE(date_create) AS tgl_create FROM tpojasa_hdr WHERE pojh_nomor = ?`,
+    `SELECT pojh_cab, DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_create FROM tpojasa_hdr WHERE pojh_nomor = ?`,
     [nomor],
   );
   if (!row) throw new Error("Data tidak ditemukan.");
@@ -376,9 +376,9 @@ const pengajuanUbah = async (nomor, tanggal, keterangan, alasan, userKode) => {
 
   await db.query(
     `INSERT INTO tspk_pin5
-       (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket,
+       (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_jenis,
         pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ('PO JASA', ?, ?, ?, ?, NOW(), ?, ?)
+     VALUES ('PO JASA HAPUS', ?, ?, ?, ?, 'HAPUS', NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        pin_tgl_trs = ?, pin_ket = ?,
        pin_acc = '', pin_tgl_minta = NOW(),
@@ -517,7 +517,7 @@ const getDataCetak = async (nomor) => {
        h.pojh_nomor,
        DATE_FORMAT(h.pojh_tanggal,  '%Y-%m-%d') AS pojh_tanggal,
        DATE_FORMAT(h.pojh_dateline, '%Y-%m-%d') AS pojh_dateline,
-       h.pojh_keterangan, h.pojh_tarif, h.pojh_jumlah,
+       h.pojh_keterangan, h.pojh_note, h.pojh_tarif, h.pojh_jumlah,
        h.pojh_status_ppn, h.pojh_ppn, h.pojh_cab,
        h.pojh_cetak, h.pojh_jasa_kode, h.pojh_spk_nomor,
        j.jasa_nama,
@@ -567,7 +567,7 @@ const getDataCetakSJ = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const cekBisaHapus = async (nomor) => {
   const [[row]] = await db.query(
-    `SELECT DATE(date_create) AS tgl_create FROM tpojasa_hdr WHERE pojh_nomor = ?`,
+    `SELECT DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_create FROM tpojasa_hdr WHERE pojh_nomor = ?`,
     [nomor],
   );
   if (!row) throw new Error("Data tidak ditemukan.");
