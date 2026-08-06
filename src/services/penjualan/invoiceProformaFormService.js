@@ -200,7 +200,11 @@ const saveData = async (payload, user) => {
       pinInfo = await checkPinStatus(nomor, conn);
     }
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    if (tglTrs <= zdtClose && pinInfo.status !== "ACC") {
+    // ⚠️ FIX: strict "<", bukan "<=" — konsisten dengan modul lain
+    // (SJ, Invoice, Mutasi Produksi). zdtClose menandai batas awal periode
+    // yang closed; tanggal PERSIS di zdtClose (mis. hari ini) masih harus
+    // dianggap terbuka, bukan closed.
+    if (tglTrs < zdtClose && pinInfo.status !== "ACC") {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
       );
