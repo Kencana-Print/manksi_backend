@@ -302,12 +302,22 @@ const refreshKomponenFromProof = async (
   const identifier = row?.spk_memo || row?.spk_so_ref || "";
   const proofData = await getKomponenFromProof(identifier);
 
-  const ListPotong = proofData.ListPotong;
+  // POTONG: gabung Proof (otomatis) + baris manual (Kode tidak ada di
+  // Proof) supaya baris manual tidak hilang tiap kali disimpan ulang.
+  const proofPotongKodes = new Set(proofData.ListPotong.map((p) => p.Kode));
+  const manualPotong = (payloadKomponenSpk.ListPotong || []).filter(
+    (r) => r.Kode && !proofPotongKodes.has(r.Kode),
+  );
+  const ListPotong = [...proofData.ListPotong, ...manualPotong];
 
+  // SECOND PROCESS: sama pola — Proof entries di-refresh Kode/Nama tapi
+  // pertahankan Proses/Penempatan/Ukuran yg sudah diisi user, DAN baris
+  // manual (Kode tidak ada di Proof) tetap dipertahankan apa adanya.
   const existingByKode = new Map(
     (payloadKomponenSpk.ListCetakBordir || []).map((r) => [r.Kode, r]),
   );
-  const ListCetakBordir = proofData.ListCetakBordir.map((p) => {
+  const proofCbKodes = new Set(proofData.ListCetakBordir.map((p) => p.Kode));
+  const fromProof = proofData.ListCetakBordir.map((p) => {
     const existing = existingByKode.get(p.Kode);
     return {
       Kode: p.Kode,
@@ -317,6 +327,10 @@ const refreshKomponenFromProof = async (
       Ukuran: existing?.Ukuran || "",
     };
   });
+  const manualCetakBordir = (payloadKomponenSpk.ListCetakBordir || []).filter(
+    (r) => r.Kode && !proofCbKodes.has(r.Kode),
+  );
+  const ListCetakBordir = [...fromProof, ...manualCetakBordir];
 
   await saveKomponenSpk(conn, nomor, { ListPotong, ListCetakBordir });
   return { ListPotong, ListCetakBordir };
@@ -434,6 +448,7 @@ const saveData = async (payload, user) => {
           "SO ini belum aktif/approved, tidak bisa dibuatkan SPK.",
         );
       }
+      cabForFlow = soHeader.spk_cab;
 
       nomor = isLegacySpkFlow(soHeader.spk_divisi)
         ? await generateNomorLegacy(
@@ -488,10 +503,11 @@ const saveData = async (payload, user) => {
       nomor = spk_nomor;
 
       const [exist] = await conn.query(
-        `SELECT spk_nomor FROM tspk WHERE spk_nomor = ? AND spk_is_so = 0`,
+        `SELECT spk_nomor, spk_cab FROM tspk WHERE spk_nomor = ? AND spk_is_so = 0`,
         [nomor],
       );
       if (exist.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");
+      cabForFlow = exist[0].spk_cab;
 
       await conn.query(
         `UPDATE tspk SET spk_ketbeli = ?, spk_keterangan = ?, user_modified = ?, date_modified = NOW()
