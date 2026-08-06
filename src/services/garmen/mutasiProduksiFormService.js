@@ -775,31 +775,29 @@ const cekKomponen = async (nomorSpk, lini) => {
 const DIVISI_TO_KOLOM_PLANSPK = {
   CUTTING: "cutting",
   KOLI: "finishing",
-  // ⚠️ "SEWING" SENGAJA TIDAK dipetakan — divisi ini dipakai untuk 2
-  // gudang berbeda konteksnya (GP002/GP017 = Cetak, GP003/GP018 =
-  // Jahit), sementara tplanningspk punya kolom terpisah utk keduanya
-  // (plan_cetak vs plan_jahit). Saya tidak berani nebak yang mana tanpa
-  // konfirmasi — kalau nanti muncul kasus serupa utk gudang Cetak/Jahit,
-  // kasih tahu supaya saya pisahkan mapping-nya per gudang bukan per
-  // string "SEWING" generik.
+  CETAK: "cetak", // ← tambahan
+  JAHIT: "jahit", // ← tambahan
+  BORDIR: "bordir", // ← tambahan (konsisten, sebelumnya tidak ada sama sekali)
 };
 
 // ─────────────────────────────────────────────────────────
 // CEK PLANNING SUDAH ADA (isplanning_*)
 // Sesuai Delphi — cek per jenis lini di tplan_ppic_dtl2
 // ─────────────────────────────────────────────────────────
-const cekPlanning = async (nomorSpk, divisi) => {
+const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
   const [[row]] = await db.query(
     `SELECT COUNT(*) AS jml
      FROM tplan_ppic_dtl2 d
      INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
      WHERE h.pl_close = 'N' AND d.plan_spk = ? AND d.plan_divisi = ?
        AND d.plan_qty_jadwal <> 0`,
-    [nomorSpk, divisi],
+    [nomorSpk, ppicDivisi],
   );
   if (Number(row.jml) > 0) return true;
 
-  const kolom = DIVISI_TO_KOLOM_PLANSPK[divisi];
+  // Gunakan token spesifik kalau dikirim controller (CETAK/JAHIT/BORDIR),
+  // fallback ke ppicDivisi kalau tidak (kompatibel dgn pemanggilan lama)
+  const kolom = DIVISI_TO_KOLOM_PLANSPK[planSpkKolom || ppicDivisi];
   if (!kolom) return false;
 
   const [[row2]] = await db.query(

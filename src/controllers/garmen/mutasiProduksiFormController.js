@@ -333,9 +333,28 @@ const cekGudangAsal = async (req, res) => {
         GP004: "KOLI",
         GP019: "KOLI",
       };
+      // ⚠️ FIX: token spesifik utk fallback ke tplanningspk — "SEWING" generik
+      // dipecah jadi CETAK (GP002/GP017) vs JAHIT (GP003/GP018), supaya cek
+      // planning per-SPK bisa pilih kolom yg benar (plan_cetak vs plan_jahit)
+      const planSpkKolomMap = {
+        GP001: "CUTTING",
+        GP015: "CUTTING",
+        GP002: "CETAK",
+        GP017: "CETAK",
+        GP014: "BORDIR",
+        GP016: "BORDIR",
+        GP003: "JAHIT",
+        GP018: "JAHIT",
+        GP004: "KOLI",
+        GP019: "KOLI",
+      };
       const planningDivisi = planningMap[gdgAsal];
       if (planningDivisi) {
-        const hasPlan = await svc.cekPlanning(nomorSpk, planningDivisi);
+        const hasPlan = await svc.cekPlanning(
+          nomorSpk,
+          planningDivisi,
+          planSpkKolomMap[gdgAsal],
+        );
         if (!hasPlan) {
           const msgMap = {
             GP001: "cutting",
