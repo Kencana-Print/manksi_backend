@@ -718,11 +718,26 @@ const syncNoPoApproval = async (conn, nomor, data, userKode) => {
   const isKosong = !data.NomorPO || String(data.NomorPO).trim() === "";
   if (isKosong) {
     const [existingPin] = await conn.query(
-      `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+      `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5
        WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ?
        ORDER BY pin_urut DESC LIMIT 1`,
       [nomor],
     );
+
+    // ⚠️ FIX: kalau pengajuan NOPO sebelumnya SUDAH di-ACC dan belum
+    // "dipakai" (belum dikonsumsi save berikutnya), jangan reset ke
+    // pending lagi — approval itu tetap berlaku selama NomorPO masih
+    // sama-sama kosong seperti saat di-ACC. Reset hanya relevan kalau
+    // memang belum pernah ada approval, atau approval sebelumnya sudah
+    // "dipakai" (siklus baru), atau ditolak (perlu ajukan ulang manual).
+    if (
+      existingPin.length > 0 &&
+      existingPin[0].pin_acc === "Y" &&
+      existingPin[0].pin_dipakai === ""
+    ) {
+      return false; // sudah ACC & masih berlaku → MAP tetap AKTIF
+    }
+
     let urut = 1;
     if (existingPin.length > 0) {
       urut = existingPin[0].pin_dipakai
@@ -748,7 +763,6 @@ const syncNoPoApproval = async (conn, nomor, data, userKode) => {
     );
     return true; // wajib pasif sampai di-ACC
   }
-  // Nomor PO sudah diisi — bersihkan pengajuan pending yg belum terpakai
   await conn.query(
     `DELETE FROM tspk_pin5
      WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_dipakai = ""`,
