@@ -406,6 +406,8 @@ const save = async (data, userKode, isNew) => {
     ApvOverride, // 'N' | '' | undefined — hasil keputusan frontend soal approval
   } = data;
 
+  const Disc = Math.round(Number(DiscRaw) || 0);
+
   // ── Validasi dasar ──────────────────────────────────────
   if (!KodePerush) throw new Error("Perusahaan belum di isi.");
   if (!KodeCus) throw new Error("Customer belum di isi.");
@@ -551,7 +553,7 @@ const save = async (data, userKode, isNew) => {
           row.Kode,
           row.Ukuran || "",
           Number(row.Jumlah),
-          Number(row.Harga || 0),
+          Math.round(Number(row.Harga || 0)),
           urut,
         ],
       );

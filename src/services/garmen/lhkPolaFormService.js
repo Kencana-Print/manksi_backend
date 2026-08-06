@@ -301,7 +301,7 @@ const searchSpk = async (q = "") => {
      ) x
      WHERE x.Nomor LIKE ? OR x.Nama LIKE ?
      ORDER BY x.Tanggal DESC
-     LIMIT 50`,
+     `,
     [like, like],
   );
   return rows;
