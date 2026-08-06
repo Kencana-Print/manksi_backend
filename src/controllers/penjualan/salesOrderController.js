@@ -10,6 +10,7 @@ const getBrowse = async (req, res) => {
       workshop: req.query.workshop,
       customer: req.query.customer,
       userCabang: req.user.cabang,
+      userKode: req.user.kode,
       canLihatCus,
       canLihatHarga,
     };

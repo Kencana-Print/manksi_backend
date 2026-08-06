@@ -5,7 +5,14 @@ const tutupBukuService = require("../tutupBukuService");
 const checkPinStatus = async (nomor, conn) => {
   const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="INV PROFORMA" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
   const [rows] = await conn.query(qPin, [nomor]);
-  if (rows.length === 0) return { status: "MINTA", urut: 0 };
+  // ⚠️ FIX: default status HARUS kosong ("") kalau belum pernah ada
+  // pengajuan PIN5 sama sekali — bukan "MINTA". "MINTA" cuma relevan
+  // kalau baris PIN5 memang sudah ada tapi datanya ambigu (fallback
+  // di bawah). Sebelumnya default "MINTA" bikin SEMUA invoice yang
+  // belum pernah diajukan approval otomatis dianggap "perlu approval",
+  // jadi tombol Simpan selalu terblokir di frontend — bahkan untuk
+  // periode yang masih terbuka (belum benar-benar tutup buku).
+  if (rows.length === 0) return { status: "", urut: 0 };
   const pin = rows[0];
   if (pin.pin_acc === "" && pin.pin_dipakai === "")
     return { status: "WAIT", urut: pin.pin_urut };
@@ -188,7 +195,7 @@ const saveData = async (payload, user) => {
       .toISOString()
       .slice(0, 19)
       .replace("T", " ");
-    let pinInfo = { status: "MINTA", urut: 0 };
+    let pinInfo = { status: "", urut: 0 };
 
     // 1. Validasi Detail
     const validDetails = details.filter((d) => d.kode && d.nama);

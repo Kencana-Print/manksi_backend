@@ -1280,7 +1280,7 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
           [nomor],
         );
         const [[prioPin]] = await conn.query(
-          `SELECT pin_acc FROM tspk_pin_prioritas WHERE pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
+          `SELECT pin_acc FROM tspk_pin_prioritas WHERE pin_nomor = ?`,
           [nomor],
         );
         const blocked =

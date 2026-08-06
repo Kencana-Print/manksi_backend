@@ -238,11 +238,22 @@ const syncNoPoApproval = async (conn, nomor, header, user) => {
 
   if (isKosong) {
     const [existingPin] = await conn.query(
-      `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+      `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5
        WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
        ORDER BY pin_urut DESC LIMIT 1`,
       [nomor],
     );
+
+    // ⚠️ FIX: sama seperti bug MAP — kalau pengajuan NOPO sudah ACC
+    // dan belum "dipakai", jangan reset ke pending lagi. SO tetap AKTIF.
+    if (
+      existingPin.length > 0 &&
+      existingPin[0].pin_acc === "Y" &&
+      existingPin[0].pin_dipakai === ""
+    ) {
+      return false;
+    }
+
     let urut = 1;
     if (existingPin.length > 0) {
       urut = existingPin[0].pin_dipakai
@@ -266,10 +277,9 @@ const syncNoPoApproval = async (conn, nomor, header, user) => {
         user.kode,
       ],
     );
-    return true; // wajib pasif sampai di-ACC
+    return true;
   }
 
-  // Nomor PO sudah diisi — bersihkan pengajuan pending yg belum terpakai
   await conn.query(
     `DELETE FROM tspk_pin5
      WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_dipakai = ""`,

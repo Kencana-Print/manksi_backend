@@ -55,7 +55,7 @@ const getById = async (nomor) => {
        a.inv_cus_alamat,
        DATE_FORMAT(a.inv_tanggal_tempo,'%Y-%m-%d') AS inv_tanggal_tempo,
        a.inv_rekening, pd.perushd_bank, pd.perushd_atasnama,
-       a.inv_sts_ppn, a.inv_ppn
+       a.inv_sts_ppn, a.inv_ppn, a.inv_disc
      FROM tinv_hdr a
      INNER JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
      INNER JOIN tcustomer c ON c.cus_kode = a.inv_cus_kode
@@ -471,6 +471,7 @@ const save = async (data, userKode, isNew) => {
     RekBank = "",
     StsPpn = 0,
     Ppn = 0,
+    Disc = 0,
     Detail = [],
     InvoiceNormalList = [],
     NomorInv = "",
@@ -495,6 +496,7 @@ const save = async (data, userKode, isNew) => {
 
   const divisiStr = String(Divisi).charAt(0);
   const xppn = StsPpn ? Number(Ppn) : 0;
+  const xdisc = Number(Disc) || 0;
 
   const conn = await db.getConnection();
   try {
@@ -511,8 +513,8 @@ const save = async (data, userKode, isNew) => {
            (inv_nomor, inv_divisi, inv_tanggal, inv_keterangan,
             inv_perush_kode, inv_cus_kode, inv_cus_alamat,
             inv_tanggal_tempo, inv_sts_pro, inv_rekening,
-            date_create, user_create, inv_sts_ppn, inv_ppn)
-         VALUES (?,?,?,?,?,?,?,?,2,?,NOW(),?,?,?)`,
+            date_create, user_create, inv_sts_ppn, inv_ppn, inv_disc)
+         VALUES (?,?,?,?,?,?,?,?,2,?,NOW(),?,?,?,?)`,
         [
           nomor,
           divisiStr,
@@ -526,6 +528,7 @@ const save = async (data, userKode, isNew) => {
           userKode,
           StsPpn,
           xppn,
+          xdisc,
         ],
       );
     } else {
@@ -534,7 +537,7 @@ const save = async (data, userKode, isNew) => {
            inv_tanggal = ?, inv_keterangan = ?,
            inv_perush_kode = ?, inv_cus_kode = ?, inv_cus_alamat = ?,
            inv_tanggal_tempo = ?, inv_rekening = ?,
-           inv_sts_ppn = ?, inv_ppn = ?,
+           inv_sts_ppn = ?, inv_ppn = ?, inv_disc = ?,
            date_modified = NOW(), user_modified = ?
          WHERE inv_nomor = ?`,
         [
@@ -547,6 +550,7 @@ const save = async (data, userKode, isNew) => {
           RekBank,
           StsPpn,
           xppn,
+          xdisc,
           userKode,
           nomor,
         ],
@@ -639,15 +643,15 @@ const save = async (data, userKode, isNew) => {
 const getDataCetak = async (nomor) => {
   const [[hdr]] = await db.query(
     `SELECT
-       a.inv_nomor, DATE_FORMAT(a.inv_tanggal,'%d-%m-%Y') AS inv_tanggal_fmt,
-       a.inv_keterangan, a.inv_cus_alamat,
-       a.inv_sts_ppn, a.inv_ppn,
-       a.inv_rekening, a.inv_perush_kode,
-       a.user_create,
-       p.perush_nama, p.perush_alamat, p.perush_kota, p.perush_telp,
-       c.cus_nama, c.cus_alamat, c.cus_telp, c.cus_fax,
-       pd.perushd_bank, pd.perushd_atasnama,
-       DATE_FORMAT(a.date_create,'%d-%m-%Y %T') AS created
+        a.inv_nomor, DATE_FORMAT(a.inv_tanggal,'%d-%m-%Y') AS inv_tanggal_fmt,
+        a.inv_keterangan, a.inv_cus_alamat,
+        a.inv_sts_ppn, a.inv_ppn, a.inv_disc,
+        a.inv_rekening, a.inv_perush_kode,
+        a.user_create,
+        p.perush_nama, p.perush_alamat, p.perush_kota, p.perush_telp,
+        c.cus_nama, c.cus_alamat, c.cus_telp, c.cus_fax,
+        pd.perushd_bank, pd.perushd_atasnama,
+        DATE_FORMAT(a.date_create,'%d-%m-%Y %T') AS created
      FROM tinv_hdr a
      INNER JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
      INNER JOIN tcustomer c   ON c.cus_kode    = a.inv_cus_kode
@@ -679,11 +683,14 @@ const getDataCetak = async (nomor) => {
     0,
   );
 
+  const disc = round(hdr.inv_disc); // dibulatkan hanya utk tampilan cetak, sama pola getDataCetak Invoice biasa
+  const dasarPpn = totalBarang - disc;
+
   let totalPpn = 0;
-  let grandTotal = totalBarang;
+  let grandTotal = dasarPpn;
   if (Number(hdr.inv_sts_ppn) === 1) {
-    totalPpn = round(totalBarang * (Number(hdr.inv_ppn) / 100));
-    grandTotal = totalBarang + totalPpn;
+    totalPpn = round(dasarPpn * (Number(hdr.inv_ppn) / 100));
+    grandTotal = dasarPpn + totalPpn;
   }
 
   const uangMuka = round(await getDebet(nomor));
@@ -693,6 +700,7 @@ const getDataCetak = async (nomor) => {
     header: hdr,
     detail: dtl,
     totalBarang,
+    disc,
     totalPpn,
     grandTotal,
     uangMuka,

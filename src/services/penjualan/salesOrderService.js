@@ -29,6 +29,7 @@ const getBrowseList = async (filters) => {
     workshop,
     customer,
     userCabang,
+    userKode, // ← BARU: dipakai untuk bypass filter cabang bagi SO milik sendiri
     canLihatCus,
     canLihatHarga,
   } = filters;
@@ -50,8 +51,13 @@ const getBrowseList = async (filters) => {
     userCabang !== "ADMIN" &&
     userCabang !== ""
   ) {
-    whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL)`;
-    params.push(userCabang);
+    // ⚠️ FIX: tambahkan OR s.user_create = userKode — sama seperti fix
+    // di SPK PPIC — SO yang DIBUAT SENDIRI (kolom MO = user_create)
+    // harus selalu terlihat oleh pembuatnya sendiri, apa pun cabang
+    // SO tsb. Kolom di subquery sudah bernama seragam "user_create"
+    // baik dari sisi tspk legacy maupun tsalesorder baru.
+    whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?)`;
+    params.push(userCabang, userKode || "");
   }
 
   // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus) —
