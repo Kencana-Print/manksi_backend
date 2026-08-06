@@ -398,6 +398,7 @@ const save = async (data, userKode, isNew) => {
     StsPpn = 0,
     Ppn = 0,
     Pph = "",
+    Disc: DiscRaw = 0,
     Detail = [],
     NomorInv = "",
     Xminta5 = "",
