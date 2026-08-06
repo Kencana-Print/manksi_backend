@@ -87,10 +87,40 @@ const requestPin5 = async (req, res) => {
   }
 };
 
+const getDesignList = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate dan endDate wajib diisi.",
+      });
+    }
+    const data = await mapService.getDesignList(startDate, endDate);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const updateDesignStatus = async (req, res) => {
+  try {
+    const { rows } = req.body;
+    await mapService.updateDesignStatus(rows);
+    res
+      .status(200)
+      .json({ success: true, message: "Update status design berhasil." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowseList,
   deleteMap,
   toggleClose,
   approveCmo,
   requestPin5,
+  getDesignList,
+  updateDesignStatus,
 };

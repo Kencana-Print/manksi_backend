@@ -194,10 +194,59 @@ const requestPin5 = async (nomor, alasan, userKode) => {
   await db.query(query, [nomor, urut, tgl, nama, userKode, alasan]);
 };
 
+// ─────────────────────────────────────────────────────────
+// GET DESIGN LIST — khusus user bagian DESAIN (btnDesignClick)
+// MAP dengan design baru yang belum selesai dikerjakan desainer,
+// difilter rentang tanggal yang sama dengan filter Browse utama.
+// ─────────────────────────────────────────────────────────
+const getDesignList = async (startDate, endDate) => {
+  const [rows] = await db.query(
+    `SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_designdone AS DesignDone
+     FROM tmemospk
+     WHERE mspk_newdesign = 'Y'
+       AND mspk_designdone = 'N'
+       AND mspk_tanggal >= ?
+       AND mspk_tanggal <= ?
+     ORDER BY mspk_tanggal`,
+    [`${startDate} 00:00:00`, `${endDate} 23:59:59`],
+  );
+  return rows;
+};
+
+// ─────────────────────────────────────────────────────────
+// UPDATE DESIGN STATUS — btnsimpandesignClick
+// Update SEMUA baris yang dikirim (bukan cuma yang berubah),
+// persis replikasi loop Delphi yang selalu UPDATE tiap row grid.
+// ─────────────────────────────────────────────────────────
+const updateDesignStatus = async (rows) => {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("Tidak ada data untuk disimpan.");
+  }
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (const r of rows) {
+      const done = r.DesignDone === "Y" ? "Y" : "N";
+      await conn.query(
+        `UPDATE tmemospk SET mspk_designdone = ? WHERE mspk_nomor = ?`,
+        [done, r.Nomor],
+      );
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowseList,
   deleteMap,
   toggleClose,
   approveCmo,
   requestPin5,
+  getDesignList,
+  updateDesignStatus,
 };

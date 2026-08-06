@@ -17,6 +17,22 @@ router.get(
   controller.getBrowseList,
 );
 
+// Rute LIST DESIGN (khusus user bagian DESAIN)
+router.get(
+  "/design/list",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getDesignList,
+);
+
+// Rute UPDATE STATUS DESIGN
+router.put(
+  "/design/status",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.updateDesignStatus,
+);
+
 // Rute HAPUS
 router.delete(
   "/:nomor",
