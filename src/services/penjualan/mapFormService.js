@@ -163,6 +163,8 @@ const getById = async (nomor) => {
     data.isTutupBuku = true;
   }
 
+  data.nopo_acc = await getNoPoStatus(nomor);
+
   return data;
 };
 
@@ -295,6 +297,14 @@ const save = async (data, userKode, isNewMode) => {
       if (!nomorMap || nomorMap === "Baru= Nomor Otomatis") {
         nomorMap = await generateNomor(data.PerushKode, data.JoKode);
       }
+      // ← tambahan: sync approval NOPO, tentukan status aktif
+      const noPoPendingCreate = await syncNoPoApproval(
+        conn,
+        nomorMap,
+        data,
+        userKode,
+      );
+      const mspkAktif = noPoPendingCreate ? "N" : "Y";
 
       const insertQ = `
         INSERT INTO tmemospk (
@@ -306,10 +316,9 @@ const save = async (data, userKode, isNewMode) => {
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
           mspk_estimasijadi, mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size,
-          mspk_acc_customer, mspk_acc_tanggal
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?)
+          mspk_acc_customer, mspk_acc_tanggal, mspk_aktif
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
-
       const insertParams = [
         nomorMap,
         data.Nama,
@@ -358,6 +367,7 @@ const save = async (data, userKode, isNewMode) => {
         data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
+        mspkAktif, // ← tambahan param terakhir
       ];
 
       // ── DEBUG WRAP: insertQ ──
@@ -382,19 +392,28 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
     } else {
+      // ← tambahan: sync approval NOPO
+      const noPoPendingEdit = await syncNoPoApproval(
+        conn,
+        nomorMap,
+        data,
+        userKode,
+      );
+      const mspkAktif = noPoPendingEdit ? "N" : "Y";
+
       const updateQ = `
-    UPDATE tmemospk SET 
-      mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
-      mspk_jo_kode=?, 
-      mspk_statuskerja=?, mspk_ukuran=?, mspk_gramasi=?, mspk_panjang=?, mspk_lebar=?, mspk_kain=?,
-      mspk_finishing=?, mspk_sablon=?, mspk_bordir=?, mspk_sublim=?, mspk_jumlah=?, mspk_harga=?,
-      mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
-      mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
-      mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
-      mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
-      mspk_acc_customer=?, mspk_acc_tanggal=?
-    WHERE mspk_nomor=?
-  `;
+        UPDATE tmemospk SET 
+          mspk_nama=?, mspk_nama2=?, mspk_divisi=?, mspk_cus_kode=?, mspk_sal_kode=?,
+          mspk_jo_kode=?, 
+          mspk_statuskerja=?, mspk_ukuran=?, mspk_gramasi=?, mspk_panjang=?, mspk_lebar=?, mspk_kain=?,
+          mspk_finishing=?, mspk_sablon=?, mspk_bordir=?, mspk_sublim=?, mspk_jumlah=?, mspk_harga=?,
+          mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
+          mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
+          mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
+          mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
+          mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?
+        WHERE mspk_nomor=?
+      `;
       const updateParams = [
         data.Nama,
         data.Nama2 || data.Nama,
@@ -437,12 +456,9 @@ const save = async (data, userKode, isNewMode) => {
         data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
+        mspkAktif, // ← tambahan param
         nomorMap,
       ];
-
-      // FIX: query UPDATE sebelumnya dibangun tapi tidak pernah dieksekusi
-      // sama sekali — jadi seluruh field header MAP gak pernah ter-update
-      // pas edit, apapun yang diubah user.
       await conn.query(updateQ, updateParams);
 
       if (data.StatusEdit === "ACC") {
@@ -693,6 +709,71 @@ const getKatalogCustomer = async (
   return { items: rows, total: totalData };
 };
 
+// ─────────────────────────────────────────────────────────
+// MENU_ID 269: Approve MAP Tanpa Nomor PO
+// ⚠️ FITUR BARU — pola identik dgn syncNoPoApproval milik SO
+// (tspk_pin5, pin_trs berbeda supaya tidak nabrak record SO).
+// ─────────────────────────────────────────────────────────
+const syncNoPoApproval = async (conn, nomor, data, userKode) => {
+  const isKosong = !data.NomorPO || String(data.NomorPO).trim() === "";
+  if (isKosong) {
+    const [existingPin] = await conn.query(
+      `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+       WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ?
+       ORDER BY pin_urut DESC LIMIT 1`,
+      [nomor],
+    );
+    let urut = 1;
+    if (existingPin.length > 0) {
+      urut = existingPin[0].pin_dipakai
+        ? existingPin[0].pin_urut + 1
+        : existingPin[0].pin_urut;
+    }
+    await conn.query(
+      `INSERT INTO tspk_pin5
+         (pin_trs, pin_jenis, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta)
+       VALUES ("MAP", "NOPO", ?, ?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE
+         pin_tgl_trs = ?, pin_ket = ?, pin_acc = "", pin_tgl_minta = NOW(), pin_user_minta = ?`,
+      [
+        nomor,
+        urut,
+        data.Tanggal,
+        "MAP dibuat/diubah tanpa Nomor PO",
+        userKode,
+        data.Tanggal,
+        "MAP dibuat/diubah tanpa Nomor PO",
+        userKode,
+      ],
+    );
+    return true; // wajib pasif sampai di-ACC
+  }
+  // Nomor PO sudah diisi — bersihkan pengajuan pending yg belum terpakai
+  await conn.query(
+    `DELETE FROM tspk_pin5
+     WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_dipakai = ""`,
+    [nomor],
+  );
+  return false;
+};
+
+// ─────────────────────────────────────────────────────────
+// GET STATUS APPROVAL NOPO — dipakai getById utk banner di form
+// ─────────────────────────────────────────────────────────
+const getNoPoStatus = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT pin_acc FROM tspk_pin5
+     WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ?
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  if (rows.length === 0) return "";
+  const acc = rows[0].pin_acc;
+  if (acc === "Y") return "ACC";
+  if (acc === "N") return "TOLAK";
+  return "MINTA";
+};
+
 module.exports = {
   generateNomor,
   getInitGrids,
@@ -705,4 +786,6 @@ module.exports = {
   getNamaSuggestions,
   checkDuplikatNama,
   getKatalogCustomer,
+  syncNoPoApproval,
+  getNoPoStatus,
 };
