@@ -141,15 +141,12 @@ const searchSpk = async (
   limit = 30,
 ) => {
   const offset = (page - 1) * limit;
-
-  // Tentukan filter divisi sesuai Delphi
   let divisiFilter;
   if (divisiUser === 1) {
     divisiFilter = "(1, 5)";
   } else {
-    divisiFilter = "(3, 4, 6)"; // garmen (default jika bukan divisi 1)
+    divisiFilter = "(3, 4, 6)";
   }
-
   const query = `
     SELECT Kode, Nama, Ukuran, Jorder
     FROM (
@@ -158,14 +155,11 @@ const searchSpk = async (
       FROM tspk
       WHERE spk_divisi IN ${divisiFilter}
         AND spk_aktif = 'Y'
-        AND spk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       UNION ALL
       SELECT mspk_nomor AS Kode, mspk_nama AS Nama, mspk_ukuran AS Ukuran,
              IFNULL(mspk_jumlah, 0) AS Jorder
       FROM tmemospk
       WHERE mspk_divisi IN ${divisiFilter}
-        AND mspk_jumlah > mspk_jumlah_kirim
-        AND mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
     ) a
     WHERE Nama LIKE ? OR Kode LIKE ?
     ORDER BY Kode

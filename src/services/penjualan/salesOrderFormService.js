@@ -297,7 +297,6 @@ const HEADER_EXTRA_FIELDS = [
   "MainImageBlob",
   "MainImageName",
   "isSalesOrder",
-  "spk_standar_ukuran",
 ];
 const cleanHeader = (h) => {
   const result = { ...h };
