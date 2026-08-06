@@ -1163,6 +1163,130 @@ const submitGantiQtyKainOtorisasi = async (
   return { nomor, transaksi, urut, peminta: pin.pin_user_minta };
 };
 
+// =========================================================================
+// APPROVAL SO TANPA NOMOR PO (MENU_ID: 268)
+// ⚠️ FITUR BARU — tidak ada referensi Delphi.
+// =========================================================================
+
+const getNoPoList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_trs = "SO" AND p.pin_jenis = "NOPO" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT
+      p.pin_nomor AS Nomor,
+      s.so_nama AS NamaSO,
+      s.so_divisi AS Divisi,
+      s.so_jumlah AS Jumlah,
+      s.so_cus_kode AS KdCus,
+      c.Cus_nama AS Customer,
+      DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
+      p.pin_ket AS Keterangan,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+      p.pin_user_pin AS Otorisasi,
+      p.pin_acc AS Acc
+    FROM tspk_pin5 p
+    LEFT JOIN tsalesorder s ON s.so_nomor = p.pin_nomor
+    LEFT JOIN tcustomer c ON c.Cus_kode = s.so_cus_kode
+    ${sqlCondition}
+    ORDER BY p.pin_tgl_minta DESC
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// ⚠️ Safety check tambahan (bukan replikasi — desain baru): saat ACC,
+// jangan aktifkan SO kalau masih ada blocking-pin lain yg pending
+// (piutang, harga 0, prioritas, pinjo), supaya tidak override approval
+// lain yang belum selesai.
+const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
+  if (!["Y", "N"].includes(statusAcc)) {
+    throw new Error("Status ACC harus Y atau N.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[pin]] = await conn.query(
+      `SELECT pin_urut, pin_user_minta FROM tspk_pin5
+       WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
+       ORDER BY pin_urut DESC LIMIT 1 FOR UPDATE`,
+      [nomor],
+    );
+    if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
+
+    await conn.query(
+      `UPDATE tspk_pin5 SET pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
+       WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_urut = ?`,
+      [userKode, statusAcc, nomor, pin.pin_urut],
+    );
+
+    if (statusAcc === "Y") {
+      const [[so]] = await conn.query(
+        `SELECT so_pinjo FROM tsalesorder WHERE so_nomor = ?`,
+        [nomor],
+      );
+      const [[custPin]] = await conn.query(
+        `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ? ORDER BY cusp_tgl_minta DESC LIMIT 1`,
+        [nomor],
+      );
+      const [[hargaPin]] = await conn.query(
+        `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
+        [nomor],
+      );
+      const [[prioPin]] = await conn.query(
+        `SELECT pin_acc FROM tspk_pin_prioritas WHERE pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
+        [nomor],
+      );
+
+      const blocked =
+        (custPin && custPin.cusp_acc !== "Y") ||
+        (hargaPin && hargaPin.pin_acc !== "Y") ||
+        (prioPin && prioPin.pin_acc !== "Y") ||
+        (so && ["MINTA", "TOLAK"].includes(so.so_pinjo));
+
+      if (!blocked) {
+        await conn.query(
+          `UPDATE tsalesorder SET so_aktif = "Y" WHERE so_nomor = ?`,
+          [nomor],
+        );
+      }
+
+      await conn.query(
+        `UPDATE tspk_pin5 SET pin_dipakai = "Y"
+         WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_urut = ?`,
+        [nomor, pin.pin_urut],
+      );
+    } else {
+      await conn.query(
+        `UPDATE tsalesorder SET so_aktif = "N" WHERE so_nomor = ?`,
+        [nomor],
+      );
+    }
+
+    await conn.commit();
+    return { nomor, peminta: pin.pin_user_minta };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
@@ -1189,4 +1313,6 @@ module.exports = {
   submitPembatalanSpkOtorisasi,
   getGantiQtyKainList,
   submitGantiQtyKainOtorisasi,
+  getNoPoList,
+  submitNoPoOtorisasi,
 };

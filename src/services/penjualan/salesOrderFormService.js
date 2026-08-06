@@ -96,6 +96,15 @@ const getDetail = async (nomor) => {
   );
   let kepentingan_acc = pinPrio.length > 0 ? pinPrio[0].acc : "";
 
+  const [pinNoPo] = await db.query(
+    `SELECT IF(pin_acc="Y","ACC",IF(pin_acc="N","TOLAK","MINTA ACC")) AS acc
+   FROM tspk_pin5
+   WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
+   ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  const nopo_acc = pinNoPo.length > 0 ? pinNoPo[0].acc : "";
+
   if (
     header[0].spk_statuskerja === "TOP URGENT" &&
     kepentingan_acc === "" &&
@@ -120,7 +129,9 @@ const getDetail = async (nomor) => {
     kepentingan_acc === "MINTA ACC" ||
     kepentingan_acc === "TOLAK" ||
     pin_jo === "MINTA ACC" ||
-    pin_jo === "TOLAK"
+    pin_jo === "TOLAK" ||
+    nopo_acc === "MINTA ACC" ||
+    nopo_acc === "TOLAK"
   ) {
     spk_aktif = "N";
   } else {
@@ -131,6 +142,7 @@ const getDetail = async (nomor) => {
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
+  header[0].nopo_acc = nopo_acc;
   header[0].spk_aktif = spk_aktif;
 
   // B. Detail Alokasi — dari tsalesorder_alokasi
@@ -215,6 +227,55 @@ const getOmzet = async (cusKode, tahun, kurangTahun) => {
     [targetTahun, kodeCari, kodeCari],
   );
   return rows[0].nominal;
+};
+
+// --- MENU_ID 268: Approve SO Tanpa Nomor PO ---
+// ⚠️ FITUR BARU (tidak ada referensi Delphi) — desain mengikuti pola
+// tspk_pin5 generik yang sudah dipakai utk Perubahan Data/Hapus Data.
+const syncNoPoApproval = async (conn, nomor, header, user) => {
+  const isKosong =
+    !header.spk_nomor_po || String(header.spk_nomor_po).trim() === "";
+
+  if (isKosong) {
+    const [existingPin] = await conn.query(
+      `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+       WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
+       ORDER BY pin_urut DESC LIMIT 1`,
+      [nomor],
+    );
+    let urut = 1;
+    if (existingPin.length > 0) {
+      urut = existingPin[0].pin_dipakai
+        ? existingPin[0].pin_urut + 1
+        : existingPin[0].pin_urut;
+    }
+    await conn.query(
+      `INSERT INTO tspk_pin5
+         (pin_trs, pin_jenis, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta)
+       VALUES ("SO", "NOPO", ?, ?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE
+         pin_tgl_trs = ?, pin_ket = ?, pin_acc = "", pin_tgl_minta = NOW(), pin_user_minta = ?`,
+      [
+        nomor,
+        urut,
+        header.spk_tanggal,
+        "SO dibuat/diubah tanpa Nomor PO",
+        user.kode,
+        header.spk_tanggal,
+        "SO dibuat/diubah tanpa Nomor PO",
+        user.kode,
+      ],
+    );
+    return true; // wajib pasif sampai di-ACC
+  }
+
+  // Nomor PO sudah diisi — bersihkan pengajuan pending yg belum terpakai
+  await conn.query(
+    `DELETE FROM tspk_pin5
+     WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_dipakai = ""`,
+    [nomor],
+  );
+  return false;
 };
 
 const HEADER_EXTRA_FIELDS = [
@@ -366,6 +427,13 @@ const saveData = async (payload, user) => {
       header.user_create = user.kode;
       header.date_create = new Date();
       header.spk_aktif = piutang > 100 ? "N" : "Y";
+      const noPoPendingCreate = await syncNoPoApproval(
+        conn,
+        nomor,
+        header,
+        user,
+      );
+      if (noPoPendingCreate) header.spk_aktif = "N";
       if (!header.spk_memo) {
         if (header.spk_acc_customer !== "Y") {
           throw new Error(
@@ -409,6 +477,8 @@ const saveData = async (payload, user) => {
       if (header.spk_pinjo === "MINTA ACC" || header.spk_pinjo === "TOLAK") {
         header.spk_aktif = "N";
       }
+      const noPoPendingEdit = await syncNoPoApproval(conn, nomor, header, user);
+      if (noPoPendingEdit) header.spk_aktif = "N";
       if (header.kepentingan_acc === "MINTA ACC") {
         await conn.query(
           `INSERT INTO tspk_pin_prioritas (pin_nomor, pin_tgl_minta, pin_user_minta)

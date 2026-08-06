@@ -117,8 +117,11 @@ const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRout
 
 const pemakaianObatRoutes = require("./routes/garmen/pemakaianObatRoutes");
 const pemakaianObatFormRoutes = require("./routes/garmen/pemakaianObatFormRoutes");
+const soDtfRoutes = require("./routes/garmen/soDtfRoutes");
 const poPaperprintRoutes = require("./routes/garmen/poPaperprintRoutes");
 const poPaperprintFormRoutes = require("./routes/garmen/poPaperprintFormRoutes");
+const poDtfRoutes = require("./routes/garmen/poDtfRoutes");
+const poDtfFormRoutes = require("./routes/garmen/poDtfFormRoutes");
 
 const lhkPolaRoutes = require("./routes/garmen/lhkPolaRoutes");
 const lhkPolaFormRoutes = require("./routes/garmen/lhkPolaFormRoutes");
@@ -438,8 +441,11 @@ app.use("/api/garmen/mutasi-produksi-form", mutasiProduksiFormRoutes);
 
 app.use("/api/garmen/pemakaian-obat", pemakaianObatRoutes);
 app.use("/api/garmen/pemakaian-obat/form", pemakaianObatFormRoutes);
+app.use("/api/garmen/dtf/so-dtf", soDtfRoutes);
 app.use("/api/garmen/po-paperprint", poPaperprintRoutes);
 app.use("/api/garmen/po-paperprint/form", poPaperprintFormRoutes);
+app.use("/api/garmen/po-dtf", poDtfRoutes);
+app.use("/api/garmen/po-dtf/form", poDtfFormRoutes);
 
 app.use("/api/garmen/lhk-pola", lhkPolaRoutes);
 app.use("/api/garmen/lhk-pola-form", lhkPolaFormRoutes);

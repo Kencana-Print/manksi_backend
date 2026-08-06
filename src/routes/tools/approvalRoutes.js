@@ -195,4 +195,18 @@ router.post(
   controller.submitGantiQtyKainOtorisasi,
 );
 
+// --- APPROVAL SO TANPA NOMOR PO (MENU_ID: 268) ---
+router.get(
+  "/nopo",
+  verifyToken,
+  checkPermission(268, "view"),
+  controller.getNoPoList,
+);
+router.post(
+  "/nopo/otorisasi",
+  verifyToken,
+  checkPermission(268, "edit"),
+  controller.submitNoPoOtorisasi,
+);
+
 module.exports = router;

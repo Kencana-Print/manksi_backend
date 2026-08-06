@@ -481,6 +481,43 @@ const submitGantiQtyKainOtorisasi = async (req, res) => {
   }
 };
 
+// =========================================================================
+// APPROVAL SO TANPA NOMOR PO (MENU_ID: 268)
+// =========================================================================
+const getNoPoList = async (req, res) => {
+  try {
+    const data = await service.getNoPoList(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const submitNoPoOtorisasi = async (req, res) => {
+  try {
+    const { nomor, status_acc } = req.body;
+    const userKode = req.user.kode;
+    if (!nomor || !status_acc) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor dan Status ACC wajib diisi",
+      });
+    }
+    const result = await service.submitNoPoOtorisasi(
+      nomor,
+      status_acc,
+      userKode,
+    );
+    res.status(200).json({
+      success: true,
+      message: `Berhasil.\nSilahkan info ke ${result.peminta}`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMasterData,
   getPengajuanDtl,
@@ -507,4 +544,6 @@ module.exports = {
   submitPembatalanSpkOtorisasi,
   getGantiQtyKainList,
   submitGantiQtyKainOtorisasi,
+  getNoPoList,
+  submitNoPoOtorisasi,
 };
