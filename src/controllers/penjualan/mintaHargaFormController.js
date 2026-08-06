@@ -136,7 +136,7 @@ const uploadImage = async (req, res) => {
     );
 
     // URL publik yang bisa diakses dari frontend
-    const imageUrl = `/images/${cabang}/mintaharga/${nomor}.jpg`;
+    const imageUrl = `/file-gambar/mintaharga/${nomor}.jpg`;
 
     res.status(200).json({
       success: true,

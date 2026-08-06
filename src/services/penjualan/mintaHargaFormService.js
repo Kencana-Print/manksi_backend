@@ -129,40 +129,52 @@ const getById = async (nomor, currentUser) => {
     Perfect: rowsMh[0].cus_perfect, // Sesuai Delphi: cbperfect.Text
   };
 
-  // --- CEK URL GAMBAR ---
   // --- CEK URL GAMBAR (Perbaikan Scan Kategori Cabang Dinamis) ---
-  const cabangRecord = rowsMh[0].mh_cabkaos ? rowsMh[0].mh_cabkaos.trim() : "";
-  // Buat daftar fallback cabang untuk di-scan agar aman jika kolom mh_cabkaos kosong
-  const daftarCabang = [
-    cabangRecord,
-    currentUser?.cabang,
-    "HO-",
-    "P01",
-    "P02",
-    "P03",
-    "P04",
-    "P05",
-  ].filter(Boolean);
+  // --- CEK URL GAMBAR ---
+  let urlDitemukan = null;
 
-  let cabangDitemukan = null;
-  for (const cab of daftarCabang) {
-    const checkPath = path.join(
-      process.cwd(),
-      "public",
-      "images",
-      cab,
-      "mintaharga",
-      `${nomor}.jpg`,
-    );
-    if (fs.existsSync(checkPath)) {
-      cabangDitemukan = cab;
-      break;
+  // 1. Cek prioritas pertama di folder sentral /mnt/image/mintaharga
+  const checkPathCentral = path.join(
+    "/mnt",
+    "image",
+    "mintaharga",
+    `${nomor}.jpg`,
+  );
+  if (fs.existsSync(checkPathCentral)) {
+    urlDitemukan = `/file-gambar/mintaharga/${nomor}.jpg`; // Mengarah ke rute statis /file-gambar
+  } else {
+    // 2. Fallback cek folder cabang lama (Legacy)
+    const cabangRecord = rowsMh[0].mh_cabkaos
+      ? rowsMh[0].mh_cabkaos.trim()
+      : "";
+    const daftarCabang = [
+      cabangRecord,
+      currentUser?.cabang,
+      "HO-",
+      "P01",
+      "P02",
+      "P03",
+      "P04",
+      "P05",
+    ].filter(Boolean);
+
+    for (const cab of daftarCabang) {
+      const checkPathLocal = path.join(
+        process.cwd(),
+        "public",
+        "images",
+        cab,
+        "mintaharga",
+        `${nomor}.jpg`,
+      );
+      if (fs.existsSync(checkPathLocal)) {
+        urlDitemukan = `/images/${cab}/mintaharga/${nomor}.jpg`;
+        break;
+      }
     }
   }
 
-  data.imageUrl = cabangDitemukan
-    ? `/images/${cabangDitemukan}/mintaharga/${nomor}.jpg`
-    : null;
+  data.imageUrl = urlDitemukan;
 
   // Status PIN 5
   const [pinRows] = await db.query(
@@ -660,14 +672,8 @@ const processImage = async (tempFilePath, nomorMh, cabang) => {
 
   const finalFileName = `${nomorMh}.jpg`;
 
-  // Path: public/images/K01/mintaharga/MH.2026.0001.jpg
-  const branchFolderPath = path.join(
-    process.cwd(),
-    "public",
-    "images",
-    cabang,
-    "mintaharga",
-  );
+  // Path Sentralisasi Baru
+  const branchFolderPath = path.join("/mnt", "image", "mintaharga");
 
   if (!fs.existsSync(branchFolderPath)) {
     fs.mkdirSync(branchFolderPath, { recursive: true });
