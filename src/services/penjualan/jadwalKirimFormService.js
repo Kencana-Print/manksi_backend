@@ -158,7 +158,6 @@ const searchSpk = async (
       FROM tspk
       WHERE spk_divisi IN ${divisiFilter}
         AND spk_aktif = 'Y'
-        AND SPK_closed_produksi = 0
         AND spk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
       UNION ALL
       SELECT mspk_nomor AS Kode, mspk_nama AS Nama, mspk_ukuran AS Ukuran,
