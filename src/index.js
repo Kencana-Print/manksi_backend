@@ -162,6 +162,8 @@ const mapRoutes = require("./routes/penjualan/mapRoutes");
 const mapFormRoutes = require("./routes/penjualan/mapFormRoutes");
 const sjMapRoutes = require("./routes/penjualan/sjMapRoutes");
 const updateSjMapRoutes = require("./routes/penjualan/updateSjMapRoutes");
+const insentifRoutes = require("./routes/penjualan/insentifRoutes");
+const insentifFormRoutes = require("./routes/penjualan/insentifFormRoutes");
 const jadwalKirimRoutes = require("./routes/penjualan/jadwalKirimRoutes");
 const jadwalKirimFormRoutes = require("./routes/penjualan/jadwalKirimFormRoutes");
 
@@ -479,6 +481,8 @@ app.use("/api/penjualan/map", mapRoutes);
 app.use("/api/penjualan/map-form", mapFormRoutes);
 app.use("/api/penjualan/sj-map", sjMapRoutes);
 app.use("/api/penjualan/update-sj-map", updateSjMapRoutes);
+app.use("/api/penjualan/insentif", insentifRoutes);
+app.use("/api/penjualan/insentif/form", insentifFormRoutes);
 app.use("/api/penjualan/jadwal-kirim", jadwalKirimRoutes);
 app.use("/api/penjualan/jadwal-kirim-form", jadwalKirimFormRoutes);
 
