@@ -446,14 +446,13 @@ const save = async (data, userKode, userCabang, isNewMode) => {
 
       if (!nomorKal) {
         nomorKal = await generateKalkulasiNomor(data.Tanggal);
-        // Insert Hdr
         await conn.query(
           `
-          INSERT INTO kalkulasi.tkalkulasi2_hdr (
-            kal_nomor, kal_project, kal_tanggal, kal_cus, kal_kh_kode, kal_rpallowance, kal_allowance, 
-            kal_rpsesuai, kal_rencanaorder, kal_rplaba, kal_laba, kal_persen, kal_pakaiobat, user_create, date_create
-          ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, "Y", "N", ?, NOW())
-        `,
+            INSERT INTO kalkulasi.tkalkulasi2_hdr (
+              kal_nomor, kal_project, kal_tanggal, kal_cus, kal_kh_kode, kal_rpallowance, kal_allowance, 
+              kal_rpsesuai, kal_ppn, kal_rpsesuaippn, kal_rencanaorder, kal_rplaba, kal_laba, kal_persen, kal_pakaiobat, user_create, date_create
+            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "Y", "N", ?, NOW())
+          `,
           [
             nomorKal,
             data.NamaPekerjaan,
@@ -462,6 +461,8 @@ const save = async (data, userKode, userCabang, isNewMode) => {
             kal.RpAllowance || 0,
             kal.PersenAllowance || 0,
             kal.HargaSesuai || 0,
+            kal.PersenPpn || 0, // ⬅ BARU
+            kal.HargaSesuaiPpn || 0, // ⬅ BARU
             data.RencanaOrder || 0,
             kal.RpLaba || 0,
             kal.PersenLaba || 0,
@@ -469,20 +470,21 @@ const save = async (data, userKode, userCabang, isNewMode) => {
           ],
         );
 
-        // Link Kalkulasi to Permintaan Harga
+        // ⬅ FIX: pakai HargaSesuaiPpn (harga final+PPN), BUKAN HargaSesuai
+        // (harga penyesuaian mentah) — HargaSesuaiPpn inilah yang jadi acuan
+        // harga jual sebenarnya (dipakai Penawaran/dsb).
         await conn.query(
           `UPDATE tmintaharga SET mh_nomor_kalkulasi=?, mh_harga_kalkulasi=? WHERE mh_nomor=?`,
-          [nomorKal, kal.HargaSesuai || 0, nomorMh],
+          [nomorKal, kal.HargaSesuaiPpn || 0, nomorMh],
         );
       } else {
-        // Update Hdr
         await conn.query(
           `
-          UPDATE kalkulasi.tkalkulasi2_hdr SET 
-            kal_project=?, kal_cus=?, kal_kh_kode=?, kal_rpallowance=?, kal_allowance=?, 
-            kal_rpsesuai=?, kal_rencanaorder=?, kal_rplaba=?, kal_laba=?, user_modified=?, date_modified=NOW()
-          WHERE kal_nomor=?
-        `,
+            UPDATE kalkulasi.tkalkulasi2_hdr SET 
+              kal_project=?, kal_cus=?, kal_kh_kode=?, kal_rpallowance=?, kal_allowance=?, 
+              kal_rpsesuai=?, kal_ppn=?, kal_rpsesuaippn=?, kal_rencanaorder=?, kal_rplaba=?, kal_laba=?, user_modified=?, date_modified=NOW()
+            WHERE kal_nomor=?
+          `,
           [
             data.NamaPekerjaan,
             data.CustKode,
@@ -490,6 +492,8 @@ const save = async (data, userKode, userCabang, isNewMode) => {
             kal.RpAllowance || 0,
             kal.PersenAllowance || 0,
             kal.HargaSesuai || 0,
+            kal.PersenPpn || 0, // ⬅ BARU
+            kal.HargaSesuaiPpn || 0, // ⬅ BARU
             data.RencanaOrder || 0,
             kal.RpLaba || 0,
             kal.PersenLaba || 0,
@@ -497,9 +501,10 @@ const save = async (data, userKode, userCabang, isNewMode) => {
             nomorKal,
           ],
         );
+        // ⬅ FIX: sama, pakai HargaSesuaiPpn
         await conn.query(
           `UPDATE tmintaharga SET mh_harga_kalkulasi=? WHERE mh_nomor=?`,
-          [kal.HargaSesuai || 0, nomorMh],
+          [kal.HargaSesuaiPpn || 0, nomorMh],
         );
       }
 
