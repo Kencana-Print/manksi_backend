@@ -29,13 +29,13 @@ const getBrowseList = async (filters) => {
     workshop,
     customer,
     userCabang,
-    userKode, // ← BARU: dipakai untuk bypass filter cabang bagi SO milik sendiri
+    userKode,
     canLihatCus,
     canLihatHarga,
   } = filters;
-  let params = [startDate, endDate];
+  let params = [startDate, endDate, startDate, endDate];
 
-  let whereClause = `WHERE s.spk_tanggal >= CONCAT(?, ' 00:00:00') AND s.spk_tanggal <= CONCAT(?, ' 23:59:59')`;
+  let whereClause = `WHERE 1=1`;
 
   if (workshop && workshop !== "ALL" && workshop !== "") {
     whereClause += ` AND s.spk_cab = ?`;
@@ -51,26 +51,16 @@ const getBrowseList = async (filters) => {
     userCabang !== "ADMIN" &&
     userCabang !== ""
   ) {
-    // ⚠️ FIX: tambahkan OR s.user_create = userKode — sama seperti fix
-    // di SPK PPIC — SO yang DIBUAT SENDIRI (kolom MO = user_create)
-    // harus selalu terlihat oleh pembuatnya sendiri, apa pun cabang
-    // SO tsb. Kolom di subquery sudah bernama seragam "user_create"
-    // baik dari sisi tspk legacy maupun tsalesorder baru.
     whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?)`;
     params.push(userCabang, userKode || "");
   }
 
-  // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus) —
-  // replikasi `if zcus=1` di ufrmBrowseSPK.btnRefreshClick.
   const custNameCol = canLihatCus
     ? "c.cus_nama AS Customer,"
     : "NULL AS Customer,";
   const groupCusCol = canLihatCus
     ? 'IFNULL(c1.cus_nama, "") AS GroupCustomer,'
     : "NULL AS GroupCustomer,";
-  // ⚠️ BARU: kolom Harga digated flag lihatHarga (user_lihat_harga) —
-  // replikasi `if zLihatHarga=1` di source yang sama, kolom terpisah
-  // dari zcus (2 flag berbeda, jangan digabung jadi 1 kondisi).
   const hargaCol = canLihatHarga ? "s.spk_harga AS Harga," : "NULL AS Harga,";
 
   const query = `
@@ -113,9 +103,18 @@ const getBrowseList = async (filters) => {
         spk_nomor_po, spk_ketpo, spk_tgl_po, spk_DatelinePO, spk_close, spk_close_alasan,
         spk_pen_nomor, spk_memo, spk_repeat, spk_aktif, spk_pinjo, spk_accpending,
         spk_mppb, spk_newdesign, spk_designdone, spk_keterangan, spk_invdc, spk_is_so,
-        spk_ketbatal 
+        spk_ketbatal
       FROM tspk
-      WHERE spk_is_so = 1 AND spk_nomor LIKE 'SO-%'
+      WHERE spk_tanggal >= CONCAT(?, ' 00:00:00') AND spk_tanggal <= CONCAT(?, ' 23:59:59')
+        AND (
+          (spk_is_so = 1 AND spk_nomor LIKE 'SO-%')
+          OR (
+            spk_is_so = 0
+            AND spk_nomor NOT LIKE 'SO-%'
+            AND (spk_so_ref IS NULL OR spk_so_ref = '')
+            AND spk_tanggal <= '2026-08-05 23:59:59'
+          )
+        )
       UNION ALL
       SELECT
         so_nomor AS spk_nomor, user_create, so_cmo AS spk_cmo, so_tanggal AS spk_tanggal,
