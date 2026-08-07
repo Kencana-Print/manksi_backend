@@ -205,15 +205,15 @@ const saveApproveRealisasi = async (nomorRealisasi) => {
 // Approve Gudang
 const saveApproveGudang = async (nomor, capv, userKode, alasan) => {
   const query = `
-    UPDATE tproduksiminta_hdr 
-    SET promin_apv_gudang = ?, 
-        promin_apv_gudang_by = ?, 
-        promin_apv_gudang_alasan = ? 
-    WHERE promin_nomor = ?
+    UPDATE tmintabahan_hdr 
+    SET min_apv = ?, 
+        min_apvusr = ?, 
+        min_apvalasan = ? 
+    WHERE min_nomor = ?
   `;
   const [result] = await db.query(query, [capv, userKode, alasan || "", nomor]);
   if (result.affectedRows === 0) {
-    throw new Error("Data realisasi tidak ditemukan.");
+    throw new Error("Data Permintaan Bahan tidak ditemukan.");
   }
   return result;
 };
@@ -221,15 +221,15 @@ const saveApproveGudang = async (nomor, capv, userKode, alasan) => {
 // Approve Manager
 const saveApproveManager = async (nomor, capv, userKode, alasan) => {
   const query = `
-    UPDATE tproduksiminta_hdr 
-    SET promin_apv_mgr = ?, 
-        promin_apv_mgr_by = ?, 
-        promin_apv_mgr_alasan = ? 
-    WHERE promin_nomor = ?
+    UPDATE tmintabahan_hdr 
+    SET min_apvmgr = ?, 
+        min_apvmgrusr = ?, 
+        min_apvalasanmgr = ? 
+    WHERE min_nomor = ?
   `;
   const [result] = await db.query(query, [capv, userKode, alasan || "", nomor]);
   if (result.affectedRows === 0) {
-    throw new Error("Data realisasi tidak ditemukan.");
+    throw new Error("Data Permintaan Bahan tidak ditemukan.");
   }
   return result;
 };
