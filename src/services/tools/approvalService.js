@@ -61,7 +61,7 @@ const getPengajuanByCustomer = async (cusKode, query) => {
     SELECT 
       i.cusp_kode AS Kode, 
       i.cusp_nomor AS SPK, 
-      s.spk_divisi AS Divisi, 
+      COALESCE(s.spk_divisi, so.so_divisi) AS Divisi, 
       DATE_FORMAT(i.cusp_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
       i.cusp_user_minta AS Peminta, 
       DATE_FORMAT(i.cusp_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
@@ -70,6 +70,7 @@ const getPengajuanByCustomer = async (cusKode, query) => {
       IF(i.cusp_user_pin <> "", "Sudah", "Belum") AS StatusPakai
     FROM tcustomer_pin i
     LEFT JOIN tspk s ON s.spk_nomor = i.cusp_nomor
+    LEFT JOIN tsalesorder so ON so.so_nomor = i.cusp_nomor
     WHERE i.cusp_kode = ? 
       AND DATE(i.cusp_tgl_minta) >= ? 
       AND DATE(i.cusp_tgl_minta) <= ? 
@@ -139,69 +140,64 @@ const getInvoiceNunggak = async (cusKode, status, dStart) => {
 const setOtorisasi = async (nomorSpk, statusAcc, userKode) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
-
   try {
-    // 1. Update status Acc di tabel customer_pin
     await conn.query(
       `UPDATE tcustomer_pin SET 
-        cusp_tgl_pin = NOW(),
-        cusp_user_pin = ?,
-        cusp_acc = ?
+        cusp_tgl_pin = NOW(), cusp_user_pin = ?, cusp_acc = ?
        WHERE cusp_nomor = ?`,
       [userKode, statusAcc, nomorSpk],
     );
 
-    // 2. Sinkronisasi spk_aktif (sesuai cxButton5Click Delphi)
-    if (statusAcc === "Y") {
-      const [cekPinHarga] = await conn.query(
-        `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
-        [nomorSpk],
-      );
+    // ⚠️ FIX: sinkronisasi aktif harus target tabel yang benar
+    // (tspk vs tsalesorder), termasuk kolom pinjo yang beda nama
+    // (spk_pinjo vs so_pinjo).
+    const loc = await resolveSoLocation(nomorSpk);
+    if (loc) {
+      const targetTable = loc === "new" ? "tsalesorder" : "tspk";
+      const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
+      const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
+      const pinjoCol = loc === "new" ? "so_pinjo" : "spk_pinjo";
 
-      let amanUntukAktif = false;
-
-      if (cekPinHarga.length > 0) {
-        // tspk_pin ADA → aktifkan hanya jika pin harga sudah di-ACC
-        if (cekPinHarga[0].pin_acc === "Y") {
-          amanUntukAktif = true;
-        }
-        // pin_acc bukan Y → tidak aktifkan, masih nunggu approval harga 0
-      } else {
-        // tspk_pin TIDAK ADA (harga bukan 0) → cek pinjo
-        const [cekPinJo] = await conn.query(
-          `SELECT spk_pinjo FROM tspk WHERE spk_nomor = ?`,
+      if (statusAcc === "Y") {
+        const [cekPinHarga] = await conn.query(
+          `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
           [nomorSpk],
         );
-        if (
-          cekPinJo.length > 0 &&
-          (cekPinJo[0].spk_pinjo === "MINTA" ||
-            cekPinJo[0].spk_pinjo === "TOLAK")
-        ) {
-          amanUntukAktif = false; // masih ada pin jo yang belum selesai
+        let amanUntukAktif = false;
+        if (cekPinHarga.length > 0) {
+          if (cekPinHarga[0].pin_acc === "Y") amanUntukAktif = true;
         } else {
-          amanUntukAktif = true; // aman, aktifkan
+          const [cekPinJo] = await conn.query(
+            `SELECT ${pinjoCol} AS pinjo FROM ${targetTable} WHERE ${targetCol} = ?`,
+            [nomorSpk],
+          );
+          if (
+            cekPinJo.length > 0 &&
+            (cekPinJo[0].pinjo === "MINTA" || cekPinJo[0].pinjo === "TOLAK")
+          ) {
+            amanUntukAktif = false;
+          } else {
+            amanUntukAktif = true;
+          }
         }
-      }
-
-      if (amanUntukAktif) {
+        if (amanUntukAktif) {
+          await conn.query(
+            `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
+            [nomorSpk],
+          );
+        }
+      } else if (statusAcc === "N") {
         await conn.query(
-          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
           [nomorSpk],
         );
       }
-    } else if (statusAcc === "N") {
-      // Jika ditolak, SPK langsung pasif
-      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
-        nomorSpk,
-      ]);
     }
 
-    // 3. Ambil nama peminta untuk notifikasi frontend
     const [userMinta] = await conn.query(
       `SELECT cusp_user_minta FROM tcustomer_pin WHERE cusp_nomor = ? LIMIT 1`,
       [nomorSpk],
     );
-
     await conn.commit();
     return {
       nomorSpk,
@@ -222,39 +218,47 @@ const setOtorisasi = async (nomorSpk, statusAcc, userKode) => {
 // --- GET DAFTAR SPK HARGA 0 (BROWSE) ---
 const getHargaNolList = async (query) => {
   const { startDate, endDate, belumAccSaja } = query;
-
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
-  let sqlCondition = ` WHERE DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  let accFilter = "";
   if (belumAccSaja === "true" || belumAccSaja === true) {
-    sqlCondition += ` AND p.pin_acc = "" `;
+    accFilter = ` AND p.pin_acc = "" `;
   }
-
   const sql = `
-    SELECT 
-      p.pin_nomor AS Nomor, 
-      s.spk_nama AS NamaSPK, 
-      s.spk_divisi AS Divisi, 
-      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
-      p.pin_user_minta AS Peminta, 
-      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
-      p.pin_user_pin AS Otorisasi, 
-      p.pin_acc AS Acc, 
-      s.spk_cus_kode AS KdCus, 
-      u.cus_nama AS Customer
-    FROM tspk_pin p
-    LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
-    LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
-    ${sqlCondition}
-    ORDER BY p.pin_nomor DESC
+    SELECT * FROM (
+      SELECT
+        p.pin_nomor AS Nomor, s.spk_nama AS NamaSPK, s.spk_divisi AS Divisi,
+        DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+        p.pin_user_minta AS Peminta,
+        DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+        p.pin_user_pin AS Otorisasi, p.pin_acc AS Acc,
+        s.spk_cus_kode AS KdCus, u.cus_nama AS Customer
+      FROM tspk_pin p
+      LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
+      LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
+      WHERE p.pin_nomor NOT LIKE 'SO-%'
+        AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? ${accFilter}
+      UNION ALL
+      SELECT
+        p.pin_nomor AS Nomor, s.so_nama AS NamaSPK, s.so_divisi AS Divisi,
+        DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+        p.pin_user_minta AS Peminta,
+        DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+        p.pin_user_pin AS Otorisasi, p.pin_acc AS Acc,
+        s.so_cus_kode AS KdCus, u.cus_nama AS Customer
+      FROM tspk_pin p
+      LEFT JOIN tsalesorder s ON s.so_nomor = p.pin_nomor
+      LEFT JOIN tcustomer u ON u.cus_kode = s.so_cus_kode
+      WHERE p.pin_nomor LIKE 'SO-%'
+        AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? ${accFilter}
+    ) x
+    ORDER BY x.Nomor DESC
   `;
-
-  const [rows] = await db.query(sql, [dStart, dEnd]);
+  const [rows] = await db.query(sql, [dStart, dEnd, dStart, dEnd]);
   return rows;
 };
 
@@ -290,56 +294,48 @@ const getHargaNolDetailInfo = async (nomor) => {
 const submitHargaNolOtorisasi = async (nomor, statusAcc, userKode) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
-
   try {
-    // 1. Update status Acc di tabel tspk_pin
     const updatePinSql = `
       UPDATE tspk_pin SET 
-        pin_tgl_pin = NOW(),
-        pin_user_pin = ?,
-        pin_acc = ?
+        pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
       WHERE pin_nomor = ?
     `;
     await conn.query(updatePinSql, [userKode, statusAcc, nomor]);
 
-    // 2. Logic Sinkronisasi Status Aktif SPK (Sesuai Delphi)
+    const loc = await resolveSoLocation(nomor);
+    if (!loc) throw new Error("SPK/SO terkait tidak ditemukan.");
+    const targetTable = loc === "new" ? "tsalesorder" : "tspk";
+    const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
+    const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
+
     if (statusAcc === "Y") {
       const [cekPinCus] = await conn.query(
         `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
         [nomor],
       );
-
       let amanUntukAktif = false;
-
       if (cekPinCus.length > 0) {
-        // tcustomer_pin ADA → aktifkan hanya jika piutang sudah di-ACC
-        if (cekPinCus[0].cusp_acc === "Y") {
-          amanUntukAktif = true;
-        }
-        // cusp_acc bukan Y → tidak aktifkan, masih nunggu approval piutang
+        if (cekPinCus[0].cusp_acc === "Y") amanUntukAktif = true;
       } else {
-        // tcustomer_pin TIDAK ADA → tidak ada masalah piutang, langsung aktifkan
         amanUntukAktif = true;
       }
-
       if (amanUntukAktif) {
         await conn.query(
-          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
           [nomor],
         );
       }
     } else if (statusAcc === "N") {
-      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
-        nomor,
-      ]);
+      await conn.query(
+        `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
+        [nomor],
+      );
     }
 
-    // Ambil nama peminta untuk di-return
     const [userMinta] = await conn.query(
       `SELECT pin_user_minta FROM tspk_pin WHERE pin_nomor = ? LIMIT 1`,
       [nomor],
     );
-
     await conn.commit();
     return {
       nomor,
@@ -360,40 +356,50 @@ const submitHargaNolOtorisasi = async (nomor, statusAcc, userKode) => {
 // --- GET DAFTAR SPK PRIORITAS (BROWSE) ---
 const getPrioritasList = async (query) => {
   const { startDate, endDate, belumAccSaja } = query;
-
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
-  let sqlCondition = ` WHERE DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
-
+  let accFilter = "";
   if (belumAccSaja === "true" || belumAccSaja === true) {
-    sqlCondition += ` AND p.pin_acc = "" `;
+    accFilter = ` AND p.pin_acc = "" `;
   }
-
+  // ⚠️ FIX: sebelumnya LEFT JOIN tspk saja — nomor ber-prefix SO-
+  // (tersimpan di tsalesorder, bukan tspk) selalu balik NamaSPK/Divisi/
+  // Customer kosong. Sekarang UNION dua sumber, sama pola dgn getNoPoList.
   const sql = `
-    SELECT 
-      p.pin_nomor AS Nomor, 
-      s.spk_nama AS NamaSPK, 
-      s.spk_divisi AS Divisi, 
-      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
-      p.pin_user_minta AS Peminta, 
-      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc, 
-      p.pin_user_pin AS Otorisasi, 
-      p.pin_acc AS Acc, 
-      s.spk_cus_kode AS KdCus, 
-      u.cus_nama AS Customer
-    FROM tspk_pin_prioritas p
-    LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
-    LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
-    ${sqlCondition}
-    ORDER BY p.pin_nomor DESC
+    SELECT * FROM (
+      SELECT
+        p.pin_nomor AS Nomor, s.spk_nama AS NamaSPK, s.spk_divisi AS Divisi,
+        DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+        p.pin_user_minta AS Peminta,
+        DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+        p.pin_user_pin AS Otorisasi, p.pin_acc AS Acc,
+        s.spk_cus_kode AS KdCus, u.cus_nama AS Customer
+      FROM tspk_pin_prioritas p
+      LEFT JOIN tspk s ON s.spk_nomor = p.pin_nomor
+      LEFT JOIN tcustomer u ON u.cus_kode = s.spk_cus_kode
+      WHERE p.pin_nomor NOT LIKE 'SO-%'
+        AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? ${accFilter}
+      UNION ALL
+      SELECT
+        p.pin_nomor AS Nomor, s.so_nama AS NamaSPK, s.so_divisi AS Divisi,
+        DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+        p.pin_user_minta AS Peminta,
+        DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s") AS TglAcc,
+        p.pin_user_pin AS Otorisasi, p.pin_acc AS Acc,
+        s.so_cus_kode AS KdCus, u.cus_nama AS Customer
+      FROM tspk_pin_prioritas p
+      LEFT JOIN tsalesorder s ON s.so_nomor = p.pin_nomor
+      LEFT JOIN tcustomer u ON u.cus_kode = s.so_cus_kode
+      WHERE p.pin_nomor LIKE 'SO-%'
+        AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? ${accFilter}
+    ) x
+    ORDER BY x.Nomor DESC
   `;
-
-  const [rows] = await db.query(sql, [dStart, dEnd]);
+  const [rows] = await db.query(sql, [dStart, dEnd, dStart, dEnd]);
   return rows;
 };
 
@@ -401,53 +407,49 @@ const getPrioritasList = async (query) => {
 const submitPrioritasOtorisasi = async (nomor, statusAcc, userKode) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
-
   try {
-    // 1. Update status Acc di tabel tspk_pin_prioritas
     const updatePinSql = `
       UPDATE tspk_pin_prioritas SET 
-        pin_tgl_pin = NOW(),
-        pin_user_pin = ?,
-        pin_acc = ?
-      WHERE pin_nomor = ?
+        pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
+       WHERE pin_nomor = ?
     `;
     await conn.query(updatePinSql, [userKode, statusAcc, nomor]);
 
-    // 2. Logic Sinkronisasi Status Aktif SPK (Sesuai Delphi)
+    // ⚠️ FIX: SPK/SO bisa tersimpan di tspk (legacy) ATAU tsalesorder
+    // (baru) — tentukan tabel target yang benar sebelum UPDATE aktif,
+    // sama pola dgn submitPembatalanSpkOtorisasi/submitNoPoOtorisasi.
+    const loc = await resolveSoLocation(nomor);
+    if (!loc) throw new Error("SPK/SO terkait tidak ditemukan.");
+    const targetTable = loc === "new" ? "tsalesorder" : "tspk";
+    const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
+    const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
+
     if (statusAcc === "Y") {
-      // Cek apakah ada masalah piutang (> 90 hari)
       const [cekPinCus] = await conn.query(
         `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
         [nomor],
       );
-
       let amanUntukAktif = true;
-
-      // Jika ada pengajuan pin customer tapi statusnya belum Y, jangan diaktifkan
       if (cekPinCus.length > 0 && cekPinCus[0].cusp_acc !== "Y") {
         amanUntukAktif = false;
       }
-
-      // Jika aman, aktifkan SPK otomatis
       if (amanUntukAktif) {
         await conn.query(
-          `UPDATE tspk SET spk_aktif = "Y" WHERE spk_nomor = ?`,
+          `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
           [nomor],
         );
       }
     } else if (statusAcc === "N") {
-      // Jika ditolak, SPK langsung pasif
-      await conn.query(`UPDATE tspk SET spk_aktif = "N" WHERE spk_nomor = ?`, [
-        nomor,
-      ]);
+      await conn.query(
+        `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
+        [nomor],
+      );
     }
 
-    // Ambil nama peminta untuk di-return
     const [userMinta] = await conn.query(
       `SELECT pin_user_minta FROM tspk_pin_prioritas WHERE pin_nomor = ? LIMIT 1`,
       [nomor],
     );
-
     await conn.commit();
     return {
       nomor,
