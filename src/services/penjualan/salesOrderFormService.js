@@ -736,11 +736,16 @@ const saveData = async (payload, user) => {
       }
     }
 
+    const JO_TANPA_WAJIB_SIZE = ["LL"];
+    const isJoTanpaWajibSize = JO_TANPA_WAJIB_SIZE.includes(
+      String(header.spk_jo_kode).toUpperCase().trim(),
+    );
     if (
       ["4", "6"].includes(divisiStr) &&
       !["BR", "SB", "SD", "PL", "DP", "TG", "PM"].some((sub) =>
         header.spk_jo_kode.includes(sub),
-      )
+      ) &&
+      !isJoTanpaWajibSize
     ) {
       const totalSize = (dtlSize || []).reduce(
         (s, r) => s + Number(r.qty || 0),
