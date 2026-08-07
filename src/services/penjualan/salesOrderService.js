@@ -49,7 +49,8 @@ const getBrowseList = async (filters) => {
     userCabang &&
     userCabang !== "HO-" &&
     userCabang !== "ADMIN" &&
-    userCabang !== ""
+    userCabang !== "" &&
+    userKode !== "DINDUN"
   ) {
     whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?)`;
     params.push(userCabang, userKode || "");
