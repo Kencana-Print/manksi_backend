@@ -133,6 +133,7 @@ const getBrowseList = async (filters) => {
         so_keterangan AS spk_keterangan, so_invdc AS spk_invdc, 1 AS spk_is_so,
         so_ketbatal AS spk_ketbatal
       FROM tsalesorder
+      WHERE so_tanggal >= CONCAT(?, ' 00:00:00') AND so_tanggal <= CONCAT(?, ' 23:59:59')
     ) s
     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
     LEFT JOIN tcustomer c1 ON c.cus_kodei = c1.cus_kode

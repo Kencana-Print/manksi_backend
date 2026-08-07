@@ -42,8 +42,14 @@ const generateNomor = async (conn, perushKode, joKode) => {
 };
 
 // --- 2. GET DETAIL UNTUK MODE UBAH ---
+// ⬅ FIX: sebelumnya HANYA query tsalesorder — SPK lama (tspk,
+// spk_is_so=0) yang ditampilkan di Browse SO (union legacy) TIDAK
+// PERNAH ketemu di sini, selalu balik "Data SO tidak ditemukan."
+// Sekarang: coba tsalesorder dulu (jalur normal/full-edit), kalau
+// kosong FALLBACK ke tspk legacy — dikembalikan sebagai READ-ONLY
+// (isLegacy:true), TIDAK bisa disimpan lewat form SO baru ini.
 const getDetail = async (nomor) => {
-  // A. Header
+  // A. Coba tsalesorder dulu (SO baru, full-edit)
   const [headerRows] = await db.query(
     `SELECT s.*, j.jo_nama, a.sal_nama, p.perush_nama, c.cus_nama, k.cus_nama AS cusk, c.cus_perfect,
       IFNULL((SELECT mkb_nomor FROM tmkb_hdr WHERE mkb_spk_nomor = s.so_nomor ORDER BY mkb_tanggal DESC LIMIT 1), "") AS mkb,
@@ -68,15 +74,46 @@ const getDetail = async (nomor) => {
      WHERE s.so_nomor = ?`,
     [nomor],
   );
-  if (headerRows.length === 0) throw new Error("Data SO tidak ditemukan.");
 
-  // Translasi so_* -> spk_* SEKALI di sini; sisa function di bawah
-  // 100% identik dengan versi asli (operasi terhadap field spk_*).
+  if (headerRows.length > 0) {
+    return getDetailFromNew(nomor, headerRows);
+  }
+
+  // B. Tidak ketemu di tsalesorder — fallback ke tspk (legacy, READ-ONLY)
+  const [legacyRows] = await db.query(
+    `SELECT s.*, j.jo_nama, a.sal_nama, p.perush_nama, c.cus_nama, c.cus_perfect,
+      IFNULL((SELECT mkb_nomor FROM tmkb_hdr WHERE mkb_spk_nomor = s.spk_nomor ORDER BY mkb_tanggal DESC LIMIT 1), "") AS mkb,
+      IFNULL((SELECT DATE_FORMAT(mkb_tanggal,"%Y-%m-%d") FROM tmkb_hdr WHERE mkb_spk_nomor = s.spk_nomor ORDER BY mkb_tanggal DESC LIMIT 1), "") AS dtmkb,
+      IFNULL(m.mpb_jmlorder, 0) AS jmlmppb,
+      IFNULL((
+        SELECT SUM(d.invd_jumlah)
+        FROM retail.tinv_hdr h
+        INNER JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+        WHERE h.inv_nomor = s.spk_invdc AND LEFT(s.spk_divisi, 1) <> '3'
+      ), 0) AS jmlinvdc,
+      map.mspk_acc_customer AS map_acc_customer,
+      map.mspk_acc_tanggal AS map_acc_tanggal
+     FROM tspk s
+     LEFT JOIN tjenisorder j ON s.spk_jo_kode = j.jo_kode
+     LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
+     LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
+     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
+     LEFT JOIN tmpb m ON s.spk_mppb = m.mpb_nomor
+     LEFT JOIN tmemospk map ON map.mspk_nomor = s.spk_memo
+     WHERE s.spk_nomor = ?`,
+    [nomor],
+  );
+  if (legacyRows.length === 0) throw new Error("Data SO tidak ditemukan.");
+
+  return getDetailLegacy(nomor, legacyRows);
+};
+
+// --- Helper: assembling detail untuk SO BARU (tsalesorder) ---
+// Isinya PERSIS logic getDetail lama, dipindah ke fungsi terpisah
+// supaya bisa dipanggil dari cabang A di atas tanpa duplikasi.
+const getDetailFromNew = async (nomor, headerRows) => {
   const header = [mapSoHeaderRow(headerRows[0])];
 
-  // --- CEK 3 STATUS PIN (APPROVAL) — TIDAK BERUBAH, tabel-tabel
-  // approval ini murni keyed by string nomor, tidak tergantung
-  // header-nya hidup di tspk atau tsalesorder ---
   const [pinCus] = await db.query(
     `SELECT IF(cusp_acc="Y", "ACC", IF(cusp_acc="N", "TOLAK", "Y")) AS acc FROM tcustomer_pin WHERE cusp_nomor=?`,
     [nomor],
@@ -138,14 +175,14 @@ const getDetail = async (nomor) => {
     spk_aktif = header[0].spk_aktif;
   }
 
-  header[0].isSalesOrder = true; // selalu true — service ini khusus tsalesorder
+  header[0].isSalesOrder = true;
+  header[0].isLegacy = false; // ⬅ BARU
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
   header[0].nopo_acc = nopo_acc;
   header[0].spk_aktif = spk_aktif;
 
-  // B. Detail Alokasi — dari tsalesorder_alokasi
   const [alokasi] = await db.query(
     `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
             soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
@@ -153,8 +190,6 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // C. Detail Kaosan — dari tsalesorder_kaosan (nama tetap di-JOIN
-  // read-time, TIDAK disimpan, sama seperti perilaku tspk_dc asli)
   const [dtlKaosan] = await db.query(
     `SELECT d.sok_kode AS kode,
             TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
@@ -165,7 +200,6 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // D. Detail Size — dari tsalesorder_size
   const [dtlSize] = await db.query(
     `SELECT sos_size AS size, sos_qty AS qty,
             sos_ld AS ld, sos_pb AS pb,
@@ -178,9 +212,6 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // E. Keterangan Komponen — TIDAK dimigrasi (tspk_ketkomponen tidak
-  // punya FK ke tspk, murni keyed by string nomor; tabel ini juga
-  // tidak pernah di-INSERT dari service ini, hanya dibaca)
   const [ketKomponen] = await db.query(
     `SELECT CAST(
      GROUP_CONCAT(
@@ -201,6 +232,94 @@ const getDetail = async (nomor) => {
     header: header[0],
     alokasi,
     dtlKaosan,
+    dtlSize,
+    komponen,
+    ketKomponen: ketKomponen[0]?.ketKomponen || "",
+  };
+};
+
+// --- Helper: assembling detail untuk SPK LEGACY (tspk) — READ-ONLY ---
+// ⚠️ Kolom tspk sudah pakai prefix spk_* asli, TIDAK perlu translasi
+// mapSoHeaderRow. Status approval (pin_customer/ketpo_acc/dst) tetap
+// dihitung sama (tabel approval generic by nomor string), supaya
+// banner status di form tetap akurat walau read-only.
+// ⚠️ ASUMSI: Alokasi & Detail Kaosan tidak punya padanan tabel legacy
+// yang saya yakini (fitur ini kemungkinan baru, eksklusif utk SO baru
+// pasca migrasi) — dikembalikan array kosong. Kalau ternyata SPK lama
+// JUGA punya data alokasi/kaosan tersimpan di tabel lain, kasih tau
+// nama tabelnya, saya tambahkan.
+const getDetailLegacy = async (nomor, legacyRows) => {
+  const header = [{ ...legacyRows[0] }];
+
+  const [pinCus] = await db.query(
+    `SELECT IF(cusp_acc="Y", "ACC", IF(cusp_acc="N", "TOLAK", "Y")) AS acc FROM tcustomer_pin WHERE cusp_nomor=?`,
+    [nomor],
+  );
+  const pin_customer = pinCus.length > 0 ? pinCus[0].acc : "N";
+
+  const [pinHarga] = await db.query(
+    `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc FROM tspk_pin WHERE pin_nomor=?`,
+    [nomor],
+  );
+  const ketpo_acc = pinHarga.length > 0 ? pinHarga[0].acc : "";
+
+  const [pinPrio] = await db.query(
+    `SELECT IF(pin_acc="Y", "ACC", IF(pin_acc="N", "TOLAK", "MINTA ACC")) AS acc 
+   FROM tspk_pin_prioritas WHERE pin_nomor=?`,
+    [nomor],
+  );
+  const kepentingan_acc = pinPrio.length > 0 ? pinPrio[0].acc : "";
+
+  const [pinNoPo] = await db.query(
+    `SELECT IF(pin_acc="Y","ACC",IF(pin_acc="N","TOLAK","MINTA ACC")) AS acc
+   FROM tspk_pin5
+   WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
+   ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  const nopo_acc = pinNoPo.length > 0 ? pinNoPo[0].acc : "";
+
+  header[0].isSalesOrder = true;
+  header[0].isLegacy = true; // ⬅ flag utama yang dibaca frontend
+  header[0].pin_customer = pin_customer;
+  header[0].ketpo_acc = ketpo_acc;
+  header[0].kepentingan_acc = kepentingan_acc;
+  header[0].nopo_acc = nopo_acc;
+
+  // Size — tspk_size sudah dipakai konsisten di modul lain (mis.
+  // mutasiProduksiFormService) sebagai tabel size utk SPK legacy.
+  const [dtlSize] = await db.query(
+    `SELECT spks_size AS size, spks_qty AS qty,
+            spks_ld AS ld, spks_b AS pb,
+            spks_pl_pendek AS pl_pendek, spks_pl_panjang AS pl_panjang,
+            spks_p_bahu AS p_bahu, spks_l_lengan AS l_lengan, spks_l_manset AS l_manset,
+            spks_l_pinggang AS l_pinggang, spks_p_celana AS p_celana,
+            spks_l_panggul AS l_panggul, spks_l_paha AS l_paha,
+            spks_pesak AS pesak, spks_l_lutut AS l_lutut, spks_l_bawah AS l_bawah
+    FROM tspk_size WHERE spks_nomor = ? AND spks_qty > 0`,
+    [nomor],
+  );
+
+  const [ketKomponen] = await db.query(
+    `SELECT CAST(
+     GROUP_CONCAT(
+       CONCAT(b.skk_kode, '= ', a.nama, ': ', b.skk_ket)
+       ORDER BY b.skk_kode
+       SEPARATOR '\r\n'
+     ) AS CHAR
+   ) AS ketKomponen
+   FROM tspk_ketkomponen b
+   LEFT JOIN tketkomponen a ON a.kode = b.skk_kode
+   WHERE b.skk_spk = ?`,
+    [nomor],
+  );
+
+  const komponen = await getKetKomponenGrid(nomor);
+
+  return {
+    header: header[0],
+    alokasi: [], // ⚠️ lihat catatan di atas fungsi
+    dtlKaosan: [], // ⚠️ lihat catatan di atas fungsi
     dtlSize,
     komponen,
     ketKomponen: ketKomponen[0]?.ketKomponen || "",

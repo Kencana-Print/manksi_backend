@@ -54,7 +54,7 @@ const generateNomor = async (kodePerush, tanggal, conn) => {
 // --- GET UANG MUKA ---
 const getUangMuka = async (nomor) => {
   if (!nomor) return 0;
-  const query = `SELECT IFNULL(kredit, 0) AS kredit FROM piutang_debet WHERE nota = ?`;
+  const query = `SELECT IFNULL(SUM(kredit), 0) AS kredit FROM piutang_kredit_detail WHERE nota = ?`;
   const [rows] = await db.query(query, [nomor]);
   return rows.length > 0 ? parseFloat(rows[0].kredit) : 0;
 };
