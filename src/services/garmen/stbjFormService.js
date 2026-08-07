@@ -619,6 +619,28 @@ const getDataCetak = async (nomor) => {
   return { header: hdr, detail: dtl };
 };
 
+// ─────────────────────────────────────────────────────────
+// SEARCH PACKING (untuk modal cari No. Packing satuan)
+// Beda dari getPackingAvailable (narik SEMUA sekaligus) — ini utk
+// user cari 1 nomor packing spesifik lewat modal, baru pilih.
+// ─────────────────────────────────────────────────────────
+const searchPacking = async (q = "") => {
+  const like = `%${q}%`;
+  const [rows] = await db.query(
+    `SELECT DISTINCT h.pack_nomor AS Nomor, h.pack_spk_nomor AS SpkNomor,
+            s.spk_nama AS NamaSpk,
+            DATE_FORMAT(h.pack_tanggal, '%d-%m-%Y') AS Tanggal
+     FROM retail.tpacking h
+     LEFT JOIN tspk s ON s.spk_nomor = h.pack_spk_nomor
+     WHERE h.pack_nostbj IS NULL
+       AND (h.pack_nomor LIKE ? OR h.pack_spk_nomor LIKE ? OR s.spk_nama LIKE ?)
+     ORDER BY h.pack_tanggal DESC
+     LIMIT 100`,
+    [like, like, like],
+  );
+  return rows;
+};
+
 module.exports = {
   generateNomor,
   getById,
@@ -631,4 +653,5 @@ module.exports = {
   getSpgList,
   save,
   getDataCetak,
+  searchPacking,
 };

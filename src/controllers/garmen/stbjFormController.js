@@ -81,6 +81,15 @@ const getDataCetak = async (req, res) => {
   }
 };
 
+const searchPacking = async (req, res) => {
+  try {
+    const rows = await svc.searchPacking(req.query.q || "");
+    res.json({ success: true, data: rows });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   getById,
   getSpkDetail,
@@ -90,4 +99,5 @@ module.exports = {
   save,
   update,
   getDataCetak,
+  searchPacking,
 };

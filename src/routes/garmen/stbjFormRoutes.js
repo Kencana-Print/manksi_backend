@@ -39,6 +39,7 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getDataCetak,
 );
+router.get("/search-packing", verifyToken, ctrl.searchPacking);
 
 // ── CRUD ─────────────────────────────────────────────────────────────
 router.get("/", verifyToken, checkPermission(MENU_ID, "view"), ctrl.getById);

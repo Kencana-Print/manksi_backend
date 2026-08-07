@@ -211,7 +211,11 @@ const saveApproveGudang = async (nomor, capv, userKode, alasan) => {
         promin_apv_gudang_alasan = ? 
     WHERE promin_nomor = ?
   `;
-  return await db.query(query, [capv, userKode, alasan, nomor]);
+  const [result] = await db.query(query, [capv, userKode, alasan || "", nomor]);
+  if (result.affectedRows === 0) {
+    throw new Error("Data realisasi tidak ditemukan.");
+  }
+  return result;
 };
 
 // Approve Manager
@@ -223,7 +227,11 @@ const saveApproveManager = async (nomor, capv, userKode, alasan) => {
         promin_apv_mgr_alasan = ? 
     WHERE promin_nomor = ?
   `;
-  return await db.query(query, [capv, userKode, alasan, nomor]);
+  const [result] = await db.query(query, [capv, userKode, alasan || "", nomor]);
+  if (result.affectedRows === 0) {
+    throw new Error("Data realisasi tidak ditemukan.");
+  }
+  return result;
 };
 
 // Ajukan Perubahan

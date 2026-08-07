@@ -64,6 +64,7 @@ const getDetail = async (nomor) => {
   const tglTrs = new Date(header.tanggal);
   tglTrs.setHours(0, 0, 0, 0);
   if (zdtClose) zdtClose.setHours(0, 0, 0, 0);
+  header.is_tutup_buku = zdtClose && tglTrs < zdtClose;
 
   header.is_tutup_buku = zdtClose && tglTrs <= zdtClose;
 
@@ -113,11 +114,9 @@ const saveData = async (payload, user) => {
     } = payload;
     const tglTrs = new Date(tanggal);
     let pinInfo = { status: "MINTA", urut: 0 };
-
-    // 1. Validasi Tutup Buku
     if (isEdit) pinInfo = await checkPinStatus(nomor, conn);
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    if (zdtClose && tglTrs <= zdtClose && pinInfo.status !== "ACC") {
+    if (zdtClose && tglTrs < zdtClose && pinInfo.status !== "ACC") {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
       );
