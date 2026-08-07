@@ -8,8 +8,12 @@ const getDivisiFilter = async (cabKaos, userCab) => {
     query = `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi WHERE kode = 3 ORDER BY kode`;
   } else if (userCab && cabKaos === "KDC") {
     query = `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi WHERE kode IN (3,6) ORDER BY kode`;
-  } else {
+  } else if (userCab === "P03") {
+    // Tambahkan kondisi khusus untuk cabang P03 agar bisa melihat divisi 3 beserta divisi lainnya
     query = `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi ORDER BY kode`;
+  } else {
+    // Cabang reguler lainnya secara default tidak memunculkan Divisi 3 (Kaosan)
+    query = `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi WHERE kode <> 3 ORDER BY kode`;
   }
   const [rows] = await db.query(query);
   return rows;
