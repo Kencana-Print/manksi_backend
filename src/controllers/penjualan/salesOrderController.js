@@ -11,6 +11,9 @@ const getBrowse = async (req, res) => {
       customer: req.query.customer,
       userCabang: req.user.cabang,
       userKode: req.user.kode,
+      userDivisi: req.user.divisi,
+      isCmo: req.user.flags?.cmo === 1 || req.user.flags?.cmo === "Y",
+      isCmo3: req.user.flags?.cmo3 === 1 || req.user.flags?.cmo3 === "Y",
       canLihatCus,
       canLihatHarga,
     };

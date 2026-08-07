@@ -30,6 +30,9 @@ const getBrowseList = async (filters) => {
     customer,
     userCabang,
     userKode,
+    userDivisi,
+    isCmo,
+    isCmo3,
     canLihatCus,
     canLihatHarga,
   } = filters;
@@ -45,6 +48,7 @@ const getBrowseList = async (filters) => {
     whereClause += ` AND s.spk_cus_kode = ?`;
     params.push(customer);
   }
+
   if (
     userCabang &&
     userCabang !== "HO-" &&
@@ -52,8 +56,15 @@ const getBrowseList = async (filters) => {
     userCabang !== "" &&
     userKode !== "DINDUN"
   ) {
-    whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?)`;
-    params.push(userCabang, userKode || "");
+    // Deteksi apakah user adalah LUTFI atau user punya flag CMO dan berada di Divisi 3
+    const isCmoDivisi3 =
+      userKode === "LUTFI" || (String(userDivisi) === "3" && (isCmo || isCmo3))
+        ? 1
+        : 0;
+
+    // Tambahkan klausa OR: Jika user adalah CMO Divisi 3, tampilkan semua data yang Divisinya berawalan '3' tanpa melihat cabang
+    whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ? OR (LEFT(s.spk_divisi, 1) = '3' AND ? = 1))`;
+    params.push(userCabang, userKode || "", isCmoDivisi3);
   }
 
   const custNameCol = canLihatCus
