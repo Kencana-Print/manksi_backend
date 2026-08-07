@@ -90,9 +90,12 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     userInfo.kode === "ADMIN" ||
     userInfo.bagian?.toUpperCase() === "AUDIT" ||
     userInfo.bagian?.toUpperCase() === "FINANCE" ||
-    userInfo.flags?.cmo === 1 || // ← tambah ini
-    userInfo.flags?.cmo === "1" || // ← string juga
-    userInfo.flags?.cmo === "Y"; // ← atau Y
+    userInfo.bagian?.toUpperCase() === "MARKETING" || // <-- Tambahkan pengecualian untuk Bagian Marketing
+    userInfo.jabatan?.toUpperCase() === "MARKETING" || // <-- Jaga-jaga jika tercatat di Jabatan
+    userInfo.jabatan?.toUpperCase() === "MO" || // <-- Jaga-jaga jika tercatat di Jabatan
+    userInfo.flags?.cmo === 1 ||
+    userInfo.flags?.cmo === "1" ||
+    userInfo.flags?.cmo === "Y";
 
   if (!isManagerOrAdmin) {
     if (userInfo.jabatan === "CRM") {
