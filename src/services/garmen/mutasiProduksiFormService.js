@@ -813,9 +813,17 @@ const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
 // ─────────────────────────────────────────────────────────
 const cekLhk = async (nomorSpk, gdgAsal) => {
   const [[row]] = await db.query(
-    `SELECT COUNT(*) AS jml FROM tmutasiproduksi_hdr
-     WHERE mph_spk_nomor = ? AND mph_gdgasal = ?`,
-    [nomorSpk, gdgAsal],
+    `SELECT
+       (
+         SELECT COUNT(*) FROM tmutasiproduksi_hdr
+         WHERE mph_spk_nomor = ? AND mph_gdgasal = ?
+       )
+       +
+       (
+         SELECT COUNT(*) FROM tbpj_dtl
+         WHERE bpjd_spk = ? AND bpjd_gdgp_asal = ?
+       ) AS jml`,
+    [nomorSpk, gdgAsal, nomorSpk, gdgAsal],
   );
   return Number(row.jml) > 0;
 };

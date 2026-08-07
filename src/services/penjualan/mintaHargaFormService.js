@@ -61,13 +61,34 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
     [jenisKain],
   );
 
-  // Fallback jahit jika tidak ketemu (keterangan '-')
   let biayaJahit = jahitRows.length > 0 ? jahitRows[0].mhb_biaya : 0;
   if (biayaJahit === 0) {
     const [defaultJahit] = await db.query(
       `SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_jenis="JAHIT" AND mhb_ket="-" LIMIT 1`,
     );
     biayaJahit = defaultJahit[0]?.mhb_biaya || 0;
+  }
+
+  // ⬅ BARU: cek dulu apakah kombinasi kode+jeniskain ini BENAR-BENAR ADA
+  // di master, sebelum lanjut ambil komponen. Kalau tidak ada sama
+  // sekali, ini data lama/stale (jenisKain sudah tidak valid di master
+  // saat ini) — kirim flag eksplisit, JANGAN diam-diam balikin array
+  // komponen kosong yang bikin HPP jadi 0 tanpa penjelasan.
+  const [existRows] = await db.query(
+    `SELECT 1 FROM tmintaharga_kain WHERE mhk_kode = ? AND TRIM(mhk_jeniskain) = TRIM(?) LIMIT 1`,
+    [model, jenisKain],
+  );
+  const jenisKainValid = existRows.length > 0;
+
+  if (!jenisKainValid) {
+    return {
+      rpPotong: potongRows[0]?.mhb_biaya || 0,
+      rpJahit: biayaJahit,
+      komponen: [],
+      margin: { laba: 0, persen: "Y" },
+      allowancePersen: 0,
+      jenisKainValid: false, // ⬅ flag utama yang dibaca frontend
+    };
   }
 
   // 3. Ambil Komponen Kain (yield/babaran & harga)
@@ -100,6 +121,7 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
     komponen: komponenRows,
     margin: marginRows[0] || { laba: 0, persen: "Y" },
     allowancePersen: komponenRows[0]?.allowance || 0,
+    jenisKainValid: true,
   };
 };
 
