@@ -57,7 +57,6 @@ const loadKomponenLini = async (nomor, map, lini) => {
 
 const getFormLoadData = async (nomor) => {
   const spk = await getSpkInfo(nomor);
-
   const [potong] = await db.query(
     `SELECT a.sk_kode AS Kode, b.Bhn_Name AS Nama
      FROM tspk_komponen_potong a
@@ -66,7 +65,6 @@ const getFormLoadData = async (nomor) => {
      ORDER BY a.sk_nourut ASC`,
     [nomor],
   );
-
   const [cetakBordir] = await db.query(
     `SELECT a.kcb_kode AS Kode, b.Bhn_Name AS Nama,
             a.kcb_proses AS Proses, a.kcb_penempatan AS Penempatan,
@@ -78,14 +76,21 @@ const getFormLoadData = async (nomor) => {
     [nomor],
   );
 
+  const finishingUpper = (spk.spk_finishing || "").toUpperCase();
+  const isCetakFromFlag = spk.spk_sablon === "Y" || spk.spk_sublim === "Y";
+  const isCetakFromText =
+    finishingUpper.includes("SABLON") || finishingUpper.includes("SUBLIM");
+  const isBordirFromFlag = spk.spk_bordir === "Y";
+  const isBordirFromText = finishingUpper.includes("BORDIR");
+
   return {
     NomorSPK: spk.spk_nomor,
     NamaBarang: spk.spk_nama,
     JenisBarang: spk.jo_nama,
     Jumlah: spk.spk_jumlah,
     Map: spk.spk_memo,
-    Cetak: spk.spk_sablon === "Y" || spk.spk_sublim === "Y",
-    Bordir: spk.spk_bordir === "Y",
+    Cetak: isCetakFromFlag || isCetakFromText,
+    Bordir: isBordirFromFlag || isBordirFromText,
     ListPotong: potong,
     ListCetakBordir: cetakBordir,
   };
