@@ -77,10 +77,33 @@ const getDetailData = async (req, res) => {
   }
 };
 
+const getAllDetailData = async (req, res) => {
+  try {
+    let { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .split("T")[0];
+      endDate = now.toISOString().split("T")[0];
+    }
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await mkbService.getAllDetailData(
+      startDate,
+      endDate,
+      canLihatCus,
+    );
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetailData,
   getLinkedPo,
   deleteMkb,
   requestPin,
+  getAllDetailData,
 };

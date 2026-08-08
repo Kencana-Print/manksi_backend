@@ -19,6 +19,12 @@ router.get(
   controller.getBrowse,
 );
 router.get(
+  "/all-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getAllDetail,
+);
+router.get(
   "/check-insert",
   verifyToken,
   checkPermission(MENU_ID, "insert"),

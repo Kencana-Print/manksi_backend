@@ -328,7 +328,7 @@ const saveData = async (payload, user) => {
     if (isEdit) {
       await conn.query(
         `UPDATE tgarmenminta_hdr SET 
-          min_tanggal=?, min_cab=?, min_gp=?, min_spk_nomor=?, min_ket=?, date_modified=?, user_modified=? 
+          min_tanggal=?, min_cab=?, min_gp=?, min_spk_nomor=?, min_ket=?, date_modified=NOW(), user_modified=? 
          WHERE min_nomor=?`,
         [
           tanggal,
@@ -336,7 +336,6 @@ const saveData = async (payload, user) => {
           finalGudang,
           finalSPK,
           keterangan || "",
-          dateModified,
           user.kode,
           nomor,
         ],
@@ -346,7 +345,7 @@ const saveData = async (payload, user) => {
       await conn.query(
         `INSERT INTO tgarmenminta_hdr 
           (min_jenis, min_nomor, min_tanggal, min_cab, min_gp, min_spk_nomor, min_bagian, min_ket, date_create, user_create, min_close)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 0)`,
         [
           jenis,
           nomor,
@@ -354,9 +353,8 @@ const saveData = async (payload, user) => {
           cabang,
           finalGudang,
           finalSPK,
-          bagianUser, // Delphi mengisi min_bagian dengan zBagian dari user
+          bagianUser,
           keterangan || "",
-          dateModified,
           user.kode,
         ],
       );

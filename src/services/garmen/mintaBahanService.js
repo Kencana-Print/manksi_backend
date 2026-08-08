@@ -252,6 +252,47 @@ const submitAjukanPerubahan = async (
   return await db.query(query, [nomor, urut, tgl, spk, userKode, alasan]);
 };
 
+/**
+ * Mendapatkan semua data Header + Detail untuk keperluan Export Excel
+ */
+const getAllDetail = async (startDate, endDate, cabang) => {
+  let query = `
+    SELECT
+      h.min_nomor AS Nomor, h.min_tanggal AS Tanggal, DATE_FORMAT(h.date_create, "%H:%i:%s") AS Jam,
+      h.min_cab AS Cab, v.Divisi AS Divisi, h.min_spk_nomor AS SPK,
+      IFNULL(s.spk_nama, m.Mspk_nama) AS NamaSpk,
+      IF(h.min_close=0, "OPEN", IF(h.min_close=1, "CLOSE", IF(h.min_close=9, "DICLOSE", "ONPROSES"))) AS Status,
+      d.mind_bhn_kode AS KodeBahan, b.Bhn_Name AS NamaBahan, b.Bhn_satuan AS Satuan,
+      d.mind_babaran AS Babaran, d.mind_pcs AS Pcs, d.mind_jumlah AS Jumlah,
+      IFNULL((
+        SELECT SUM(i.promind_Jumlah)
+        FROM tproduksiminta_dtl i
+        INNER JOIN tproduksiminta_hdr j ON j.promin_nomor = i.promind_promin_Nomor
+        WHERE j.promin_minta = h.min_nomor AND i.promind_kodem = d.mind_bhn_kode
+      ), 0) AS Realisasi,
+      d.mind_komponen AS Komponen, d.mind_ket AS Keterangan
+    FROM tmintabahan_hdr h
+    INNER JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
+    LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
+    LEFT JOIN tdivisi v ON v.kode = IFNULL(s.spk_divisi, m.mspk_divisi)
+    WHERE h.min_tanggal >= ? AND h.min_tanggal <= ?
+  `;
+
+  const params = [startDate, endDate];
+
+  if (cabang && cabang !== "ALL") {
+    query += ` AND h.min_cab = ?`;
+    params.push(cabang);
+  }
+
+  query += ` ORDER BY h.min_tanggal DESC, h.min_nomor DESC, d.mind_bhn_kode ASC`;
+
+  const [rows] = await db.query(query, params);
+  return rows;
+};
+
 module.exports = {
   getBrowse,
   getDetailBahan,
@@ -264,4 +305,5 @@ module.exports = {
   saveApproveGudang,
   saveApproveManager,
   submitAjukanPerubahan,
+  getAllDetail,
 };

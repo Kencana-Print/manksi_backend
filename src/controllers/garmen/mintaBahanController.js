@@ -175,6 +175,26 @@ const approveRealisasi = async (req, res) => {
   }
 };
 
+const getAllDetail = async (req, res) => {
+  try {
+    const { startDate, endDate, cabang } = req.query;
+    if (!startDate || !endDate)
+      return res
+        .status(400)
+        .json({ success: false, message: "Tanggal dibutuhkan" });
+
+    const data = await service.getAllDetail(
+      startDate + " 00:00:00",
+      endDate + " 23:59:59",
+      cabang || "ALL",
+    );
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -185,4 +205,5 @@ module.exports = {
   approveManager,
   ajukanPerubahan,
   approveRealisasi,
+  getAllDetail,
 };

@@ -222,16 +222,12 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
 
   try {
     let nomor = payload.nomor;
-    const dateModified = new Date()
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " ");
 
     if (isEdit) {
       const qUpdate = `
         UPDATE tmintabahan_hdr SET 
           min_tanggal = ?, min_cab = ?, min_spk_nomor = ?, min_ket = ?, min_divisi = ?,
-          date_modified = ?, user_modified = ?
+          date_modified = NOW(), user_modified = ?
         WHERE min_nomor = ?
       `;
       await conn.query(qUpdate, [
@@ -240,7 +236,6 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
         payload.spk,
         payload.keterangan,
         payload.divisi,
-        dateModified,
         user.kode,
         nomor,
       ]);
@@ -272,9 +267,8 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
       const qInsert = `
         INSERT INTO tmintabahan_hdr 
         (min_nomor, min_tanggal, min_cab, min_divisi, min_spk_nomor, min_ket, min_apv, min_apvmgr, date_create, user_create) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
       `;
-
       await conn.query(qInsert, [
         nomor,
         payload.tanggal,
@@ -282,9 +276,8 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
         payload.divisi,
         payload.spk,
         payload.keterangan,
-        min_apv, // Status Apv Gudang
-        min_apvmgr, // Status Apv Manager
-        dateModified,
+        min_apv,
+        min_apvmgr,
         user.kode,
       ]);
     }

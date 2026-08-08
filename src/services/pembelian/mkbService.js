@@ -256,10 +256,67 @@ const requestPin = async (payload, user) => {
   }
 };
 
+// --- ALL DETAIL MKB (Untuk Export) ---
+const getAllDetailData = async (startDate, endDate, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `c.cus_nama AS Customer, c.cus_alamat AS Alamat,`
+    : `NULL AS Customer, NULL AS Alamat,`;
+
+  const query = `
+    SELECT 
+      x.Nomor, x.Tanggal, x.SPK, x.TglSPK, x.Dateline, x.NamaSpk, x.JumlahSPK, 
+      x.Customer, x.Alamat,
+      x.Komponen, x.Warna, x.Jenis, x.Babaran, x.Kode, 
+      x.NamaBahan, x.Satuan, x.Gramasi, x.Butuh, x.Ready, x.Akan_PO, 
+      (x.SudahPO1 + x.SudahPO2) AS SudahPO, 
+      (x.Terimapo + x.nonpo + x.linkpo) AS Terima, 
+      (x.Butuh - x.Ready - (x.Terimapo + x.nonpo + x.linkpo)) AS Kurang
+    FROM (
+      SELECT 
+        d.mkbd_mkb_nomor AS Nomor,
+        h.mkb_tanggal AS Tanggal,
+        IFNULL(so.so_nomor, IFNULL(s.spk_nomor, m.mspk_nomor)) AS SPK, 
+        IFNULL(so.so_tanggal, IFNULL(s.spk_tanggal, m.mspk_tanggal)) AS TglSPK, 
+        IFNULL(so.so_dateline, IFNULL(s.spk_dateline, m.mspk_dateline)) AS Dateline, 
+        IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS NamaSpk,
+        IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS JumlahSPK, 
+        ${custCols}
+        d.mkbd_komponen AS Komponen, 
+        d.mkbd_warna AS Warna, 
+        d.mkbd_jenis AS Jenis, 
+        d.mkbd_babaran AS Babaran,
+        d.mkbd_bhn_kode AS Kode,
+        b.bhn_name AS NamaBahan,
+        d.mkbd_bhn_satuan AS Satuan,
+        b.bhn_gramasi AS Gramasi,
+        d.mkbd_jumlah AS Butuh,
+        d.mkbd_jumlah_rs AS Ready,
+        d.mkbd_jumlah_po AS Akan_PO,
+        IFNULL((SELECT SUM(i.pod_jumlah) FROM tpo_dtl i WHERE i.pod_mkb_nomor = h.mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode), 0) AS SudahPO1,
+        IFNULL((SELECT SUM(i.mkbd2_qty) FROM tmkb_dtl2 i WHERE i.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND i.mkbd2_nourut = d.mkbd_nourut), 0) AS SudahPO2,
+        IFNULL((SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tpo_dtl p LEFT JOIN tbpb_dtl2 i ON i.bpbd2_po_nomor = p.pod_po_nomor AND i.bpbd2_nourut = p.pod_nourut WHERE p.pod_mkb_nomor = d.mkbd_mkb_nomor AND p.pod_bhn_kode = d.mkbd_bhn_kode GROUP BY p.pod_bhn_kode, p.pod_mkb_nomor), 0) AS Terimapo,
+        IFNULL((SELECT IF(k.mkbd2_qty <= SUM(p.bpbd2_jumlah), k.mkbd2_qty, SUM(p.bpbd2_jumlah)) FROM tbpb_dtl2 p INNER JOIN tmkb_dtl2 k ON k.mkbd2_po_nomor = p.bpbd2_po_nomor AND k.mkbd2_pourut = p.bpbd2_nourut WHERE k.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND k.mkbd2_nourut = d.mkbd_nourut), 0) AS linkpo,
+        IFNULL((SELECT SUM(i.bpbd_jumlah) FROM tbpb_dtl i WHERE i.bpbd_mkb = h.mkb_nomor AND i.bpbd_bhn_kode = d.mkbd_bhn_kode AND i.bpbd_nourut = d.mkbd_nourut), 0) AS nonpo
+      FROM tmkb_dtl d
+      LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+      LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+      LEFT JOIN tsalesorder so ON so.so_nomor = h.mkb_spk_nomor
+      LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
+      LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
+      LEFT JOIN tcustomer c ON c.cus_kode = IFNULL(so.so_cus_kode, IFNULL(s.spk_cus_kode, m.mspk_cus_kode))
+      WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal <= ?
+    ) x
+    ORDER BY x.Tanggal DESC, x.Nomor DESC
+  `;
+  const [rows] = await db.query(query, [startDate, endDate]);
+  return rows;
+};
+
 module.exports = {
   getBrowseMkb,
   getDetailData,
   getLinkedPo,
   deleteMkb,
   requestPin,
+  getAllDetailData,
 };
