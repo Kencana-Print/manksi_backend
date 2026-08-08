@@ -378,14 +378,20 @@ const searchRealisasiMinta = async (req, res) => {
 const searchRealisasiMintaDetail = async (req, res) => {
   try {
     const { nomor, gdg } = req.query;
-    if (!nomor || !gdg) {
+
+    // Cukup validasi nomor saja. Biarkan gdg kosong jika memang dipanggil dari form general.
+    if (!nomor) {
       return res.status(400).json({
         success: false,
-        message:
-          "Parameter nomor realisasi dan kode gudang produksi wajib disertakan.",
+        message: "Parameter nomor realisasi wajib disertakan.",
       });
     }
-    const data = await lookupService.searchRealisasiMintaDetail(nomor, gdg);
+
+    // Jika gdg bernilai undefined/kosong, berikan fallback string kosong "" agar query SQL tetap berjalan aman
+    const data = await lookupService.searchRealisasiMintaDetail(
+      nomor,
+      gdg || "",
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

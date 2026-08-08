@@ -28,7 +28,7 @@ const getMasterStok = async (query, user) => {
 
   const dStart = startDate || defaultStart;
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-  const fixCabang = cabang || "P04";
+  const fixCabang = cabang || user?.cabang || "P04";
 
   const tableName = getTableName(selectedJenis, user?.bagian);
 
@@ -120,7 +120,7 @@ const getDetailKartuStok = async (query, brgKode, user) => {
 
   const dStart = startDate || defaultStart;
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-  const fixCabang = cabang || "P04";
+  const fixCabang = cabang || user?.cabang || "P04";
 
   const tableName = getTableName(selectedJenis, user?.bagian);
 

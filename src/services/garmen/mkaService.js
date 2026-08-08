@@ -13,37 +13,71 @@ const db = require("../../config/database");
 const getBrowseList = async (filters) => {
   const { startDate, endDate, kodeBarang } = filters;
 
-  let params = [startDate, endDate];
-  let extraWhere = "";
+  let paramsMKA = [startDate, endDate];
+  let extraWhereMKA = "";
+
+  let paramsSPK = [startDate, endDate];
+  let extraWhereSPK = "";
 
   if (kodeBarang && kodeBarang.trim() !== "") {
-    extraWhere = ` AND EXISTS (
+    extraWhereMKA = ` AND EXISTS (
       SELECT 1 FROM tmka_dtl d2
       WHERE d2.mkbd_nomor = h.mkb_nomor
         AND d2.mkbd_brg_kode = ?
     )`;
-    params.push(kodeBarang.trim());
+    paramsMKA.push(kodeBarang.trim());
+
+    // Jika difilter berdasarkan kode aksesoris, SPK pending tidak perlu tampil
+    // (karena SPK pending belum memiliki detail aksesoris)
+    extraWhereSPK = ` AND 1=0 `;
   }
 
   const [rows] = await db.query(
-    `SELECT
-       h.mkb_nomor        AS Nomor,
-       h.mkb_tanggal      AS Tanggal,
-       IFNULL(v.divisi, '') AS Divisi,
-       h.mkb_spk_nomor    AS SPK,
-       IFNULL(s.spk_nama, '') AS NamaSpk,
-       IFNULL(s.spk_jumlah, 0) AS JumlahSPK,
-       IF(IFNULL(s.spk_close, 0) = 0, 'OPEN', 'CLOSE') AS StatusSPK,
-       h.mkb_note         AS Keterangan,
-       h.user_create      AS UserCreate,
-       h.date_create      AS Created
-     FROM tmka_hdr h
-     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
-     LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
-     WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal <= ?
-     ${extraWhere}
-     ORDER BY h.mkb_tanggal ASC, h.mkb_nomor ASC`,
-    params,
+    `SELECT * FROM (
+       -- 1. Data MKA yang sudah dibuat
+       SELECT
+         h.mkb_nomor        AS Nomor,
+         h.mkb_tanggal      AS Tanggal,
+         IFNULL(v.divisi, '') AS Divisi,
+         h.mkb_spk_nomor    AS SPK,
+         IFNULL(s.spk_nama, '') AS NamaSpk,
+         IFNULL(s.spk_jumlah, 0) AS JumlahSPK,
+         IF(IFNULL(s.spk_close, 0) = 0, 'OPEN', 'CLOSE') AS StatusSPK,
+         h.mkb_note         AS Keterangan,
+         h.user_create      AS UserCreate,
+         h.date_create      AS Created,
+         'MKA'              AS RowType
+       FROM tmka_hdr h
+       LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
+       LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
+       WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal <= ?
+       ${extraWhereMKA}
+
+       UNION ALL
+
+       -- 2. Data SPK yang belum dibuatkan MKA
+       SELECT
+         s.spk_nomor        AS Nomor,
+         s.spk_tanggal      AS Tanggal,
+         IFNULL(v.divisi, '') AS Divisi,
+         s.spk_nomor        AS SPK,
+         s.spk_nama         AS NamaSpk,
+         s.spk_jumlah       AS JumlahSPK,
+         IF(s.spk_close = 0, 'OPEN', 'CLOSE') AS StatusSPK,
+         s.spk_keterangan   AS Keterangan,
+         s.user_create      AS UserCreate,
+         s.date_create      AS Created,
+         'SPK'              AS RowType
+       FROM tspk s
+       LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
+       WHERE s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+         AND s.spk_aktif = 'Y'
+         AND IFNULL(v.divisi, '') NOT IN ('SPANDUK', 'MMT')
+         AND NOT EXISTS (SELECT 1 FROM tmka_hdr h WHERE h.mkb_spk_nomor = s.spk_nomor)
+         ${extraWhereSPK}
+     ) z
+     ORDER BY z.Tanggal ASC, z.Nomor ASC`,
+    [...paramsMKA, ...paramsSPK],
   );
 
   return rows;
@@ -158,7 +192,9 @@ const getExportDetail = async (filters) => {
   }
 
   // Susun params: [kodeBarang?, startDate, endDate]
-  const queryParams = kodeBarang ? [kodeBarang.trim(), startDate, endDate] : [startDate, endDate];
+  const queryParams = kodeBarang
+    ? [kodeBarang.trim(), startDate, endDate]
+    : [startDate, endDate];
 
   const [rows] = await db.query(
     `SELECT
