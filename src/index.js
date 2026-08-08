@@ -2,6 +2,9 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 const path = require("path");
+const axios = require("axios");
+const https = require("https");
+const fs = require("fs");
 
 const authRoutes = require("./routes/authRoute");
 const lookupRoutes = require("./routes/lookupRoutes");
@@ -288,6 +291,37 @@ app.use(
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
 app.use("/images", express.static(path.join(process.cwd(), "public/images")));
+// [BARU] Endpoint Image Proxy untuk menerobos mTLS Kaosan secara aman dari backend
+const mtlsAgent = new https.Agent({
+  cert: fs.readFileSync("/home/kencana/sertifikat_retail/client.crt"), // Sesuaikan path client cert kamu jika ada
+  key: fs.readFileSync("/home/kencana/sertifikat_retail/client.key"), // Sesuaikan path client key kamu jika ada
+  rejectUnauthorized: false,
+});
+
+app.get("/api/proxy-image", async (req, res) => {
+  const imageUrl = req.query.url;
+  if (!imageUrl || !imageUrl.startsWith("https://retail.kaosanofficial.com")) {
+    return res.status(400).send("URL tidak valid.");
+  }
+
+  try {
+    const response = await axios({
+      method: "get",
+      url: imageUrl,
+      responseType: "stream",
+      httpsAgent: mtlsAgent, // Menyertakan sertifikat mTLS secara backend-to-backend
+    });
+
+    res.setHeader(
+      "Content-Type",
+      response.headers["content-type"] || "image/jpeg",
+    );
+    response.data.pipe(res);
+  } catch (error) {
+    console.error("Gagal proxy gambar:", error.message);
+    res.status(404).send("Gambar tidak ditemukan atau gagal diakses.");
+  }
+});
 
 // Routes
 app.use("/api/auth", authRoutes);
