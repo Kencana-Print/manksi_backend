@@ -89,6 +89,7 @@ const getBrowseList = async (filters) => {
         s.spk_pen_nomor AS NoPenawaran,
         s.spk_memo AS MAP, s.spk_repeat AS 'Repeat',
         s.spk_aktif AS Aktif, s.spk_is_so AS IsSO,
+        s.spk_so_ref AS SORef,
         IFNULL(i.cusp_acc, "") AS Acc,
         IFNULL(j.pin_acc, "") AS AccH0,
         s.spk_pinjo AS AccJO, s.spk_accpending AS AccPending,
