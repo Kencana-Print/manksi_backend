@@ -124,7 +124,6 @@ const getBrowseList = async (filters) => {
             spk_is_so = 0
             AND spk_nomor NOT LIKE 'SO-%'
             AND (spk_so_ref IS NULL OR spk_so_ref = '')
-            AND spk_tanggal <= '2026-08-05 23:59:59'
           )
         )
       UNION ALL
