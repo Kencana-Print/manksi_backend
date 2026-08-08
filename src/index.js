@@ -310,6 +310,10 @@ app.get("/api/proxy-image", async (req, res) => {
       url: imageUrl,
       responseType: "stream",
       httpsAgent: mtlsAgent,
+      headers: {
+        Accept:
+          "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      },
     });
 
     const contentType = response.headers["content-type"] || "";
