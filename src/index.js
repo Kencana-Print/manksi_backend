@@ -309,13 +309,17 @@ app.get("/api/proxy-image", async (req, res) => {
       method: "get",
       url: imageUrl,
       responseType: "stream",
-      httpsAgent: mtlsAgent, // Menyertakan sertifikat mTLS secara backend-to-backend
+      httpsAgent: mtlsAgent,
     });
 
-    res.setHeader(
-      "Content-Type",
-      response.headers["content-type"] || "image/jpeg",
-    );
+    const contentType = response.headers["content-type"] || "";
+    // ← BARU: kalau bukan gambar, treat sebagai "tidak ditemukan"
+    if (!contentType.startsWith("image/")) {
+      console.warn(`Bukan gambar (${contentType}) dari:`, imageUrl);
+      return res.status(404).send("Gambar tidak ditemukan di server retail.");
+    }
+
+    res.setHeader("Content-Type", contentType);
     response.data.pipe(res);
   } catch (error) {
     console.error("Gagal proxy gambar:", error.message);
