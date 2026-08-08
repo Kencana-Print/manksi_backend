@@ -474,10 +474,13 @@ const loadBahan = async ({ kode, nomorSpk, existingRows = [] }) => {
 // walau user sudah mengisi identitas komponen lewat form barunya.
 // ─────────────────────────────────────────────────────────
 const cekKomponenIdentifikasi = async (nomorSpk, jenis) => {
+  // Pastikan membersihkan spasi berlebih pada nomor SPK bawaan dari PO
+  const spkTrimmed = (nomorSpk || "").trim();
+
   if (jenis === "POTONG") {
     const [rows] = await db.query(
-      `SELECT COUNT(*) AS jml FROM tspk_komponen_potong WHERE sk_nomor = ?`,
-      [nomorSpk],
+      `SELECT COUNT(*) AS jml FROM tspk_komponen_potong WHERE TRIM(sk_nomor) = ?`,
+      [spkTrimmed],
     );
     return Number(rows[0]?.jml) > 0;
   }
@@ -485,8 +488,8 @@ const cekKomponenIdentifikasi = async (nomorSpk, jenis) => {
   if (jenis === "CETAK") {
     const [rows] = await db.query(
       `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
-       WHERE kcb_nomor = ? AND kcb_proses IN ('SABLON', 'SUBLIM')`,
-      [nomorSpk],
+       WHERE TRIM(kcb_nomor) = ? AND TRIM(kcb_proses) IN ('SABLON', 'SUBLIM', 'CETAK')`,
+      [spkTrimmed],
     );
     return Number(rows[0]?.jml) > 0;
   }
@@ -494,8 +497,8 @@ const cekKomponenIdentifikasi = async (nomorSpk, jenis) => {
   if (jenis === "BORDIR") {
     const [rows] = await db.query(
       `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
-       WHERE kcb_nomor = ? AND kcb_proses = 'BORDIR'`,
-      [nomorSpk],
+       WHERE TRIM(kcb_nomor) = ? AND TRIM(kcb_proses) = 'BORDIR'`,
+      [spkTrimmed],
     );
     return Number(rows[0]?.jml) > 0;
   }

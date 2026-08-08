@@ -754,11 +754,12 @@ const cekKomponen = async (nomorSpk, lini) => {
   }
 
   if (liniUpper === "CETAK" || liniUpper === "BORDIR") {
-    const kcbProses = liniUpper === "CETAK" ? "SABLON" : "BORDIR";
+    const kcbProses =
+      liniUpper === "CETAK" ? "('SABLON', 'SUBLIM')" : "('BORDIR')";
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
-       WHERE kcb_nomor = ? AND kcb_proses = ?`,
-      [nomorSpk, kcbProses],
+       WHERE kcb_nomor = ? AND kcb_proses IN ${kcbProses}`,
+      [nomorSpk],
     );
     return Number(row.jml) > 0;
   }

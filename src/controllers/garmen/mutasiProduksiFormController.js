@@ -300,17 +300,26 @@ const getKomponenProof = async (req, res) => {
 // ─────────────────────────────────────────────────────────
 // CEK VALIDASI GUDANG ASAL (pending, planning, LHK)
 // POST /api/garmen/mutasi-produksi-form/cek-gudang-asal
-// body: { nomorSpk, gdgAsal, ckcetak, ckbordir, lbldivisi }
 // ─────────────────────────────────────────────────────────
 const cekGudangAsal = async (req, res) => {
   try {
-    const {
+    // Gunakan 'let' agar nilai ckcetak dan ckbordir bisa kita timpa
+    let {
       nomorSpk,
       gdgAsal,
       ckcetak = false,
       ckbordir = false,
       lbldivisi = "",
     } = req.body;
+
+    // --- BACA DARI IDENTITAS KOMPONEN (SECOND PROCESS) ---
+    // Jika dari frontend/header bernilai false, pastikan cek lagi ke tabel komponen
+    if (nomorSpk) {
+      if (!ckcetak) ckcetak = await svc.cekKomponen(nomorSpk, "CETAK");
+      if (!ckbordir) ckbordir = await svc.cekKomponen(nomorSpk, "BORDIR");
+    }
+    // -----------------------------------------------------
+
     const isSpg = nomorSpk?.startsWith("SPG");
     const skipValidation = svc.isSkipPlanningValidation(nomorSpk || "");
 
@@ -472,12 +481,25 @@ const cekGudangAsal = async (req, res) => {
       }
       // Cek LHK Cetak untuk QC Cetak ke DC (GP010 sebagai asal — baru)
       else if (gdgAsal === "GP010") {
-        const hasLhk = await svc.cekLhk(nomorSpk, "GP002");
-        if (!hasLhk) {
-          return res.status(400).json({
-            success: false,
-            message: "Spk tsb belum input lhk cetak.\nHubungi divisi tsb.",
-          });
+        if (ckcetak) {
+          const hasLhk = await svc.cekLhk(nomorSpk, "GP002");
+          if (!hasLhk) {
+            return res.status(400).json({
+              success: false,
+              message: "Spk tsb belum input lhk cetak.\nHubungi divisi tsb.",
+            });
+          }
+        } else if (ckbordir) {
+          // Jika SPK adalah bordir, validasi LHK bordir (GP014 / GP016)
+          const hasLhk =
+            (await svc.cekLhk(nomorSpk, "GP014")) ||
+            (await svc.cekLhk(nomorSpk, "GP016"));
+          if (!hasLhk) {
+            return res.status(400).json({
+              success: false,
+              message: "Spk tsb belum input lhk bordir.\nHubungi divisi tsb.",
+            });
+          }
         }
       }
     }

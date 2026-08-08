@@ -267,14 +267,18 @@ const save = async (data, userKode, isNewMode) => {
       throw new Error("Perusahaan harus diisi.");
     }
 
+    const isDivisi3 = String(data.Divisi).charAt(0) === "3";
+
     if (isNewMode) {
-      if (data.AccCustomer !== "Y") {
-        throw new Error(
-          "Customer belum menyetujui pesanan ini. MAP tidak bisa disimpan.",
-        );
-      }
-      if (!data.AccTanggal) {
-        throw new Error("Tanggal persetujuan customer wajib diisi.");
+      if (!isDivisi3) {
+        if (data.AccCustomer !== "Y") {
+          throw new Error(
+            "Customer belum menyetujui pesanan ini. MAP tidak bisa disimpan.",
+          );
+        }
+        if (!data.AccTanggal) {
+          throw new Error("Tanggal persetujuan customer wajib diisi.");
+        }
       }
     } else {
       const [existingRows] = await conn.query(
@@ -283,7 +287,7 @@ const save = async (data, userKode, isNewMode) => {
       );
       const wasAlreadyApproved = existingRows[0]?.mspk_acc_customer === "Y";
 
-      if (!wasAlreadyApproved) {
+      if (!isDivisi3 && !wasAlreadyApproved) {
         if (data.AccCustomer === "Y" && !data.AccTanggal) {
           throw new Error("Tanggal persetujuan customer wajib diisi.");
         }
@@ -715,6 +719,14 @@ const getKatalogCustomer = async (
 // (tspk_pin5, pin_trs berbeda supaya tidak nabrak record SO).
 // ─────────────────────────────────────────────────────────
 const syncNoPoApproval = async (conn, nomor, data, userKode) => {
+  if (String(data.Divisi).charAt(0) === "3") {
+    await conn.query(
+      `DELETE FROM tspk_pin5 WHERE pin_trs = "MAP" AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_dipakai = ""`,
+      [nomor],
+    );
+    return false; // Return false = mspk_aktif langsung "Y"
+  }
+
   const isKosong = !data.NomorPO || String(data.NomorPO).trim() === "";
   if (isKosong) {
     const [existingPin] = await conn.query(
@@ -724,12 +736,6 @@ const syncNoPoApproval = async (conn, nomor, data, userKode) => {
       [nomor],
     );
 
-    // ⚠️ FIX: kalau pengajuan NOPO sebelumnya SUDAH di-ACC dan belum
-    // "dipakai" (belum dikonsumsi save berikutnya), jangan reset ke
-    // pending lagi — approval itu tetap berlaku selama NomorPO masih
-    // sama-sama kosong seperti saat di-ACC. Reset hanya relevan kalau
-    // memang belum pernah ada approval, atau approval sebelumnya sudah
-    // "dipakai" (siklus baru), atau ditolak (perlu ajukan ulang manual).
     if (
       existingPin.length > 0 &&
       existingPin[0].pin_acc === "Y" &&
