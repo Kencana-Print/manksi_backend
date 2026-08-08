@@ -28,8 +28,8 @@ const buildStatusFilter = (closedCol, status) => {
 
 // ─────────────────────────────────────────────
 // DATA ROWS — transaksi mutasi + BPJ, di-SUM per (Nomor, Produksi).
-// Filter Nomor/Nama/Status SEKARANG didorong ke SQL (bukan di JS)
-// biar database yang mempersempit, bukan narik semua lalu filter.
+// Filter tanggal SEKARANG diterapkan pada Tanggal SPK/MAP,
+// agar selaras dengan ekspektasi user.
 // ─────────────────────────────────────────────
 const getDataRows = async (
   startDate,
@@ -54,12 +54,14 @@ const getDataRows = async (
   const alias = isMap ? "m" : "s";
   const mutasiJoinKey = isMap ? "m.mspk_nomor" : "s.spk_nomor";
 
+  // Filter gabungan didorong ke query
   const extraFilter =
-    (nomorSpk ? `AND ${alias}.${nomorCol} = ?` : "") +
+    ` AND ${alias}.${tglCol} >= ? AND ${alias}.${tglCol} <= ?` +
+    (nomorSpk ? ` AND ${alias}.${nomorCol} = ?` : "") +
     (namaSpk ? ` AND ${alias}.${namaCol} LIKE ?` : "") +
     ` ${buildStatusFilter(`${alias}.${closedCol}`, status)}`;
 
-  const extraParams = [];
+  const extraParams = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   if (nomorSpk) extraParams.push(nomorSpk);
   if (namaSpk) extraParams.push(`%${namaSpk}%`);
 
@@ -85,8 +87,7 @@ const getDataRows = async (
       INNER JOIN tbahan bh ON bh.bhn_kode = d.mpd_bhn_kode
       INNER JOIN tgudangproduksi b ON b.gdgp_kode = h.mph_gdgasal
       INNER JOIN tgudangproduksi c ON c.gdgp_kode = h.mph_gdgtujuan
-      WHERE h.mph_tanggal BETWEEN ? AND ?
-        AND d.mpd_bhn_kode = ?
+      WHERE d.mpd_bhn_kode = ?
         AND b.gdgp_nama NOT LIKE '%QC%'
         ${extraFilter}
       UNION ALL
@@ -105,34 +106,30 @@ const getDataRows = async (
       INNER JOIN tbahan bh ON bh.bhn_kode = d.bpjd_bhn_kode
       INNER JOIN tjasa j ON j.jasa_kode = po.pojh_jasa_kode
       LEFT JOIN tgudangproduksi gp ON gp.gdgp_kode = j.jasa_gdgp_kode
-      WHERE h.bpj_tanggal BETWEEN ? AND ?
-        AND d.bpjd_bhn_kode = ?
+      WHERE d.bpjd_bhn_kode = ?
         AND gp.gdgp_nama NOT LIKE '%QC%'
         ${extraFilter}
     ) x
     GROUP BY x.Nomor, x.Produksi
   `;
-  const params = [
-    startDate,
-    endDate,
-    komponen,
-    ...extraParams,
-    startDate,
-    endDate,
-    komponen,
-    ...extraParams,
-  ];
+
+  const params = [komponen, ...extraParams, komponen, ...extraParams];
+
   const [rows] = await db.query(sql, params);
   return rows;
 };
 
 // ─────────────────────────────────────────────
-// BASELINE ROWS — ✅ FIX: sekarang di-GROUP BY (Nomor, Produksi)
-// biar 2 kode gudang yang ke-label sama (misal Potong P01 & P04)
-// gak dobel-duplikasi jadi 2 baris Kurang=Jumlah. Filter Nomor/Nama/
-// Status juga didorong ke SQL buat performa.
+// BASELINE ROWS — Penambahan Parameter Filter Tanggal
 // ─────────────────────────────────────────────
-const getBaselineRows = async (isMap, nomorSpk, namaSpk, status) => {
+const getBaselineRows = async (
+  startDate,
+  endDate,
+  isMap,
+  nomorSpk,
+  namaSpk,
+  status,
+) => {
   const nomorCol = isMap ? "mspk_nomor" : "spk_nomor";
   const divisiCol = isMap ? "mspk_divisi" : "spk_divisi";
   const namaCol = isMap ? "mspk_nama" : "spk_nama";
@@ -146,12 +143,14 @@ const getBaselineRows = async (isMap, nomorSpk, namaSpk, status) => {
   const aktifCol = isMap ? "mspk_aktif" : "spk_aktif";
   const table = isMap ? "tmemospk" : "tspk";
 
+  // Tambahkan filter tanggal pada baseline
   const extraFilter =
-    (nomorSpk ? `AND s.${nomorCol} = ?` : "") +
+    ` AND s.${tglCol} >= ? AND s.${tglCol} <= ?` +
+    (nomorSpk ? ` AND s.${nomorCol} = ?` : "") +
     (namaSpk ? ` AND s.${namaCol} LIKE ?` : "") +
     ` ${buildStatusFilter(`s.${closedCol}`, status)}`;
 
-  const extraParams = [];
+  const extraParams = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   if (nomorSpk) extraParams.push(nomorSpk);
   if (namaSpk) extraParams.push(`%${namaSpk}%`);
 
@@ -183,7 +182,7 @@ const getBaselineRows = async (isMap, nomorSpk, namaSpk, status) => {
 };
 
 // ─────────────────────────────────────────────
-// MASTER — gabung data + baseline (data menang kalau ada progress)
+// MASTER — Gabung
 // ─────────────────────────────────────────────
 const getBrowse = async (
   startDate,
@@ -196,7 +195,8 @@ const getBrowse = async (
 ) => {
   const [dataRows, baselineRows] = await Promise.all([
     getDataRows(startDate, endDate, komponen, isMap, nomorSpk, namaSpk, status),
-    getBaselineRows(isMap, nomorSpk, namaSpk, status),
+    // Pastikan startDate dan endDate dikirimkan ke getBaselineRows
+    getBaselineRows(startDate, endDate, isMap, nomorSpk, namaSpk, status),
   ]);
 
   const dataMap = new Map();

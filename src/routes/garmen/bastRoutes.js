@@ -16,6 +16,13 @@ router.get(
   checkPermission(MENU_ID, "view"),
   controller.getBrowseList,
 );
+// TAMBAHKAN RUTE INI
+router.get(
+  "/export-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getExportDetail,
+);
 router.delete(
   "/:nomor",
   verifyToken,

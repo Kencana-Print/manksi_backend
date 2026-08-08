@@ -16,6 +16,14 @@ router.get(
   poBahanController.getBrowse,
 );
 
+// Export All Detail
+router.get(
+  "/all-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  poBahanController.getAllDetail,
+);
+
 // Browse Detail (Untuk expand baris)
 router.get(
   "/detail/:nomor",

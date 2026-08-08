@@ -318,9 +318,9 @@ const cekBisaCetak = async (nomor) => {
   );
   if (!row) throw new Error("Data tidak ditemukan.");
 
-  if (row.Status === "Proforma") {
-    return { bisa: false, reason: "Silahkan cetak di invoice proforma." };
-  }
+  // if (row.Status === "Proforma") {
+  //   return { bisa: false, reason: "Silahkan cetak di invoice proforma." };
+  // }
   if (row.Status === "Tidak Normal") {
     return { bisa: false, reason: "Silahkan cetak di invoice tak normal." };
   }
@@ -333,6 +333,10 @@ const cekBisaCetak = async (nomor) => {
   return { bisa: true, reason: null };
 };
 
+// ═══════════════════════════════════════════════════════════
+// VALIDASI sebelum Cetak/Ubah
+// Sesuai Delphi cxButton3Click / cxButton1Click
+// ═══════════════════════════════════════════════════════════
 const cekBisaUbah = async (nomor) => {
   const [[row]] = await db.query(
     `SELECT
@@ -342,12 +346,17 @@ const cekBisaUbah = async (nomor) => {
   );
   if (!row) throw new Error("Data tidak ditemukan.");
 
+  // Blokade untuk Proforma DIHAPUS agar bisa lanjut di-edit di form Invoice Normal
+  /*
   if (row.Status === "Proforma") {
     return { bisa: false, reason: "Silahkan edit di invoice proforma." };
   }
+  */
+
   if (row.Status === "Tidak Normal") {
     return { bisa: false, reason: "Silahkan edit di invoice tak normal." };
   }
+
   return { bisa: true, reason: null };
 };
 

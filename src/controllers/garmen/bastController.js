@@ -25,7 +25,23 @@ const deleteBast = async (req, res) => {
   }
 };
 
+const getExportDetail = async (req, res) => {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      onProgressOnly: req.query.onProgress,
+    };
+    const userCabang = req.user?.cabang || "ALL";
+    const data = await bastService.getExportDetail(filters, userCabang);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowseList,
   deleteBast,
+  getExportDetail,
 };

@@ -84,7 +84,62 @@ const deleteBast = async (nomor, userKode) => {
   }
 };
 
+// --- GET EXPORT DETAIL ---
+const getExportDetail = async (filters, userCabang) => {
+  // 1. Ambil data master/header dengan filter yang sama persis
+  const headers = await getBrowseList(filters, userCabang);
+  if (headers.length === 0) return [];
+
+  const mapNomors = headers.map((h) => h.Nomor);
+  const placeholders = mapNomors.map(() => "?").join(",");
+
+  // 2. Ambil data Komponen (Bahan)
+  // Sesuai struktur: menggunakan c.nomor, c.kode, dan c.babaran
+  const [komponen] = await db.query(
+    `
+    SELECT 
+      c.nomor AS Nomor, 
+      c.kode AS Kode, 
+      b.bhn_name AS Nama, 
+      c.babaran AS Qty, 
+      b.bhn_satuan AS Satuan, 
+      'KOMPONEN' AS Jenis
+    FROM tkesesuaianmap_komponen c
+    LEFT JOIN tbahan b ON b.bhn_kode = c.kode
+    WHERE c.nomor IN (${placeholders})
+  `,
+    mapNomors,
+  );
+
+  // 3. Ambil data Obat
+  // Sesuai struktur: menggunakan o.ko_nomor, o.ko_kode, dan o.ko_qty
+  const [obat] = await db.query(
+    `
+    SELECT 
+      o.ko_nomor AS Nomor, 
+      o.ko_kode AS Kode, 
+      b.bhn_name AS Nama, 
+      o.ko_qty AS Qty, 
+      b.bhn_satuan AS Satuan, 
+      'OBAT' AS Jenis
+    FROM tkesesuaianmap_obat o
+    LEFT JOIN tbahan b ON b.bhn_kode = o.ko_kode
+    WHERE o.ko_nomor IN (${placeholders})
+  `,
+    mapNomors,
+  );
+
+  const allDetails = [...komponen, ...obat];
+
+  // 4. Gabungkan ke dalam objek headers
+  return headers.map((h) => ({
+    ...h,
+    details: allDetails.filter((d) => d.Nomor === h.Nomor),
+  }));
+};
+
 module.exports = {
   getBrowseList,
   deleteBast,
+  getExportDetail,
 };

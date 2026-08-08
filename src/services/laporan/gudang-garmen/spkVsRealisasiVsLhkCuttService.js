@@ -9,13 +9,29 @@ const db = require("../../../config/database");
 // ⚠️ Kolom `Divisi` (td.Divisi) belum terverifikasi — cek
 // `SHOW COLUMNS FROM tdivisi` sebelum dipakai di production.
 // ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+// BROWSE MAP
+// ─────────────────────────────────────────────
 const getBrowseMap = async (
   startDate,
   endDate,
   spkPrefix,
   canLihatCus = false,
+  namaBahan = "",
 ) => {
   const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
+
+  // 1. Filter Bahan (Sub-query)
+  const bahanFilter = namaBahan
+    ? `AND EXISTS (
+        SELECT 1 FROM tproduksiminta_hdr h2
+        INNER JOIN tproduksiminta_dtl d2 ON d2.promind_promin_Nomor = h2.promin_nomor
+        WHERE h2.promin_spk_nomor = s.mspk_nomor
+          AND d2.promind_bhn_kode = ?   
+    )`
+    : "";
+
   const sql = `
     SELECT x.*, (x.TotMinta - x.TotRetur) AS NetMinta, (x.Lhk + x.Cmt) AS TotLhk
     FROM (
@@ -51,25 +67,50 @@ const getBrowseMap = async (
         s.mspk_tanggal AS _sortTgl
       FROM tmemospk s
       INNER JOIN tcustomer c ON s.mspk_cus_kode = c.cus_kode
-      LEFT JOIN tsales sl ON sl.sal_kode = s.mspk_sal_kode
-      LEFT JOIN tdivisi td ON td.kode = s.mspk_divisi
+      LEFT JOIN tsales sl ON sl.sal_kode = s.spk_sal_kode
+      LEFT JOIN tdivisi td ON td.kode = s.spk_divisi
       WHERE s.mspk_divisi IN (3, 4, 6)
         AND s.mspk_nomor LIKE ?
         AND s.mspk_tanggal >= ? AND s.mspk_tanggal <= ?
+        ${bahanFilter} /* 2. INJEKSI FILTER BAHAN */
     ) x
     ORDER BY x._sortTgl
   `;
-  const [rows] = await db.query(sql, [`${spkPrefix}%`, startDate, endDate]);
+
+  // 3. Masukkan parameter (termasuk filter jam)
+  const params = [
+    `${spkPrefix}%`,
+    `${startDate} 00:00:00`,
+    `${endDate} 23:59:59`,
+  ];
+  if (namaBahan) params.push(namaBahan);
+
+  const [rows] = await db.query(sql, params);
   return rows.map(({ _sortTgl, ...r }) => r);
 };
 
+// ─────────────────────────────────────────────
+// BROWSE SPK
+// ─────────────────────────────────────────────
 const getBrowseSpk = async (
   startDate,
   endDate,
   spkPrefix,
   canLihatCus = false,
+  namaBahan = "",
 ) => {
   const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
+
+  // 1. Filter Bahan (Sub-query)
+  const bahanFilter = namaBahan
+    ? `AND EXISTS (
+        SELECT 1 FROM tproduksiminta_hdr h2
+        INNER JOIN tproduksiminta_dtl d2 ON d2.promind_promin_Nomor = h2.promin_nomor
+        WHERE h2.promin_spk_nomor = s.spk_nomor
+          AND d2.promind_bhn_kode = ?   
+    )`
+    : "";
+
   const sql = `
     SELECT x.*, (x.TotMinta - x.TotRetur) AS NetMinta, (x.Lhk + x.Cmt) AS TotLhk
     FROM (
@@ -111,10 +152,20 @@ const getBrowseSpk = async (
         AND s.spk_aktif = 'Y'
         AND s.spk_nomor LIKE ?
         AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+        ${bahanFilter} /* 2. INJEKSI FILTER BAHAN */
     ) x
     ORDER BY x._sortTgl
   `;
-  const [rows] = await db.query(sql, [`${spkPrefix}%`, startDate, endDate]);
+
+  // 3. Masukkan parameter (termasuk filter jam)
+  const params = [
+    `${spkPrefix}%`,
+    `${startDate} 00:00:00`,
+    `${endDate} 23:59:59`,
+  ];
+  if (namaBahan) params.push(namaBahan);
+
+  const [rows] = await db.query(sql, params);
   return rows.map(({ _sortTgl, ...r }) => r);
 };
 
@@ -124,6 +175,7 @@ const getBrowse = async (
   spk = "",
   isMap = false,
   canLihatCus = false,
+  namaBahan = "",
 ) =>
   isMap
     ? getBrowseMap(startDate, endDate, spk, canLihatCus)
@@ -162,6 +214,7 @@ const getDetail = async (spk, canLihatCus = false) => {
       ((x.Jumlah - x.retur) - IFNULL(m.berat, 0)) AS SisaBahan,
       IF(m.jml IS NULL OR m.berat IS NULL, 0,
         IF(m.sat = 'KG', m.jml / m.berat, m.berat / m.jml)) AS Babaran,
+      IFNULL(mlhk.berat, 0) AS BeratLhk,   -- ← BARU: replikasi persis filter Lhk+Cmt master
       ${supplierCol}
       y.Mkb AS NoMkb,
       DATE_FORMAT(y.TglMkb, '%Y-%m-%d') AS TglMkb,
@@ -208,6 +261,22 @@ const getDetail = async (spk, canLihatCus = false) => {
       ) v
       GROUP BY v.mat, v.kode
     ) m ON m.mat = x.NoMinta AND m.kode = x.promind_bhn_kode
+    -- ↓ BARU: join kedua, khusus utk kolom BeratLhk (match filter master persis)
+    LEFT JOIN (
+      SELECT
+        v.mat, v.kode, SUM(v.berat) AS berat
+      FROM (
+        SELECT m.mph_qty_berat AS berat, m.mph_bhn_kode AS kode, m.mph_nomaterial AS mat
+        FROM tmutasiproduksi_hdr m
+        WHERE m.mph_nomaterial <> ''
+          AND (m.mph_gdgasal = 'GP001' OR m.mph_gdgasal = 'GP015')  -- ← filter Lhk
+        UNION ALL
+        SELECT j.bpj_qty_berat AS berat, j.bpj_bhn_kode AS kode, j.bpj_nomaterial AS mat
+        FROM tbpj_hdr j
+        WHERE j.bpj_nomaterial <> ''   -- Cmt tetap tanpa filter gudang, sama seperti master
+      ) v
+      GROUP BY v.mat, v.kode
+    ) mlhk ON mlhk.mat = x.NoMinta AND mlhk.kode = x.promind_bhn_kode
     LEFT JOIN (
       SELECT j.MKB_NOMOR AS Mkb, j.MKB_TANGGAL AS TglMkb, j.MKB_SPK_NOMOR,
         SUM(i.mkbd_jumlah) AS QtyMkb, SUM(i.mkbd_babaran) AS BabaranMkb
@@ -230,8 +299,16 @@ const getAllDetail = async (
   spk = "",
   isMap = false,
   canLihatCus = false,
+  namaBahan = "",
 ) => {
-  const master = await getBrowse(startDate, endDate, spk, isMap, canLihatCus);
+  const master = await getBrowse(
+    startDate,
+    endDate,
+    spk,
+    isMap,
+    canLihatCus,
+    namaBahan,
+  );
   const result = [];
   for (const m of master) {
     const dtl = await getDetail(m.Spk, canLihatCus);

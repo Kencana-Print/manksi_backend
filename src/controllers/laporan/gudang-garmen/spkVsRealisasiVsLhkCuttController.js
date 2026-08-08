@@ -4,7 +4,13 @@ const parseIsMap = (val) => val === "true" || val === "1" || val === true;
 
 const getBrowse = async (req, res) => {
   try {
-    const { startDate, endDate, spk = "", map = "false" } = req.query;
+    const {
+      startDate,
+      endDate,
+      spk = "",
+      map = "false",
+      namaBahan = "",
+    } = req.query;
     if (!startDate || !endDate) {
       return res
         .status(400)
@@ -17,6 +23,7 @@ const getBrowse = async (req, res) => {
       spk,
       parseIsMap(map),
       canLihatCus,
+      namaBahan,
     );
     res.json({ success: true, data, canLihatCus });
   } catch (err) {
@@ -37,7 +44,13 @@ const getDetail = async (req, res) => {
 
 const getAllDetail = async (req, res) => {
   try {
-    const { startDate, endDate, spk = "", map = "false" } = req.query;
+    const {
+      startDate,
+      endDate,
+      spk = "",
+      map = "false",
+      namaBahan = "",
+    } = req.query;
     if (!startDate || !endDate) {
       return res
         .status(400)
@@ -50,6 +63,7 @@ const getAllDetail = async (req, res) => {
       spk,
       parseIsMap(map),
       canLihatCus,
+      namaBahan,
     );
     res.json({ success: true, data });
   } catch (err) {

@@ -289,10 +289,72 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
   }
 };
 
+// --- ALL DETAIL PO BAHAN (Untuk Export) ---
+const getAllDetail = async (
+  query,
+  canLihatSup = false,
+  canLihatBeli = false,
+) => {
+  const { startDate, endDate, search } = query;
+
+  const dStart = startDate || new Date().toISOString().substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const supCols = canLihatSup
+    ? "s.sup_kode AS KodeSupplier, s.sup_nama AS Supplier,"
+    : "NULL AS KodeSupplier, NULL AS Supplier,";
+
+  const hargaCols = canLihatBeli
+    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS Disc,";
+
+  let sql = `
+    SELECT 
+      h.po_nomor AS Nomor,
+      h.po_tanggal AS Tanggal,
+      h.po_commitdate AS Comm_Delivery,
+      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", "BAHAN")) AS JenisPO,
+      ${supCols}
+      d.pod_bhn_kode AS Kode,
+      b.bhn_name AS Nama,
+      d.pod_bhn_satuan AS Satuan,
+      d.pod_jumlah AS Jumlah,
+      
+      IFNULL((SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tbpb_dtl2 i WHERE i.bpbd2_po_nomor = d.pod_po_nomor AND i.bpbd2_nourut = d.pod_nourut), 0) AS QtyBpb,
+      IFNULL((SELECT SUM(i.retd_jumlah) FROM tret_dtl i INNER JOIN tret_hdr j ON j.ret_nomor = i.retd_ret_nomor INNER JOIN tbpb_hdr f ON f.bpb_Nomor = j.ret_bpb_nomor WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode), 0) AS QtyRetur,
+      
+      ${hargaCols}
+      IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
+      d.pod_mkb_nomor AS MKB,
+      d.pod_spk_nomor AS SPK,
+      IF(d.pod_spk_nomor <> "", IFNULL(spk.spk_nama, m.Mspk_nama), "") AS Nama_SPK
+    FROM tpo_hdr h
+    INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
+    LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
+    INNER JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    LEFT JOIN tspk spk ON spk.spk_nomor = d.pod_spk_nomor
+    LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
+    WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?
+  `;
+
+  const params = [dStart, dEnd];
+
+  if (search) {
+    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC, d.pod_nourut ASC`;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 module.exports = {
   getBrowse,
   getBrowseDetail,
   deleteData,
   toggleClose,
   requestPinEdit,
+  getAllDetail,
 };

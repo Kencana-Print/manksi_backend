@@ -16,6 +16,14 @@ router.get(
   mkbController.getBrowse,
 );
 
+// --- ROUTE EXPORT ALL DETAIL ---
+router.get(
+  "/all-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  mkbController.getAllDetailData,
+);
+
 // --- ROUTE LOAD DETAIL DATA BARANG ---
 router.get(
   "/:nomor/detail",

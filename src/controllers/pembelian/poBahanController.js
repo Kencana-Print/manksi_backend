@@ -60,10 +60,27 @@ const requestPinEdit = async (req, res) => {
   }
 };
 
+const getAllDetail = async (req, res) => {
+  try {
+    const canLihatSup = Number(req.user?.flags?.lihatSup) === 1;
+    const canLihatBeli = Number(req.user?.flags?.lihatBeli) === 1;
+
+    const data = await poBahanService.getAllDetail(
+      req.query,
+      canLihatSup,
+      canLihatBeli,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getBrowseDetail,
   deleteData,
   toggleClose,
   requestPinEdit,
+  getAllDetail,
 };

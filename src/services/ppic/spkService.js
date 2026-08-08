@@ -291,9 +291,7 @@ const approveCmo = async (nomor, userKode) => {
 };
 
 // ─────────────────────────────────────────────────────────
-// CETAK SPK — dibatasi 1x bebas, cetak ke-2 dst wajib approval
-// (mirip pola pin5, tapi HARD-BLOCK: dicegah sampai di-ACC,
-// bukan soft-flag seperti Mutasi Produksi NoPlan)
+// CETAK SPK — dibatasi 5x bebas, cetak ke-6 dst wajib approval
 // ─────────────────────────────────────────────────────────
 const checkPrintPermission = async (nomor) => {
   const [rows] = await db.query(
@@ -303,11 +301,12 @@ const checkPrintPermission = async (nomor) => {
   if (rows.length === 0) throw new Error("SPK tidak ditemukan.");
   const count = Number(rows[0].spk_cetak_count) || 0;
 
-  if (count === 0) {
+  // Jika sudah dicetak kurang dari 5x, tidak butuh approval
+  if (count < 5) {
     return { allowed: true, count, needApproval: false, approvalStatus: "" };
   }
 
-  // Sudah pernah dicetak minimal 1x — cek approval pending/ACC terbaru
+  // Sudah pernah dicetak >= 5x — cek approval pending/ACC terbaru
   const [pinRows] = await db.query(
     `SELECT pin_acc, pin_dipakai FROM tspk_pin5
      WHERE pin_trs = 'SPK CETAK ULANG' AND pin_nomor = ?
@@ -319,8 +318,7 @@ const checkPrintPermission = async (nomor) => {
   }
   const pin = pinRows[0];
   if (pin.pin_acc === "Y" && pin.pin_dipakai === "") {
-    // Sudah di-ACC dan belum dipakai — boleh cetak 1x, akan ditandai
-    // "dipakai" begitu recordPrint dipanggil setelah cetak berhasil.
+    // Sudah di-ACC dan belum dipakai — boleh cetak 1x lagi (yg ke-6 dst).
     return { allowed: true, count, needApproval: false, approvalStatus: "ACC" };
   }
   const status =
