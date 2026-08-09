@@ -264,26 +264,49 @@ const getHargaNolList = async (query) => {
 
 // --- GET DETAIL INFO MODAL OTORISASI HARGA 0 ---
 const getHargaNolDetailInfo = async (nomor) => {
-  // Query untuk mendapatkan tanggal SPK baru vs Lama + Selisih harinya
-  const sql = `
-    SELECT 
-      x.spk_nomor AS NomorSPK,
-      DATE_FORMAT(x.spk_tanggal,"%d-%m-%Y") AS TglBaru, 
-      x.spk_ketpo AS KetPO, 
-      x.spk_lama AS SPKLama,
-      DATE_FORMAT(x.dtold,"%d-%m-%Y") AS TglLama, 
-      IF(x.dtold IS NOT null, DATEDIFF(x.spk_tanggal, x.dtold), 0) AS SelisihHari
-    FROM (
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) throw new Error("Data SPK/SO tidak ditemukan.");
+
+  const sql =
+    loc === "new"
+      ? `
       SELECT 
-        s.spk_nomor, 
-        s.spk_tanggal, 
-        s.spk_ketpo, 
-        s.spk_lama,
-        (SELECT i.spk_tanggal FROM tspk i WHERE i.spk_nomor = s.spk_lama LIMIT 1) AS dtold
-      FROM tspk s
-      WHERE s.spk_nomor = ?
-    ) x
-  `;
+        x.so_nomor AS NomorSPK,
+        DATE_FORMAT(x.so_tanggal,"%d-%m-%Y") AS TglBaru, 
+        x.so_ketpo AS KetPO, 
+        x.so_lama AS SPKLama,
+        DATE_FORMAT(x.dtold,"%d-%m-%Y") AS TglLama, 
+        IF(x.dtold IS NOT NULL, DATEDIFF(x.so_tanggal, x.dtold), 0) AS SelisihHari
+      FROM (
+        SELECT 
+          s.so_nomor, s.so_tanggal, s.so_ketpo, s.so_lama,
+          COALESCE(
+            (SELECT so_tanggal FROM tsalesorder WHERE so_nomor = s.so_lama LIMIT 1),
+            (SELECT spk_tanggal FROM tspk WHERE spk_nomor = s.so_lama LIMIT 1)
+          ) AS dtold
+        FROM tsalesorder s
+        WHERE s.so_nomor = ?
+      ) x
+    `
+      : `
+      SELECT 
+        x.spk_nomor AS NomorSPK,
+        DATE_FORMAT(x.spk_tanggal,"%d-%m-%Y") AS TglBaru, 
+        x.spk_ketpo AS KetPO, 
+        x.spk_lama AS SPKLama,
+        DATE_FORMAT(x.dtold,"%d-%m-%Y") AS TglLama, 
+        IF(x.dtold IS NOT NULL, DATEDIFF(x.spk_tanggal, x.dtold), 0) AS SelisihHari
+      FROM (
+        SELECT 
+          s.spk_nomor, s.spk_tanggal, s.spk_ketpo, s.spk_lama,
+          COALESCE(
+            (SELECT spk_tanggal FROM tspk WHERE spk_nomor = s.spk_lama LIMIT 1),
+            (SELECT so_tanggal FROM tsalesorder WHERE so_nomor = s.spk_lama LIMIT 1)
+          ) AS dtold
+        FROM tspk s
+        WHERE s.spk_nomor = ?
+      ) x
+    `;
 
   const [rows] = await db.query(sql, [nomor]);
   if (rows.length === 0) throw new Error("Data detail SPK tidak ditemukan.");
