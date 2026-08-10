@@ -281,35 +281,53 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
   }
 
   const dataParams = [...params];
+  let limitOffsetClause = "";
+  if (limitNum > 0) {
+    limitOffsetClause = ` LIMIT ? OFFSET ?`;
+    dataParams.push(limitNum, offset);
+  }
+
+  // [OPTIMASI] Gunakan CTE / Subquery untuk memfilter 50 data terlebih dahulu,
+  // sehingga MySQL hanya menghitung stok (yang pakai fungsi LIKE lambat)
+  // sebanyak 50 kali saja, bukan ribuan kali.
   let dataQuery = `
+    WITH paged_bahan AS (
+      SELECT 
+        b.bhn_kode, 
+        b.bhn_name, 
+        b.bhn_satuan, 
+        b.bhn_hargabeli
+      FROM tbahan b
+      ${whereClause}
+      ORDER BY b.bhn_name ASC
+      ${limitOffsetClause}
+    )
     SELECT 
-      b.bhn_kode AS Kode, 
-      b.bhn_name AS Nama, 
-      b.bhn_satuan AS Satuan,
+      pb.bhn_kode AS Kode, 
+      pb.bhn_name AS Nama, 
+      pb.bhn_satuan AS Satuan,
       IFNULL(g.bg_nama, "") AS Gramasi,
       IFNULL(s.bs_nama, "") AS Setting,
       IFNULL(j.bj_nama, "") AS Jenis,
-      b.bhn_hargabeli AS Harga,
+      pb.bhn_hargabeli AS Harga,
       IFNULL((
         SELECT SUM(c.mst_stok_in - c.mst_stok_out) 
         FROM tmasterstok_barcode c
         WHERE c.mst_aktif = 'Y' 
-          AND c.mst_brg_kode LIKE CONCAT(b.bhn_kode, '_______')
+          AND c.mst_brg_kode LIKE CONCAT(pb.bhn_kode, '_______')
       ), 0) AS Stok
-    FROM tbahan b
-    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.bhn_kode, 6, 2)
-    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.bhn_kode, 2)
-    LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(b.bhn_kode, 2)
-    ${whereClause} 
-    ORDER BY b.bhn_name ASC
+    FROM paged_bahan pb
+    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(pb.bhn_kode, 6, 2)
+    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(pb.bhn_kode, 2)
+    LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(pb.bhn_kode, 2)
+    ORDER BY pb.bhn_name ASC
   `;
-  if (limitNum > 0) {
-    dataQuery += ` LIMIT ? OFFSET ?`;
-    dataParams.push(limitNum, offset);
-  }
 
-  // Jalankan count & data secara paralel — dua query independen,
-  // tidak perlu menunggu satu sama lain secara berurutan.
+  // Hilangkan logika push LIMIT dan OFFSET yang lama,
+  // karena sudah kita masukkan ke dalam dataParams saat membuat limitOffsetClause di atas.
+  // Pastikan menghapus baris "if (limitNum > 0) { ... }" yang lama.
+
+  // Jalankan count & data secara paralel
   const [[countResult], [rows]] = await Promise.all([
     db.query(`SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`, params),
     db.query(dataQuery, dataParams),
