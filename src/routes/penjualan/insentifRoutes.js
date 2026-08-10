@@ -23,6 +23,13 @@ router.delete(
   controller.deleteData,
 );
 
+router.get(
+  "/:nomor/cetak",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getCetakData,
+);
+
 // ⚠️ Delphi (btnSimpanClick) memakai permission cekdelete() untuk aksi
 // SIMPAN realisasi — kemungkinan copy-paste dari tombol Hapus di
 // atasnya (btnUpdateClick & btnbatalClick juga sama-sama cekdelete).
