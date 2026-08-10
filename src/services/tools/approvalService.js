@@ -1273,7 +1273,6 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
   try {
     await conn.beginTransaction();
 
-    // Cek dulu jenis transaksinya (SO atau MAP) dari pin_trs yang tersimpan
     const [[pin]] = await conn.query(
       `SELECT pin_trs, pin_urut, pin_user_minta FROM tspk_pin5
        WHERE pin_trs IN ("SO", "MAP") AND pin_jenis = "NOPO" AND pin_nomor = ?
@@ -1281,7 +1280,7 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
       [nomor],
     );
     if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
-    const jenis = pin.pin_trs; // "SO" atau "MAP"
+    const jenis = pin.pin_trs;
 
     await conn.query(
       `UPDATE tspk_pin5 SET pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
@@ -1291,7 +1290,6 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
 
     if (statusAcc === "Y") {
       if (jenis === "SO") {
-        // safety check yg sudah ada sebelumnya (piutang, harga-0, prioritas, pinjo)
         const [[so]] = await conn.query(
           `SELECT so_pinjo FROM tsalesorder WHERE so_nomor = ?`,
           [nomor],
@@ -1320,18 +1318,19 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
           );
         }
       } else {
-        // MAP — tidak ada safety-check tambahan (belum ada mekanisme
-        // approval lain di tmemospk yg perlu dicek silang seperti SO)
         await conn.query(
           `UPDATE tmemospk SET mspk_aktif = "Y" WHERE mspk_nomor = ?`,
           [nomor],
         );
       }
-      await conn.query(
-        `UPDATE tspk_pin5 SET pin_dipakai = "Y"
-         WHERE pin_trs = ? AND pin_jenis = "NOPO" AND pin_nomor = ? AND pin_urut = ?`,
-        [jenis, nomor, pin.pin_urut],
-      );
+      // ⚠️ FIX: pin_dipakai SENGAJA TIDAK di-set "Y" di sini.
+      // Approval NOPO berbeda dari pola generik Perubahan Data/Hapus
+      // Data — di sini "dipakai" berarti "approval ini sudah dikonsumsi
+      // oleh siklus edit berikutnya yang butuh approval baru lagi",
+      // BUKAN "baru saja di-ACC". Kalau di-set "Y" di sini, edit SO
+      // berikutnya (PO masih kosong) akan salah mendeteksi approval
+      // sebagai basi dan meminta approval ulang padahal SO belum
+      // berubah kondisi — itulah bug yang dilaporkan.
     } else {
       const targetTable = jenis === "SO" ? "tsalesorder" : "tmemospk";
       const targetCol = jenis === "SO" ? "so_nomor" : "mspk_nomor";
