@@ -85,5 +85,11 @@ router.post(
   checkPermission(MENU_ID, "edit"),
   controller.ajukanGantiQtyKain,
 );
+router.get(
+  "/search-for-spk",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.searchAvailableForSpk,
+);
 
 module.exports = router;

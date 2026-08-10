@@ -189,6 +189,30 @@ const ajukanGantiQtyKain = async (req, res) => {
   }
 };
 
+const searchAvailableForSpk = async (req, res) => {
+  try {
+    const { q, startDate, endDate, page, limit } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter startDate dan endDate wajib diisi.",
+      });
+    }
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await service.searchAvailableForSpk(
+      q,
+      startDate,
+      endDate,
+      page,
+      limit,
+      canLihatCus,
+    );
+    res.status(200).json({ success: true, data, canLihatCus });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getSizes,
@@ -202,4 +226,5 @@ module.exports = {
   ajukanPembatalan,
   getGantiQtyKainStatus,
   ajukanGantiQtyKain,
+  searchAvailableForSpk,
 };
