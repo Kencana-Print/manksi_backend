@@ -163,31 +163,16 @@ const getDataCetak = async ({ tglAwal, tglAkhir, gudang = "" }) => {
       b.Size,
       IFNULL(b.Jumlah, 0)                                     AS Jumlah,
       IFNULL(b.Koli, 0)                                       AS Koli,
-      -- Konversi jam 12-hour → HH:MM seperti Delphi TIME_FORMAT
-      TIME_FORMAT(
-        CASE
-          WHEN b.Jam LIKE '%PM' AND LEFT(b.Jam, 2) <> '12'
-          THEN SEC_TO_TIME(
-            (CAST(IF(MID(b.Jam,2,1)=':', LEFT(b.Jam,1), LEFT(b.Jam,2)) AS DECIMAL) + 12) * 3600
-            + TIME_TO_SEC(STR_TO_DATE(MID(b.Jam, IF(MID(b.Jam,2,1)=':',2,3), 3), '%i:%s'))
-          )
-          ELSE STR_TO_DATE(b.Jam, '%h:%i %p')
-        END,
-        '%H:%i'
-      )                                                        AS Jam,
+      CASE
+        WHEN b.Jam IS NULL OR b.Jam = '' OR b.Jam = '0' THEN ''
+        ELSE IFNULL(TIME_FORMAT(STR_TO_DATE(b.Jam, '%h:%i:%s %p'), '%H:%i'), b.Jam)
+      END                                                      AS Jam,
       IFNULL(b.jumlah_kirim, 0)                              AS Jumlah_Kirim,
       IFNULL(b.koli_kirim, 0)                                AS Koli_Kirim,
-      TIME_FORMAT(
-        CASE
-          WHEN b.Jam_Kirim LIKE '%PM' AND LEFT(b.Jam_Kirim, 2) <> '12'
-          THEN SEC_TO_TIME(
-            (CAST(IF(MID(b.Jam_Kirim,2,1)=':', LEFT(b.Jam_Kirim,1), LEFT(b.Jam_Kirim,2)) AS DECIMAL) + 12) * 3600
-            + TIME_TO_SEC(STR_TO_DATE(MID(b.Jam_Kirim, IF(MID(b.Jam_Kirim,2,1)=':',2,3), 3), '%i:%s'))
-          )
-          ELSE STR_TO_DATE(b.Jam_Kirim, '%h:%i %p')
-        END,
-        '%H:%i'
-      )                                                        AS Jam_Kirim,
+      CASE
+        WHEN b.Jam_Kirim IS NULL OR b.Jam_Kirim = '' OR b.Jam_Kirim = '0' THEN ''
+        ELSE IFNULL(TIME_FORMAT(STR_TO_DATE(b.Jam_Kirim, '%h:%i:%s %p'), '%H:%i'), b.Jam_Kirim)
+      END                                                      AS Jam_Kirim,
       b.Expedisi,
       c.spk_cus_kode                                          AS Cus_Kode,
       e.Cus_nama,
