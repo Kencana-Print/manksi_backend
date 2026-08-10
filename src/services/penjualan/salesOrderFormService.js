@@ -62,16 +62,28 @@ const getDetail = async (nomor) => {
         WHERE h.inv_nomor = s.so_invdc AND LEFT(s.so_divisi, 1) <> '3'
       ), 0) AS jmlinvdc,
       map.mspk_acc_customer AS map_acc_customer,
-      map.mspk_acc_tanggal AS map_acc_tanggal
-     FROM tsalesorder s
-     LEFT JOIN tjenisorder j ON s.so_jo_kode = j.jo_kode
-     LEFT JOIN tsales a ON s.so_sal_kode = a.sal_kode
-     LEFT JOIN tperusahaan p ON s.so_perush_kode = p.perush_kode
-     LEFT JOIN tcustomer c ON s.so_cus_kode = c.cus_kode
-     LEFT JOIN retail.tcustomer k ON s.so_cus_kaosan = k.cus_kode
-     LEFT JOIN tmpb m ON s.so_mppb = m.mpb_nomor
-     LEFT JOIN tmemospk map ON map.mspk_nomor = s.so_memo
-     WHERE s.so_nomor = ?`,
+      map.mspk_acc_tanggal AS map_acc_tanggal,
+      -- ⚠️ FIX: override kolom DATE dari s.* dengan versi string murni.
+      -- mysql2 mengembalikan kolom DATE sebagai JS Date object (local
+      -- midnight); saat di-serialize lewat res.json(), Node memanggil
+      -- .toISOString() yang mengonversi ke UTC — kalau server timezone
+      -- di depan UTC (WIB=+7), tanggalnya MUNDUR 1 hari di frontend.
+      -- Karena nama kolom sama, hasil DATE_FORMAT ini MENIMPA versi
+      -- Date object dari s.* (mysql2 pakai key terakhir yang menang).
+      DATE_FORMAT(s.so_tanggal, '%Y-%m-%d') AS so_tanggal,
+      DATE_FORMAT(s.so_dateline, '%Y-%m-%d') AS so_dateline,
+      DATE_FORMAT(s.so_tgl_po, '%Y-%m-%d') AS so_tgl_po,
+      DATE_FORMAT(s.so_datelinepo, '%Y-%m-%d') AS so_datelinepo,
+      DATE_FORMAT(s.so_acc_tanggal, '%Y-%m-%d') AS so_acc_tanggal
+    FROM tsalesorder s
+    LEFT JOIN tjenisorder j ON s.so_jo_kode = j.jo_kode
+    LEFT JOIN tsales a ON s.so_sal_kode = a.sal_kode
+    LEFT JOIN tperusahaan p ON s.so_perush_kode = p.perush_kode
+    LEFT JOIN tcustomer c ON s.so_cus_kode = c.cus_kode
+    LEFT JOIN retail.tcustomer k ON s.so_cus_kaosan = k.cus_kode
+    LEFT JOIN tmpb m ON s.so_mppb = m.mpb_nomor
+    LEFT JOIN tmemospk map ON map.mspk_nomor = s.so_memo
+    WHERE s.so_nomor = ?`,
     [nomor],
   );
 
@@ -92,15 +104,21 @@ const getDetail = async (nomor) => {
         WHERE h.inv_nomor = s.spk_invdc AND LEFT(s.spk_divisi, 1) <> '3'
       ), 0) AS jmlinvdc,
       map.mspk_acc_customer AS map_acc_customer,
-      map.mspk_acc_tanggal AS map_acc_tanggal
-     FROM tspk s
-     LEFT JOIN tjenisorder j ON s.spk_jo_kode = j.jo_kode
-     LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
-     LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
-     LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
-     LEFT JOIN tmpb m ON s.spk_mppb = m.mpb_nomor
-     LEFT JOIN tmemospk map ON map.mspk_nomor = s.spk_memo
-     WHERE s.spk_nomor = ?`,
+      map.mspk_acc_tanggal AS map_acc_tanggal,
+      -- ⚠️ FIX: sama seperti getDetailFromNew di atas
+      DATE_FORMAT(s.spk_tanggal, '%Y-%m-%d') AS spk_tanggal,
+      DATE_FORMAT(s.spk_dateline, '%Y-%m-%d') AS spk_dateline,
+      DATE_FORMAT(s.spk_tgl_po, '%Y-%m-%d') AS spk_tgl_po,
+      DATE_FORMAT(s.spk_datelinepo, '%Y-%m-%d') AS spk_datelinepo,
+      DATE_FORMAT(s.spk_acc_tanggal, '%Y-%m-%d') AS spk_acc_tanggal
+    FROM tspk s
+    LEFT JOIN tjenisorder j ON s.spk_jo_kode = j.jo_kode
+    LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
+    LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
+    LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
+    LEFT JOIN tmpb m ON s.spk_mppb = m.mpb_nomor
+    LEFT JOIN tmemospk map ON map.mspk_nomor = s.spk_memo
+    WHERE s.spk_nomor = ?`,
     [nomor],
   );
   if (legacyRows.length === 0) throw new Error("Data SO tidak ditemukan.");
