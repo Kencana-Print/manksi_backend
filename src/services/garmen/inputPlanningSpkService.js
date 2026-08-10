@@ -1,11 +1,5 @@
 const db = require("../../config/database");
 
-// ─────────────────────────────────────────────────────────
-// MASTER — replikasi persis query btnRefreshClick (union tspk + tmemospk)
-// tsalesorder SENGAJA tidak diikutkan — modul ini murni scope produksi
-// garmen (SPK/MAP), tsalesorder (SO retail/kaosan) tidak berkaitan
-// dengan alur planning produksi ini.
-// ─────────────────────────────────────────────────────────
 const getBrowseList = async (query) => {
   const today = new Date();
   const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1)
@@ -15,8 +9,6 @@ const getBrowseList = async (query) => {
 
   const startDate = query.startDate || defaultStart;
   const endDate = query.endDate || defaultEnd;
-
-  const JO_EXCLUDE = `("", "SD", "BR", "PL", "SB", "KS", "DP", "TG")`;
 
   const sql = `
     SELECT
@@ -37,7 +29,7 @@ const getBrowseList = async (query) => {
         )
       ) AS Belum
     FROM (
-      -- Sumber 1: tspk (SPK garmen) — SourceOrder=1, tampil duluan
+      -- Sumber 1: tspk (SPK garmen) — SourceOrder=1
       SELECT
         1 AS SourceOrder, s.date_create AS DateCreate,
         s.spk_nomor AS Nomor, s.spk_tanggal AS Tanggal, s.spk_dateline AS Dateline,
@@ -46,13 +38,16 @@ const getBrowseList = async (query) => {
         s.spk_nama AS NamaSPK, s.spk_jumlah AS JumlahSPK, s.spk_kain AS Kain,
         s.spk_finishing AS Finishing, s.spk_sablon AS Sablon, s.spk_sublim AS Sublim,
         s.spk_bordir AS Bordir,
-        (SELECT IFNULL(SUM(p.plan_datang), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS datang,
-        (SELECT IFNULL(SUM(p.plan_cutting), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS cutting,
-        (SELECT IFNULL(SUM(p.plan_cetak + p.plan_sublim), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS cetak,
-        (SELECT IFNULL(SUM(p.plan_bordir), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS qbordir,
-        (SELECT IFNULL(SUM(p.plan_jahit), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS jahit,
-        (SELECT IFNULL(SUM(p.plan_finishing), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS qfinishing,
-        (SELECT IFNULL(SUM(p.plan_kirim), 0) FROM tplanningspk p WHERE p.plan_spk = s.spk_nomor) AS kirim,
+        -- ⚠️ FIX: planning kedatangan bahan bisa tersimpan atas nomor SO
+        -- induknya (kalau MKB dibuat mereferensikan SO, bukan SPK PPIC
+        -- turunannya) — cocokkan ke keduanya, bukan cuma spk_nomor sendiri.
+        (SELECT IFNULL(SUM(p.plan_datang), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS datang,
+        (SELECT IFNULL(SUM(p.plan_cutting), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS cutting,
+        (SELECT IFNULL(SUM(p.plan_cetak + p.plan_sublim), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS cetak,
+        (SELECT IFNULL(SUM(p.plan_bordir), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS qbordir,
+        (SELECT IFNULL(SUM(p.plan_jahit), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS jahit,
+        (SELECT IFNULL(SUM(p.plan_finishing), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS qfinishing,
+        (SELECT IFNULL(SUM(p.plan_kirim), 0) FROM tplanningspk p WHERE p.plan_spk IN (s.spk_nomor, s.spk_so_ref)) AS kirim,
         IFNULL((SELECT IF(COUNT(r.promin_spk_nomor) > 0, "SUDAH", "BELUM")
                 FROM tproduksiminta_hdr r WHERE r.promin_spk_nomor = s.spk_nomor), 0) AS RPB
       FROM tspk s
@@ -62,10 +57,43 @@ const getBrowseList = async (query) => {
 
       UNION ALL
 
-      -- Sumber 2: tmemospk (MAP) — SourceOrder=2, SELALU tampil di bawah
-      -- blok SPK di atas, berapa pun tanggalnya (replikasi persis
-      -- perilaku Delphi: tanpa ORDER BY level luar, UNION ALL preserve
-      -- urutan blok subquery, tspk selalu duluan lalu tmemospk).
+      -- ⚠️ Sumber baru — tsalesorder (SO baru pasca migrasi). MKB
+      -- sekarang bisa mereferensikan nomor SO langsung, jadi modul
+      -- ini perlu ikut menampilkan & memantau planning-nya. SourceOrder
+      -- disamakan dengan tspk (=1) supaya SO tercampur berdasar tanggal
+      -- dengan SPK, bukan selalu di bawah blok MAP.
+      SELECT
+        1 AS SourceOrder, s.date_create AS DateCreate,
+        s.so_nomor AS Nomor, s.so_tanggal AS Tanggal, s.so_dateline AS Dateline,
+        s.so_divisi AS Divisi, s.so_tipe AS Tipe, s.so_cab AS Cab,
+        s.so_statuskerja AS Kepentingan, s.so_cus_kode AS KdCus,
+        s.so_nama AS NamaSPK, s.so_jumlah AS JumlahSPK, s.so_kain AS Kain,
+        s.so_finishing AS Finishing, s.so_sablon AS Sablon, s.so_sublim AS Sublim,
+        s.so_bordir AS Bordir,
+        (SELECT IFNULL(SUM(p.plan_datang), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS datang,
+        (SELECT IFNULL(SUM(p.plan_cutting), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS cutting,
+        (SELECT IFNULL(SUM(p.plan_cetak + p.plan_sublim), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS cetak,
+        (SELECT IFNULL(SUM(p.plan_bordir), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS qbordir,
+        (SELECT IFNULL(SUM(p.plan_jahit), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS jahit,
+        (SELECT IFNULL(SUM(p.plan_finishing), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS qfinishing,
+        (SELECT IFNULL(SUM(p.plan_kirim), 0) FROM tplanningspk p WHERE p.plan_spk = s.so_nomor) AS kirim,
+        IFNULL((SELECT IF(COUNT(r.promin_spk_nomor) > 0, "SUDAH", "BELUM")
+                FROM tproduksiminta_hdr r WHERE r.promin_spk_nomor = s.so_nomor), 0) AS RPB
+      FROM tsalesorder s
+      WHERE s.so_cmo <> "" AND s.so_aktif = "Y" AND s.so_divisi IN (3, 4, 6)
+        AND s.so_jo_kode NOT IN ("", "SD", "BR", "PL", "SB", "KS", "DP", "TG")
+        AND DATE(s.so_tanggal) BETWEEN ? AND ?
+        -- ⚠️ Jangan tampilkan baris SO kalau sudah ada SPK PPIC turunannya —
+        -- planning-nya sudah terwakili di baris SPK PPIC (lihat fix di atas),
+        -- kalau tidak difilter, user akan lihat 2 baris untuk 1 order yang sama.
+        AND NOT EXISTS (
+          SELECT 1 FROM tspk ppic
+          WHERE ppic.spk_so_ref = s.so_nomor AND ppic.spk_is_so = 0
+        )
+
+      UNION ALL
+
+      -- Sumber 3 (dulu 2): tmemospk (MAP) — SourceOrder=2, selalu paling bawah
       SELECT
         2 AS SourceOrder, s.date_create AS DateCreate,
         s.mspk_nomor AS Nomor, s.mspk_tanggal AS Tanggal, s.mspk_dateline AS Dateline,
@@ -91,9 +119,15 @@ const getBrowseList = async (query) => {
     ORDER BY x.SourceOrder ASC, x.DateCreate ASC
   `;
 
-  const [rows] = await db.query(sql, [startDate, endDate, startDate, endDate]);
+  const [rows] = await db.query(sql, [
+    startDate,
+    endDate,
+    startDate,
+    endDate,
+    startDate,
+    endDate,
+  ]);
 
-  // Cast defensif — mysql2 kadang return SUM/aggregate turunan sebagai string
   return rows.map((r) => ({
     ...r,
     JumlahSPK: Number(r.JumlahSPK) || 0,
@@ -101,12 +135,19 @@ const getBrowseList = async (query) => {
   }));
 };
 
-// ─────────────────────────────────────────────────────────
-// DETAIL — dipanggil on-demand saat row di-expand (lazy-load,
-// sesuai konvensi BaseBrowse project). Replikasi persis SQLDetail
-// Delphi: SELECT dari tplanningspk WHERE plan_spk=nomor, order by tanggal.
-// ─────────────────────────────────────────────────────────
 const getDetailByNomor = async (nomor) => {
+  // ⚠️ Sama akar masalah dengan getBrowseList: planning "Bahan Datang"
+  // bisa tersimpan atas nomor SO induk (kalau MKB dibuat mereferensikan
+  // SO, bukan SPK PPIC turunannya) — bukan cuma atas nomor sendiri.
+  // Resolve dulu spk_so_ref-nya, baru query ke kedua kemungkinan key.
+  const [[spkRow]] = await db.query(
+    `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
+    [nomor],
+  );
+  const soRef = spkRow?.spk_so_ref || "";
+
+  const planKeys = soRef ? [nomor, soRef] : [nomor];
+
   const [rows] = await db.query(
     `SELECT
        p.plan_spk AS Nomor,
@@ -120,14 +161,11 @@ const getDetailByNomor = async (nomor) => {
        p.plan_finishing AS Finishing,
        p.plan_kirim AS Kirim
      FROM tplanningspk p
-     WHERE p.plan_spk = ?
+     WHERE p.plan_spk IN (?)
      ORDER BY p.plan_tanggal`,
-    [nomor],
+    [planKeys],
   );
   return rows;
 };
 
-module.exports = {
-  getBrowseList,
-  getDetailByNomor,
-};
+module.exports = { getBrowseList, getDetailByNomor };
