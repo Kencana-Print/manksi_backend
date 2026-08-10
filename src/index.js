@@ -121,6 +121,8 @@ const mutasiProduksiFormRoutes = require("./routes/garmen/mutasiProduksiFormRout
 const pemakaianObatRoutes = require("./routes/garmen/pemakaianObatRoutes");
 const pemakaianObatFormRoutes = require("./routes/garmen/pemakaianObatFormRoutes");
 const soDtfRoutes = require("./routes/garmen/soDtfRoutes");
+const lhkSoDtfRoutes = require("./routes/garmen/lhkSoDtfRoutes");
+const lhkSoDtfFormRoutes = require("./routes/garmen/lhkSoDtfFormRoutes");
 const poPaperprintRoutes = require("./routes/garmen/poPaperprintRoutes");
 const poPaperprintFormRoutes = require("./routes/garmen/poPaperprintFormRoutes");
 const poDtfRoutes = require("./routes/garmen/poDtfRoutes");
@@ -291,14 +293,27 @@ app.use(
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
 app.use("/images", express.static(path.join(process.cwd(), "public/images")));
-// [BARU] Endpoint Image Proxy untuk menerobos mTLS Kaosan secara aman dari backend
-const mtlsAgent = new https.Agent({
-  cert: fs.readFileSync("/home/kencana/sertifikat_retail/client.crt"), // Sesuaikan path client cert kamu jika ada
-  key: fs.readFileSync("/home/kencana/sertifikat_retail/client.key"), // Sesuaikan path client key kamu jika ada
-  rejectUnauthorized: false,
-});
+let mtlsAgent = null;
+const CERT_PATH = "/home/kencana/sertifikat_retail/client.crt";
+const KEY_PATH = "/home/kencana/sertifikat_retail/client.key";
+try {
+  mtlsAgent = new https.Agent({
+    cert: fs.readFileSync(CERT_PATH),
+    key: fs.readFileSync(KEY_PATH),
+    rejectUnauthorized: false,
+  });
+} catch (e) {
+  console.warn(
+    `[proxy-image] Sertifikat mTLS tidak ditemukan (${e.code}) — endpoint /api/proxy-image dinonaktifkan di environment ini.`,
+  );
+}
 
 app.get("/api/proxy-image", async (req, res) => {
+  if (!mtlsAgent) {
+    return res
+      .status(503)
+      .send("Proxy image tidak tersedia di environment ini.");
+  }
   const imageUrl = req.query.url;
   if (!imageUrl || !imageUrl.startsWith("https://retail.kaosanofficial.com")) {
     return res.status(400).send("URL tidak valid.");
@@ -486,6 +501,8 @@ app.use("/api/garmen/mutasi-produksi-form", mutasiProduksiFormRoutes);
 app.use("/api/garmen/pemakaian-obat", pemakaianObatRoutes);
 app.use("/api/garmen/pemakaian-obat/form", pemakaianObatFormRoutes);
 app.use("/api/garmen/dtf/so-dtf", soDtfRoutes);
+app.use("/api/garmen/dtf/lhk-so-dtf", lhkSoDtfRoutes);
+app.use("/api/garmen/dtf/lhk-so-dtf-form", lhkSoDtfFormRoutes);
 app.use("/api/garmen/po-paperprint", poPaperprintRoutes);
 app.use("/api/garmen/po-paperprint/form", poPaperprintFormRoutes);
 app.use("/api/garmen/po-dtf", poDtfRoutes);
