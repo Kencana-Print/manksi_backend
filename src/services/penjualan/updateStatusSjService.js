@@ -213,79 +213,101 @@ const getFormById = async (nomor, canLihatCus = false) => {
 // Sesuai Delphi simpandata
 // ─────────────────────────────────────────────────────────
 const saveStatus = async (nomor, payload) => {
-  const {
-    statusIndex,
-    expedisi = "",
-    kurir = "",
-    tanggalKirim = null,
-    nomorResi = "",
-    biayaKirim = 0,
-    tanggalKembali = null,
-    contactPerson = "",
-    tanggalKonfirmasi = null,
-    tanggalTerima = null,
-    tanggalSerahTerima = null,
-    tanggalTerimaSj = null,
-    penerimaBarang = "",
-  } = payload;
-
   if (!nomor) throw new Error("Nomor SJ wajib diisi.");
+  const statusIndex = Number(payload.statusIndex);
 
-  if (Number(statusIndex) === 0) {
-    // Status 0 — reset semua field ke NULL, sesuai Delphi
+  if (statusIndex === 0) {
+    // Status 0 — reset semua field ke NULL, sesuai Delphi (tidak berubah)
     await db.query(
       `UPDATE tsj_hdr SET
          sj_stssj_kode = 0,
-         expedisi = NULL,
-         kurir = NULL,
-         tanggal_kirim = NULL,
-         nomor_resi = NULL,
-         biaya_kirim = 0,
-         tanggal_kembali = NULL,
-         contact_person = NULL,
-         tanggal_konfirmasi = NULL,
-         tanggal_terima = NULL,
-         tanggal_serahterima = NULL,
-         tanggal_terima_sj = NULL,
-         penerima_barang = NULL
+         expedisi = NULL, kurir = NULL, tanggal_kirim = NULL,
+         nomor_resi = NULL, biaya_kirim = 0, tanggal_kembali = NULL,
+         contact_person = NULL, tanggal_konfirmasi = NULL,
+         tanggal_terima = NULL, tanggal_serahterima = NULL,
+         tanggal_terima_sj = NULL, penerima_barang = NULL
        WHERE sj_nomor = ?`,
       [nomor],
     );
-  } else {
-    await db.query(
-      `UPDATE tsj_hdr SET
-         sj_stssj_kode = ?,
-         expedisi = ?,
-         kurir = ?,
-         tanggal_kirim = ?,
-         nomor_resi = ?,
-         biaya_kirim = ?,
-         tanggal_kembali = ?,
-         contact_person = ?,
-         tanggal_konfirmasi = ?,
-         tanggal_terima = ?,
-         tanggal_serahterima = ?,
-         tanggal_terima_sj = ?,
-         penerima_barang = ?
-       WHERE sj_nomor = ?`,
-      [
-        Number(statusIndex),
-        expedisi,
-        kurir,
-        tanggalKirim,
-        nomorResi,
-        Number(biayaKirim) || 0,
-        tanggalKembali,
-        contactPerson,
-        tanggalKonfirmasi,
-        tanggalTerima,
-        tanggalSerahTerima,
-        tanggalTerimaSj,
-        penerimaBarang,
-        nomor,
-      ],
-    );
+    return { nomor };
   }
+
+  // ⚠️ FIX: ambil data existing dulu, supaya field milik status LAIN
+  // (bukan status yang sedang di-set sekarang) TIDAK ikut ter-timpa
+  // null. Frontend cuma mengirim field yang relevan untuk statusIndex
+  // aktif — kalau backend selalu SET semua kolom mentah dari payload,
+  // riwayat status sebelumnya (misal tanggal_kirim di status
+  // "Pengiriman") hilang begitu user pindah ke status berikutnya.
+  const [[existing]] = await db.query(
+    `SELECT * FROM tsj_hdr WHERE sj_nomor = ?`,
+    [nomor],
+  );
+  if (!existing) throw new Error("Data SJ tidak ditemukan.");
+
+  // Default: pertahankan nilai lama untuk semua field
+  let expedisi = existing.expedisi;
+  let kurir = existing.kurir;
+  let tanggal_kirim = existing.tanggal_kirim;
+  let nomor_resi = existing.nomor_resi;
+  let biaya_kirim = existing.biaya_kirim;
+  let tanggal_kembali = existing.tanggal_kembali;
+  let tanggal_terima_sj = existing.tanggal_terima_sj;
+  let contact_person = existing.contact_person;
+  let tanggal_konfirmasi = existing.tanggal_konfirmasi;
+  let tanggal_terima = existing.tanggal_terima;
+  let tanggal_serahterima = existing.tanggal_serahterima;
+  let penerima_barang = existing.penerima_barang;
+
+  // Timpa HANYA field milik grup status yang sedang aktif disimpan
+  if (statusIndex === 1) {
+    // Pengiriman
+    expedisi = payload.expedisi ?? expedisi;
+    kurir = payload.kurir ?? kurir;
+    tanggal_kirim = payload.tanggalKirim ?? tanggal_kirim;
+    nomor_resi = payload.nomorResi ?? nomor_resi;
+    biaya_kirim = payload.biayaKirim ?? biaya_kirim;
+  } else if (statusIndex === 2) {
+    // Penyerahan Dokumen Kembali
+    tanggal_kembali = payload.tanggalKembali ?? tanggal_kembali;
+    penerima_barang = payload.penerimaBarang ?? penerima_barang;
+    // ⚠️ REQUIREMENT: Tgl Terima SJ otomatis = Tgl Kembali, bukan
+    // input terpisah. Server-side yang menentukan, tidak percaya
+    // field tanggalTerimaSj dari client sama sekali.
+    tanggal_terima_sj = payload.tanggalKembali ?? tanggal_terima_sj;
+  } else if (statusIndex === 3) {
+    // Konfirmasi Ke Client
+    contact_person = payload.contactPerson ?? contact_person;
+    tanggal_konfirmasi = payload.tanggalKonfirmasi ?? tanggal_konfirmasi;
+    tanggal_terima = payload.tanggalTerima ?? tanggal_terima;
+  } else if (statusIndex === 4) {
+    // Serah Terima ke Bag. Piutang
+    tanggal_serahterima = payload.tanggalSerahTerima ?? tanggal_serahterima;
+  }
+
+  await db.query(
+    `UPDATE tsj_hdr SET
+       sj_stssj_kode = ?, expedisi = ?, kurir = ?, tanggal_kirim = ?,
+       nomor_resi = ?, biaya_kirim = ?, tanggal_kembali = ?,
+       contact_person = ?, tanggal_konfirmasi = ?, tanggal_terima = ?,
+       tanggal_serahterima = ?, tanggal_terima_sj = ?, penerima_barang = ?
+     WHERE sj_nomor = ?`,
+    [
+      statusIndex,
+      expedisi,
+      kurir,
+      tanggal_kirim,
+      nomor_resi,
+      biaya_kirim,
+      tanggal_kembali,
+      contact_person,
+      tanggal_konfirmasi,
+      tanggal_terima,
+      tanggal_serahterima,
+      tanggal_terima_sj,
+      penerima_barang,
+      nomor,
+    ],
+  );
 
   return { nomor };
 };
