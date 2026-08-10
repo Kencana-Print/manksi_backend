@@ -129,7 +129,6 @@ const getDetail = async (nomor) => {
 // Delphi: edtNomorSPKExit
 // ─────────────────────────────────────────────
 const getSpkInfo = async (spkNomor) => {
-  // Validasi SPK aktif dan sudah di-CMO
   const [spkRows] = await db.query(
     `SELECT s.spk_nomor, s.spk_nama, s.spk_jumlah, s.spk_memo, v.divisi
      FROM tspk s
@@ -140,30 +139,26 @@ const getSpkInfo = async (spkNomor) => {
        AND s.spk_nomor = ?`,
     [spkNomor],
   );
-
   if (!spkRows.length) {
     return {
       exists: false,
       error: "SPK tidak ditemukan, belum di-CMO, atau sudah selesai kirim",
     };
   }
-
   const spk = spkRows[0];
 
-  // Cek apakah SPK sudah punya MKA
   const [mkaRows] = await db.query(
     `SELECT mkb_nomor FROM tmka_hdr WHERE mkb_spk_nomor = ? LIMIT 1`,
     [spkNomor],
   );
-
   if (mkaRows.length) {
-    // SPK sudah punya MKA → load existing
     const existing = await getDetail(mkaRows[0].mkb_nomor);
     return { exists: true, hasExisting: true, existing };
   }
 
-  // SPK belum punya MKA → pre-fill dari tkesesuaianmap_acc (MAP)
   const prefillDetail = [];
+
+  // ── Sumber 1: prefill dari MAP (tkesesuaianmap_acc) — TIDAK BERUBAH ──
   if (spk.spk_memo) {
     const [mapRows] = await db.query(
       `SELECT a.kode,
@@ -183,7 +178,6 @@ const getSpkInfo = async (spkNomor) => {
        ORDER BY a.no_urut`,
       [spk.spk_memo],
     );
-
     for (const row of mapRows) {
       const jumlah =
         (parseFloat(spk.spk_jumlah) || 0) * (parseFloat(row.pemakaian) || 0);
@@ -200,6 +194,102 @@ const getSpkInfo = async (spkNomor) => {
         po: ready >= jumlah ? 0 : jumlah - ready,
         keterangan: "",
       });
+    }
+  }
+
+  // ── Sumber 2: template CARE SIZE LABEL per-size, khusus divisi
+  // KAOSAN — replikasi spksize()+getkdacc() Delphi. Jumlah baris =
+  // jumlah size di tspk_size, masing-masing jumlah = qty SPK untuk
+  // size itu sendiri (bukan total SPK), pemakaian selalu 1.
+  // ⚠️ ASUMSI: pakai tspk_size (sama tabel yang dipakai modul legacy
+  // lain untuk size SPK) — kalau SPK ini datang dari alur SO baru
+  // yang size-nya tersimpan di tabel berbeda, perlu disesuaikan.
+  if ((spk.divisi || "").toUpperCase() === "KAOSAN") {
+    // ⚠️ Dua sumber size, tergantung SPK ini datang dari alur lama
+    // atau baru:
+    //  - Legacy: size tersimpan langsung di tspk_size (spks_nomor = SPK).
+    //  - Baru (pasca migrasi SO): SPK ini adalah SPK PPIC turunan dari
+    //    SO, size sebenarnya tersimpan di tsalesorder_size (sos_so_nomor
+    //    = nomor SO induk, via tspk.spk_so_ref), BUKAN di tspk_size.
+    let sizeRows = [];
+
+    const [legacySize] = await db.query(
+      `SELECT spks_size AS size, spks_qty AS qty
+     FROM tspk_size
+     WHERE spks_nomor = ? AND spks_qty > 0
+     ORDER BY spks_size`,
+      [spkNomor],
+    );
+
+    if (legacySize.length > 0) {
+      sizeRows = legacySize;
+    } else {
+      const [[spkRefRow]] = await db.query(
+        `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
+        [spkNomor],
+      );
+      const soRef = spkRefRow?.spk_so_ref || "";
+      if (soRef) {
+        const [newSize] = await db.query(
+          `SELECT sos_size AS size, sos_qty AS qty
+         FROM tsalesorder_size
+         WHERE sos_so_nomor = ? AND sos_qty > 0
+         ORDER BY sos_size`,
+          [soRef],
+        );
+        sizeRows = newSize;
+      }
+    }
+
+    for (const sz of sizeRows) {
+      const jumlah = parseFloat(sz.qty) || 0;
+
+      const [labelRows] = await db.query(
+        `SELECT b.brg_kode AS kode,
+              IF(b.brg_note = '', b.brg_nama,
+                 CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
+              b.brg_satuan AS satuan,
+              IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                FROM tmasterstok_acc m
+                WHERE m.mst_aktif = 'Y'
+                  AND m.mst_brg_kode = b.brg_kode
+              ), 0) AS ready
+       FROM tgarmen_brg b
+       WHERE b.brg_jenis = 'ACCESORIES'
+         AND b.brg_aktif = 'Y'
+         AND b.brg_nama LIKE '%LABEL%'
+         AND b.brg_nama LIKE ?
+         AND b.brg_nama LIKE ?
+       LIMIT 1`,
+        [`%- ${sz.size}%`, `%${spk.divisi}%`],
+      );
+
+      if (labelRows.length) {
+        const row = labelRows[0];
+        const ready = parseFloat(row.ready) || 0;
+        const terpakai = await getMkaTerpakai(row.kode, "");
+        const already = prefillDetail.find((d) => d.kode === row.kode);
+        if (already) {
+          already.jumlah += jumlah;
+          already.po =
+            already.ready >= already.jumlah
+              ? 0
+              : already.jumlah - already.ready;
+        } else {
+          prefillDetail.push({
+            kode: row.kode,
+            nama: row.nama,
+            satuan: row.satuan,
+            pemakaian: 1,
+            jumlah,
+            ready,
+            free: ready - terpakai,
+            po: ready >= jumlah ? 0 : jumlah - ready,
+            keterangan: "",
+          });
+        }
+      }
     }
   }
 
