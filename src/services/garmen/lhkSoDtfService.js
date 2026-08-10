@@ -28,18 +28,12 @@ const getBrowseData = async (startDate, endDate, cab) => {
   // konsisten, TIDAK mengubah data yang di-filter.
   const q = `
     SELECT
-      d.Tanggal,
+      DATE_FORMAT(d.Tanggal, '%Y-%m-%d') AS Tanggal,
       d.Cab,
       d.spk_nomor AS SPK,
       IFNULL(s.spk_nama, IFNULL(m.mspk_nama, h.sd_nama)) AS NamaOrder,
-      d.Depan,
-      d.Belakang,
-      d.Lengan,
-      d.Variasi,
-      d.Saku,
-      d.Panjang AS PanjangM,
-      d.Buangan,
-      d.Keterangan
+      d.Depan, d.Belakang, d.Lengan, d.Variasi, d.Saku,
+      d.Panjang AS PanjangM, d.Buangan, d.Keterangan
     FROM tdtf d
     LEFT JOIN tspk s ON s.spk_nomor = d.spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = d.spk_nomor
