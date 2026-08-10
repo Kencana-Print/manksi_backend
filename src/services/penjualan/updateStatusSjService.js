@@ -270,10 +270,7 @@ const saveStatus = async (nomor, payload) => {
     // Penyerahan Dokumen Kembali
     tanggal_kembali = payload.tanggalKembali ?? tanggal_kembali;
     penerima_barang = payload.penerimaBarang ?? penerima_barang;
-    // ⚠️ REQUIREMENT: Tgl Terima SJ otomatis = Tgl Kembali, bukan
-    // input terpisah. Server-side yang menentukan, tidak percaya
-    // field tanggalTerimaSj dari client sama sekali.
-    tanggal_terima_sj = payload.tanggalKembali ?? tanggal_terima_sj;
+    tanggal_terima_sj = payload.tanggalTerimaSj ?? tanggal_terima_sj;
   } else if (statusIndex === 3) {
     // Konfirmasi Ke Client
     contact_person = payload.contactPerson ?? contact_person;
