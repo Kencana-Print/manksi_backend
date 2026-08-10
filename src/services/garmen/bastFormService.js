@@ -44,20 +44,15 @@ const getBastFormData = async (nomorMap, userCabang) => {
     [nomorMap],
   );
   if (komponen.length === 0) {
-    // FIX: prioritaskan MKB (Memo Kebutuhan Bahan) sebagai sumber komponen
-    // + bahan + babaran untuk MAP — MKB dibuat khusus untuk MAP ini
-    // (mkb_spk_nomor = nomorMap) dan sudah punya babaran aktual yang
-    // diinput user (mkbd_babaran), bukan cuma daftar bahan kosong seperti
-    // fallback tmintabahan_dtl sebelumnya.
     const [mkbRows] = await db.query(
       `SELECT d.mkbd_bhn_kode AS kode, b.bhn_name, b.bhn_satuan,
-            d.mkbd_komponen AS komponen, d.mkbd_warna AS warna,
-            d.mkbd_babaran AS babaran, 0 AS babarank
-     FROM tmkb_hdr h
-     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
-     LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
-     WHERE h.mkb_spk_nomor = ? AND d.mkbd_komponen <> ''
-     ORDER BY d.mkbd_nourut`,
+          d.mkbd_komponen AS komponen, d.mkbd_warna AS warna,
+          0 AS babaran, 0 AS babarank
+      FROM tmkb_hdr h
+      INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+      LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
+      WHERE h.mkb_spk_nomor = ? AND d.mkbd_komponen <> ''
+      ORDER BY d.mkbd_nourut`,
       [nomorMap],
     );
     if (mkbRows.length > 0) {
@@ -65,10 +60,10 @@ const getBastFormData = async (nomorMap, userCabang) => {
     } else {
       [komponen] = await db.query(
         `SELECT DISTINCT d.mind_bhn_kode AS kode, b.bhn_name, b.bhn_satuan, d.mind_komponen AS komponen, 0 AS babaran, 0 AS babarank
-       FROM tmintabahan_hdr h
-       LEFT JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
-       LEFT JOIN tbahan b ON b.bhn_kode = d.mind_bhn_kode
-       WHERE h.min_spk_nomor = ?`,
+          FROM tmintabahan_hdr h
+         LEFT JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
+         LEFT JOIN tbahan b ON b.bhn_kode = d.mind_bhn_kode
+         WHERE h.min_spk_nomor = ?`,
         [nomorMap],
       );
     }
