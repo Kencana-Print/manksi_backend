@@ -26,7 +26,11 @@ const getBrowse = async (filters) => {
   ) {
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     if (isGudang) {
-      whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ? OR s.spk_cab IN ('P01','P04'))`;
+      whereClause += ` AND (
+        s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?
+        OR s.spk_cab IN ('P01','P04')
+        OR TRIM(s.spk_workshop) IN ('P01','P04')
+      )`;
     } else {
       whereClause += ` AND (s.spk_cab = ? OR s.spk_cab = "" OR s.spk_cab IS NULL OR s.user_create = ?)`;
     }
@@ -43,7 +47,7 @@ const getBrowse = async (filters) => {
       s.spk_tipe AS Tipe,
       s.spk_divisi AS Divisi,
       s.spk_cab AS Cab,
-      s.spk_workshop AS Workshop,
+      TRIM(s.spk_workshop) AS Workshop,
       j.jo_nama AS JoNama,
       s.spk_nama AS NamaSPK,
       s.spk_jumlah AS Jumlah,
