@@ -2,7 +2,7 @@ const service = require("../../../services/laporan/gudang-garmen/spkBelumMkbServ
 
 const getSpkBelumMkb = async (req, res) => {
   try {
-    const data = await service.getSpkBelumMkb(req.query);
+    const data = await service.getSoBelumMkb(req.query);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

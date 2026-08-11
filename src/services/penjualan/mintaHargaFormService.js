@@ -326,27 +326,28 @@ const getById = async (nomor, currentUser) => {
 };
 
 // --- SAVE TRANSAKSI ---
+// --- SAVE TRANSAKSI PERMINTAAN HARGA (Tab 1) ---
+// ⚠️ FIX: TIDAK PERNAH menyentuh kalkulasi.tkalkulasi2_hdr atau
+// mh_harga_kalkulasi/mh_nomor_kalkulasi sama sekali — sesuai perilaku
+// Delphi asli, di mana simpanharga() SENGAJA di-comment di FormKeyDown
+// (F10). Kalkulasi cuma bisa diubah lewat saveKalkulasi() terpisah,
+// dipanggil eksplisit dari Tab 2, bukan otomatis ikut tiap kali Tab 1
+// disimpan.
 const save = async (data, userKode, userCabang, isNewMode) => {
-  // 1. VALIDASI TUTUP BUKU (Sesuai Logic Delphi zClose)
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
   const tglInput = new Date(data.Tanggal);
-
   if (zdtClose && tglInput < zdtClose) {
     throw new Error(
       "Anda tidak boleh input/edit di tanggal periode yang sudah diclose.",
     );
   }
-
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-
     let nomorMh = data.Nomor;
 
-    // --- TAB 1: SIMPAN PERMINTAAN HARGA ---
     if (isNewMode) {
       nomorMh = await generateNomor(data.Tanggal);
-
       const insertMh = `
         INSERT INTO tmintaharga (
           mh_nomor, mh_tanggal, mh_divisi, mh_cus_kode, mh_cus_nama, mh_sal_kode, mh_nama,
@@ -373,7 +374,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.Gramasi,
         data.Finishing,
         data.Sublim,
-        userCabang, // <-- 3. Gunakan Cabang dari session user
+        userCabang,
         data.Keterangan,
         data.Status,
         userKode,
@@ -406,15 +407,10 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.Keterangan,
         userKode,
       ];
-
-      // 1. Proteksi Status: Hanya update jika BELUM, MINTA, CANCEL
       if (["BELUM", "MINTA", "CANCEL"].includes(data.Status)) {
         updateMh += `, mh_status=? `;
         updateParams.push(data.Status);
       }
-
-      // 2. Auto-Approve Logic
-      // Pastikan dari frontend mengirim data.TglApv dan data.UserCreate saat isEditMode
       if (
         !data.TglApv &&
         data.Status === "MINTA" &&
@@ -424,13 +420,10 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         updateMh += `, mh_apv=NOW(), mh_apv_usr=? `;
         updateParams.push(userKode);
       }
-
       updateMh += ` WHERE mh_nomor=?`;
       updateParams.push(nomorMh);
-
       await conn.query(updateMh, updateParams);
 
-      // Update PIN 5 jika ACC
       if (data.StatusEdit === "ACC") {
         await conn.query(
           `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="PERMINTAAN HARGA" AND pin_nomor=? AND pin_dipakai=""`,
@@ -439,243 +432,259 @@ const save = async (data, userKode, userCabang, isNewMode) => {
       }
     }
 
-    // --- TAB 2: SIMPAN KALKULASI (Jika Diaktifkan) ---
-    if (data.SimpanKalkulasi && data.Kalkulasi) {
-      const kal = data.Kalkulasi;
-      let nomorKal = kal.NomorKalkulasi;
+    await conn.commit();
+    return nomorMh;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
 
-      if (!nomorKal) {
-        nomorKal = await generateKalkulasiNomor(data.Tanggal);
-        await conn.query(
-          `
-            INSERT INTO kalkulasi.tkalkulasi2_hdr (
-              kal_nomor, kal_project, kal_tanggal, kal_cus, kal_kh_kode, kal_rpallowance, kal_allowance, 
-              kal_rpsesuai, kal_ppn, kal_rpsesuaippn, kal_rencanaorder, kal_rplaba, kal_laba, kal_persen, kal_pakaiobat, user_create, date_create
-            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "Y", "N", ?, NOW())
-          `,
-          [
-            nomorKal,
-            data.NamaPekerjaan,
-            data.CustKode,
-            kal.Model,
-            kal.RpAllowance || 0,
-            kal.PersenAllowance || 0,
-            kal.HargaSesuai || 0,
-            kal.PersenPpn || 0, // ⬅ BARU
-            kal.HargaSesuaiPpn || 0, // ⬅ BARU
-            data.RencanaOrder || 0,
-            kal.RpLaba || 0,
-            kal.PersenLaba || 0,
-            userKode,
-          ],
-        );
+// --- SAVE KALKULASI (Tab 2) — TERPISAH TOTAL dari save() Tab 1 ---
+// Dipanggil HANYA lewat aksi eksplisit "Simpan Kalkulasi" di Tab 2,
+// tidak pernah otomatis ikut saat user simpan Tab 1.
+const saveKalkulasi = async (
+  nomorMh,
+  kal,
+  namaPekerjaan,
+  custKode,
+  rencanaOrder,
+  userKode,
+) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
 
-        // ⬅ FIX: pakai HargaSesuaiPpn (harga final+PPN), BUKAN HargaSesuai
-        // (harga penyesuaian mentah) — HargaSesuaiPpn inilah yang jadi acuan
-        // harga jual sebenarnya (dipakai Penawaran/dsb).
-        await conn.query(
-          `UPDATE tmintaharga SET mh_nomor_kalkulasi=?, mh_harga_kalkulasi=? WHERE mh_nomor=?`,
-          [nomorKal, kal.HargaSesuaiPpn || 0, nomorMh],
-        );
-      } else {
-        await conn.query(
-          `
-            UPDATE kalkulasi.tkalkulasi2_hdr SET 
-              kal_project=?, kal_cus=?, kal_kh_kode=?, kal_rpallowance=?, kal_allowance=?, 
-              kal_rpsesuai=?, kal_ppn=?, kal_rpsesuaippn=?, kal_rencanaorder=?, kal_rplaba=?, kal_laba=?, user_modified=?, date_modified=NOW()
-            WHERE kal_nomor=?
-          `,
-          [
-            data.NamaPekerjaan,
-            data.CustKode,
-            kal.Model,
-            kal.RpAllowance || 0,
-            kal.PersenAllowance || 0,
-            kal.HargaSesuai || 0,
-            kal.PersenPpn || 0, // ⬅ BARU
-            kal.HargaSesuaiPpn || 0, // ⬅ BARU
-            data.RencanaOrder || 0,
-            kal.RpLaba || 0,
-            kal.PersenLaba || 0,
-            userKode,
-            nomorKal,
-          ],
-        );
-        // ⬅ FIX: sama, pakai HargaSesuaiPpn
-        await conn.query(
-          `UPDATE tmintaharga SET mh_harga_kalkulasi=? WHERE mh_nomor=?`,
-          [kal.HargaSesuaiPpn || 0, nomorMh],
-        );
-      }
+    const [[mhRow]] = await conn.query(
+      `SELECT mh_tanggal, mh_nomor_kalkulasi FROM tmintaharga WHERE mh_nomor = ? FOR UPDATE`,
+      [nomorMh],
+    );
+    if (!mhRow) throw new Error("Data Permintaan Harga tidak ditemukan.");
 
-      // Hapus detail lama (Metode standar Delphi)
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_dtl WHERE kald_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_komponen WHERE kk_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_aksesories WHERE ka_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_ctk WHERE kc_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_cetak WHERE kald_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_bordir WHERE kald_nomor=?`,
-        [nomorKal],
-      );
-      await conn.query(
-        `DELETE FROM kalkulasi.tkalkulasi2_dtf WHERE kald_nomor=?`,
-        [nomorKal],
-      );
-
-      // Re-insert Dtl
-      await conn.query(
-        `
-        INSERT INTO kalkulasi.tkalkulasi2_dtl (kald_nomor, kald_rppotong, kald_rpjahit, kald_rpfinishing, kald_rpkirim, kald_rpbiayaobat) 
-        VALUES (?, ?, ?, ?, ?, ?)
-      `,
-        [
-          nomorKal,
-          kal.RpPotong || 0,
-          kal.RpJahit || 0,
-          kal.RpFinishing || 0,
-          kal.RpKirim || 0,
-          kal.RpObat || 0,
-        ],
-      );
-
-      // Re-insert Komponen Grid
-      if (kal.GridKomponen && kal.GridKomponen.length > 0) {
-        const values = kal.GridKomponen.map((k, i) => [
-          nomorKal,
-          k.Komponen,
-          k.Kg ? "Y" : "N",
-          k.Pabrik ? "Y" : "N",
-          k.JenisKain,
-          k.Lengan,
-          k.Warna,
-          k.Harga || 0,
-          k.Babaran || 0,
-          k.Pcs || 0,
-          k.LogBody || 0,
-          k.LogLengan || 0,
-          i + 1,
-        ]);
-        await conn.query(
-          `INSERT INTO kalkulasi.tkalkulasi2_komponen (kk_nomor, kk_komponen, kk_kg, kk_pabrik, kk_jeniskain, kk_lengan, kk_warna, kk_harga, kk_babaran, kk_pcs, kald_logbody, kald_loglengan, kk_nourut) VALUES ?`,
-          [values],
-        );
-      }
-
-      // Re-insert Aksesories Grid
-      if (kal.GridAksesoris && kal.GridAksesoris.length > 0) {
-        const values = kal.GridAksesoris.map((a, i) => [
-          nomorKal,
-          a.Keterangan,
-          a.Harga || 0,
-          i + 1,
-        ]);
-        await conn.query(
-          `INSERT INTO kalkulasi.tkalkulasi2_aksesories (ka_nomor, ka_aksesories, ka_biaya, ka_nourut) VALUES ?`,
-          [values],
-        );
-      }
-
-      // Re-insert Cetak Grid
-      if (kal.GridCetak && kal.GridCetak.length > 0) {
-        const values = kal.GridCetak.map((c, i) => [
-          nomorKal,
-          c.Keterangan,
-          c.Harga || 0,
-          i + 1,
-        ]);
-        await conn.query(
-          `INSERT INTO kalkulasi.tkalkulasi2_ctk (kc_nomor, kc_ket, kc_biaya, kc_nourut) VALUES ?`,
-          [values],
-        );
-      }
-
-      // Re-insert Cetak, Bordir, DTF Hdr
-      await conn.query(
-        `INSERT INTO kalkulasi.tkalkulasi2_cetak (kald_nomor, kald_rpcetak) VALUES (?, ?)`,
-        [nomorKal, kal.RpCetakTotal || 0],
-      );
-
-      const bd = kal.Bordir || {};
-      await conn.query(
-        `
-        INSERT INTO kalkulasi.tkalkulasi2_bordir (
-          kald_nomor, kald_cmbordir, kald_bordirp1, kald_bordirp2, kald_bordirp3, kald_bordirp4, kald_bordirp5, kald_bordirp6, kald_bordirp7, kald_bordirp8,
-          kald_bordirl1, kald_bordirl2, kald_bordirl3, kald_bordirl4, kald_bordirl5, kald_bordirl6, kald_bordirl7, kald_bordirl8, kald_rpbordir
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-        [
-          nomorKal,
-          bd.Cm || 0,
-          bd.P1 || 0,
-          bd.P2 || 0,
-          bd.P3 || 0,
-          bd.P4 || 0,
-          bd.P5 || 0,
-          bd.P6 || 0,
-          bd.P7 || 0,
-          bd.P8 || 0,
-          bd.L1 || 0,
-          bd.L2 || 0,
-          bd.L3 || 0,
-          bd.L4 || 0,
-          bd.L5 || 0,
-          bd.L6 || 0,
-          bd.L7 || 0,
-          bd.L8 || 0,
-          kal.RpBordirTotal || 0,
-        ],
-      );
-
-      const df = kal.Dtf || {};
-      await conn.query(
-        `
-        INSERT INTO kalkulasi.tkalkulasi2_dtf (
-          kald_nomor, kald_cmdtf, kald_dtfp1, kald_dtfp2, kald_dtfp3, kald_dtfp4, kald_dtfp5, kald_dtfp6, kald_dtfp7, kald_dtfp8,
-          kald_dtfl1, kald_dtfl2, kald_dtfl3, kald_dtfl4, kald_dtfl5, kald_dtfl6, kald_dtfl7, kald_dtfl8, kald_rpdtf
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-        [
-          nomorKal,
-          df.Cm || 0,
-          df.P1 || 0,
-          df.P2 || 0,
-          df.P3 || 0,
-          df.P4 || 0,
-          df.P5 || 0,
-          df.P6 || 0,
-          df.P7 || 0,
-          df.P8 || 0,
-          df.L1 || 0,
-          df.L2 || 0,
-          df.L3 || 0,
-          df.L4 || 0,
-          df.L5 || 0,
-          df.L6 || 0,
-          df.L7 || 0,
-          df.L8 || 0,
-          kal.RpDtfTotal || 0,
-        ],
+    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+    const tglInput = new Date(mhRow.mh_tanggal);
+    if (zdtClose && tglInput < zdtClose) {
+      throw new Error(
+        "Anda tidak boleh mengubah kalkulasi di periode yang sudah diclose.",
       );
     }
 
+    let nomorKal = kal.NomorKalkulasi;
+    if (!nomorKal) {
+      nomorKal = await generateKalkulasiNomor(mhRow.mh_tanggal);
+      await conn.query(
+        `
+          INSERT INTO kalkulasi.tkalkulasi2_hdr (
+            kal_nomor, kal_project, kal_tanggal, kal_cus, kal_kh_kode, kal_rpallowance, kal_allowance, 
+            kal_rpsesuai, kal_ppn, kal_rpsesuaippn, kal_rencanaorder, kal_rplaba, kal_laba, kal_persen, kal_pakaiobat, user_create, date_create
+          ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "Y", "N", ?, NOW())
+        `,
+        [
+          nomorKal,
+          namaPekerjaan,
+          custKode,
+          kal.Model,
+          kal.RpAllowance || 0,
+          kal.PersenAllowance || 0,
+          kal.HargaSesuai || 0,
+          kal.PersenPpn || 0,
+          kal.HargaSesuaiPpn || 0,
+          rencanaOrder || 0,
+          kal.RpLaba || 0,
+          kal.PersenLaba || 0,
+          userKode,
+        ],
+      );
+      await conn.query(
+        `UPDATE tmintaharga SET mh_nomor_kalkulasi=?, mh_harga_kalkulasi=? WHERE mh_nomor=?`,
+        [nomorKal, kal.HargaSesuaiPpn || 0, nomorMh],
+      );
+    } else {
+      await conn.query(
+        `
+          UPDATE kalkulasi.tkalkulasi2_hdr SET 
+            kal_project=?, kal_cus=?, kal_kh_kode=?, kal_rpallowance=?, kal_allowance=?, 
+            kal_rpsesuai=?, kal_ppn=?, kal_rpsesuaippn=?, kal_rencanaorder=?, kal_rplaba=?, kal_laba=?, user_modified=?, date_modified=NOW()
+          WHERE kal_nomor=?
+        `,
+        [
+          namaPekerjaan,
+          custKode,
+          kal.Model,
+          kal.RpAllowance || 0,
+          kal.PersenAllowance || 0,
+          kal.HargaSesuai || 0,
+          kal.PersenPpn || 0,
+          kal.HargaSesuaiPpn || 0,
+          rencanaOrder || 0,
+          kal.RpLaba || 0,
+          kal.PersenLaba || 0,
+          userKode,
+          nomorKal,
+        ],
+      );
+      await conn.query(
+        `UPDATE tmintaharga SET mh_harga_kalkulasi=? WHERE mh_nomor=?`,
+        [kal.HargaSesuaiPpn || 0, nomorMh],
+      );
+    }
+
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_dtl WHERE kald_nomor=?`,
+      [nomorKal],
+    );
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_komponen WHERE kk_nomor=?`,
+      [nomorKal],
+    );
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_aksesories WHERE ka_nomor=?`,
+      [nomorKal],
+    );
+    await conn.query(`DELETE FROM kalkulasi.tkalkulasi2_ctk WHERE kc_nomor=?`, [
+      nomorKal,
+    ]);
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_cetak WHERE kald_nomor=?`,
+      [nomorKal],
+    );
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_bordir WHERE kald_nomor=?`,
+      [nomorKal],
+    );
+    await conn.query(
+      `DELETE FROM kalkulasi.tkalkulasi2_dtf WHERE kald_nomor=?`,
+      [nomorKal],
+    );
+
+    await conn.query(
+      `INSERT INTO kalkulasi.tkalkulasi2_dtl (kald_nomor, kald_rppotong, kald_rpjahit, kald_rpfinishing, kald_rpkirim, kald_rpbiayaobat) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        nomorKal,
+        kal.RpPotong || 0,
+        kal.RpJahit || 0,
+        kal.RpFinishing || 0,
+        kal.RpKirim || 0,
+        kal.RpObat || 0,
+      ],
+    );
+
+    if (kal.GridKomponen && kal.GridKomponen.length > 0) {
+      const values = kal.GridKomponen.map((k, i) => [
+        nomorKal,
+        k.Komponen,
+        k.Kg ? "Y" : "N",
+        k.Pabrik ? "Y" : "N",
+        k.JenisKain,
+        k.Lengan,
+        k.Warna,
+        k.Harga || 0,
+        k.Babaran || 0,
+        k.Pcs || 0,
+        k.LogBody || 0,
+        k.LogLengan || 0,
+        i + 1,
+      ]);
+      await conn.query(
+        `INSERT INTO kalkulasi.tkalkulasi2_komponen (kk_nomor, kk_komponen, kk_kg, kk_pabrik, kk_jeniskain, kk_lengan, kk_warna, kk_harga, kk_babaran, kk_pcs, kald_logbody, kald_loglengan, kk_nourut) VALUES ?`,
+        [values],
+      );
+    }
+
+    if (kal.GridAksesoris && kal.GridAksesoris.length > 0) {
+      const values = kal.GridAksesoris.map((a, i) => [
+        nomorKal,
+        a.Keterangan,
+        a.Harga || 0,
+        i + 1,
+      ]);
+      await conn.query(
+        `INSERT INTO kalkulasi.tkalkulasi2_aksesories (ka_nomor, ka_aksesories, ka_biaya, ka_nourut) VALUES ?`,
+        [values],
+      );
+    }
+
+    if (kal.GridCetak && kal.GridCetak.length > 0) {
+      const values = kal.GridCetak.map((c, i) => [
+        nomorKal,
+        c.Keterangan,
+        c.Harga || 0,
+        i + 1,
+      ]);
+      await conn.query(
+        `INSERT INTO kalkulasi.tkalkulasi2_ctk (kc_nomor, kc_ket, kc_biaya, kc_nourut) VALUES ?`,
+        [values],
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO kalkulasi.tkalkulasi2_cetak (kald_nomor, kald_rpcetak) VALUES (?, ?)`,
+      [nomorKal, kal.RpCetakTotal || 0],
+    );
+
+    const bd = kal.Bordir || {};
+    await conn.query(
+      `INSERT INTO kalkulasi.tkalkulasi2_bordir (
+        kald_nomor, kald_cmbordir, kald_bordirp1, kald_bordirp2, kald_bordirp3, kald_bordirp4, kald_bordirp5, kald_bordirp6, kald_bordirp7, kald_bordirp8,
+        kald_bordirl1, kald_bordirl2, kald_bordirl3, kald_bordirl4, kald_bordirl5, kald_bordirl6, kald_bordirl7, kald_bordirl8, kald_rpbordir
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nomorKal,
+        bd.Cm || 0,
+        bd.P1 || 0,
+        bd.P2 || 0,
+        bd.P3 || 0,
+        bd.P4 || 0,
+        bd.P5 || 0,
+        bd.P6 || 0,
+        bd.P7 || 0,
+        bd.P8 || 0,
+        bd.L1 || 0,
+        bd.L2 || 0,
+        bd.L3 || 0,
+        bd.L4 || 0,
+        bd.L5 || 0,
+        bd.L6 || 0,
+        bd.L7 || 0,
+        bd.L8 || 0,
+        kal.RpBordirTotal || 0,
+      ],
+    );
+
+    const df = kal.Dtf || {};
+    await conn.query(
+      `INSERT INTO kalkulasi.tkalkulasi2_dtf (
+        kald_nomor, kald_cmdtf, kald_dtfp1, kald_dtfp2, kald_dtfp3, kald_dtfp4, kald_dtfp5, kald_dtfp6, kald_dtfp7, kald_dtfp8,
+        kald_dtfl1, kald_dtfl2, kald_dtfl3, kald_dtfl4, kald_dtfl5, kald_dtfl6, kald_dtfl7, kald_dtfl8, kald_rpdtf
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nomorKal,
+        df.Cm || 0,
+        df.P1 || 0,
+        df.P2 || 0,
+        df.P3 || 0,
+        df.P4 || 0,
+        df.P5 || 0,
+        df.P6 || 0,
+        df.P7 || 0,
+        df.P8 || 0,
+        df.L1 || 0,
+        df.L2 || 0,
+        df.L3 || 0,
+        df.L4 || 0,
+        df.L5 || 0,
+        df.L6 || 0,
+        df.L7 || 0,
+        df.L8 || 0,
+        kal.RpDtfTotal || 0,
+      ],
+    );
+
     await conn.commit();
-    return nomorMh;
+    return nomorKal;
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -799,6 +808,7 @@ module.exports = {
   getById,
   getKalkulasiMetadata,
   save,
+  saveKalkulasi,
   updateNomorKalkulasi,
   processImage,
   getKatalogCustomer,

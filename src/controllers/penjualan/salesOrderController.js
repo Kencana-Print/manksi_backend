@@ -199,6 +199,8 @@ const searchAvailableForSpk = async (req, res) => {
       });
     }
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const userCab = req.user?.cabang;
+
     const data = await service.searchAvailableForSpk(
       q,
       startDate,
@@ -206,6 +208,7 @@ const searchAvailableForSpk = async (req, res) => {
       page,
       limit,
       canLihatCus,
+      userCab,
     );
     res.status(200).json({ success: true, data, canLihatCus });
   } catch (error) {

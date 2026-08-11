@@ -110,6 +110,29 @@ const save = async (req, res) => {
   }
 };
 
+const saveKalkulasi = async (req, res) => {
+  try {
+    const { nomorMh, kal, namaPekerjaan, custKode, rencanaOrder } = req.body;
+    if (!nomorMh) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor Permintaan Harga wajib diisi.",
+      });
+    }
+    const nomorKal = await mintaHargaFormService.saveKalkulasi(
+      nomorMh,
+      kal,
+      namaPekerjaan,
+      custKode,
+      rencanaOrder,
+      req.user.kode,
+    );
+    res.status(200).json({ success: true, data: { nomorKal } });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 const uploadImage = async (req, res) => {
   try {
     if (!req.file) {
@@ -182,6 +205,7 @@ const getKatalogCustomer = async (req, res) => {
 module.exports = {
   getById,
   save,
+  saveKalkulasi,
   uploadImage,
   getKalkulasiMetadata,
   getKatalogCustomer,

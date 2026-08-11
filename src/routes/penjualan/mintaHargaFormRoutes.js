@@ -42,4 +42,11 @@ router.post(
   controller.save,
 );
 
+router.post(
+  "/save-kalkulasi",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  controller.saveKalkulasi,
+);
+
 module.exports = router;

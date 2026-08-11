@@ -19,7 +19,7 @@ const getDetail = async (req, res) => {
 };
 
 const getDefaultCab = async (req, res) => {
-  const userCab = req.user?.cab || "";
+  const userCab = req.user?.cabang || "";
   const filterCab = req.query.filterCab || "ALL";
   res.status(200).json({
     success: true,
@@ -67,7 +67,8 @@ const save = async (req, res) => {
       });
     }
     const userKode = req.user?.kode || req.user?.username || "";
-    const userCab = req.user?.cab || "";
+    // ⚠️ FIX: sama, req.user.cabang bukan req.user.cab
+    const userCab = req.user?.cabang || "";
     const result = await lhkSoDtfFormService.save(
       cab,
       tanggal,

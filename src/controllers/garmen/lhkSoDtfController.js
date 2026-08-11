@@ -20,7 +20,7 @@ const getBrowse = async (req, res) => {
 // Cab (frmMenu.CAB / 'P04' / cabang filter aktif) dan Tanggal (hari ini).
 const getDefaultForCreate = async (req, res) => {
   try {
-    const userCab = req.user?.cab || "";
+    const userCab = req.user?.cabang || ""; // ← pastikan sudah "cabang"
     const filterCab = req.query.cab || "ALL";
     res.status(200).json({
       success: true,
