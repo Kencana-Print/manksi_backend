@@ -1,8 +1,4 @@
 const svc = require("../../../services/laporan/gudang-garmen/browseSpkService");
-// Reuse mekanisme approval cetak yang SAMA dengan modul SPK PPIC —
-// supaya spk_cetak_count & tspk_pin5 tetap satu sumber kebenaran,
-// terlepas dari halaman mana yang memicu cetak (PPIC atau shortcut
-// Browse SPK ini).
 const spkService = require("../../../services/ppic/spkService");
 
 const getBrowse = async (req, res) => {
@@ -13,7 +9,13 @@ const getBrowse = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Periode wajib diisi." });
     }
-    const data = await svc.getBrowse(startDate, endDate);
+    const data = await svc.getBrowse({
+      startDate,
+      endDate,
+      userCabang: req.user?.cabang,
+      userKode: req.user?.kode,
+      userBagian: req.user?.bagian,
+    });
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
