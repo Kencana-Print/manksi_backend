@@ -825,18 +825,37 @@ const searchPoInternalSpk = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- GET ACCESORIES (Dari tgarmen_brg) ---
-const searchAccesories = async () => {
+const searchAccesories = async (keyword = "", limit = 50, size = "") => {
+  const like = `%${keyword}%`;
+  let whereExtra = "";
+  const params = [like, like, like];
+
+  if (size) {
+    whereExtra = ` AND b.brg_nama LIKE '%LABEL%' AND b.brg_nama LIKE ?`;
+    params.push(`%- ${size}%`);
+  }
+
   const query = `
     SELECT 
-      brg_kode AS Kode, 
-      brg_nama AS Nama, 
-      brg_satuan AS Satuan, 
-      brg_note AS Note
-    FROM tgarmen_brg
-    WHERE brg_jenis = 'ACCESORIES'
-    ORDER BY brg_nama
+      b.brg_kode AS Kode, 
+      b.brg_nama AS Nama, 
+      b.brg_satuan AS Satuan, 
+      b.brg_note AS Note,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok_acc m
+        WHERE m.mst_aktif = 'Y' AND m.mst_brg_kode = b.brg_kode
+      ), 0) AS Ready
+    FROM tgarmen_brg b
+    WHERE b.brg_jenis = 'ACCESORIES'
+      AND b.brg_aktif = 'Y'
+      AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ? OR b.brg_note LIKE ?)
+      ${whereExtra}
+    ORDER BY b.brg_nama
+    LIMIT ?
   `;
-  const [rows] = await db.query(query);
+  params.push(Number(limit));
+  const [rows] = await db.query(query, params);
   return { items: rows };
 };
 

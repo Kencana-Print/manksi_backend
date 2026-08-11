@@ -1267,8 +1267,10 @@ const getStandarUkuran = async (joKode, varian = "STANDAR") => {
   }
   return allSizes.map((s) => {
     const d = standarMap[s.size] || {};
+    const adaStandar = !!standarMap[s.size];
     return {
       size: s.size,
+      adaStandar,
       qty: 0,
       ld: Number(d.ts_ld) || 0,
       pb: Number(d.ts_pb) || 0,

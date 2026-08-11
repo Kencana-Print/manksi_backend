@@ -198,11 +198,7 @@ const getSpkInfo = async (spkNomor) => {
   }
 
   // ── Sumber 2: template size dari tspk_size — replikasi spksize() Delphi.
-  // [FIX] Ini SEHARUSNYA jalan untuk SEMUA divisi (spksize() Delphi
-  // dipanggil unconditional), bukan cuma KAOSAN. Yang KAOSAN-only cuma
-  // auto-lookup kode LABEL via getkdacc() — kalau bukan KAOSAN (atau
-  // KAOSAN tapi label nggak ketemu), baris tetap dibuat tapi kode/nama
-  // kosong, nunggu user isi manual (behavior sama kayak Delphi).
+  // Ini jalan untuk SEMUA divisi (spksize() Delphi dipanggil unconditional).
   let sizeRows = [];
 
   const [legacySize] = await db.query(
@@ -233,13 +229,11 @@ const getSpkInfo = async (spkNomor) => {
     }
   }
 
-  const isKaosan = (spk.divisi || "").toUpperCase() === "KAOSAN";
-
   for (const sz of sizeRows) {
     const jumlah = parseFloat(sz.qty) || 0;
 
     // Baris default: template kosong menunggu kode diisi manual
-    // (persis kdbrg blank di Delphi kalau getkdacc gak nemu match)
+    // (kalau lookup di bawah nggak nemu match)
     let templateRow = {
       kode: "",
       nama: "",
@@ -250,55 +244,58 @@ const getSpkInfo = async (spkNomor) => {
       free: 0,
       po: 0,
       keterangan: `Size ${sz.size}`,
+      size: sz.size,
     };
 
-    // Auto-lookup kode LABEL — KAOSAN only, sama kayak getkdacc()
-    if (isKaosan) {
-      const [labelRows] = await db.query(
-        `SELECT b.brg_kode AS kode,
-                IF(b.brg_note = '', b.brg_nama,
-                   CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
-                b.brg_satuan AS satuan,
-                IFNULL((
-                  SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-                  FROM tmasterstok_acc m
-                  WHERE m.mst_aktif = 'Y'
-                    AND m.mst_brg_kode = b.brg_kode
-                ), 0) AS ready
-         FROM tgarmen_brg b
-         WHERE b.brg_jenis = 'ACCESORIES'
-           AND b.brg_aktif = 'Y'
-           AND b.brg_nama LIKE '%LABEL%'
-           AND b.brg_nama LIKE ?
-           AND b.brg_nama LIKE ?
-         LIMIT 1`,
-        [`%- ${sz.size}%`, `%${spk.divisi}%`],
-      );
+    // [FIX] Auto-lookup kode LABEL — SEMUA divisi, bukan cuma KAOSAN.
+    // getkdacc() Delphi sendiri generic: cari brg_nama LIKE '%LABEL%'
+    // + '- {size}%' + '%{divisi}%' tanpa syarat divisi tertentu.
+    // Pembatasan "cuma jalan kalau KAOSAN" itu ada di spksize() (si
+    // PEMANGGIL), bukan di getkdacc() itu sendiri — jadi divisi lain
+    // (misal GARMEN) yang punya barang LABEL dengan nama mengandung
+    // size + nama divisinya juga bakal ke-auto-fill. Kalau nggak
+    // ketemu, fallback ke templateRow kosong seperti biasa.
+    const [labelRows] = await db.query(
+      `SELECT b.brg_kode AS kode,
+              IF(b.brg_note = '', b.brg_nama,
+                 CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
+              b.brg_satuan AS satuan,
+              IFNULL((
+                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                FROM tmasterstok_acc m
+                WHERE m.mst_aktif = 'Y'
+                  AND m.mst_brg_kode = b.brg_kode
+              ), 0) AS ready
+       FROM tgarmen_brg b
+       WHERE b.brg_jenis = 'ACCESORIES'
+         AND b.brg_aktif = 'Y'
+         AND b.brg_nama LIKE '%LABEL%'
+         AND b.brg_nama LIKE ?
+         AND b.brg_nama LIKE ?
+       LIMIT 1`,
+      [`%- ${sz.size}%`, `%${spk.divisi}%`],
+    );
 
-      if (labelRows.length) {
-        const row = labelRows[0];
-        const ready = parseFloat(row.ready) || 0;
-        const terpakai = await getMkaTerpakai(row.kode, "");
-        const already = prefillDetail.find((d) => d.kode === row.kode);
-        if (already) {
-          // Kode LABEL sama sudah dipakai size lain -> gabung jumlahnya
-          already.jumlah += jumlah;
-          already.po =
-            already.ready >= already.jumlah
-              ? 0
-              : already.jumlah - already.ready;
-          continue; // jangan push templateRow, sudah digabung ke baris lain
-        }
-        templateRow = {
-          ...templateRow,
-          kode: row.kode,
-          nama: row.nama,
-          satuan: row.satuan,
-          ready,
-          free: ready - terpakai,
-          po: ready >= jumlah ? 0 : jumlah - ready,
-        };
+    if (labelRows.length) {
+      const row = labelRows[0];
+      const ready = parseFloat(row.ready) || 0;
+      const terpakai = await getMkaTerpakai(row.kode, "");
+      const already = prefillDetail.find((d) => d.kode === row.kode);
+      if (already) {
+        already.jumlah += jumlah;
+        already.po =
+          already.ready >= already.jumlah ? 0 : already.jumlah - already.ready;
+        continue;
       }
+      templateRow = {
+        ...templateRow,
+        kode: row.kode,
+        nama: row.nama,
+        satuan: row.satuan,
+        ready,
+        free: ready - terpakai,
+        po: ready >= jumlah ? 0 : jumlah - ready,
+      };
     }
 
     prefillDetail.push(templateRow);

@@ -333,7 +333,8 @@ const searchPoInternalSpk = async (req, res) => {
 
 const searchAccesories = async (req, res) => {
   try {
-    const data = await lookupService.searchAccesories();
+    const { q = "", limit = 50, size = "" } = req.query;
+    const data = await lookupService.searchAccesories(q, limit, size);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
