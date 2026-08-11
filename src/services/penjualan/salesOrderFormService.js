@@ -63,13 +63,6 @@ const getDetail = async (nomor) => {
       ), 0) AS jmlinvdc,
       map.mspk_acc_customer AS map_acc_customer,
       map.mspk_acc_tanggal AS map_acc_tanggal,
-      -- ⚠️ FIX: override kolom DATE dari s.* dengan versi string murni.
-      -- mysql2 mengembalikan kolom DATE sebagai JS Date object (local
-      -- midnight); saat di-serialize lewat res.json(), Node memanggil
-      -- .toISOString() yang mengonversi ke UTC — kalau server timezone
-      -- di depan UTC (WIB=+7), tanggalnya MUNDUR 1 hari di frontend.
-      -- Karena nama kolom sama, hasil DATE_FORMAT ini MENIMPA versi
-      -- Date object dari s.* (mysql2 pakai key terakhir yang menang).
       DATE_FORMAT(s.so_tanggal, '%Y-%m-%d') AS so_tanggal,
       DATE_FORMAT(s.so_dateline, '%Y-%m-%d') AS so_dateline,
       DATE_FORMAT(s.so_tgl_po, '%Y-%m-%d') AS so_tgl_po,

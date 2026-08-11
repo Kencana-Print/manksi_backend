@@ -167,8 +167,12 @@ const getDetail = async (nomor) => {
   const [items] = await db.query(
     `
     SELECT d.*, b.bhn_name, 
-           IFNULL(j.bj_nama,"") as jenis, IFNULL(g.bg_nama,"") as gramasi, IFNULL(s.bs_nama,"") as setting
+           IFNULL(j.bj_nama,"") as jenis, 
+           -- Jika PO Bahan (3) dan pod_gramasia ada isinya, pakai itu. Jika tidak, ambil dari master.
+           IF(h.po_jenis = 3 AND d.pod_gramasia <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi, 
+           IFNULL(s.bs_nama,"") as setting
     FROM tpo_dtl d
+    INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
     LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
@@ -355,10 +359,6 @@ const saveData = async (payload, userKode) => {
     }
 
     // C. INSERT DETAIL 1 (Item PO) & AUTO BPB DETAIL
-    // ⚠️ FIX: filter baris kode kosong sebagai jaring pengaman
-    // server-side — jangan cuma percaya frontend sudah bersih (race
-    // condition watcher auto-trailing-row pernah bikin baris kosong
-    // lolos, walau sudah difilter di validateSave).
     const validItemsToInsert = (items || []).filter(
       (item) => item.kode && String(item.kode).trim() !== "",
     );
@@ -366,6 +366,11 @@ const saveData = async (payload, userKode) => {
       let nourut = 1;
       for (const item of validItemsToInsert) {
         const namaExt = item.namaext ? item.namaext : item.nama;
+
+        // Tentukan apa yang dititipkan ke kolom fisik pod_gramasia
+        const gramasiaToSave =
+          jpo === 3 ? item.gramasi || "" : item.gramasia || "";
+
         await conn.query(
           `
           INSERT INTO tpo_dtl (
@@ -379,7 +384,7 @@ const saveData = async (payload, userKode) => {
             item.kode,
             namaExt,
             item.satuan,
-            item.gramasia || "",
+            gramasiaToSave, // <--- Gunakan variabel yang sudah diatur
             item.roll || 0,
             item.jumlah || 0,
             item.diskon || 0,
