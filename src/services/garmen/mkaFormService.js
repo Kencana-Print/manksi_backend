@@ -197,71 +197,81 @@ const getSpkInfo = async (spkNomor) => {
     }
   }
 
-  // ── Sumber 2: template CARE SIZE LABEL per-size, khusus divisi
-  // KAOSAN — replikasi spksize()+getkdacc() Delphi. Jumlah baris =
-  // jumlah size di tspk_size, masing-masing jumlah = qty SPK untuk
-  // size itu sendiri (bukan total SPK), pemakaian selalu 1.
-  // ⚠️ ASUMSI: pakai tspk_size (sama tabel yang dipakai modul legacy
-  // lain untuk size SPK) — kalau SPK ini datang dari alur SO baru
-  // yang size-nya tersimpan di tabel berbeda, perlu disesuaikan.
-  if ((spk.divisi || "").toUpperCase() === "KAOSAN") {
-    // ⚠️ Dua sumber size, tergantung SPK ini datang dari alur lama
-    // atau baru:
-    //  - Legacy: size tersimpan langsung di tspk_size (spks_nomor = SPK).
-    //  - Baru (pasca migrasi SO): SPK ini adalah SPK PPIC turunan dari
-    //    SO, size sebenarnya tersimpan di tsalesorder_size (sos_so_nomor
-    //    = nomor SO induk, via tspk.spk_so_ref), BUKAN di tspk_size.
-    let sizeRows = [];
+  // ── Sumber 2: template size dari tspk_size — replikasi spksize() Delphi.
+  // [FIX] Ini SEHARUSNYA jalan untuk SEMUA divisi (spksize() Delphi
+  // dipanggil unconditional), bukan cuma KAOSAN. Yang KAOSAN-only cuma
+  // auto-lookup kode LABEL via getkdacc() — kalau bukan KAOSAN (atau
+  // KAOSAN tapi label nggak ketemu), baris tetap dibuat tapi kode/nama
+  // kosong, nunggu user isi manual (behavior sama kayak Delphi).
+  let sizeRows = [];
 
-    const [legacySize] = await db.query(
-      `SELECT spks_size AS size, spks_qty AS qty
+  const [legacySize] = await db.query(
+    `SELECT spks_size AS size, spks_qty AS qty
      FROM tspk_size
      WHERE spks_nomor = ? AND spks_qty > 0
      ORDER BY spks_size`,
+    [spkNomor],
+  );
+
+  if (legacySize.length > 0) {
+    sizeRows = legacySize;
+  } else {
+    const [[spkRefRow]] = await db.query(
+      `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
       [spkNomor],
     );
-
-    if (legacySize.length > 0) {
-      sizeRows = legacySize;
-    } else {
-      const [[spkRefRow]] = await db.query(
-        `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
-        [spkNomor],
-      );
-      const soRef = spkRefRow?.spk_so_ref || "";
-      if (soRef) {
-        const [newSize] = await db.query(
-          `SELECT sos_size AS size, sos_qty AS qty
+    const soRef = spkRefRow?.spk_so_ref || "";
+    if (soRef) {
+      const [newSize] = await db.query(
+        `SELECT sos_size AS size, sos_qty AS qty
          FROM tsalesorder_size
          WHERE sos_so_nomor = ? AND sos_qty > 0
          ORDER BY sos_size`,
-          [soRef],
-        );
-        sizeRows = newSize;
-      }
+        [soRef],
+      );
+      sizeRows = newSize;
     }
+  }
 
-    for (const sz of sizeRows) {
-      const jumlah = parseFloat(sz.qty) || 0;
+  const isKaosan = (spk.divisi || "").toUpperCase() === "KAOSAN";
 
+  for (const sz of sizeRows) {
+    const jumlah = parseFloat(sz.qty) || 0;
+
+    // Baris default: template kosong menunggu kode diisi manual
+    // (persis kdbrg blank di Delphi kalau getkdacc gak nemu match)
+    let templateRow = {
+      kode: "",
+      nama: "",
+      satuan: "",
+      pemakaian: 1,
+      jumlah,
+      ready: 0,
+      free: 0,
+      po: 0,
+      keterangan: `Size ${sz.size}`,
+    };
+
+    // Auto-lookup kode LABEL — KAOSAN only, sama kayak getkdacc()
+    if (isKaosan) {
       const [labelRows] = await db.query(
         `SELECT b.brg_kode AS kode,
-              IF(b.brg_note = '', b.brg_nama,
-                 CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
-              b.brg_satuan AS satuan,
-              IFNULL((
-                SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-                FROM tmasterstok_acc m
-                WHERE m.mst_aktif = 'Y'
-                  AND m.mst_brg_kode = b.brg_kode
-              ), 0) AS ready
-       FROM tgarmen_brg b
-       WHERE b.brg_jenis = 'ACCESORIES'
-         AND b.brg_aktif = 'Y'
-         AND b.brg_nama LIKE '%LABEL%'
-         AND b.brg_nama LIKE ?
-         AND b.brg_nama LIKE ?
-       LIMIT 1`,
+                IF(b.brg_note = '', b.brg_nama,
+                   CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
+                b.brg_satuan AS satuan,
+                IFNULL((
+                  SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+                  FROM tmasterstok_acc m
+                  WHERE m.mst_aktif = 'Y'
+                    AND m.mst_brg_kode = b.brg_kode
+                ), 0) AS ready
+         FROM tgarmen_brg b
+         WHERE b.brg_jenis = 'ACCESORIES'
+           AND b.brg_aktif = 'Y'
+           AND b.brg_nama LIKE '%LABEL%'
+           AND b.brg_nama LIKE ?
+           AND b.brg_nama LIKE ?
+         LIMIT 1`,
         [`%- ${sz.size}%`, `%${spk.divisi}%`],
       );
 
@@ -271,26 +281,27 @@ const getSpkInfo = async (spkNomor) => {
         const terpakai = await getMkaTerpakai(row.kode, "");
         const already = prefillDetail.find((d) => d.kode === row.kode);
         if (already) {
+          // Kode LABEL sama sudah dipakai size lain -> gabung jumlahnya
           already.jumlah += jumlah;
           already.po =
             already.ready >= already.jumlah
               ? 0
               : already.jumlah - already.ready;
-        } else {
-          prefillDetail.push({
-            kode: row.kode,
-            nama: row.nama,
-            satuan: row.satuan,
-            pemakaian: 1,
-            jumlah,
-            ready,
-            free: ready - terpakai,
-            po: ready >= jumlah ? 0 : jumlah - ready,
-            keterangan: "",
-          });
+          continue; // jangan push templateRow, sudah digabung ke baris lain
         }
+        templateRow = {
+          ...templateRow,
+          kode: row.kode,
+          nama: row.nama,
+          satuan: row.satuan,
+          ready,
+          free: ready - terpakai,
+          po: ready >= jumlah ? 0 : jumlah - ready,
+        };
       }
     }
+
+    prefillDetail.push(templateRow);
   }
 
   return {

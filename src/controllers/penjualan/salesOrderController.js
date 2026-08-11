@@ -12,6 +12,7 @@ const getBrowse = async (req, res) => {
       userCabang: req.user.cabang,
       userKode: req.user.kode,
       userDivisi: req.user.divisi,
+      userBagian: req.user.bagian,
       isCmo: req.user.flags?.cmo === 1 || req.user.flags?.cmo === "Y",
       isCmo3: req.user.flags?.cmo3 === 1 || req.user.flags?.cmo3 === "Y",
       canLihatCus,

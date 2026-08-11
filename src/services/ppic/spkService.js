@@ -9,6 +9,7 @@ const getBrowseList = async (filters) => {
     customer,
     userCabang,
     userKode,
+    userBagian,
     canLihatCus,
     canLihatHarga,
   } = filters;
@@ -30,7 +31,12 @@ const getBrowseList = async (filters) => {
     userCabang !== "ADMIN" &&
     userCabang !== ""
   ) {
-    whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?)`;
+    const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
+    if (isGudang) {
+      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ? OR x.Cab IN ('P01','P04'))`;
+    } else {
+      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?)`;
+    }
     params.push(userCabang, userKode || "");
   }
 

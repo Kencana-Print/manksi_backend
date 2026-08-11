@@ -31,6 +31,7 @@ const getBrowseList = async (filters) => {
     userCabang,
     userKode,
     userDivisi,
+    userBagian,
     isCmo,
     isCmo3,
     canLihatCus,
@@ -60,7 +61,13 @@ const getBrowseList = async (filters) => {
       userKode === "LUTFI" || (String(userDivisi) === "3" && (isCmo || isCmo3))
         ? 1
         : 0;
-    whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1))`;
+
+    const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
+    if (isGudang) {
+      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR y.spk_cab IN ('P01','P04'))`;
+    } else {
+      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1))`;
+    }
     params.push(userCabang, userKode || "", isCmoDivisi3);
   }
 
