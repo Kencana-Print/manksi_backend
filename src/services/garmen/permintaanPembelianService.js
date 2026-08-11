@@ -60,7 +60,6 @@ const getBrowse = async (startDate, endDate, jenis, cabang, userBagian) => {
 };
 
 const getBrowseDetail = async (nomor, jenis) => {
-  // Tambahan kolom spesifikasi dan kegunaan khusus SPAREPART & ATK/RTK (Sesuai Delphi)
   const isKeteranganExtra = jenis === "SPAREPART" || jenis === "ATK/RTK";
   const extraCols = isKeteranganExtra
     ? `d.mbd_ket AS Spesifikasi, d.mbd_kegunaan AS Kegunaan,`
@@ -74,12 +73,25 @@ const getBrowseDetail = async (nomor, jenis) => {
       b.brg_satuan AS Satuan,
       ${extraCols}
       d.mbd_jumlah AS Jumlah,
-      IFNULL((
-        SELECT SUM(dd.bpbd_jumlah) 
-        FROM tgarmenbpb_hdr hh
-        INNER JOIN tgarmenbpb_dtl dd ON dd.bpbd_nomor = hh.bpb_nomor
-        WHERE hh.bpb_mb_nomor = d.mbd_nomor AND dd.bpbd_brg_kode = d.mbd_brg_kode
-      ), 0) AS Bpb,
+      -- [FIX] Terima = Bpb + Msi (sebelumnya cuma Bpb, field "msi"
+      -- dari tgarmenmso_dtl belum pernah dihitung sama sekali, jadi
+      -- Terima di web selalu 0 untuk barang yang diterima lewat MSO)
+      (
+        IFNULL((
+          SELECT SUM(dd.bpbd_jumlah) 
+          FROM tgarmenbpb_hdr hh
+          INNER JOIN tgarmenbpb_dtl dd ON dd.bpbd_nomor = hh.bpb_nomor
+          WHERE hh.bpb_mb_nomor = d.mbd_nomor AND dd.bpbd_brg_kode = d.mbd_brg_kode
+        ), 0)
+        +
+        IFNULL((
+          SELECT SUM(msod_jumlah)
+          FROM tgarmenmso_dtl
+          WHERE msod_msi_nomor <> ''
+            AND msod_mb_nomor = d.mbd_nomor
+            AND msod_brg_kode = d.mbd_brg_kode
+        ), 0)
+      ) AS Terima,
       IFNULL((
         SELECT c.mbd2_ket 
         FROM tgarmenmintabeli_dtl2 c 
