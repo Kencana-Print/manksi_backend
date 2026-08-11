@@ -32,8 +32,6 @@ const getBrowseList = async (query) => {
 
       UNION ALL
 
-      -- [FIX] NOT EXISTS correlated subquery -> LEFT JOIN + IS NULL antijoin.
-      -- Optimizer bisa pertimbangkan idx_spk_so_ref lagi (bukan possible_keys: NULL kayak sebelumnya)
       SELECT
         1 AS SourceOrder, s.date_create AS DateCreate,
         s.so_nomor AS Nomor,
@@ -74,6 +72,26 @@ const getBrowseList = async (query) => {
         AND s.mspk_jo_kode NOT IN ('', 'SD', 'BR', 'PL', 'SB', 'KS', 'DP', 'TG')
         AND s.mspk_tanggal >= CONCAT(?, ' 00:00:00')
         AND s.mspk_tanggal <= CONCAT(?, ' 23:59:59')
+    ),
+
+    -- [FIX] Agregasi tplanningspk PER plan_spk dulu (SUM semua tanggal),
+    -- baru di-JOIN. plan_spk BUKAN unik sendirian -- satu SPK bisa
+    -- punya banyak baris planning (satu per tanggal), jadi JOIN
+    -- langsung ke tabel mentah bikin baris SPK ke-multiply setiap
+    -- SPK punya >1 baris planning (persis abis user input planning).
+    plan_agg AS (
+      SELECT
+        plan_spk,
+        SUM(plan_datang) AS plan_datang,
+        SUM(plan_cutting) AS plan_cutting,
+        SUM(plan_cetak) AS plan_cetak,
+        SUM(plan_sublim) AS plan_sublim,
+        SUM(plan_bordir) AS plan_bordir,
+        SUM(plan_jahit) AS plan_jahit,
+        SUM(plan_finishing) AS plan_finishing,
+        SUM(plan_kirim) AS plan_kirim
+      FROM tplanningspk
+      GROUP BY plan_spk
     )
 
     SELECT
@@ -81,13 +99,8 @@ const getBrowseList = async (query) => {
       x.KdCus, x.NamaSPK, x.JumlahSPK, x.Kain, x.Finishing, x.Sablon, x.Sublim,
       x.Bordir,
 
-      -- [FIX] EXISTS correlated subquery -> LEFT JOIN ke daftar distinct
-      -- (dedup dulu di subquery kecil, join-nya jadi 1:1, pasti pakai index)
       IF(rpb.promin_spk_nomor IS NULL, 'BELUM', 'SUDAH') AS RPB,
 
-      -- [FIX] OR-join dipecah jadi 2 LEFT JOIN terpisah by PRIMARY KEY (plan_spk).
-      -- p1 = match by Nomor sendiri, p2 = match by RefNomor (SPK PPIC turunan).
-      -- plan_spk unique (PK) jadi masing-masing max 1 baris -> nggak perlu GROUP BY lagi.
       IF(IFNULL(p1.plan_datang, 0) + IFNULL(p2.plan_datang, 0) = 0, 1,
         IF(IFNULL(p1.plan_cutting, 0) + IFNULL(p2.plan_cutting, 0) = 0, 2,
           IF(IFNULL(p1.plan_cetak, 0) + IFNULL(p2.plan_cetak, 0)
@@ -104,8 +117,8 @@ const getBrowseList = async (query) => {
       ) AS Belum
 
     FROM base_orders x
-    LEFT JOIN tplanningspk p1 ON p1.plan_spk = x.Nomor
-    LEFT JOIN tplanningspk p2 ON p2.plan_spk = x.RefNomor
+    LEFT JOIN plan_agg p1 ON p1.plan_spk = x.Nomor
+    LEFT JOIN plan_agg p2 ON p2.plan_spk = x.RefNomor
     LEFT JOIN (
       SELECT DISTINCT promin_spk_nomor FROM tproduksiminta_hdr
     ) rpb ON rpb.promin_spk_nomor = x.Nomor
