@@ -172,7 +172,24 @@ const getById = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const searchBarang = async (cusKode, q = "") => {
   const like = `%${q}%`;
-  let where = `(s.spk_nomor IS NULL OR s.spk_cus_kode = ?)`;
+
+  // Menggunakan subquery UNION untuk menggabungkan tsalesorder dan tspk
+  let where = `(
+    NOT EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_cus_kode AS Cus FROM tspk
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode
+    )
+    OR EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_cus_kode AS Cus FROM tspk
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode AND sox.Cus = ?
+    )
+  )`;
   const params = [cusKode];
 
   if (q) {
@@ -184,7 +201,6 @@ const searchBarang = async (cusKode, q = "") => {
     `SELECT b.brg_kode AS Kode, b.brg_name AS Nama,
             b.brg_ukuran AS Ukuran, b.brg_harga AS Harga
      FROM tbarang b
-     LEFT JOIN tspk s ON s.spk_nomor = b.brg_kode
      WHERE ${where}
      ORDER BY b.brg_kode
      LIMIT 200`,

@@ -459,9 +459,38 @@ const saveData = async (payload, user) => {
           conn,
         );
       } else {
-        nomor = so_nomor.startsWith("SO-")
+        const nomorWarisan = so_nomor.startsWith("SO-")
           ? so_nomor.replace("SO-", "SPK-")
           : so_nomor;
+
+        // ⚠️ GUARD: nomor warisan dari SO bisa BENTROK dengan nomor SPK
+        // "sisa debt" dari counter lama (generateNomor), karena dulu SPK
+        // dibuat via increment independen, bukan mengikuti nomor SO.
+        // Contoh nyata: SPK-JA-KO-000004 sudah kepakai duluan oleh SO
+        // yang BEDA (SO-JA-KO-000009), sebelum skema ini dipasang.
+        // Kalau nomor warisan sudah dipakai SO lain, fallback ke skema
+        // counter lama supaya tidak duplicate key / salah tempel data.
+        const [clash] = await conn.query(
+          `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ? FOR UPDATE`,
+          [nomorWarisan],
+        );
+        const isClashWithOtherSo =
+          clash.length > 0 && clash[0].spk_so_ref !== so_nomor;
+
+        if (isClashWithOtherSo) {
+          nomor = await generateNomor(
+            soHeader.spk_perush_kode,
+            soHeader.spk_jo_kode,
+            conn,
+          );
+        } else if (clash.length > 0) {
+          // Kasus retry/re-submit SO yang sama: SPK-nya sendiri sudah ada.
+          throw new Error(
+            `SPK untuk SO ${so_nomor} sudah pernah dibuat (${nomorWarisan}). Silakan gunakan mode Ubah.`,
+          );
+        } else {
+          nomor = nomorWarisan;
+        }
       }
 
       const newHeader = { ...soHeader };

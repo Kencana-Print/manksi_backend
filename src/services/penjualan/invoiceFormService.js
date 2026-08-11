@@ -160,7 +160,7 @@ const isSpk = async (kode) => {
   if (newRows.length > 0) return true;
 
   const [[row]] = await db.query(
-    `SELECT spk_nomor FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1`,
+    `SELECT spk_nomor FROM tspk WHERE spk_nomor = ?`,
     [kode],
   );
   return !!row;
@@ -173,13 +173,11 @@ const isSpk = async (kode) => {
 const getSjForSpk = async (soNomor, perushKode) => {
   const [rows] = await db.query(
     `SELECT DISTINCT d.sjd_sj_nomor
-     FROM tspk turunan
-     INNER JOIN tsj_hdr h ON h.sj_perush_kode = ?
-     INNER JOIN tsj_dtl d ON d.sjd_sj_nomor = h.sj_nomor
-       AND d.sjd_spk_nomor = turunan.spk_nomor
-     WHERE turunan.spk_so_ref = ?
-       AND turunan.spk_is_so = 0`,
-    [perushKode, soNomor],
+     FROM tsj_dtl d
+     INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor AND h.sj_perush_kode = ?
+     LEFT JOIN tspk turunan ON turunan.spk_nomor = d.sjd_spk_nomor AND turunan.spk_is_so = 0
+     WHERE d.sjd_spk_nomor = ? OR turunan.spk_so_ref = ?`,
+    [perushKode, soNomor, soNomor],
   );
   return rows.map((r) => r.sjd_sj_nomor).join(",");
 };
@@ -206,14 +204,14 @@ const searchBarang = async (
   let where = `(
     NOT EXISTS (
       SELECT 1 FROM (
-        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk WHERE spk_is_so = 1
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
         UNION ALL
         SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
       ) sox WHERE sox.Nomor = b.brg_kode
     )
     OR EXISTS (
       SELECT 1 FROM (
-        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk WHERE spk_is_so = 1
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
         UNION ALL
         SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
       ) sox WHERE sox.Nomor = b.brg_kode AND sox.Perush = ? AND sox.Cus = ?
@@ -259,8 +257,6 @@ const loadBarangDetail = async (kode, perushKode) => {
   );
   if (!barang) throw new Error("Barang Tidak di temukan.");
 
-  // Coba tsalesorder (SO baru) dulu — jumlah_inv dihitung on-the-fly
-  // dari tinv_dtl karena tsalesorder TIDAK punya kolom so_jumlah_inv
   const [[soNew]] = await db.query(
     `SELECT
         so.so_jumlah AS jumlah_total,
@@ -274,12 +270,12 @@ const loadBarangDetail = async (kode, perushKode) => {
      WHERE so.so_nomor = ? AND so.so_aktif = 'Y'`,
     [kode],
   );
-  // Fallback ke tspk legacy
+
   const [[soLegacy]] = !soNew
     ? await db.query(
         `SELECT spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv,
                 spk_perush_kode, spk_cus_kode
-         FROM tspk WHERE spk_nomor = ? AND spk_aktif = 'Y' AND spk_is_so = 1`,
+         FROM tspk WHERE spk_nomor = ? AND spk_aktif = 'Y'`,
         [kode],
       )
     : [[null]];

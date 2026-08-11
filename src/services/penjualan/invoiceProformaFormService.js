@@ -108,23 +108,40 @@ const getRekeningByNomor = async (rekening, perushKode) => {
 };
 
 // ── Lookup Barang by Kode ──
-// Sesuai searchBarangInvProforma di lookupService — tabel tbarang + tspk
+// Sesuai searchBarangInvProforma di lookupService — tabel tbarang + tspk/tsalesorder
 const getBarangByKode = async (kode, perushKode, cusKode) => {
   if (!perushKode || !cusKode)
     throw new Error("Perusahaan dan Customer harus dipilih dulu.");
+
+  let where = `(
+    NOT EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode
+    )
+    OR EXISTS (
+      SELECT 1 FROM (
+        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
+      ) sox WHERE sox.Nomor = b.brg_kode AND sox.Perush = ? AND sox.Cus = ?
+    )
+  )`;
 
   const [rows] = await db.query(
     `SELECT b.brg_kode AS Kode, b.brg_name AS Nama,
             b.brg_ukuran AS Ukuran, b.brg_harga AS Harga
      FROM tbarang b
-     LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor
-     WHERE b.brg_kode = ?
-       AND (s.spk_nomor IS NULL
-            OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ?))
+     WHERE b.brg_kode = ? AND ${where}
      LIMIT 1`,
     [kode, perushKode, cusKode],
   );
-  if (rows.length === 0) throw new Error("Kode barang tidak ditemukan.");
+  if (rows.length === 0)
+    throw new Error(
+      "Kode barang tidak ditemukan atau tidak diizinkan untuk customer ini.",
+    );
   return rows[0];
 };
 
