@@ -1459,95 +1459,95 @@ const getSpkBelumMkbCount = async (user) => {
   return rows[0]?.Total || 0;
 };
 
-// ── 2. Aktivitas Hari Ini (SPK baru + penawaran baru + invoice baru) ──
 // ── 2. Aktivitas Hari Ini (SPK baru + SO baru + MAP baru + SJ baru + penawaran baru + invoice baru) ──
 const getAktivitasHariIni = async (limit = 20, offset = 0) => {
   const sql = `
     SELECT * FROM (
-      -- SPK baru hari ini (data historis Delphi)
       SELECT
-        'SPK'                                                          AS jenis,
-        s.spk_nomor                                                    AS nomor,
-        s.spk_nama                                                     AS nama,
-        d.divisi                                                       AS divisi,
-        DATE_FORMAT(s.date_create, '%H:%i')                           AS jam,
-        s.date_create                                                  AS waktu
+        'SPK' AS jenis,
+        s.spk_nomor AS nomor,
+        s.spk_nama AS nama,
+        d.divisi AS divisi,
+        DATE_FORMAT(s.date_create, '%H:%i') AS jam,
+        s.date_create AS waktu
       FROM tspk s
       LEFT JOIN tdivisi d ON d.kode = s.spk_divisi
-      WHERE DATE(s.date_create) = CURDATE()
+      WHERE s.date_create >= CURDATE() AND s.date_create < CURDATE() + INTERVAL 1 DAY
         AND s.spk_aktif = 'Y'
 
       UNION ALL
 
-      -- SO baru hari ini (jalur baru pasca migrasi tspk -> tsalesorder)
       SELECT
-        'SO'                                                            AS jenis,
-        so.so_nomor                                                     AS nomor,
-        so.so_nama                                                      AS nama,
-        d.divisi                                                        AS divisi,
-        DATE_FORMAT(so.date_create, '%H:%i')                           AS jam,
-        so.date_create                                                  AS waktu
+        'SO' AS jenis,
+        so.so_nomor AS nomor,
+        so.so_nama AS nama,
+        d.divisi AS divisi,
+        DATE_FORMAT(so.date_create, '%H:%i') AS jam,
+        so.date_create AS waktu
       FROM tsalesorder so
       LEFT JOIN tdivisi d ON d.kode = so.so_divisi
-      WHERE DATE(so.date_create) = CURDATE()
+      WHERE so.date_create >= CURDATE() AND so.date_create < CURDATE() + INTERVAL 1 DAY
         AND so.so_aktif = 'Y'
 
       UNION ALL
 
-      -- MAP baru hari ini
       SELECT
-        'MAP'                                                           AS jenis,
-        m.mspk_nomor                                                    AS nomor,
-        m.mspk_nama                                                     AS nama,
-        d.divisi                                                        AS divisi,
-        DATE_FORMAT(m.date_create, '%H:%i')                            AS jam,
-        m.date_create                                                   AS waktu
+        'MAP' AS jenis,
+        m.mspk_nomor AS nomor,
+        m.mspk_nama AS nama,
+        d.divisi AS divisi,
+        DATE_FORMAT(m.date_create, '%H:%i') AS jam,
+        m.date_create AS waktu
       FROM tmemospk m
       LEFT JOIN tdivisi d ON d.kode = m.mspk_divisi
-      WHERE DATE(m.date_create) = CURDATE()
+      WHERE m.date_create >= CURDATE() AND m.date_create < CURDATE() + INTERVAL 1 DAY
         AND m.mspk_aktif = 'Y'
 
       UNION ALL
 
-      -- Surat Jalan baru hari ini
       SELECT
-        'SJ'                                                            AS jenis,
-        h.sj_nomor                                                      AS nomor,
-        h.sj_keterangan                                                 AS nama,
-        d.divisi                                                        AS divisi,
-        DATE_FORMAT(h.date_create, '%H:%i')                            AS jam,
-        h.date_create                                                   AS waktu
+        'SJ' AS jenis,
+        h.sj_nomor AS nomor,
+        h.sj_keterangan AS nama,
+        d.divisi AS divisi,
+        DATE_FORMAT(h.date_create, '%H:%i') AS jam,
+        h.date_create AS waktu
       FROM tsj_hdr h
       LEFT JOIN tdivisi d ON d.kode = h.sj_divisi
-      WHERE DATE(h.date_create) = CURDATE()
+      WHERE h.date_create >= CURDATE() AND h.date_create < CURDATE() + INTERVAL 1 DAY
 
       UNION ALL
 
-      -- Penawaran baru hari ini
       SELECT
-        'PENAWARAN'                                                    AS jenis,
-        h.pen_nomor                                                    AS nomor,
-        h.pen_keterangan                                               AS nama,
-        d.divisi                                                       AS divisi,
-        DATE_FORMAT(h.date_create, '%H:%i')                           AS jam,
-        h.date_create                                                  AS waktu
+        'PENAWARAN' AS jenis,
+        h.pen_nomor AS nomor,
+        h.pen_keterangan AS nama,
+        d.divisi AS divisi,
+        DATE_FORMAT(h.date_create, '%H:%i') AS jam,
+        h.date_create AS waktu
       FROM tpenawaran_hdr h
       LEFT JOIN tdivisi d ON d.kode = h.pen_divisi
-      WHERE DATE(h.date_create) = CURDATE()
+      WHERE h.date_create >= CURDATE() AND h.date_create < CURDATE() + INTERVAL 1 DAY
 
       UNION ALL
 
-      -- Invoice baru hari ini
+      -- [FIX] OR di sini beda kasus dari OR-join sebelumnya: ini OR di WHERE
+      -- antar 2 kolom pada tabel yang sama, MariaDB bisa index_merge selama
+      -- masing-masing kolom sargable & ada index sendiri-sendiri.
       SELECT
-        'INVOICE'                                                            AS jenis,
-        a.inv_nomor                                                          AS nomor,
-        a.inv_keterangan                                                     AS nama,
-        p.perush_nama                                                        AS divisi,
-        DATE_FORMAT(IFNULL(a.date_create, a.inv_tanggal), '%H:%i')          AS jam,
-        IFNULL(a.date_create, a.inv_tanggal)                                AS waktu
+        'INVOICE' AS jenis,
+        a.inv_nomor AS nomor,
+        a.inv_keterangan AS nama,
+        p.perush_nama AS divisi,
+        DATE_FORMAT(IFNULL(a.date_create, a.inv_tanggal), '%H:%i') AS jam,
+        IFNULL(a.date_create, a.inv_tanggal) AS waktu
       FROM tinv_hdr a
       LEFT JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
-      WHERE (DATE(a.inv_tanggal) = CURDATE() OR DATE(a.date_create) = CURDATE())
+      WHERE (
+          (a.inv_tanggal >= CURDATE() AND a.inv_tanggal < CURDATE() + INTERVAL 1 DAY)
+          OR
+          (a.date_create >= CURDATE() AND a.date_create < CURDATE() + INTERVAL 1 DAY)
+        )
         AND a.inv_status_otomatis <> 1
     ) akt
     ORDER BY waktu DESC
