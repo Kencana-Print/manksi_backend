@@ -65,6 +65,8 @@ const returBeliBahanFormRoutes = require("./routes/garmen/returBeliBahanFormRout
 const pembuatanBarcodeBahanRoutes = require("./routes/garmen/pembuatanBarcodeBahanRoutes");
 const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcodeBahanFormRoutes");
 
+const cetakBarcodeKaosanRoutes = require("./routes/garmen/cetakBarcodeKaosanRoutes");
+const cetakBarcodeKaosanFormRoutes = require("./routes/garmen/cetakBarcodeKaosanFormRoutes");
 const stbjRoutes = require("./routes/garmen/stbjRoutes");
 const stbjFormRoutes = require("./routes/garmen/stbjFormRoutes");
 const cetakBkbjRoutes = require("./routes/garmen/cetakBkbjRoutes");
@@ -421,6 +423,14 @@ app.use(
   pembuatanBarcodeBahanFormRoutes,
 );
 
+app.use(
+  "/api/garmen/bahan-jadi/cetak-barcode-kaosan",
+  cetakBarcodeKaosanRoutes,
+);
+app.use(
+  "/api/garmen/bahan-jadi/cetak-barcode-kaosan/form",
+  cetakBarcodeKaosanFormRoutes,
+);
 app.use("/api/garmen/stbj", stbjRoutes);
 app.use("/api/garmen/stbj-form", stbjFormRoutes);
 app.use("/api/garmen/bahan-jadi/cetak-bkbj", cetakBkbjRoutes);
