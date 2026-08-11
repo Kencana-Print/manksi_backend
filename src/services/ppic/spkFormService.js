@@ -113,24 +113,30 @@ const getDetail = async (nomor) => {
   if (header.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");
 
   const isPremium = isPremiumWorkshop(header[0].spk_cab);
+  const isKaosan = isDivisiTiga(header[0].spk_divisi);
 
   // ⚠️ Tab Komponen/Layout Proses/Keterangan HANYA relevan untuk P04.
   // Untuk legacy (P01/P02/P05), query-query ini tetap dipanggil supaya
   // shape response konsisten (array kosong), tapi TIDAK ditampilkan
   // di frontend. Alokasi sebaliknya: selalu diambil, dominan dipakai
   // di legacy tapi tidak ada ruginya kalau kosong di premium.
-  const [dtlSize, komponenSpk, layoutProses, keteranganKhusus, alokasi] =
-    await Promise.all([
-      getSizeList(nomor),
-      isPremium
-        ? getKomponenSpk(nomor)
-        : { ListPotong: [], ListCetakBordir: [] },
-      isPremium
-        ? getLayoutProses(nomor)
-        : { header: null, proof: [], sewing: [] },
-      isPremium ? getKeteranganKhusus(nomor) : [],
-      getAlokasi(nomor),
-    ]);
+  const [
+    dtlSize,
+    komponenSpk,
+    layoutProses,
+    keteranganKhusus,
+    alokasi,
+    dtlKaosan,
+  ] = await Promise.all([
+    getSizeList(nomor),
+    isPremium ? getKomponenSpk(nomor) : { ListPotong: [], ListCetakBordir: [] },
+    isPremium
+      ? getLayoutProses(nomor)
+      : { header: null, proof: [], sewing: [] },
+    isPremium ? getKeteranganKhusus(nomor) : [],
+    getAlokasi(nomor),
+    isKaosan ? getSpkKaosanList(nomor) : [], // ← BARU
+  ]);
 
   const [masterKet] = isPremium
     ? await db.query(
@@ -148,6 +154,7 @@ const getDetail = async (nomor) => {
     header: header[0],
     isPremiumFlow: isPremium, // ← baru, dipakai frontend switch tab
     dtlSize,
+    dtlKaosan,
     komponenSpk,
     layoutProses,
     keteranganKhusus,
@@ -191,6 +198,9 @@ const getSoSourceDetail = async (soNomor) => {
   const dtlSize = await getSoSizeListUnified(soNomor);
   const isPremium = isPremiumWorkshop(header.spk_cab);
   const soAlokasi = isPremium ? [] : await getSoAlokasiReference(soNomor);
+  const soKaosan = isDivisiTiga(header.spk_divisi)
+    ? await getSoKaosanReference(soNomor, source)
+    : [];
 
   return {
     header,
@@ -198,6 +208,7 @@ const getSoSourceDetail = async (soNomor) => {
     _soSource: source,
     isPremiumFlow: isPremium,
     soAlokasi, // referensi saja, untuk tombol "copy dari SO" di frontend
+    dtlKaosan: soKaosan,
   };
 };
 
@@ -411,6 +422,67 @@ const getSoAlokasiReference = async (soNomor) => {
   return [];
 };
 
+// --- KAOSAN SPK (tspk_dc) — mirip tsalesorder_kaosan, tapi milik SPK
+// sendiri (spkd_nomor = nomor SPK). Nama barang tidak disimpan di
+// sini, di-JOIN dari retail.tbarangdc sama seperti dtlKaosan di
+// salesOrderFormService.getDetailFromNew.
+const getSpkKaosanList = async (spkNomor) => {
+  const [rows] = await db.query(
+    `SELECT d.spkd_kode AS kode,
+            TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+            d.spkd_ukuran AS ukuran, d.spkd_qtyorder AS qtyorder
+     FROM tspk_dc d
+     LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.spkd_kode
+     WHERE d.spkd_nomor = ?`,
+    [spkNomor],
+  );
+  return rows;
+};
+
+const saveSpkKaosan = async (conn, spkNomor, list) => {
+  await conn.query(`DELETE FROM tspk_dc WHERE spkd_nomor = ?`, [spkNomor]);
+  const rows = (list || []).filter((item) => item.kode && item.ukuran);
+  if (rows.length === 0) return;
+
+  const vals = rows.map((item) => [
+    spkNomor,
+    item.kode,
+    item.ukuran,
+    item.qtyorder || 0,
+  ]);
+  await conn.query(
+    `INSERT INTO tspk_dc (spkd_nomor, spkd_kode, spkd_ukuran, spkd_qtyorder) VALUES ?`,
+    [vals],
+  );
+};
+
+// --- Ambil Kaosan dari SO sumber sebagai starting point saat create.
+// ⚠️ ASUMSI (sama pola dengan getSoAlokasiReference): SO baru (source
+// "new") datanya di tsalesorder_kaosan. SO legacy (source "legacy",
+// hidup sebagai row tspk dengan spk_is_so=1) diasumsikan datanya JUGA
+// di tspk_dc dengan key nomor SO itu sendiri — mengikuti pola bahwa
+// tspk_dc adalah tabel generik "kaosan milik satu nomor dokumen",
+// dipakai baik oleh SO legacy maupun SPK PPIC. Kalau ternyata SO
+// legacy kaosan-nya disimpan di tabel lain, kasih tau nama tabelnya.
+const getSoKaosanReference = async (soNomor, source) => {
+  if (source === "new") {
+    const [rows] = await db.query(
+      `SELECT d.sok_kode AS kode,
+              TRIM(CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna)) AS nama,
+              d.sok_ukuran AS ukuran, d.sok_qtyorder AS qtyorder
+       FROM tsalesorder_kaosan d
+       LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.sok_kode
+       WHERE d.sok_so_nomor = ?`,
+      [soNomor],
+    );
+    return rows;
+  }
+  // source === "legacy"
+  return getSpkKaosanList(soNomor);
+};
+
+const isDivisiTiga = (divisi) => String(divisi).charAt(0) === "3";
+
 // ============================================================
 // SAVE DATA — create & edit SPK PPIC
 // ============================================================
@@ -425,6 +497,7 @@ const saveData = async (payload, user) => {
     komponenSpk,
     keteranganKhusus,
     alokasi,
+    dtlKaosan,
   } = payload;
 
   const conn = await db.getConnection();
@@ -441,7 +514,10 @@ const saveData = async (payload, user) => {
       // bentuk spk_* seragam via getSoHeaderUnified, sehingga
       // seluruh logic copy-ke-tspk di bawah TIDAK berubah sama sekali.
       if (!so_nomor) throw new Error("No. SO sumber wajib dipilih.");
-      const { header: soHeader } = await getSoHeaderUnified(so_nomor, conn);
+      const { header: soHeader, source: soSource } = await getSoHeaderUnified(
+        so_nomor,
+        conn,
+      );
       if (!soHeader) throw new Error("Sales Order tidak ditemukan.");
       if (soHeader.spk_aktif !== "Y" || !soHeader.spk_cmo) {
         throw new Error(
@@ -518,6 +594,17 @@ const saveData = async (payload, user) => {
           : await getSoSizeListUnified(so_nomor);
       await saveSizeList(conn, nomor, sizeSource);
 
+      // [BARU] Simpan Kaosan — hanya divisi 3. Prioritaskan payload (kalau
+      // user sudah edit manual di form sebelum submit pertama), fallback
+      // copy dari SO sumber.
+      if (isDivisiTiga(soHeader.spk_divisi)) {
+        const kaosanSource =
+          payload.dtlKaosan && payload.dtlKaosan.length > 0
+            ? payload.dtlKaosan
+            : await getSoKaosanReference(so_nomor, soSource);
+        await saveSpkKaosan(conn, nomor, kaosanSource);
+      }
+
       // ⚠️ BARU: auto-copy alokasi dari SO sumber (kalau ada) saat create.
       // Hanya relevan untuk legacy flow, tapi dijalankan apa adanya untuk
       // semua cab — kalau SO tidak punya alokasi, otomatis no-op (array kosong).
@@ -538,7 +625,7 @@ const saveData = async (payload, user) => {
       nomor = spk_nomor;
 
       const [exist] = await conn.query(
-        `SELECT spk_nomor, spk_cab FROM tspk WHERE spk_nomor = ? AND spk_is_so = 0`,
+        `SELECT spk_nomor, spk_cab, spk_divisi FROM tspk WHERE spk_nomor = ? AND spk_is_so = 0`,
         [nomor],
       );
       if (exist.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");
@@ -552,6 +639,11 @@ const saveData = async (payload, user) => {
 
       if (dtlSize) {
         await saveSizeList(conn, nomor, dtlSize);
+      }
+
+      // [BARU] divisi 3 — simpan Kaosan kalau dikirim di payload
+      if (isDivisiTiga(exist[0].spk_divisi) && dtlKaosan !== undefined) {
+        await saveSpkKaosan(conn, nomor, dtlKaosan);
       }
     }
 
@@ -1361,4 +1453,9 @@ module.exports = {
   getAlokasi,
   saveAlokasi,
   getSoAlokasiReference,
+  getSpkKaosanList,
+  saveSpkKaosan,
+  getSoKaosanReference,
+  isDivisiTiga,
+  getSoHeaderUnified,
 };
