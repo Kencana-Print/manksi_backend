@@ -31,18 +31,24 @@ const LINI_COLUMN_VISIBILITY = {
 
 // --- GENERATE NOMOR: PRF/NNNN/YYYY (4 digit, beda dari SJ 5 digit) ---
 const generateNomor = async (tahun, conn = db) => {
+  const tahunNum = Number(tahun);
+  const currentYear = new Date().getFullYear();
+  if (!tahunNum || tahunNum < currentYear - 1 || tahunNum > currentYear + 1) {
+    throw new Error(
+      `Tahun tanggal tidak valid (${tahun}). Mohon cek kembali tanggal Proof.`,
+    );
+  }
+  const tahunStr = String(tahunNum);
+
   const [rows] = await conn.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(pf_nomor, 5, 4) AS UNSIGNED)), 0) AS jumlah
      FROM tproofgarmen_hdr
      WHERE LEFT(pf_nomor, 3) = 'PRF' AND RIGHT(pf_nomor, 4) = ?
      FOR UPDATE`,
-    [String(tahun)],
+    [tahunStr],
   );
-  // FIX: paksa Number() — driver mysql2 balikin hasil CAST(...AS UNSIGNED)
-  // sebagai STRING (BIGINT UNSIGNED), bukan Number. Tanpa ini, "832" + 1
-  // di JS jadi STRING CONCATENATION ("8321"), bukan penjumlahan (833).
   const next = Number(rows[0].jumlah) + 1;
-  return `PRF/${String(next).padStart(4, "0")}/${tahun}`;
+  return `PRF/${String(next).padStart(4, "0")}/${tahunStr}`;
 };
 
 // ============================================================
@@ -295,23 +301,36 @@ const saveData = async (payload, userKode) => {
       );
     } else {
       const tahun = new Date(pf_tanggal).getFullYear();
-      nomor = await generateNomor(tahun, conn);
-      await conn.query(
-        `INSERT INTO tproofgarmen_hdr
+
+      let attempt = 0;
+      while (true) {
+        attempt++;
+        nomor = await generateNomor(tahun, conn);
+        try {
+          await conn.query(
+            `INSERT INTO tproofgarmen_hdr
            (pf_nomor, pf_tanggal, pf_jam, pf_cab, pf_lini, pf_spk_nomor,
             pf_petugas, date_create, user_create)
          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
-        [
-          nomor,
-          pf_tanggal,
-          pf_jam,
-          pf_cab,
-          pf_lini,
-          pf_spk_nomor,
-          pf_petugas || "",
-          userKode,
-        ],
-      );
+            [
+              nomor,
+              pf_tanggal,
+              pf_jam,
+              pf_cab,
+              pf_lini,
+              pf_spk_nomor,
+              pf_petugas || "",
+              userKode,
+            ],
+          );
+          break; // sukses
+        } catch (err) {
+          if (err.code === "ER_DUP_ENTRY" && attempt < 3) {
+            continue; // coba generate ulang nomor berikutnya
+          }
+          throw err;
+        }
+      }
     }
 
     await conn.query(`DELETE FROM tproofgarmen_dtl WHERE pfd_nomor = ?`, [
