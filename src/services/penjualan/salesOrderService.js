@@ -844,30 +844,29 @@ const searchAvailableForSpk = async (
   page = 1,
   limit = 50,
   canLihatCus = false,
-  userCab = null, // 1. Tambahkan argumen penangkap
+  userCab = null,
 ) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   const like = `%${keyword || ""}%`;
 
-  // 2. Ubah const source menjadi let agar bisa ditambahkan dinamis
-  //    serta tambahkan so_cab AS Cab dan spk_cab AS Cab pada UNION
   let source = `
     FROM (
       SELECT so_nomor AS Nomor, so_tanggal AS Tanggal, so_nama AS Nama,
              so_jumlah AS Pesan, so_workshop AS Workshop, so_cab AS Cab,
              so_cus_kode AS CusKode, so_cmo AS CMO, so_aktif AS Aktif,
-             so_memo AS MapNomor
+             so_memo AS MapNomor, user_create AS UserCreate
       FROM tsalesorder
       UNION ALL
       SELECT spk_nomor, spk_tanggal, spk_nama, spk_jumlah, spk_workshop, spk_cab AS Cab,
-             spk_cus_kode, spk_cmo, spk_aktif, spk_memo AS MapNomor
+             spk_cus_kode, spk_cmo, spk_aktif, spk_memo AS MapNomor, user_create AS UserCreate
       FROM tspk
       WHERE spk_is_so = 1
     ) s
     LEFT JOIN tcustomer c ON c.cus_kode = s.CusKode
     LEFT JOIN tmemospk map ON map.mspk_nomor = s.MapNomor
     LEFT JOIN tspk ppic ON ppic.spk_so_ref = s.Nomor AND ppic.spk_is_so = 0
+    LEFT JOIN tuser u ON u.user_kode = s.UserCreate
     WHERE s.Aktif = 'Y'
       AND s.CMO <> ''
       AND ppic.spk_nomor IS NULL
@@ -877,7 +876,6 @@ const searchAvailableForSpk = async (
 
   const params = [startDate, endDate, like, like, like];
 
-  // 3. Injeksi kondisi WHERE untuk filter cabang
   if (userCab && userCab !== "HO-") {
     source += ` AND s.Cab = ?`;
     params.push(userCab);
@@ -896,6 +894,7 @@ const searchAvailableForSpk = async (
        s.CusKode AS KodeCustomer,
        ${custNameCol} AS Customer,
        s.MapNomor AS MAP,
+       IFNULL(u.user_nama, s.UserCreate) AS MO,
        CASE
          WHEN s.MapNomor IS NULL OR s.MapNomor = '' THEN 'TANPA_MAP'
          WHEN map.mspk_cmo IS NULL OR map.mspk_cmo = '' THEN 'MENUNGGU_APV'
