@@ -450,13 +450,19 @@ const saveData = async (payload, user) => {
       }
       cabForFlow = soHeader.spk_cab;
 
-      nomor = isLegacySpkFlow(soHeader.spk_divisi)
-        ? await generateNomorLegacy(
-            soHeader.spk_perush_kode,
-            soHeader.spk_jo_kode,
-            conn,
-          )
-        : await generateNomor(soHeader.spk_perush_kode, soHeader.spk_jo_kode);
+      // CEK DIVISI: Jika Spanduk/MMT (Legacy), tetap generate nomor baru dari database.
+      // Jika divisi lain (Garmen, dll), otomatis mewarisi nomor SO.
+      if (isLegacySpkFlow(soHeader.spk_divisi)) {
+        nomor = await generateNomorLegacy(
+          soHeader.spk_perush_kode,
+          soHeader.spk_jo_kode,
+          conn,
+        );
+      } else {
+        nomor = so_nomor.startsWith("SO-")
+          ? so_nomor.replace("SO-", "SPK-")
+          : so_nomor;
+      }
 
       const newHeader = { ...soHeader };
       delete newHeader.spk_nomor;
