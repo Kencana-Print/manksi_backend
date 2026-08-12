@@ -382,7 +382,7 @@ const searchCustomer = async (keyword, page = 1, limit = 50) => {
 
 const getCabangPabrik = async (type) => {
   // FIX: Tambahkan pab_nama AS Nama agar tidak kosong di frontend
-  let query = `SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik WHERE pab_nama NOT LIKE "%MITRA%"`;
+  let query = `SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik`;
 
   // Jika parameter type dikirim sebagai 'po-internal', batasi hasilnya
   if (type === "po-internal") {
