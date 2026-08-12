@@ -1,15 +1,6 @@
 const db = require("../../config/database"); // Sesuaikan path
 
-const getBrowse = async (startDate, endDate, divisiId) => {
-  // 1. Logika hak akses divisi (Mengikuti Delphi)
-  let filterDivisi = "";
-  if (divisiId === 1) {
-    filterDivisi = " AND spk_divisi IN (1,5) ";
-  } else if (divisiId === 4) {
-    filterDivisi = " AND spk_divisi IN (3,4,6) ";
-  }
-
-  // 2. Query Utama (Master)
+const getBrowse = async (startDate, endDate) => {
   const query = `
     SELECT 
       x.Nomor, x.Tanggal, x.Map, x.Divisi, x.Cab, x.Tipe, x.Nama, x.Jumlah, x.Cetak, x.Bordir, 
@@ -37,12 +28,9 @@ const getBrowse = async (startDate, endDate, divisiId) => {
         AND s.spk_close = 0 
         AND s.spk_tanggal >= ? 
         AND s.spk_tanggal <= ?
-        ${filterDivisi}
     ) x
     ORDER BY x.Tanggal ASC, x.Nomor ASC
   `;
-
-  // Di query Delphi parameternya adalah startdate dan enddate
   const [rows] = await db.query(query, [startDate, endDate]);
   return rows;
 };
