@@ -78,10 +78,21 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const getCloseStatus = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getCloseStatus(nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getKomponen,
   getSpkInfo,
   getDetail,
   saveData,
   getPrintData,
+  getCloseStatus,
 };

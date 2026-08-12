@@ -41,6 +41,32 @@ const checkPinStatus = async (nomor, conn) => {
 };
 
 /**
+ * Cek apakah suatu nomor Minta Bahan butuh pengajuan PIN5 (real-time).
+ * Menggunakan sumber & logika PERSIS SAMA dengan validasi di saveMintaBahan,
+ * supaya hasil di Browse selalu konsisten dengan hasil saat Simpan di Form.
+ */
+const getCloseStatus = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT min_tanggal FROM tmintabahan_hdr WHERE min_nomor = ?`,
+    [nomor],
+  );
+  if (rows.length === 0) throw new Error("Nomor tsb tidak ditemukan");
+
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const tglTrs = new Date(rows[0].min_tanggal);
+
+  const pinInfo = await checkPinStatus(nomor, db);
+
+  // Logika identik dgn: if (tglTrs < zdtClose && pinInfo.status !== "ACC")
+  const needsPin5 = tglTrs < zdtClose && pinInfo.status !== "ACC";
+
+  return {
+    needsPin5,
+    pinStatus: pinInfo.status, // "", "WAIT", "ACC", "TOLAK"
+  };
+};
+
+/**
  * Mendapatkan Daftar Komponen untuk Dropdown Grid
  */
 const getKomponenOptions = async () => {
@@ -413,4 +439,5 @@ module.exports = {
   getMintaBahan,
   saveMintaBahan,
   getPrintData,
+  getCloseStatus,
 };

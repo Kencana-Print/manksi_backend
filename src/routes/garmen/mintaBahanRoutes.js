@@ -48,6 +48,12 @@ router.post(
   checkPermission(MENU_ID, "insert"),
   formController.saveData,
 );
+router.get(
+  "/form/:nomor/close-status",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  formController.getCloseStatus,
+);
 router.put(
   "/form/:nomor",
   verifyToken,
