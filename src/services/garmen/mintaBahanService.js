@@ -290,7 +290,7 @@ const saveApproveManager = async (nomor, capv, userKode, alasan) => {
 // Ajukan Perubahan
 const submitAjukanPerubahan = async (
   nomor,
-  urut, // (bisa diabaikan karena kita cari urut otomatis)
+  urut, // diabaikan, dihitung ulang di bawah
   tgl,
   spk,
   userKode,
@@ -300,7 +300,7 @@ const submitAjukanPerubahan = async (
   const [urutRows] = await db.query(
     `SELECT IFNULL(MAX(pin_urut), 0) + 1 AS next_urut 
      FROM tspk_pin5 
-     WHERE pin_trs="MINTA BAHAN" AND pin_nomor=?`,
+     WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? AND pin_jenis="UBAH"`,
     [nomor],
   );
   const nextUrut = urutRows[0].next_urut;
@@ -308,14 +308,24 @@ const submitAjukanPerubahan = async (
   // 2. Insert ke tabel standar pengajuan perubahan data (PIN 5)
   const query = `
     INSERT INTO tspk_pin5 (
-      pin_trs, pin_nomor, pin_urut, pin_tgl, pin_ket, pin_user, pin_acc, pin_dipakai
+      pin_trs, pin_nomor, pin_urut, pin_jenis, pin_program,
+      pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta,
+      pin_acc, pin_dipakai, pin_alasan
     ) VALUES (
-      "MINTA BAHAN", ?, ?, NOW(), ?, ?, "", ""
+      "MINTA BAHAN", ?, ?, "UBAH", "MANKSI",
+      ?, ?, NOW(), ?,
+      "", "", ?
     )
   `;
 
-  // Eksekusi insert
-  return await db.query(query, [nomor, nextUrut, alasan, userKode]);
+  return await db.query(query, [
+    nomor,
+    nextUrut,
+    tgl || null, // pin_tgl_trs — tanggal dokumen minta bahan
+    alasan, // pin_ket
+    userKode,
+    alasan, // pin_alasan
+  ]);
 };
 
 /**
