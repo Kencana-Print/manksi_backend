@@ -1,4 +1,44 @@
 const db = require("../../config/database");
+const tutupBukuService = require("../tutupBukuService");
+
+// --- HELPER: CEK STATUS PIN 5 ---
+const checkPinStatus = async (nomor, conn) => {
+  const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
+  const [rows] = await conn.query(qPin, [nomor]);
+
+  // Jika belum pernah ada pengajuan PIN, kembalikan string kosong
+  if (rows.length === 0) return { status: "", urut: 0, acc: "", dipakai: "" };
+
+  const pin = rows[0];
+  if (pin.pin_acc === "" && pin.pin_dipakai === "")
+    return {
+      status: "WAIT",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+  if (pin.pin_acc === "Y" && pin.pin_dipakai === "")
+    return {
+      status: "ACC",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+  if (pin.pin_acc === "N")
+    return {
+      status: "TOLAK",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+
+  return {
+    status: "MINTA",
+    urut: pin.pin_urut,
+    acc: pin.pin_acc,
+    dipakai: pin.pin_dipakai,
+  };
+};
 
 /**
  * Mendapatkan Daftar Komponen untuk Dropdown Grid
@@ -180,9 +220,7 @@ const getMintaBahan = async (nomor) => {
     SELECT 
       h.*, 
       IFNULL(k.mkb_nomor, "") AS mkb_nomor, DATE_FORMAT(k.mkb_tanggal, '%Y-%m-%d') AS mkb_tanggal,
-      IFNULL(s.spk_nama, m.Mspk_nama) AS namaspk, IFNULL(s.spk_jumlah, m.Mspk_jumlah) AS jumlahspk,
-      (SELECT pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=h.min_nomor ORDER BY pin_urut DESC LIMIT 1) AS pin_dipakai,
-      (SELECT pin_acc FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=h.min_nomor ORDER BY pin_urut DESC LIMIT 1) AS pin_acc
+      IFNULL(s.spk_nama, m.Mspk_nama) AS namaspk, IFNULL(s.spk_jumlah, m.Mspk_jumlah) AS jumlahspk
     FROM tmintabahan_hdr h
     LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
@@ -210,6 +248,12 @@ const getMintaBahan = async (nomor) => {
   `;
   const [dtl] = await db.query(queryDtl, [nomor]);
 
+  // Eksekusi Helper dan Sisipkan Hasil ke Header
+  const pinInfo = await checkPinStatus(nomor, db);
+  hdr[0].pin_status = pinInfo.status;
+  hdr[0].pin_acc = pinInfo.acc;
+  hdr[0].pin_dipakai = pinInfo.dipakai;
+
   return { header: hdr[0], details: dtl };
 };
 
@@ -222,6 +266,22 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
 
   try {
     let nomor = payload.nomor;
+
+    // --- VALIDASI TUTUP BUKU & PIN ---
+    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+    const tglTrs = new Date(payload.tanggal);
+    let pinInfo = { status: "", acc: "", dipakai: "" };
+
+    if (isEdit) {
+      pinInfo = await checkPinStatus(nomor, conn);
+    }
+
+    // Cegah edit jika lewat batas tutup buku DAN pin belum ACC
+    if (tglTrs < zdtClose && pinInfo.status !== "ACC") {
+      throw new Error(
+        "Anda tidak boleh input di tanggal periode yang sudah diclose.\nSilahkan ajukan perubahan data (PIN5) terlebih dahulu.",
+      );
+    }
 
     if (isEdit) {
       const qUpdate = `

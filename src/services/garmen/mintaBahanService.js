@@ -1,13 +1,66 @@
 const db = require("../../config/database");
+const tutupBukuService = require("../tutupBukuService");
+
+// --- HELPER: CEK STATUS PIN 5 ---
+const checkPinStatus = async (nomor, conn) => {
+  const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
+  const [rows] = await conn.query(qPin, [nomor]);
+
+  if (rows.length === 0) return { status: "", urut: 0, acc: "", dipakai: "" };
+
+  const pin = rows[0];
+  if (pin.pin_acc === "" && pin.pin_dipakai === "")
+    return {
+      status: "WAIT",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+  if (pin.pin_acc === "Y" && pin.pin_dipakai === "")
+    return {
+      status: "ACC",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+  if (pin.pin_acc === "N")
+    return {
+      status: "TOLAK",
+      urut: pin.pin_urut,
+      acc: pin.pin_acc,
+      dipakai: pin.pin_dipakai,
+    };
+
+  return {
+    status: "MINTA",
+    urut: pin.pin_urut,
+    acc: pin.pin_acc,
+    dipakai: pin.pin_dipakai,
+  };
+};
 
 /**
  * Mendapatkan data utama Browse Permintaan Bahan
  */
 const getBrowse = async (startDate, endDate, cabang) => {
+  // 1. Ambil batas tanggal tutup buku
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+
+  // 2. Format YYYY-MM-DD dengan aman
+  const zYear = zdtClose.getFullYear();
+  const zMonth = String(zdtClose.getMonth() + 1).padStart(2, "0");
+  const zDay = String(zdtClose.getDate()).padStart(2, "0");
+  const zdtCloseStr = `${zYear}-${zMonth}-${zDay}`;
+
   let query = `
     SELECT 
       x.Nomor, x.Tanggal, x.Jam, x.Cab, x.Divisi, v.Divisi AS DivisiSpk, 
-      x.SPK, x.NamaSpk, x.JmlSpk, x.Keterangan, x.sts AS Status, x.AlasanClose,
+      x.SPK, x.NamaSpk, x.JmlSpk, x.Keterangan, 
+      
+      -- MENGATASI BEDA LOGIKA: Timpa status OPEN jadi CLOSE jika tanggal sudah melewati tutup buku
+      IF(x.Tanggal < '${zdtCloseStr}' AND x.sts = 'OPEN', 'CLOSE', x.sts) AS Status, 
+      
+      x.AlasanClose,
       IF(x.totr=0, "", IF(x.totr>x.tota, "N", "Y")) AS Approve,
       x.ApvGudang, x.AlasanTolak_ApvGudang,
       x.ApvManager, x.AlasanTolak_ApvManager, x.Usr,
@@ -237,19 +290,32 @@ const saveApproveManager = async (nomor, capv, userKode, alasan) => {
 // Ajukan Perubahan
 const submitAjukanPerubahan = async (
   nomor,
-  urut,
+  urut, // (bisa diabaikan karena kita cari urut otomatis)
   tgl,
   spk,
   userKode,
   alasan,
 ) => {
-  // Diasumsikan ada tabel log atau update ke header/detail
+  // 1. Cari nomor urut PIN terakhir untuk dokumen ini agar tidak bentrok
+  const [urutRows] = await db.query(
+    `SELECT IFNULL(MAX(pin_urut), 0) + 1 AS next_urut 
+     FROM tspk_pin5 
+     WHERE pin_trs="MINTA BAHAN" AND pin_nomor=?`,
+    [nomor],
+  );
+  const nextUrut = urutRows[0].next_urut;
+
+  // 2. Insert ke tabel standar pengajuan perubahan data (PIN 5)
   const query = `
-    INSERT INTO tproduksiminta_ubah (
-      promin_nomor, urut, tgl_ubah, spk_ubah, user_ubah, alasan_ubah, tgl_input
-    ) VALUES (?, ?, ?, ?, ?, ?, NOW())
+    INSERT INTO tspk_pin5 (
+      pin_trs, pin_nomor, pin_urut, pin_tgl, pin_ket, pin_user, pin_acc, pin_dipakai
+    ) VALUES (
+      "MINTA BAHAN", ?, ?, NOW(), ?, ?, "", ""
+    )
   `;
-  return await db.query(query, [nomor, urut, tgl, spk, userKode, alasan]);
+
+  // Eksekusi insert
+  return await db.query(query, [nomor, nextUrut, alasan, userKode]);
 };
 
 /**

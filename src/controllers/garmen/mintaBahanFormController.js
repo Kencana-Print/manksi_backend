@@ -43,27 +43,6 @@ const saveData = async (req, res) => {
     const payload = req.body;
     if (isEdit) payload.nomor = req.params.nomor;
 
-    // --- LOGIKA TUTUP BUKU (Translasi dari Delphi) ---
-    // 1. Ambil boundary tanggal (zdtClose)
-    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    const tglInput = new Date(payload.tanggal);
-
-    // 2. Cek Bypass PIN5 (xminta5 = 'ACC')
-    // Kita cek apakah ada status ACC untuk nomor ini di database
-    const { pin_acc } = payload;
-
-    // 3. Jalankan Validasi Tanggal
-    // Jika tanggal input LEBIH KECIL dari tanggal tutup buku,
-    // DAN tidak ada ACC dari PIN5, maka TOLAK.
-    if (tglInput < zdtClose && pin_acc !== "Y") {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Anda tidak boleh input di tanggal periode yang sudah diclose.\nSilahkan ajukan perubahan data (PIN5) terlebih dahulu.",
-      });
-    }
-    // -------------------------------------------------
-
     // Cek Akses Cabang
     if (
       payload.cabang !== req.user.cabang &&
@@ -76,14 +55,17 @@ const saveData = async (req, res) => {
       });
     }
 
+    // Eksekusi Service (Validasi Tutup Buku & PIN 5 sudah ada di dalam sini)
     const result = await service.saveMintaBahan(payload, req.user, isEdit);
+
     res
       .status(200)
       .json({ success: true, message: "Berhasil disimpan", data: result });
   } catch (error) {
+    // Tangkap error dari throw new Error() di Service
     res
-      .status(500)
-      .json({ success: false, message: "Gagal Simpan: " + error.message });
+      .status(400) // Gunakan 400 (Bad Request) agar pesan error validasi muncul di toast frontend, bukan 500
+      .json({ success: false, message: error.message });
   }
 };
 
