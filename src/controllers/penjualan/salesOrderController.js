@@ -27,6 +27,20 @@ const getBrowse = async (req, res) => {
 
 const deleteOrder = async (req, res) => {
   try {
+    const flags = req.user.flags || {};
+    const userKode = (req.user.kode || "").toUpperCase();
+
+    // Validasi: Hanya cmo bernilai 1 ATAU user kode 'RIYA' yang bisa hapus
+    const canDelete = flags.cmo === 1 || userKode === "RIYA";
+
+    if (!canDelete) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Akses ditolak. Hanya CMO atau RIYA yang berhak menghapus Sales Order.",
+      });
+    }
+
     await service.deleteOrder(req.params.nomor, req.user);
     res.json({ success: true, message: "Sales Order berhasil dihapus." });
   } catch (error) {
