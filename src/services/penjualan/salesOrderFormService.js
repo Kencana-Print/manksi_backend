@@ -1373,6 +1373,19 @@ const findSjMemoByMap = async (nomorMap) => {
   return rows;
 };
 
+// --- REPEAT DARI SO — ambil data produk/customer untuk auto-fill,
+// TIDAK termasuk approval/status/gambar. Qty sengaja TIDAK dinolkan
+// di sini — itu tanggung jawab frontend, biar service ini reusable.
+const getRepeatDetail = async (nomor) => {
+  const detail = await getDetail(nomor);
+  return {
+    header: detail.header,
+    dtlKaosan: detail.dtlKaosan,
+    dtlSize: detail.dtlSize,
+    komponen: detail.komponen,
+  };
+};
+
 module.exports = {
   getDetail,
   saveData,
@@ -1387,4 +1400,5 @@ module.exports = {
   getKomponenMaster,
   getSjMemoMapList,
   findSjMemoByMap,
+  getRepeatDetail,
 };

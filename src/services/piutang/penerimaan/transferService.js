@@ -2,7 +2,7 @@ const db = require("../../../config/database");
 const tutupBukuService = require("../../tutupBukuService");
 
 // --- 1. GET BROWSE ---
-const getBrowseList = async (query) => {
+const getBrowseList = async (query, userFlags = {}) => {
   const { startDate, endDate } = query;
 
   const dStart =
@@ -11,6 +11,8 @@ const getBrowseList = async (query) => {
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const lihatCus = Number(userFlags?.lihatCus) === 1;
 
   const sql = `
     SELECT 
@@ -36,6 +38,43 @@ const getBrowseList = async (query) => {
   `;
 
   const [rows] = await db.query(sql, [dStart, dEnd]);
+
+  // ── Resolve nama customer (bisa multi-kode dipisah ';') ──
+  if (lihatCus) {
+    const allKodes = new Set();
+    rows.forEach((r) => {
+      (r.customer || "")
+        .split(";")
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .forEach((k) => allKodes.add(k));
+    });
+
+    let namaMap = {};
+    if (allKodes.size > 0) {
+      const [custRows] = await db.query(
+        `SELECT cus_kode, cus_nama FROM tcustomer WHERE cus_kode IN (?)`,
+        [Array.from(allKodes)],
+      );
+      namaMap = custRows.reduce((acc, c) => {
+        acc[c.cus_kode] = c.cus_nama;
+        return acc;
+      }, {});
+    }
+
+    rows.forEach((r) => {
+      const kodes = (r.customer || "")
+        .split(";")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      r.CustomerNama = kodes.map((k) => namaMap[k] || k).join(";");
+    });
+  } else {
+    rows.forEach((r) => {
+      r.CustomerNama = "";
+    });
+  }
+
   return rows;
 };
 

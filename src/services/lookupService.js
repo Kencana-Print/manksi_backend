@@ -2147,13 +2147,14 @@ const getKodeBayar = async () => {
   return rows;
 };
 
-const searchBuktiBayar = async (cabang, kode, search = "") => {
-  if (!cabang || !kode) throw new Error("Cabang dan kode bayar wajib diisi.");
+const searchBuktiBayar = async (cabang, kode = "", search = "") => {
+  if (!cabang) throw new Error("Cabang wajib diisi.");
 
+  const kodeTrim = (kode || "").trim().toUpperCase();
   let rows = [];
 
-  if (kode === "RT") {
-    // Retur Penjualan
+  // ── Retur (RT) ──
+  const fetchRetur = async () => {
     let whereClause = `WHERE a.retj_perush_kode = ?`;
     let params = [cabang];
 
@@ -2166,29 +2167,38 @@ const searchBuktiBayar = async (cabang, kode, search = "") => {
       SELECT
         a.retj_nomor                            AS Nomor,
         DATE_FORMAT(a.retj_tanggal, '%d-%m-%Y') AS Tanggal,
-        a.retj_keterangan                        AS Keterangan,
+        "RT"                                     AS Kode,
         b.cus_nama                               AS Customer,
         (
           SELECT SUM(retjd_harga * retjd_jumlah *
             IF(a.retj_sts_ppn = 1, ((100 + a.retj_ppn) / 100), 1))
           FROM tretj_dtl
           WHERE retjd_retj_nomor = a.retj_nomor
-        )                                        AS Debet
+        )                                        AS Debet,
+        a.retj_keterangan                        AS Keterangan
       FROM tretj_hdr a
       INNER JOIN tcustomer b ON a.retj_cus_kode = b.cus_kode
       ${whereClause}
       ORDER BY a.retj_tanggal DESC
       LIMIT 200
     `;
-    [rows] = await db.query(query, params);
-  } else {
-    // BG, BT, CS, PT
-    let whereClause = `WHERE a.cabang = ? AND a.kode = ?`;
-    let params = [cabang, kode];
+    const [r] = await db.query(query, params);
+    return r;
+  };
+
+  // ── BG, BT, CS, PT ──
+  const fetchNonRetur = async () => {
+    let whereClause = `WHERE a.cabang = ?`;
+    let params = [cabang];
+
+    if (kodeTrim) {
+      whereClause += ` AND a.kode = ?`;
+      params.push(kodeTrim);
+    }
 
     if (search && search.trim() !== "") {
-      whereClause += ` AND (a.nomor LIKE ? OR a.notes LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`);
+      whereClause += ` AND (a.nomor LIKE ? OR a.notes LIKE ? OR b.cus_nama LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const query = `
@@ -2196,15 +2206,36 @@ const searchBuktiBayar = async (cabang, kode, search = "") => {
         a.nomor                            AS Nomor,
         DATE_FORMAT(a.tanggal, '%d-%m-%Y') AS Tanggal,
         a.kode                             AS Kode,
-        a.customer                         AS Customer,
+        IFNULL(b.cus_nama, a.customer)      AS Customer,
         a.debet                            AS Debet,
         a.notes                            AS Keterangan
       FROM terima_bayar_debet a
+      LEFT JOIN tcustomer b
+        ON b.cus_kode = SUBSTRING_INDEX(a.customer, ';', 1)
       ${whereClause}
       ORDER BY a.tanggal DESC
       LIMIT 200
     `;
-    [rows] = await db.query(query, params);
+    const [r] = await db.query(query, params);
+    return r;
+  };
+
+  if (kodeTrim === "RT") {
+    rows = await fetchRetur();
+  } else if (kodeTrim) {
+    rows = await fetchNonRetur();
+  } else {
+    // kode kosong → gabungan semua jenis
+    const [retur, nonRetur] = await Promise.all([
+      fetchRetur(),
+      fetchNonRetur(),
+    ]);
+    rows = [...nonRetur, ...retur].sort(
+      (a, b) =>
+        new Date(b.Tanggal.split("-").reverse().join("-")) -
+        new Date(a.Tanggal.split("-").reverse().join("-")),
+    );
+    rows = rows.slice(0, 200);
   }
 
   return rows;

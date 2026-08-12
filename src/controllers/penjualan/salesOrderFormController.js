@@ -192,6 +192,17 @@ const findSjMemoByMap = async (req, res) => {
   }
 };
 
+const getRepeatDetail = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    if (!nomor) throw new Error("Nomor SO wajib diisi.");
+    const data = await service.getRepeatDetail(nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getDetail,
   save,
@@ -206,4 +217,5 @@ module.exports = {
   getKomponenMaster,
   getSjMemoMapList,
   findSjMemoByMap,
+  getRepeatDetail,
 };

@@ -9,9 +9,8 @@ const checkKelayakanPengajuan = async (nomor) => {
   if (rows.length === 0) throw new Error("Data Giro tidak ditemukan.");
 
   const tglTrs = new Date(rows[0].Tanggal);
-  tglTrs.setHours(0, 0, 0, 0); // Nolkan jam agar komparasi akurat
+  tglTrs.setHours(0, 0, 0, 0);
 
-  // Ambil tanggal tutup buku (Manual per Modul & Global)
   const tglCloseGlobal = await tutupBukuService.getTanggalTutupBuku();
   const tglCloseManual =
     await tutupBukuService.getManualTutupBuku("PENERIMAAN GIRO");
@@ -19,25 +18,25 @@ const checkKelayakanPengajuan = async (nomor) => {
   const finalCloseDate = tglCloseManual || tglCloseGlobal;
   if (finalCloseDate) finalCloseDate.setHours(0, 0, 0, 0);
 
-  // LOGIKA DELPHI: Jika Tanggal Transaksi >= Tanggal Close, artinya BELUM di-close
   if (finalCloseDate && tglTrs >= finalCloseDate) {
     throw new Error("Tidak perlu pengajuan perubahan data.");
   }
 
-  return true; // Layak mengajukan PIN
+  return true;
 };
 
 // --- 1. GET BROWSE ---
-const getBrowseList = async (query) => {
+const getBrowseList = async (query, userFlags = {}) => {
   const { startDate, endDate } = query;
 
-  // Default: Awal bulan s/d Hari ini
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  const lihatCus = Number(userFlags?.lihatCus) === 1;
 
   const sql = `
     SELECT 
@@ -63,6 +62,43 @@ const getBrowseList = async (query) => {
   `;
 
   const [rows] = await db.query(sql, [dStart, dEnd]);
+
+  // ── Resolve nama customer (bisa multi-kode dipisah ';') ──
+  if (lihatCus) {
+    const allKodes = new Set();
+    rows.forEach((r) => {
+      (r.customer || "")
+        .split(";")
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .forEach((k) => allKodes.add(k));
+    });
+
+    let namaMap = {};
+    if (allKodes.size > 0) {
+      const [custRows] = await db.query(
+        `SELECT cus_kode, cus_nama FROM tcustomer WHERE cus_kode IN (?)`,
+        [Array.from(allKodes)],
+      );
+      namaMap = custRows.reduce((acc, c) => {
+        acc[c.cus_kode] = c.cus_nama;
+        return acc;
+      }, {});
+    }
+
+    rows.forEach((r) => {
+      const kodes = (r.customer || "")
+        .split(";")
+        .map((c) => c.trim())
+        .filter(Boolean);
+      r.CustomerNama = kodes.map((k) => namaMap[k] || k).join(";");
+    });
+  } else {
+    rows.forEach((r) => {
+      r.CustomerNama = "";
+    });
+  }
+
   return rows;
 };
 
@@ -77,7 +113,6 @@ const deleteGiro = async (nomor) => {
   const tglInput = new Date(rows[0].Tanggal);
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
 
-  // Validasi Tutup Buku
   if (zdtClose && tglInput <= zdtClose) {
     throw new Error(
       "Transaksi tersebut sudah close (Tutup Buku). Tidak bisa dihapus.",
@@ -101,7 +136,6 @@ const deleteGiro = async (nomor) => {
 const requestPin5 = async (nomor, alasan, userKode) => {
   await checkKelayakanPengajuan(nomor);
 
-  // Ambil informasi Tanggal dan Customer untuk disimpan di PIN
   const [rows] = await db.query(
     `SELECT Tanggal, customer FROM terima_bayar_debet WHERE Nomor = ?`,
     [nomor],
@@ -111,7 +145,6 @@ const requestPin5 = async (nomor, alasan, userKode) => {
   const tglTrs = rows[0].Tanggal;
   const customer = rows[0].customer || "";
 
-  // Cari urutan terakhir
   const [pinRows] = await db.query(
     `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs = "PENERIMAAN GIRO" AND pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
     [nomor],
@@ -123,7 +156,6 @@ const requestPin5 = async (nomor, alasan, userKode) => {
     urut = lastPin.pin_dipakai === "" ? lastPin.pin_urut : lastPin.pin_urut + 1;
   }
 
-  // Insert on duplicate key update sesuai Delphi
   const sql = `
     INSERT INTO tspk_pin5 (
       pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan

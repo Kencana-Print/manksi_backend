@@ -833,13 +833,17 @@ const getKodeBayar = async (req, res) => {
 const searchBuktiBayar = async (req, res) => {
   try {
     const { cabang, kode, search } = req.query;
-    if (!cabang || !kode) {
+    if (!cabang) {
       return res.status(400).json({
         success: false,
-        message: "Parameter cabang dan kode wajib diisi.",
+        message: "Parameter cabang wajib diisi.",
       });
     }
-    const data = await lookupService.searchBuktiBayar(cabang, kode, search);
+    const data = await lookupService.searchBuktiBayar(
+      cabang,
+      kode || "",
+      search,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

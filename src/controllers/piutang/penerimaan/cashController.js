@@ -2,7 +2,8 @@ const service = require("../../../services/piutang/penerimaan/cashService");
 
 const getBrowse = async (req, res) => {
   try {
-    const data = await service.getBrowseList(req.query);
+    const userFlags = { lihatCus: req.user?.flags?.lihatCus };
+    const data = await service.getBrowseList(req.query, userFlags);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

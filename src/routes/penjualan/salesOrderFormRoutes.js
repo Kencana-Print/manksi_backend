@@ -48,5 +48,6 @@ router.get(
 // di routes
 router.get("/sj-memo-map-list", verifyToken, controller.getSjMemoMapList);
 router.get("/sj-memo-by-map", verifyToken, controller.findSjMemoByMap);
+router.get("/repeat-detail", verifyToken, controller.getRepeatDetail);
 
 module.exports = router;
