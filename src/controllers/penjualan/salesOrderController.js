@@ -30,8 +30,15 @@ const deleteOrder = async (req, res) => {
     const flags = req.user.flags || {};
     const userKode = (req.user.kode || "").toUpperCase();
 
-    // Validasi: Hanya cmo bernilai 1 ATAU user kode 'RIYA' yang bisa hapus
-    const canDelete = flags.cmo === 1 || userKode === "RIYA";
+    // Kembalikan pengecekan cmo dan cmo3 (termasuk string "Y")
+    const isCmo =
+      flags.cmo === 1 ||
+      flags.cmo === "Y" ||
+      flags.cmo3 === 1 ||
+      flags.cmo3 === "Y";
+
+    // Validasi: Hanya CMO (umum/divisi 3) ATAU user kode 'RIYA' yang bisa hapus
+    const canDelete = isCmo || userKode === "RIYA";
 
     if (!canDelete) {
       return res.status(403).json({
