@@ -30,14 +30,13 @@ const deleteOrder = async (req, res) => {
     const flags = req.user.flags || {};
     const userKode = (req.user.kode || "").toUpperCase();
 
-    // Kembalikan pengecekan cmo dan cmo3 (termasuk string "Y")
+    // Konversi eksplisit pada backend
     const isCmo =
-      flags.cmo === 1 ||
-      flags.cmo === "Y" ||
-      flags.cmo3 === 1 ||
-      flags.cmo3 === "Y";
+      Number(flags.cmo) === 1 ||
+      String(flags.cmo).toUpperCase() === "Y" ||
+      Number(flags.cmo3) === 1 ||
+      String(flags.cmo3).toUpperCase() === "Y";
 
-    // Validasi: Hanya CMO (umum/divisi 3) ATAU user kode 'RIYA' yang bisa hapus
     const canDelete = isCmo || userKode === "RIYA";
 
     if (!canDelete) {
