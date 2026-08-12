@@ -50,10 +50,15 @@ const getById = async (nomor) => {
   // 2. Ambil Detail + Cek Referensi SPK
   const queryDtl = `
     SELECT d.*, 
-           IFNULL((IFNULL(s.spk_nomor, m.MSPK_Nomor)), "") AS spk
+          IFNULL(
+            (SELECT s.spk_nomor FROM tspk s 
+              WHERE s.spk_pen_nomor = d.pend_pen_nomor AND s.spk_pen_id = d.pend_id 
+              LIMIT 1),
+            (SELECT m.MSPK_Nomor FROM tmemospk m 
+              WHERE m.mspk_pen_nomor = d.pend_pen_nomor AND m.mspk_pen_id = d.pend_id 
+              LIMIT 1)
+          ) AS spk
     FROM tpenawaran_dtl d
-    LEFT JOIN tspk s ON s.spk_pen_nomor = d.pend_pen_nomor AND s.spk_pen_id = d.pend_id
-    LEFT JOIN tmemospk m ON m.mspk_pen_nomor = d.pend_pen_nomor AND m.mspk_pen_id = d.pend_id
     WHERE d.pend_pen_nomor = ?
     ORDER BY d.pend_urutan
   `;
@@ -127,6 +132,13 @@ const save = async (data, user, isNewMode) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    if (!isNewMode) {
+      await conn.query(
+        `SELECT pen_nomor FROM tpenawaran_hdr WHERE pen_nomor = ? FOR UPDATE`,
+        [data.Nomor],
+      );
+    }
 
     let nomorPen = data.Nomor;
 
@@ -272,8 +284,8 @@ const save = async (data, user, isNewMode) => {
       // Jika sudah nempel ke SPK, hanya update urutannya (Delphi logic)
       else if (d.NamaBarang && d.Spk) {
         await conn.query(
-          `UPDATE tpenawaran_dtl SET pend_urutan=? WHERE pend_pen_nomor=? AND pend_nama_barang=? AND pend_bahan=? AND pend_ukuran=?`,
-          [i + 1, nomorPen, d.NamaBarang, d.Bahan || "", d.Ukuran || ""],
+          `UPDATE tpenawaran_dtl SET pend_urutan=? WHERE pend_pen_nomor=? AND pend_id=?`,
+          [i + 1, nomorPen, d.ID],
         );
       }
     }
