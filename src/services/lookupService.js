@@ -915,25 +915,39 @@ const searchRealisasiMinta = async (
   limit = 50,
   nomorSpk = "",
   excludeNomor = "",
+  flat = false, // [BARU] paksa flat-mode meski nomorSpk kosong
 ) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
 
-  // ── MODE: pilih material untuk SPK tertentu (dipakai Mutasi Produksi) ──
-  if (nomorSpk) {
-    let where = `WHERE h.promin_spk_nomor = ?`;
-    const whereParams = [nomorSpk];
-    if (keyword && keyword.trim() !== "") {
-      where += ` AND (b.Bhn_Name LIKE ? OR g.gdgp_cab LIKE ? OR h.promin_nomor LIKE ?)`;
-      whereParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  // ── MODE FLAT: satu baris = satu bahan (Jumlah/Terpakai/Sudah/Sisa
+  // langsung kelihatan, tanpa expand). Dipakai baik dengan nomorSpk
+  // (Mutasi Produksi, scoped 1 SPK) MAUPUN tanpa nomorSpk (Retur
+  // Bahan, lintas SPK dengan pencarian keyword).
+  if (flat || nomorSpk) {
+    let where = `WHERE 1=1`;
+    const whereParams = [];
+    if (nomorSpk) {
+      where += ` AND h.promin_spk_nomor = ?`;
+      whereParams.push(nomorSpk);
     }
+    if (keyword && keyword.trim() !== "") {
+      where += ` AND (h.promin_nomor LIKE ? OR h.promin_spk_nomor LIKE ? OR b.Bhn_Name LIKE ? OR IFNULL(s.spk_nama, m.mspk_nama) LIKE ?)`;
+      const kw = `%${keyword}%`;
+      whereParams.push(kw, kw, kw, kw);
+    }
+
+    const joinNama = `
+      LEFT JOIN tspk s ON s.spk_nomor = h.promin_spk_nomor
+      LEFT JOIN tmemospk m ON m.mspk_nomor = h.promin_spk_nomor
+    `;
 
     const [countResult] = await db.query(
       `SELECT COUNT(*) AS total
        FROM tproduksiminta_hdr h
        INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
        LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
-       LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.promin_gdgp_kode
+       ${joinNama}
        ${where}`,
       whereParams,
     );
@@ -943,6 +957,8 @@ const searchRealisasiMinta = async (
     const [rows] = await db.query(
       `SELECT h.promin_nomor AS Nomor,
               DATE_FORMAT(h.promin_tanggal, '%d-%m-%Y') AS Tanggal,
+              h.promin_spk_nomor AS SPK,
+              IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
               d.promind_bhn_kode AS Kode,
               b.Bhn_Name AS JenisKain,
               b.Bhn_satuan AS Satuan,
@@ -953,7 +969,7 @@ const searchRealisasiMinta = async (
                   AND r.proretd_bhn_kode = d.promind_bhn_kode
               ), 0) AS Jumlah,
               d.promind_sup_kode AS Kodesup,
-              s.sup_nama AS NamaSupplier,
+              sup.sup_nama AS NamaSupplier,
               g.gdgp_cab AS Cab,
               (
                 IFNULL((
@@ -970,12 +986,21 @@ const searchRealisasiMinta = async (
                   WHERE bpj_nomaterial = h.promin_nomor
                     AND bpj_bhn_kode = d.promind_bhn_kode
                 ), 0)
-              ) AS Terpakai
+              ) AS Terpakai,
+              -- [BARU] "Sudah" — sama sumber dengan getDetailRealisasi
+              -- lama (tproduksireturlog_dtl, jalur RETL), murni info
+              IFNULL((
+                SELECT SUM(u.proretd_Jumlah)
+                FROM tproduksireturlog_dtl u
+                WHERE u.proretd_nominta = h.promin_nomor
+                  AND u.proretd_bhn_kode = d.promind_bhn_kode
+              ), 0) AS Sudah
        FROM tproduksiminta_hdr h
        INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
        LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
-       LEFT JOIN tsupplier s ON s.sup_kode = d.promind_sup_kode
+       LEFT JOIN tsupplier sup ON sup.sup_kode = d.promind_sup_kode
        LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.promin_gdgp_kode
+       ${joinNama}
        ${where}
        ORDER BY h.promin_nomor DESC
        LIMIT ? OFFSET ?`,
@@ -989,7 +1014,9 @@ const searchRealisasiMinta = async (
     return { items, total };
   }
 
-  // ── MODE DEFAULT: browsing umum tanpa filter SPK (perilaku existing, tidak berubah) ──
+  // ── MODE DEFAULT (header + expand nested) — tetap dipertahankan
+  // untuk kompatibilitas pemanggil lain yang mungkin masih pakai
+  // mode ini di luar Retur Bahan/Mutasi Produksi.
   let whereClause = "WHERE 1=1";
   const params = [];
   if (keyword && keyword.trim() !== "") {
