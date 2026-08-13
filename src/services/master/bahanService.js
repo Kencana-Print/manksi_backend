@@ -26,7 +26,20 @@ const getBrowseBahan = async () => {
 
 const getBahanById = async (kode) => {
   const query = `
-    SELECT b.*, 
+    SELECT 
+      b.Bhn_kode,
+      b.Bhn_Name AS Bhn_name,
+      b.Bhn_satuan,
+      b.Bhn_jb_kode,
+      b.Bhn_stok,
+      b.bhn_buffer AS Bhn_buffer,
+      b.Bhn_hargabeli,
+      b.Bhn_avgcost,
+      b.bhn_dead AS Bhn_dead,
+      b.bhn_ket AS Bhn_ket,
+      b.bhn_GRAMASI AS Bhn_gramasi,
+      b.bhn_setting AS Bhn_setting,
+      b.bhn_aktif AS Bhn_aktif,
       LEFT(b.Bhn_kode, 2) AS kdJenis,
       MID(b.Bhn_kode, 3, 3) AS kdWarna,
       MID(b.Bhn_kode, 6, 2) AS kdGramasi,
