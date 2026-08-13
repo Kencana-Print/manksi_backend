@@ -357,12 +357,13 @@ const requestPrintApproval = async (nomor, alasan, userKode) => {
   await db.query(
     `INSERT INTO tspk_pin5
        (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket,
-        pin_tgl_minta, pin_user_minta, pin_alasan, pin_acc, pin_dipakai)
-     VALUES ('SPK CETAK ULANG', ?, ?, ?, ?, NOW(), ?, ?, '', '')
+        pin_tgl_minta, pin_user_minta, pin_alasan, pin_acc, pin_dipakai, pin_jenis)
+     VALUES ('SPK CETAK ULANG', ?, ?, ?, ?, NOW(), ?, ?, '', '', 'CETAKULANG')
      ON DUPLICATE KEY UPDATE
        pin_acc = '', pin_dipakai = '', pin_tgl_minta = NOW(),
        pin_user_minta = VALUES(pin_user_minta),
-       pin_alasan = VALUES(pin_alasan)`,
+       pin_alasan = VALUES(pin_alasan),
+       pin_jenis = 'CETAKULANG'`,
     [nomor, urut, spk[0].spk_tanggal, spk[0].spk_nama, userKode, alasan || ""],
   );
 };
