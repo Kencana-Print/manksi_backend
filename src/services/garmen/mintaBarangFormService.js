@@ -260,13 +260,13 @@ const saveData = async (payload, user) => {
     }
 
     // --- 2. Validasi Khusus Sparepart ---
-    if (jenis === "SPAREPART") {
-      if (bagianUser !== "TEKNISI" && bagianUser !== "IT") {
-        throw new Error(
-          "Hanya bagian Teknisi/IT yg diizinkan untuk menyimpan.",
-        );
-      }
-    }
+    // if (jenis === "SPAREPART") {
+    //   if (bagianUser !== "TEKNISI" && bagianUser !== "IT") {
+    //     throw new Error(
+    //       "Hanya bagian Teknisi/IT yg diizinkan untuk menyimpan.",
+    //     );
+    //   }
+    // }
 
     // --- 3. Cek Status Edit & Tutup Buku (PIN 5) ---
     if (isEdit) {
