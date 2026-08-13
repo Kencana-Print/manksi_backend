@@ -694,19 +694,23 @@ const getDataCetak = async (nomor) => {
 
   const round = (v) => Math.round(Number(v) || 0);
 
-  const totalBarang = dtl.reduce(
-    (s, r) => s + round(Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0)),
+  // ⬅ FIX: hitung dari nilai MENTAH dulu (belum dibulatkan) — supaya
+  // PPN dihitung dari angka asli persis seperti Delphi, bukan dari
+  // hasil pembulatan per baris yang sudah menyimpang duluan.
+  const totalBarangRaw = dtl.reduce(
+    (s, r) => s + Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0),
     0,
   );
+  const totalBarang = round(totalBarangRaw); // dibulatkan HANYA untuk tampilan
 
-  const disc = round(hdr.inv_disc); // dibulatkan hanya utk tampilan cetak, sama pola getDataCetak Invoice biasa
-  const dasarPpn = totalBarang - disc;
+  const disc = round(hdr.inv_disc);
+  const dasarPpnRaw = totalBarangRaw - disc;
 
   let totalPpn = 0;
-  let grandTotal = dasarPpn;
+  let grandTotal = totalBarang - disc;
   if (Number(hdr.inv_sts_ppn) === 1) {
-    totalPpn = round(dasarPpn * (Number(hdr.inv_ppn) / 100));
-    grandTotal = dasarPpn + totalPpn;
+    totalPpn = round(dasarPpnRaw * (Number(hdr.inv_ppn) / 100));
+    grandTotal = totalBarang - disc + totalPpn;
   }
 
   const uangMuka = round(await getDebet(nomor));
