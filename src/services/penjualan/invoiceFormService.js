@@ -431,9 +431,28 @@ const save = async (data, userKode, isNew) => {
   const divisiStr = String(Divisi).charAt(0);
 
   // ── Logic apv & pro — sesuai Delphi simpandata ──────────
-  let apv = ApvOverride !== undefined ? ApvOverride : "";
-  let pro;
+  // ⚠️ FIX: sebelumnya `apv` HANYA dari ApvOverride (parameter luar).
+  // Kalau ApvOverride tidak dikirim, apv selalu "" — sehingga invoice
+  // yang SUDAH PERNAH di-ACC (inv_apvnosj berisi timestamp ACC, bukan
+  // "N"/"T") dianggap seolah belum pernah diajukan, dan approval
+  // diminta ulang setiap kali header diedit walau kondisi SJ tidak
+  // berubah. Sekarang: kalau ApvOverride tidak dikirim eksplisit, baca
+  // status apv SAAT INI dari database (khusus mode edit) sebagai basis,
+  // meniru variabel form-level Delphi yang otomatis "ingat" status lama.
+  let apv;
+  if (ApvOverride !== undefined) {
+    apv = ApvOverride;
+  } else if (!isNew) {
+    const [[current]] = await db.query(
+      `SELECT inv_apvnosj FROM tinv_hdr WHERE inv_nomor = ?`,
+      [NomorInv],
+    );
+    apv = current ? current.inv_apvnosj || "" : "";
+  } else {
+    apv = "";
+  }
 
+  let pro;
   if (!InvPro || !InvPro.trim()) {
     const adaSjSemua = cekAdaSjSemua(validDetail);
     if (adaSjSemua) {
