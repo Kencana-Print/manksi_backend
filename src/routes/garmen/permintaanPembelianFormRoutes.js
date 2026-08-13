@@ -5,6 +5,7 @@ const {
   verifyToken,
   checkPermission,
 } = require("../../middleware/authMiddleware");
+const uploadMiddleware = require("../../middleware/uploadMiddleware");
 
 const MENU_ID = 65;
 
@@ -13,6 +14,19 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   controller.getBarangByKode,
+);
+router.post(
+  "/gambar/:nomor/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  uploadMiddleware.single("gambar"),
+  controller.uploadGambarItem,
+);
+router.delete(
+  "/gambar/:nomor/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.deleteGambarItem,
 );
 router.get(
   "/:nomor",

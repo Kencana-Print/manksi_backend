@@ -53,4 +53,41 @@ const getBarangByKode = async (req, res) => {
   }
 };
 
-module.exports = { getDetail, saveData, saveRealisasi, getBarangByKode };
+const uploadGambarItem = async (req, res) => {
+  try {
+    if (!req.file) throw new Error("File gambar tidak ditemukan.");
+    const { nomor, kode } = req.params;
+    const url = await service.saveGambarItem(
+      nomor,
+      kode,
+      req.file.path,
+      req.file.size,
+    );
+    res.status(200).json({
+      success: true,
+      data: { url },
+      message: "Gambar berhasil diupload",
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const deleteGambarItem = async (req, res) => {
+  try {
+    const { nomor, kode } = req.params;
+    await service.deleteGambarItem(nomor, kode);
+    res.status(200).json({ success: true, message: "Gambar berhasil dihapus" });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getDetail,
+  saveData,
+  saveRealisasi,
+  getBarangByKode,
+  uploadGambarItem,
+  deleteGambarItem,
+};

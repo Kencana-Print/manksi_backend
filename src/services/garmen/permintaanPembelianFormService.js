@@ -1,5 +1,7 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const fs = require("fs");
+const path = require("path");
 
 const generateNomor = async (jenis, tanggal) => {
   let prefix = "MBK";
@@ -81,10 +83,15 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
+  const itemsWithFoto = dtl.map((item) => ({
+    ...item,
+    foto: gambarExists(nomor, item.kode) ? "YA" : "",
+  }));
+
   return {
     header: hdr[0],
     statusPin: statusPin,
-    items: dtl,
+    items: itemsWithFoto,
     realisasi: dtl2,
   };
 };
@@ -294,4 +301,41 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   return rows[0];
 };
 
-module.exports = { getDetail, saveData, saveRealisasi, getBarangByKode };
+const IMAGE_DIR = path.join(
+  __dirname,
+  "../../../public/images/permintaan-pembelian",
+);
+const MAX_SIZE = 1000000; // 1 MB, sama seperti validasi Delphi
+
+const buildFileName = (nomor, kode) => `${nomor}${kode}.jpg`;
+
+const saveGambarItem = async (nomor, kode, tempFilePath, fileSize) => {
+  if (fileSize > MAX_SIZE) {
+    fs.unlinkSync(tempFilePath);
+    throw new Error("Ukuran gambar tidak boleh > 1 Mb.");
+  }
+  if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
+  const destPath = path.join(IMAGE_DIR, buildFileName(nomor, kode));
+  fs.copyFileSync(tempFilePath, destPath);
+  fs.unlinkSync(tempFilePath);
+  return `/images/permintaan-pembelian/${buildFileName(nomor, kode)}`;
+};
+
+const deleteGambarItem = async (nomor, kode) => {
+  const filePath = path.join(IMAGE_DIR, buildFileName(nomor, kode));
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+};
+
+const gambarExists = (nomor, kode) => {
+  return fs.existsSync(path.join(IMAGE_DIR, buildFileName(nomor, kode)));
+};
+
+module.exports = {
+  getDetail,
+  saveData,
+  saveRealisasi,
+  getBarangByKode,
+  saveGambarItem,
+  deleteGambarItem,
+  gambarExists,
+};

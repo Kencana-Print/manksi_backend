@@ -31,13 +31,25 @@ const generateNomor = async (kodePerush, tanggal, conn) => {
 
 // ─────────────────────────────────────────────────────────
 // GET DEBET (uang muka) — sesuai Delphi getdebet
-// CATATAN: query lebih sederhana dari Invoice biasa (langsung
-// piutang_debet.kredit, tidak lewat piutang_kredit_detail)
+// ⬅ FIX: Invoice Tak Normal TIDAK PERNAH menerima pembayaran
+// langsung atas nomornya sendiri — pelunasan selalu tercatat di
+// invoice normal turunannya (via tinv_flag). getDebet versi lama
+// hanya cek nota=nomor Tak Normal, yang hampir selalu 0, sehingga
+// Nilai Piutang di cetakan tidak pernah mencerminkan pelunasan
+// yang sebenarnya sudah terjadi di invoice normal terkait.
+// Sekarang: gabungkan kredit dari nomor sendiri (jaga-jaga kalau
+// suatu saat ada pembayaran langsung) + SEMUA invoice normal yang
+// dinaungi lewat tinv_flag.
 // ─────────────────────────────────────────────────────────
 const getDebet = async (nomor) => {
   const [[row]] = await db.query(
-    `SELECT IFNULL(kredit,0) AS kredit FROM piutang_debet WHERE nota = ?`,
-    [nomor],
+    `SELECT IFNULL(SUM(kredit), 0) AS kredit
+     FROM piutang_debet
+     WHERE nota = ?
+        OR nota IN (
+          SELECT invf_normal FROM tinv_flag WHERE invf_taknormal = ?
+        )`,
+    [nomor, nomor],
   );
   return row ? Number(row.kredit) || 0 : 0;
 };
