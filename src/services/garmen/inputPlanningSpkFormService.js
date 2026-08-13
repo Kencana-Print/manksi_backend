@@ -47,6 +47,8 @@ const getDetail = async (nomor) => {
       [nomor],
     );
   } else {
+    // ⬅ FIX: SPK PPIC — tambahkan spk_so_ref ke SELECT, supaya bisa
+    // dipakai cari planning yang tersimpan atas nama SO sumbernya
     [headerRows] = await db.query(
       `SELECT
          s.spk_nomor AS nomor, s.spk_nama AS nama,
@@ -54,7 +56,8 @@ const getDetail = async (nomor) => {
          DATE_FORMAT(s.spk_dateline, '%Y-%m-%d') AS dateline,
          s.spk_jumlah AS jumlah, s.spk_cab AS cab, s.spk_workshop AS workshop,
          s.spk_tipe AS tipe, s.spk_kain AS kain, s.spk_finishing AS finishing,
-         s.spk_sablon AS sablon, s.spk_sublim AS sublim, s.spk_bordir AS bordir
+         s.spk_sablon AS sablon, s.spk_sublim AS sublim, s.spk_bordir AS bordir,
+         s.spk_so_ref AS soRef
        FROM tspk s WHERE s.spk_nomor = ?`,
       [nomor],
     );
@@ -68,6 +71,9 @@ const getDetail = async (nomor) => {
   header.sublim = header.sublim === "Y";
   header.bordir = header.bordir === "Y";
 
+  // planKeys sudah otomatis include header.soRef kalau ada —
+  // logic ini TIDAK berubah, cuma sekarang soRef ikut ke-select
+  // untuk source "map" MAUPUN "spk" (sebelumnya cuma "map")
   const planKeys = [nomor];
   if (header.soRef) planKeys.push(header.soRef);
 
@@ -107,6 +113,19 @@ const getDetail = async (nomor) => {
 
 const saveData = async (nomor, rows, userKode) => {
   if (!nomor) throw new Error("Nomor SPK tidak valid.");
+
+  // ⬅ FIX: kalau ini SPK PPIC yang punya SO sumber, simpan planning
+  // ke nomor SO-nya — supaya konsisten dengan MKB yang selalu pakai
+  // SO sebagai key plan_spk, bukan nomor SPK turunannya.
+  const source = resolveHeaderSource(nomor);
+  let effectiveNomor = nomor;
+  if (source === "spk") {
+    const [[row]] = await db.query(
+      `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
+      [nomor],
+    );
+    if (row?.spk_so_ref) effectiveNomor = row.spk_so_ref;
+  }
 
   const validRows = (rows || []).filter((r) => r && r.tanggal);
   if (validRows.length === 0) {
