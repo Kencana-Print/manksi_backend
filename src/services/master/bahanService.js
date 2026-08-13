@@ -72,14 +72,14 @@ const createBahan = async (data, user) => {
   `;
   await db.query(query, [
     generatedKode,
-    data.Bhn_name,
-    data.Bhn_satuan,
-    data.nmSetting,
-    data.nmGramasi,
-    data.Bhn_ket,
-    data.Bhn_dead,
-    data.Bhn_hargabeli,
-    data.Bhn_buffer,
+    data.Bhn_name || "",
+    data.Bhn_satuan || "",
+    data.nmSetting || "",
+    data.nmGramasi || "",
+    data.Bhn_ket || "",
+    data.Bhn_dead ?? 0,
+    Number(data.Bhn_hargabeli) || 0,
+    Number(data.Bhn_buffer) || 0,
     user,
   ]);
   return generatedKode;
@@ -93,12 +93,12 @@ const updateBahan = async (kode, data, user) => {
     WHERE bhn_kode = ?
   `;
   await db.query(query, [
-    data.Bhn_name,
-    data.Bhn_satuan,
-    data.Bhn_ket,
-    data.Bhn_dead,
-    data.Bhn_hargabeli,
-    data.Bhn_buffer,
+    data.Bhn_name || "",
+    data.Bhn_satuan || "",
+    data.Bhn_ket || "",
+    data.Bhn_dead ?? 0,
+    Number(data.Bhn_hargabeli) || 0,
+    Number(data.Bhn_buffer) || 0,
     user,
     kode,
   ]);
