@@ -114,19 +114,6 @@ const getDetail = async (nomor) => {
 const saveData = async (nomor, rows, userKode) => {
   if (!nomor) throw new Error("Nomor SPK tidak valid.");
 
-  // ⬅ FIX: kalau ini SPK PPIC yang punya SO sumber, simpan planning
-  // ke nomor SO-nya — supaya konsisten dengan MKB yang selalu pakai
-  // SO sebagai key plan_spk, bukan nomor SPK turunannya.
-  const source = resolveHeaderSource(nomor);
-  let effectiveNomor = nomor;
-  if (source === "spk") {
-    const [[row]] = await db.query(
-      `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
-      [nomor],
-    );
-    if (row?.spk_so_ref) effectiveNomor = row.spk_so_ref;
-  }
-
   const validRows = (rows || []).filter((r) => r && r.tanggal);
   if (validRows.length === 0) {
     throw new Error("Tidak ada data, tidak dapat disimpan.");
@@ -140,10 +127,14 @@ const saveData = async (nomor, rows, userKode) => {
     seenTanggal.add(r.tanggal);
   }
 
-  // ⚠️ Refetch header fresh — sekarang tiga sumber (MAP/SO/SPK),
-  // sama pola resolveHeaderSource seperti getDetail di atas.
+  // ⚠️ Refetch header fresh — tiga sumber (MAP/SO/SPK), sama pola
+  // resolveHeaderSource seperti getDetail di atas. Untuk SPK PPIC,
+  // sekalian ambil spk_so_ref supaya planning bisa disimpan konsisten
+  // ke nomor SO sumbernya (sama key yang dipakai MKB).
   const source = resolveHeaderSource(nomor);
   let headerRows;
+  let effectiveNomor = nomor;
+
   if (source === "map") {
     [headerRows] = await db.query(
       `SELECT mspk_sablon AS sablon, mspk_sublim AS sublim, mspk_bordir AS bordir FROM tmemospk WHERE mspk_nomor = ?`,
@@ -156,9 +147,12 @@ const saveData = async (nomor, rows, userKode) => {
     );
   } else {
     [headerRows] = await db.query(
-      `SELECT spk_sablon AS sablon, spk_sublim AS sublim, spk_bordir AS bordir FROM tspk WHERE spk_nomor = ?`,
+      `SELECT spk_sablon AS sablon, spk_sublim AS sublim, spk_bordir AS bordir, spk_so_ref AS soRef FROM tspk WHERE spk_nomor = ?`,
       [nomor],
     );
+    if (headerRows.length > 0 && headerRows[0].soRef) {
+      effectiveNomor = headerRows[0].soRef;
+    }
   }
   if (headerRows.length === 0)
     throw new Error("Data SPK/SO/MAP tidak ditemukan.");
@@ -268,7 +262,7 @@ const saveData = async (nomor, rows, userKode) => {
            plan_usr = VALUES(plan_usr),
            plan_dtusr = VALUES(plan_dtusr)`,
         [
-          nomor,
+          effectiveNomor, // ⬅ FIX: pakai SO ref kalau ada, bukan `nomor` mentah
           r.tanggal,
           datang,
           Number(r.cutting) || 0,
