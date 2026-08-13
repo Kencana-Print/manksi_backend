@@ -12,7 +12,7 @@ const getBrowseBahan = async () => {
     FROM tbahan b
     LEFT JOIN tbahan_warna w ON w.bw_kode = MID(b.Bhn_kode, 3, 3)
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2)
-    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.Bhn_kode, 2)
+    LEFT JOIN tbahan_setting s ON s.bs_kode = SUBSTRING(b.Bhn_kode, 8, 2)
     LEFT JOIN (
       SELECT mst_brg_kode, SUM(mst_stok_in - mst_stok_out) AS total_stok 
       FROM tmasterstok_bahan WHERE mst_aktif = 'Y' GROUP BY mst_brg_kode
@@ -34,7 +34,7 @@ const getBahanById = async (kode) => {
     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(b.Bhn_kode, 2)
     LEFT JOIN tbahan_warna w ON w.bw_kode = MID(b.Bhn_kode, 3, 3)
     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2)
-    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.Bhn_kode, 2)
+    LEFT JOIN tbahan_setting s ON s.bs_kode = SUBSTRING(b.Bhn_kode, 8, 2)
     LEFT JOIN tbahan_project p ON p.kode = MID(b.Bhn_kode, 10, 1)
     WHERE b.Bhn_kode = ?
   `;
