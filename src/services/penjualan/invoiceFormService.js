@@ -515,11 +515,12 @@ const save = async (data, userKode, isNew) => {
       );
     } else {
       let updateFields = `
-        inv_tanggal = ?, inv_keterangan = ?,
+        inv_divisi = ?, inv_tanggal = ?, inv_keterangan = ?,
         inv_perush_kode = ?, inv_cus_kode = ?, inv_cus_alamat = ?,
         inv_tanggal_tempo = ?, inv_rekening = ?, inv_invpro = ?,
         inv_sts_ppn = ?, inv_ppn = ?,`;
       const updateParams = [
+        divisiStr,
         Tanggal,
         Keterangan,
         KodePerush,
