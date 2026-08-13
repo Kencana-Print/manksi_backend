@@ -749,7 +749,8 @@ const submitHapusDataOtorisasi = async (
         await conn.query(`DELETE FROM tpojasa_hdr WHERE pojh_nomor = ?`, [
           nomor,
         ]);
-      } else if (trxType === "HAPUS BPB JASA") {
+      } else if (trxType === "BPB JASA HAPUS") {
+        // ⬅ FIX: samakan urutan kata dengan yang tersimpan
         await conn.query(`DELETE FROM tbpj_hdr WHERE bpj_Nomor = ?`, [nomor]);
       } else if (trxType === "HAPUS MUTASI PRODUKSI") {
         await conn.query(
@@ -757,7 +758,6 @@ const submitHapusDataOtorisasi = async (
           [nomor],
         );
       }
-      // Note: Bisa ditambahkan jenis penghapusan lain di masa depan ke dalam if-else ini
     }
 
     // Ambil nama peminta untuk alert frontend
