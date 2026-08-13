@@ -2153,7 +2153,6 @@ const searchBuktiBayar = async (cabang, kode = "", search = "") => {
   const kodeTrim = (kode || "").trim().toUpperCase();
   let rows = [];
 
-  // ── Retur (RT) ──
   const fetchRetur = async () => {
     let whereClause = `WHERE a.retj_perush_kode = ?`;
     let params = [cabang];
@@ -2168,6 +2167,7 @@ const searchBuktiBayar = async (cabang, kode = "", search = "") => {
         a.retj_nomor                            AS Nomor,
         DATE_FORMAT(a.retj_tanggal, '%d-%m-%Y') AS Tanggal,
         "RT"                                     AS Kode,
+        a.retj_cus_kode                          AS KodeCustomer,
         b.cus_nama                               AS Customer,
         (
           SELECT SUM(retjd_harga * retjd_jumlah *
@@ -2186,7 +2186,6 @@ const searchBuktiBayar = async (cabang, kode = "", search = "") => {
     return r;
   };
 
-  // ── BG, BT, CS, PT ──
   const fetchNonRetur = async () => {
     let whereClause = `WHERE a.cabang = ?`;
     let params = [cabang];
@@ -2206,7 +2205,8 @@ const searchBuktiBayar = async (cabang, kode = "", search = "") => {
         a.nomor                            AS Nomor,
         DATE_FORMAT(a.tanggal, '%d-%m-%Y') AS Tanggal,
         a.kode                             AS Kode,
-        IFNULL(b.cus_nama, a.customer)      AS Customer,
+        a.customer                         AS KodeCustomer,
+        IFNULL(b.cus_nama, a.customer)     AS Customer,
         a.debet                            AS Debet,
         a.notes                            AS Keterangan
       FROM terima_bayar_debet a
@@ -2225,7 +2225,6 @@ const searchBuktiBayar = async (cabang, kode = "", search = "") => {
   } else if (kodeTrim) {
     rows = await fetchNonRetur();
   } else {
-    // kode kosong → gabungan semua jenis
     const [retur, nonRetur] = await Promise.all([
       fetchRetur(),
       fetchNonRetur(),
