@@ -57,8 +57,13 @@ const getBrowse = async (startDate, endDate, cabang) => {
       x.Nomor, x.Tanggal, x.Jam, x.Cab, x.Divisi, v.Divisi AS DivisiSpk, 
       x.SPK, x.NamaSpk, x.JmlSpk, x.Keterangan, 
       
-      -- MENGATASI BEDA LOGIKA: Timpa status OPEN jadi CLOSE jika tanggal sudah melewati tutup buku
-      IF(x.Tanggal < '${zdtCloseStr}' AND x.sts = 'OPEN', 'CLOSE', x.sts) AS Status, 
+      -- ⬅ FIX: Status transaksi asli TIDAK LAGI ditimpa oleh tutup buku.
+      -- Realisasi/OPEN-CLOSE murni dari status transaksi sebenarnya.
+      x.sts AS Status,
+
+      -- ⬅ BARU: flag terpisah, murni penanda periode akuntansi sudah
+      -- dikunci — TIDAK mencerminkan apakah realisasi sudah selesai.
+      IF(x.Tanggal < '${zdtCloseStr}' AND x.sts = 'OPEN', 1, 0) AS IsPeriodLocked,
       
       x.AlasanClose,
       IF(x.totr=0, "", IF(x.totr>x.tota, "N", "Y")) AS Approve,
@@ -107,7 +112,10 @@ const getBrowse = async (startDate, endDate, cabang) => {
   query += ` ORDER BY h.min_nomor ) x LEFT JOIN tdivisi v ON v.kode = x.kddiv`;
 
   const [rows] = await db.query(query, params);
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    IsPeriodLocked: Number(r.IsPeriodLocked) === 1,
+  }));
 };
 
 /**
