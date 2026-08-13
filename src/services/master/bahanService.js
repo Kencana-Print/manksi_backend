@@ -27,6 +27,10 @@ const getBrowseBahan = async () => {
 const getBahanById = async (kode) => {
   const query = `
     SELECT b.*, 
+      LEFT(b.Bhn_kode, 2) AS kdJenis,
+      MID(b.Bhn_kode, 3, 3) AS kdWarna,
+      MID(b.Bhn_kode, 6, 2) AS kdGramasi,
+      SUBSTRING(b.Bhn_kode, 8, 2) AS kdSetting,
       IFNULL(j.bj_nama, "") as nmJenis, IFNULL(w.bw_nama, "") as nmWarna, 
       IFNULL(g.bg_nama, "") as nmGramasi, IFNULL(s.bs_nama, "") as nmSetting,
       IFNULL(p.project, "REGULER") as project
