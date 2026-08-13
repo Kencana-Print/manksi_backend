@@ -20,7 +20,7 @@ const generateNomor = async (tanggal) => {
 
 // ─────────────────────────────────────────────────────────
 // MAPPING PILIHAN MUTASI → GUDANG ASAL & TUJUAN
-// Sesuai Delphi RadioButton1Click
+// Sesuai Delphi RadioButton1Claick
 // ─────────────────────────────────────────────────────────
 const GUDANG_MAP = {
   P04: {
@@ -322,10 +322,13 @@ const getPlanningPerSpk = async (
   let kolom = JENIS_TO_KOLOM_PLANSPK[Number(jenisMutasi)];
   if (kelompok === "BORDIR") kolom = "bordir";
   if (!kolom) return [];
-  const params = [nomorSpk];
+
+  // ⬅ FIX: resolve spk_so_ref, sama seperti cekPlanning
+  const soRef = await resolveSoRef(nomorSpk);
+  const planKeys = soRef ? [nomorSpk, soRef] : [nomorSpk];
+
+  const params = [planKeys];
   let tglFilter = "";
-  // Sama seperti PPIC: filter cutting dgn tanggal SPK dibuat, cegah
-  // planning yg target-nya lebih awal dari SPK-nya eksis.
   if (kolom === "cutting" && tglDibuat) {
     tglFilter = `AND plan_tanggal >= ?`;
     params.push(tglDibuat);
@@ -333,17 +336,17 @@ const getPlanningPerSpk = async (
   const [rows] = await db.query(
     `SELECT plan_tanggal AS tanggal, plan_${kolom} AS jumlah
      FROM tplanningspk
-     WHERE plan_spk = ? AND plan_${kolom} <> 0 ${tglFilter}
+     WHERE plan_spk IN (?) AND plan_${kolom} <> 0 ${tglFilter}
      ORDER BY plan_tanggal`,
     params,
   );
   return rows.map((r) => ({
-    no_planning: "", // tidak ada nomor header di tplanningspk
+    no_planning: "",
     tanggal: r.tanggal
       ? new Date(r.tanggal).toISOString().substring(0, 10)
       : "",
     jumlah: Number(r.jumlah) || 0,
-    status: "PLANNING SPK", // penanda sumber, biar frontend bisa bedakan
+    status: "PLANNING SPK",
     line_kelompok: null,
   }));
 };
@@ -782,6 +785,22 @@ const DIVISI_TO_KOLOM_PLANSPK = {
 };
 
 // ─────────────────────────────────────────────────────────
+// RESOLVE SO REF — sama pola dengan planningPerSpkService.js.
+// Planning per SPK menyimpan data ke tplanningspk dengan
+// plan_spk = SO REF (kalau SPK ini punya spk_so_ref terisi),
+// bukan nomor SPK itu sendiri. Semua query ke tplanningspk di
+// file ini WAJIB ikut resolve ini, atau data planning yang sudah
+// diinput tidak akan pernah ketemu.
+// ─────────────────────────────────────────────────────────
+const resolveSoRef = async (nomorSpk) => {
+  const [[row]] = await db.query(
+    `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
+    [nomorSpk],
+  );
+  return row?.spk_so_ref || null;
+};
+
+// ─────────────────────────────────────────────────────────
 // CEK PLANNING SUDAH ADA (isplanning_*)
 // Sesuai Delphi — cek per jenis lini di tplan_ppic_dtl2
 // ─────────────────────────────────────────────────────────
@@ -796,14 +815,15 @@ const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
   );
   if (Number(row.jml) > 0) return true;
 
-  // Gunakan token spesifik kalau dikirim controller (CETAK/JAHIT/BORDIR),
-  // fallback ke ppicDivisi kalau tidak (kompatibel dgn pemanggilan lama)
   const kolom = DIVISI_TO_KOLOM_PLANSPK[planSpkKolom || ppicDivisi];
   if (!kolom) return false;
 
+  const soRef = await resolveSoRef(nomorSpk);
+  const planKeys = soRef ? [nomorSpk, soRef] : [nomorSpk];
+
   const [[row2]] = await db.query(
-    `SELECT COUNT(*) AS jml FROM tplanningspk WHERE plan_spk = ? AND plan_${kolom} <> 0`,
-    [nomorSpk],
+    `SELECT COUNT(*) AS jml FROM tplanningspk WHERE plan_spk IN (?) AND plan_${kolom} <> 0`,
+    [planKeys],
   );
   return Number(row2.jml) > 0;
 };
