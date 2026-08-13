@@ -108,7 +108,6 @@ const getById = async (nomor) => {
 const save = async (data, user, isNewMode) => {
   const userKode = user.kode;
 
-  // ✅ BARU: validasi hak CMO sebelum mengizinkan Digital Sign = Y
   if (data.DigitalSign === "Y") {
     const divisiStr = String(data.Divisi).charAt(0);
     const punyaHakCmo =
@@ -120,7 +119,6 @@ const save = async (data, user, isNewMode) => {
     }
   }
 
-  // Validasi Tutup Buku
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
   const tglInput = new Date(data.Tanggal);
   if (zdtClose && tglInput < zdtClose && data.StatusEdit !== "ACC") {
@@ -133,10 +131,26 @@ const save = async (data, user, isNewMode) => {
   try {
     await conn.beginTransaction();
 
+    // ⬅ FIX: lock berjalan untuk KEDUA mode (create & edit), bukan
+    // cuma edit — mencegah dua submit create yang nyaris bersamaan
+    // saling tabrakan dan menghasilkan duplikat/duplicate-key error
+    // yang tidak informatif.
     if (!isNewMode) {
       await conn.query(
         `SELECT pen_nomor FROM tpenawaran_hdr WHERE pen_nomor = ? FOR UPDATE`,
         [data.Nomor],
+      );
+    } else {
+      // Kunci berbasis rentang nomor (perush+tahun) yang akan dipakai
+      // generateNomor, supaya request create yang tabrakan menunggu
+      // satu sama lain, bukan jalan paralel.
+      const d = new Date(data.Tanggal);
+      const tahun = d.getFullYear();
+      await conn.query(
+        `SELECT pen_nomor FROM tpenawaran_hdr 
+         WHERE RIGHT(pen_nomor, 7) = ? AND SUBSTR(pen_nomor, 4, 1) <> "/"
+         FOR UPDATE`,
+        [`${data.PerushKode}/${tahun}`],
       );
     }
 
@@ -228,7 +242,6 @@ const save = async (data, user, isNewMode) => {
         nomorPen,
       ]);
 
-      // Jika edit hasil ACC, matikan PIN
       if (data.StatusEdit === "ACC") {
         await conn.query(
           `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="PENAWARAN" AND pin_nomor=? AND pin_dipakai=""`,
@@ -251,18 +264,39 @@ const save = async (data, user, isNewMode) => {
     await conn.query(delDtlQ, [nomorPen, nomorPen, nomorPen]);
 
     // --- 3. SIMPAN DETAIL BARU/UPDATE ---
+    // ⬅ FIX: pakai ON DUPLICATE KEY UPDATE, bukan INSERT polos.
+    // Sesuai PK baru (pend_pen_nomor, pend_id, pend_urutan) — dalam
+    // satu kali save, pend_urutan = i+1 selalu unik per baris array
+    // sehingga tidak akan pernah tabrakan sesama dirinya sendiri.
+    // Tapi kalau ada retry/klik-ganda yang re-submit payload yang
+    // (hampir) sama, upsert ini bikin percobaan kedua MENIMPA baris
+    // yang sudah ada, bukan gagal dengan error duplicate key.
     for (let i = 0; i < data.Details.length; i++) {
       const d = data.Details[i];
-      // Jika baris valid (ada nama) dan belum nempel ke SPK, Insert
       if (d.NamaBarang && !d.Spk) {
-        const insDtl = `
+        const pendId = d.ID || String(i + 101).slice(-2);
+        const upsertDtl = `
           INSERT INTO tpenawaran_dtl (
             pend_urutan, pend_pen_nomor, pend_minta, pend_nama_barang, pend_bahan, pend_ukuran,
             pend_panjang, pend_lebar, pend_satuan, pend_qty, pend_harga, pend_gambar, 
             pend_status, pend_batal, pend_confirm, pend_id
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            pend_minta = VALUES(pend_minta),
+            pend_nama_barang = VALUES(pend_nama_barang),
+            pend_bahan = VALUES(pend_bahan),
+            pend_ukuran = VALUES(pend_ukuran),
+            pend_panjang = VALUES(pend_panjang),
+            pend_lebar = VALUES(pend_lebar),
+            pend_satuan = VALUES(pend_satuan),
+            pend_qty = VALUES(pend_qty),
+            pend_harga = VALUES(pend_harga),
+            pend_gambar = VALUES(pend_gambar),
+            pend_status = VALUES(pend_status),
+            pend_batal = VALUES(pend_batal),
+            pend_confirm = VALUES(pend_confirm)
         `;
-        await conn.query(insDtl, [
+        await conn.query(upsertDtl, [
           i + 1,
           nomorPen,
           d.NoPermintaan || "",
@@ -278,11 +312,9 @@ const save = async (data, user, isNewMode) => {
           d.Status || "",
           d.Batal || "",
           d.Confirm || "",
-          d.ID || String(i + 101).slice(-2),
+          pendId,
         ]);
-      }
-      // Jika sudah nempel ke SPK, hanya update urutannya (Delphi logic)
-      else if (d.NamaBarang && d.Spk) {
+      } else if (d.NamaBarang && d.Spk) {
         await conn.query(
           `UPDATE tpenawaran_dtl SET pend_urutan=? WHERE pend_pen_nomor=? AND pend_id=?`,
           [i + 1, nomorPen, d.ID],
