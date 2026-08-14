@@ -566,6 +566,9 @@ const saveData = async (payload, user) => {
       header.user_create = user.kode;
       header.date_create = new Date();
       header.spk_aktif = piutang > 100 ? "N" : "Y";
+      if (header.spk_cmo) {
+        header.spk_cmo_tanggal = new Date();
+      }
       const noPoPendingCreate = await syncNoPoApproval(
         conn,
         nomor,
@@ -587,12 +590,14 @@ const saveData = async (payload, user) => {
         mapSpkHeaderToSo(cleanHeader(header)),
       ]);
     } else {
+      const [existingRows] = await conn.query(
+        `SELECT so_acc_customer, so_cmo FROM tsalesorder WHERE so_nomor = ?`,
+        [nomor],
+      );
+      const existingData = existingRows[0] || {};
+
       if (!header.spk_memo) {
-        const [existingRows] = await conn.query(
-          `SELECT so_acc_customer FROM tsalesorder WHERE so_nomor = ?`,
-          [nomor],
-        );
-        const wasAlreadyApproved = existingRows[0]?.so_acc_customer === "Y";
+        const wasAlreadyApproved = existingData.so_acc_customer === "Y";
         if (
           !wasAlreadyApproved &&
           header.spk_acc_customer === "Y" &&
@@ -600,6 +605,14 @@ const saveData = async (payload, user) => {
         ) {
           throw new Error("Tanggal persetujuan customer wajib diisi.");
         }
+      }
+      // ── [TAMBAHAN]: Cek perubahan status approve CMO
+      if (header.spk_cmo && !existingData.so_cmo) {
+        // Baru saja dicentang approve
+        header.spk_cmo_tanggal = new Date();
+      } else if (!header.spk_cmo) {
+        // Centang approve dicabut (batal approve)
+        header.spk_cmo_tanggal = null;
       }
       header.user_modified = user.kode;
       header.date_modified = new Date();
