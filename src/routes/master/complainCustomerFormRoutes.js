@@ -33,6 +33,12 @@ router.post(
   checkPermission(menuId, "insert"),
   controller.save,
 );
+router.put(
+  "/:nomor",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  controller.save,
+);
 router.post(
   "/upload-image",
   verifyToken,

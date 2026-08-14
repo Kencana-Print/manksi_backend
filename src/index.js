@@ -275,6 +275,7 @@ const userRoutes = require("./routes/tools/userRoutes");
 const userFormRoutes = require("./routes/tools/userFormRoutes");
 const approvalRoutes = require("./routes/tools/approvalRoutes");
 const relationshipMapRoutes = require("./routes/tools/relationshipMapRoutes");
+const informasiBahanRoutes = require("./routes/tools/informasiBahanRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
 
@@ -728,6 +729,7 @@ app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
 app.use("/api/tools/approval", approvalRoutes);
 app.use("/api/tools/relationship-map", relationshipMapRoutes);
+app.use("/api/tools/sistem-informasi-bahan", informasiBahanRoutes);
 
 app.use("/api/system/version", versionRoutes);
 
