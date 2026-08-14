@@ -64,7 +64,7 @@ const getBrowseList = async (filters) => {
         ? 1
         : 0;
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
-    const isDonaExtraCab = userKode === "DONA" ? 1 : 0;
+    const isDonaExtraCab = userKode === "DONADONG" ? 1 : 0;
 
     if (isGudang) {
       whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR y.spk_cab IN ('P01','P04') OR (y.spk_cab = 'P05' AND ? = 1))`;
