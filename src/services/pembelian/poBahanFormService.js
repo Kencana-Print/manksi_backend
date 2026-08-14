@@ -166,19 +166,26 @@ const getDetail = async (nomor) => {
   // D. Get Grid 1 (Items)
   const [items] = await db.query(
     `
-    SELECT d.*, b.bhn_name, 
-           IFNULL(j.bj_nama,"") as jenis, 
-           -- Jika PO Bahan (3) dan pod_gramasia ada isinya, pakai itu. Jika tidak, ambil dari master.
-           IF(h.po_jenis = 3 AND d.pod_gramasia <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi, 
-           IFNULL(s.bs_nama,"") as setting
-    FROM tpo_dtl d
-    INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
-    LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
-    LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
-    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
-    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
-    WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ORDER BY d.pod_nourut
-  `,
+      SELECT d.*, b.bhn_name, 
+            IFNULL(j.bj_nama,"") as jenis, 
+            -- Gramasi Akhir: kalau PO Bahan dan sudah diisi manual, pakai itu.
+            -- Kalau belum diisi (PO baru) atau bukan PO Bahan, fallback ke master.
+            IF(h.po_jenis = 3 AND d.pod_gramasia <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
+            -- Gramasi Awal: HANYA relevan untuk PO Bahan. Kalau sudah diisi
+            -- manual pakai itu, kalau belum fallback ke master (default awal).
+            IF(h.po_jenis = 3, 
+                IF(d.pod_gramasia_awal <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")), 
+                NULL
+            ) as gramasiAwal,
+            IFNULL(s.bs_nama,"") as setting
+      FROM tpo_dtl d
+      INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
+      LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
+      LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
+      LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
+      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
+      WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ORDER BY d.pod_nourut
+    `,
     [nomor],
   );
 
@@ -367,24 +374,28 @@ const saveData = async (payload, userKode) => {
       for (const item of validItemsToInsert) {
         const namaExt = item.namaext ? item.namaext : item.nama;
 
-        // Tentukan apa yang dititipkan ke kolom fisik pod_gramasia
+        // Gramasi Akhir — tetap seperti sebelumnya
         const gramasiaToSave =
           jpo === 3 ? item.gramasi || "" : item.gramasia || "";
 
+        // ⬅ BARU — Gramasi Awal, HANYA disimpan untuk PO Bahan (jenis 3)
+        const gramasiAwalToSave = jpo === 3 ? item.gramasiAwal || "" : "";
+
         await conn.query(
           `
-          INSERT INTO tpo_dtl (
-            pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-            pod_gramasia, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
+            INSERT INTO tpo_dtl (
+              pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
+              pod_gramasia, pod_gramasia_awal, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
           [
             nomorPO,
             nourut,
             item.kode,
             namaExt,
             item.satuan,
-            gramasiaToSave, // <--- Gunakan variabel yang sudah diatur
+            gramasiaToSave,
+            gramasiAwalToSave,
             item.roll || 0,
             item.jumlah || 0,
             item.diskon || 0,
