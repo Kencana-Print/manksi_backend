@@ -1,5 +1,4 @@
 const db = require("../../config/database");
-const tutupBukuService = require("../tutupBukuService");
 
 // --- GET BROWSE MASTER DETAIL ---
 const getBrowse = async (startDate, endDate, jenis, cabang) => {
@@ -89,35 +88,25 @@ const terimaMutasi = async (nomor, userKode) => {
       [nomor],
     );
     if (rows.length === 0) throw new Error("Data Mutasi tidak ditemukan.");
-
     const data = rows[0];
     if (data.mso_msi_nomor && data.mso_msi_nomor.trim() !== "") {
       throw new Error("Mutasi tsb sudah diterima.");
     }
 
-    // 2. Validasi Tutup Buku
-    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    const tglMutasi = new Date(data.mso_tanggal);
-    if (zdtClose && tglMutasi < zdtClose) {
-      throw new Error(
-        "Transaksi tersebut sudah close (tutup buku). Tidak bisa menerima mutasi.",
-      );
-    }
-
-    // 3. Generate Nomor Terima Baru
+    // 2. Generate Nomor Terima Baru
     const noTerima = await generateNomorTerima(
       data.mso_jenis,
       data.mso_tanggal,
       conn,
     );
 
-    // 4. Update Header
+    // 3. Update Header
     await conn.query(
       "UPDATE tgarmenmso_hdr SET mso_msi_nomor = ?, mso_msi_usr = ?, mso_msi_date = NOW() WHERE mso_nomor = ?",
       [noTerima, userKode, nomor],
     );
 
-    // 5. Update Detail
+    // 4. Update Detail
     await conn.query(
       "UPDATE tgarmenmso_dtl SET msod_msi_nomor = ? WHERE msod_nomor = ?",
       [noTerima, nomor],
