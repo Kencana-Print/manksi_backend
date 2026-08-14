@@ -585,6 +585,12 @@ const saveData = async (payload, user) => {
       delete newHeader.date_modified;
       const filteredHeader = await filterToTspkColumns(newHeader, conn);
       await conn.query(`INSERT INTO tspk SET ?`, [filteredHeader]);
+      if (so_nomor.startsWith("SO-")) {
+        await conn.query(
+          `UPDATE tsalesorder SET so_spk_ref = ? WHERE so_nomor = ?`,
+          [nomor, so_nomor],
+        );
+      }
       // Copy size dari SO (tsalesorder_size ATAU tspk_size, tergantung
       // sumber) sebagai starting point, lalu override dengan dtlSize
       // dari payload kalau user sudah sesuaikan di form

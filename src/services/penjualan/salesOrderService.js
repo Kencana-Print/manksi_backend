@@ -854,33 +854,21 @@ const searchAvailableForSpk = async (
   const like = `%${keyword || ""}%`;
 
   let source = `
-    FROM (
-      SELECT so_nomor AS Nomor, so_tanggal AS Tanggal, so_nama AS Nama,
-             so_jumlah AS Pesan, so_workshop AS Workshop, so_cab AS Cab,
-             so_cus_kode AS CusKode, so_cmo AS CMO, so_aktif AS Aktif,
-             so_memo AS MapNomor, user_create AS UserCreate
-      FROM tsalesorder
-      UNION ALL
-      SELECT spk_nomor, spk_tanggal, spk_nama, spk_jumlah, spk_workshop, spk_cab AS Cab,
-             spk_cus_kode, spk_cmo, spk_aktif, spk_memo AS MapNomor, user_create AS UserCreate
-      FROM tspk
-      WHERE spk_is_so = 1
-    ) s
-    LEFT JOIN tcustomer c ON c.cus_kode = s.CusKode
-    LEFT JOIN tmemospk map ON map.mspk_nomor = s.MapNomor
-    LEFT JOIN tspk ppic ON ppic.spk_so_ref = s.Nomor AND ppic.spk_is_so = 0
-    LEFT JOIN tuser u ON u.user_kode = s.UserCreate
-    WHERE s.Aktif = 'Y'
-      AND s.CMO <> ''
-      AND ppic.spk_nomor IS NULL
-      AND DATE(s.Tanggal) >= ? AND DATE(s.Tanggal) <= ?
-      AND (s.Nomor LIKE ? OR s.Nama LIKE ? OR c.cus_nama LIKE ?)
+    FROM tsalesorder s
+    LEFT JOIN tcustomer c ON c.cus_kode = s.so_cus_kode
+    LEFT JOIN tmemospk map ON map.mspk_nomor = s.so_memo
+    LEFT JOIN tuser u ON u.user_kode = s.user_create
+    WHERE s.so_aktif = 'Y'
+      AND s.so_cmo <> ''
+      AND (s.so_spk_ref IS NULL OR s.so_spk_ref = '')
+      AND DATE(s.so_tanggal) >= ? AND DATE(s.so_tanggal) <= ?
+      AND (s.so_nomor LIKE ? OR s.so_nama LIKE ? OR c.cus_nama LIKE ?)
   `;
 
   const params = [startDate, endDate, like, like, like];
 
   if (userCab && userCab !== "HO-") {
-    source += ` AND s.Cab = ?`;
+    source += ` AND s.so_cab = ?`;
     params.push(userCab);
   }
 
@@ -893,18 +881,18 @@ const searchAvailableForSpk = async (
 
   const [rows] = await db.query(
     `SELECT
-       s.Nomor, s.Tanggal, s.Nama, s.Pesan, s.Workshop,
-       s.CusKode AS KodeCustomer,
+       s.so_nomor AS Nomor, s.so_tanggal AS Tanggal, s.so_nama AS Nama, s.so_jumlah AS Pesan, s.so_workshop AS Workshop,
+       s.so_cus_kode AS KodeCustomer,
        ${custNameCol} AS Customer,
-       s.MapNomor AS MAP,
-       IFNULL(u.user_nama, s.UserCreate) AS MO,
+       s.so_memo AS MAP,
+       IFNULL(u.user_nama, s.user_create) AS MO,
        CASE
-         WHEN s.MapNomor IS NULL OR s.MapNomor = '' THEN 'TANPA_MAP'
+         WHEN s.so_memo IS NULL OR s.so_memo = '' THEN 'TANPA_MAP'
          WHEN map.mspk_cmo IS NULL OR map.mspk_cmo = '' THEN 'MENUNGGU_APV'
          ELSE 'SUDAH_APPROVE'
        END AS StatusMap
      ${source}
-     ORDER BY s.Tanggal DESC
+     ORDER BY s.so_tanggal DESC
      LIMIT ? OFFSET ?`,
     [...params, limitNum, offset],
   );
