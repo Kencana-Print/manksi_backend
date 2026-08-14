@@ -93,8 +93,8 @@ const getJadwalKirimList = async (req, res) => {
 
 const cekPiutang = async (req, res) => {
   try {
-    const { spkNomor, cusKode } = req.query;
-    const data = await svc.cekPiutang(spkNomor, cusKode);
+    const { spkNomor, cusKode, invPro = "" } = req.query;
+    const data = await svc.cekPiutang(spkNomor, cusKode, invPro);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

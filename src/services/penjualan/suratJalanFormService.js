@@ -590,28 +590,35 @@ const getJadwalKirimList = async (
 // CEK PIUTANG (v_cekpiutang)
 // Sesuai Delphi clkodePropertiesEditValueChanged
 // ─────────────────────────────────────────────────────────
-const cekPiutang = async (spkNomor, cusKode) => {
+const cekPiutang = async (spkNomor, cusKode, invPro = "") => {
   const [[cus]] = await db.query(
     `SELECT cus_korporasi, cus_nama FROM tcustomer WHERE cus_kode = ?`,
     [cusKode],
   );
   if (cus?.cus_korporasi === "Y") return { lunas: true, korporasi: true };
-
   const namaUpper = (cus?.cus_nama || "").toUpperCase();
   if (namaUpper.includes("RITAILER") || namaUpper.includes("DARI WEB")) {
     return { lunas: true, korporasi: false, skipAlasan: "RITAILER/WEB" };
   }
 
-  const [rows] = await db.query(
-    `SELECT flag, flag2 FROM v_cekpiutang
-     WHERE spk_nomor = ? AND inv_cus_kode = ?`,
-    [spkNomor, cusKode],
-  );
+  let query = `SELECT flag, flag2 FROM v_cekpiutang WHERE spk_nomor = ? AND inv_cus_kode = ?`;
+  const params = [spkNomor, cusKode];
+  if (invPro) {
+    query += ` AND inv_nomor = ?`;
+    params.push(invPro);
+  }
 
+  const [rows] = await db.query(query, params);
   if (!rows.length) return { lunas: true, korporasi: false };
 
-  const r = rows[0];
-  const lunas = r.flag === "0" || r.flag2 === "0";
+  // Kalau tanpa invPro dan ada beberapa baris, ambil yang PALING
+  // KETAT (kalau ADA satu saja yang belum lunas, anggap belum lunas) —
+  // lebih aman daripada ambil baris pertama secara acak.
+  const anyUnpaid = rows.some((r) => r.flag !== "0" && r.flag2 !== "0");
+  const lunas = invPro
+    ? rows[0].flag === "0" || rows[0].flag2 === "0"
+    : !anyUnpaid;
+
   return { lunas, korporasi: false };
 };
 
