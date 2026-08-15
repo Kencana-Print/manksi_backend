@@ -243,7 +243,8 @@ const getAllDetail = async (
   for (const s of master) {
     const dtl = await getDetail(s.Nomor, startDate, endDate, cabang, mode);
     for (const d of dtl) {
-      result.push({ ...d, Nama: s.Nama, Customer: s.Customer });
+      // Tambahkan s.Kain agar ikut masuk ke hasil Export Excel
+      result.push({ ...d, Nama: s.Nama, Customer: s.Customer, Kain: s.Kain });
     }
   }
   return result;
