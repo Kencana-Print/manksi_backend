@@ -201,7 +201,8 @@ const searchBarang = async (
   const offset = (Number(page) - 1) * limitNum;
   const like = `%${q}%`;
 
-  let where = `(
+  // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
+  let whereBarang = `(
     NOT EXISTS (
       SELECT 1 FROM (
         SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
@@ -217,72 +218,137 @@ const searchBarang = async (
       ) sox WHERE sox.Nomor = b.brg_kode AND sox.Perush = ? AND sox.Cus = ?
     )
   )`;
-  const params = [perushKode, cusKode];
+  const paramsBarang = [perushKode, cusKode];
 
   if (q) {
-    where += ` AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`;
-    params.push(like, like);
+    whereBarang += ` AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`;
+    paramsBarang.push(like, like);
   }
 
+  // ── Cabang 2 (BARU): SPK turunan custom job — spk_is_so = 0 ──
+  let whereSpk = `
+    WHERE s2.spk_is_so = 0
+      AND s2.spk_perush_kode = ?
+      AND s2.spk_cus_kode = ?
+  `;
+  const paramsSpk = [perushKode, cusKode];
+
+  if (q) {
+    whereSpk += ` AND (s2.spk_nomor LIKE ? OR s2.spk_nama LIKE ?)`;
+    paramsSpk.push(like, like);
+  }
+
+  // ── Count gabungan ──
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total
-     FROM tbarang b
-     WHERE ${where}`,
-    params,
+    `SELECT
+      (SELECT COUNT(*) FROM tbarang b WHERE ${whereBarang})
+      +
+      (SELECT COUNT(*) FROM tspk s2 ${whereSpk})
+      AS total`,
+    [...paramsBarang, ...paramsSpk],
   );
 
   const [rows] = await db.query(
     `SELECT b.brg_kode AS Kode, b.brg_name AS Nama,
             b.brg_ukuran AS Ukuran, b.brg_harga AS Harga
      FROM tbarang b
-     WHERE ${where}
-     ORDER BY b.brg_kode
+     WHERE ${whereBarang}
+
+     UNION ALL
+
+    SELECT s2.spk_nomor AS Kode, s2.spk_nama AS Nama,
+           s2.spk_ukuran AS Ukuran, s2.spk_harga AS Harga
+     FROM tspk s2
+     ${whereSpk}
+
+     ORDER BY Kode
      LIMIT ? OFFSET ?`,
-    [...params, limitNum, offset],
+    [...paramsBarang, ...paramsSpk, limitNum, offset],
   );
+
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
 // ─────────────────────────────────────────────────────────
 // LOAD DETAIL BARANG (saat barang dipilih dari modal/manual)
-// FIX: UNION-aware — coba tsalesorder (SO baru) dulu, fallback
-// ke tspk legacy (spk_is_so=1). Kolom so_jumlah/so_jumlah_inv
-// sepadan 1:1 dengan spk_jumlah/spk_jumlah_inv (pola sama seperti
-// mapSoHeaderRow di salesOrderFormService.js).
+// FIX 2: sekarang juga fallback ke SPK custom job (spk_is_so = 0)
+// kalau kode tidak ditemukan di tbarang — item seperti banner/custom
+// yang murni turunan SPK, tidak punya representasi di tbarang.
+// Jumlah/Kurang untuk item custom diambil langsung dari
+// spk_jumlah - spk_jumlah_inv (SPK ini sendiri yang nyimpan qty,
+// bukan lewat SO induk).
 // ─────────────────────────────────────────────────────────
 const loadBarangDetail = async (kode, perushKode) => {
   const [[barang]] = await db.query(
     `SELECT brg_kode, brg_name, brg_ukuran, brg_harga FROM tbarang WHERE brg_kode = ?`,
     [kode],
   );
-  if (!barang) throw new Error("Barang Tidak di temukan.");
 
-  const [[soNew]] = await db.query(
-    `SELECT
-        so.so_jumlah AS jumlah_total,
-        IFNULL((
-          SELECT SUM(d.invd_jumlah)
-          FROM tinv_dtl d
-          WHERE d.invd_spk_nomor = so.so_nomor
-        ), 0) AS jumlah_inv,
-        so.so_perush_kode, so.so_cus_kode
-     FROM tsalesorder so
-     WHERE so.so_nomor = ? AND so.so_aktif = 'Y'`,
-    [kode],
-  );
+  let itemInfo;
+  let jumlahTotal = 0;
+  let jumlahInv = 0;
 
-  const [[soLegacy]] = !soNew
-    ? await db.query(
-        `SELECT spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv,
-                spk_perush_kode, spk_cus_kode
-         FROM tspk WHERE spk_nomor = ? AND spk_aktif = 'Y'`,
-        [kode],
-      )
-    : [[null]];
+  if (barang) {
+    // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
+    itemInfo = {
+      Kode: barang.brg_kode,
+      Nama: barang.brg_name,
+      Ukuran: barang.brg_ukuran,
+      Harga: barang.brg_harga,
+    };
 
-  const so = soNew || soLegacy;
-  const jumlahTotal = so ? Number(so.jumlah_total) || 0 : 0;
-  const jumlahInv = so ? Number(so.jumlah_inv) || 0 : 0;
+    const [[soNew]] = await db.query(
+      `SELECT
+          so.so_jumlah AS jumlah_total,
+          IFNULL((
+            SELECT SUM(d.invd_jumlah)
+            FROM tinv_dtl d
+            WHERE d.invd_spk_nomor = so.so_nomor
+          ), 0) AS jumlah_inv
+       FROM tsalesorder so
+       WHERE so.so_nomor = ? AND so.so_aktif = 'Y'`,
+      [kode],
+    );
+
+    const [[soLegacy]] = !soNew
+      ? await db.query(
+          `SELECT spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv
+           FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1 AND spk_aktif = 'Y'`,
+          [kode],
+        )
+      : [[null]];
+
+    const so = soNew || soLegacy;
+    if (so) {
+      jumlahTotal = Number(so.jumlah_total) || 0;
+      jumlahInv = Number(so.jumlah_inv) || 0;
+    }
+  } else {
+    // ── Cabang 2 (BARU): SPK turunan custom job — spk_is_so = 0 ──
+    // Kode/nama custom (banner, dsb) tidak ada di tbarang, cuma di tspk.
+    // Jumlah/Kurang dihitung langsung dari SPK ini (bukan via SO induk),
+    // karena SPK turunan punya spk_jumlah/spk_jumlah_inv sendiri.
+    const [[spkCustom]] = await db.query(
+      `SELECT spk_nomor, spk_nama, spk_ukuran, spk_harga,
+        spk_jumlah, spk_jumlah_inv
+       FROM tspk
+       WHERE spk_nomor = ?
+        AND spk_is_so = 0
+        AND spk_perush_kode = ?
+        AND spk_aktif = 'Y'`,
+      [kode, perushKode],
+    );
+    if (!spkCustom) throw new Error("Barang Tidak di temukan.");
+
+    itemInfo = {
+      Kode: spkCustom.spk_nomor,
+      Nama: spkCustom.spk_nama, // ← ganti dari spk_nama2
+      Ukuran: spkCustom.spk_ukuran,
+      Harga: spkCustom.spk_harga,
+    };
+    jumlahTotal = Number(spkCustom.spk_jumlah) || 0;
+    jumlahInv = Number(spkCustom.spk_jumlah_inv) || 0;
+  }
 
   const spkAda = await isSpk(kode);
   let sjList = "-";
@@ -290,16 +356,18 @@ const loadBarangDetail = async (kode, perushKode) => {
     sjList = await getSjForSpk(kode, perushKode);
   }
 
+  const sisa = jumlahTotal - jumlahInv;
+
   return {
-    Kode: barang.brg_kode,
-    Nama: barang.brg_name,
-    Ukuran: barang.brg_ukuran,
-    Jumlah: so ? jumlahTotal - jumlahInv : 0,
-    Harga: barang.brg_harga,
-    Total: Number(barang.brg_harga) * (so ? jumlahTotal - jumlahInv : 0),
+    Kode: itemInfo.Kode,
+    Nama: itemInfo.Nama,
+    Ukuran: itemInfo.Ukuran,
+    Jumlah: sisa,
+    Harga: itemInfo.Harga,
+    Total: Number(itemInfo.Harga) * sisa,
     SjNomor: sjList,
     JmlInv: jumlahInv,
-    Kurang: so ? jumlahTotal - jumlahInv : 0,
+    Kurang: sisa,
   };
 };
 

@@ -54,6 +54,7 @@ const NODE_TYPES = [
   "SO",
   "PROOF",
   "SJ_MEMO",
+  "MPPB",
   "PO",
   "BPB",
   "STBJ",
@@ -267,6 +268,24 @@ const getNodeDetail = async (type, nomor, context = {}) => {
       );
       return row
         ? { type, nomor: row.nomor, tanggal: row.tanggal, label: row.nomor }
+        : null;
+    }
+    case "MPPB": {
+      const [[row]] = await db.query(
+        `SELECT mpb_nomor AS nomor, DATE_FORMAT(mpb_tanggal,'%Y-%m-%d') AS tanggal,
+          mpb_nama AS label, mpb_jmlorder AS jumlah, mpb_approve AS approveStatus
+         FROM tmpb WHERE mpb_nomor = ?`,
+        [nomor],
+      );
+      return row
+        ? {
+            type,
+            nomor: row.nomor,
+            tanggal: row.tanggal,
+            label: row.label || row.nomor,
+            jumlah: row.jumlah,
+            approveStatus: row.approveStatus === "Y" ? "APPROVED" : undefined,
+          }
         : null;
     }
     case "PO": {
@@ -1140,9 +1159,40 @@ const getRelated = async (type, nomor) => {
         const resolved = await resolveProduksiNomor(row.ref);
         if (resolved) backward.push(resolved);
       }
-
       const [poRows] = await db.query(
         `SELECT DISTINCT mkbd2_po_nomor AS nomor FROM tmkb_dtl2 WHERE mkbd2_mkb_nomor = ? AND mkbd2_po_nomor <> ''`,
+        [nomor],
+      );
+      poRows.forEach((r) => forward.push({ type: "PO", nomor: r.nomor }));
+      // ⚠️ ASUMSI (derived, BUKAN FK langsung) — lihat catatan lengkap di
+      // case PERMINTAAN_BAHAN. mkb_spk_nomor bisa terisi nomor SO,
+      // sementara tmintabahan_hdr.min_spk_nomor selalu nomor SPK turunan
+      // — jadi perlu cari SPK turunan dari SO ini dulu (spk_so_ref) buat
+      // dapat kandidat lookup yang benar, konsisten dgn
+      // mintaBahanFormService.getSpkDetailsAndMkb.
+      if (row?.ref) {
+        const [[turunanRow]] = await db.query(
+          `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0`,
+          [row.ref],
+        );
+        const lookupNomors = [row.ref, turunanRow?.spk_nomor].filter(Boolean);
+        const [permintaanBahanRows] = await db.query(
+          `SELECT DISTINCT min_nomor AS nomor
+           FROM tmintabahan_hdr
+           WHERE min_spk_nomor IN (?)`,
+          [lookupNomors],
+        );
+        permintaanBahanRows.forEach((r) =>
+          forward.push({ type: "PERMINTAAN_BAHAN", nomor: r.nomor }),
+        );
+      }
+      break;
+    }
+    case "MPPB": {
+      // ✅ Terkonfirmasi poBahanFormService.js: relasi 1:1, 1 MPPB cuma
+      // bisa dipakai 1 PO (validateField blok kalau MPPB sudah terpakai).
+      const [poRows] = await db.query(
+        `SELECT po_nomor AS nomor FROM tpo_hdr WHERE po_mppb_nomor = ?`,
         [nomor],
       );
       poRows.forEach((r) => forward.push({ type: "PO", nomor: r.nomor }));
@@ -1157,15 +1207,20 @@ const getRelated = async (type, nomor) => {
         const resolved = await resolveProduksiNomor(r.ref);
         if (resolved) backward.push(resolved);
       }
-
-      // Link balik ke MKB (kalau item PO ini di-generate dari MKB, lihat
-      // poBahanFormService saveData: pod_mkb_nomor diisi dari item.mkb)
       const [mkbRefRows] = await db.query(
         `SELECT DISTINCT pod_mkb_nomor AS nomor FROM tpo_dtl WHERE pod_po_nomor = ? AND pod_mkb_nomor <> ''`,
         [nomor],
       );
       mkbRefRows.forEach((r) => backward.push({ type: "MKB", nomor: r.nomor }));
-
+      // ✅ Terkonfirmasi poBahanFormService.js: tpo_hdr.po_mppb_nomor = FK
+      // LANGSUNG ke tmpb.mpb_nomor (level header, bukan derived). Validasi
+      // validateField bahkan mencegah 1 MPPB dipakai >1 PO ("MPPB sudah
+      // di-input di PO"), jadi relasinya 1:1 per PO.
+      const [[hdrRow]] = await db.query(
+        `SELECT po_mppb_nomor AS mppb FROM tpo_hdr WHERE po_nomor = ?`,
+        [nomor],
+      );
+      if (hdrRow?.mppb) backward.push({ type: "MPPB", nomor: hdrRow.mppb });
       const [bpbRows] = await db.query(
         `SELECT DISTINCT bpb_nomor AS nomor FROM tbpb_hdr WHERE bpb_po_nomor = ?`,
         [nomor],
@@ -1360,7 +1415,23 @@ const getRelated = async (type, nomor) => {
         const resolved = await resolveProduksiNomor(row.ref);
         if (resolved) backward.push(resolved);
       }
-
+      // ⚠️ ASUMSI (derived, sama seperti case MKB) — min_spk_nomor di
+      // sini SELALU nomor SPK turunan. Tapi tmkb_hdr.mkb_spk_nomor bisa
+      // tercatat pakai nomor SO INDUK (spk_so_ref dari SPK turunan ini),
+      // bukan nomor SPK turunan itu sendiri — jadi cari MKB berdasarkan
+      // kedua kemungkinan (SPK turunan ATAU SO induknya).
+      if (row?.ref) {
+        const [[spkRow]] = await db.query(
+          `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ? AND spk_is_so = 0`,
+          [row.ref],
+        );
+        const lookupNomors = [row.ref, spkRow?.spk_so_ref].filter(Boolean);
+        const [mkbRows] = await db.query(
+          `SELECT DISTINCT mkb_nomor AS nomor FROM tmkb_hdr WHERE mkb_spk_nomor IN (?)`,
+          [lookupNomors],
+        );
+        mkbRows.forEach((r) => backward.push({ type: "MKB", nomor: r.nomor }));
+      }
       const [realisasiRows] = await db.query(
         `SELECT promin_nomor AS nomor FROM tproduksiminta_hdr WHERE promin_minta = ?`,
         [nomor],
@@ -1928,6 +1999,7 @@ const search = async (type, query) => {
     SO: `SELECT so_nomor AS nomor, so_nama AS label, so_tanggal AS tgl FROM tsalesorder WHERE so_nomor LIKE ? AND so_aktif = 'Y' ORDER BY so_tanggal DESC LIMIT ${limit}`,
     PROOF: `SELECT pf_nomor AS nomor, pf_nomor AS label, pf_tanggal AS tgl FROM tproofgarmen_hdr WHERE pf_nomor LIKE ? ORDER BY pf_tanggal DESC LIMIT ${limit}`,
     SJ_MEMO: `SELECT sj_nomor AS nomor, sj_nomor AS label, sj_tanggal AS tgl FROM tsj_hdr_memo WHERE sj_nomor LIKE ? ORDER BY sj_tanggal DESC LIMIT ${limit}`,
+    MPPB: `SELECT mpb_nomor AS nomor, mpb_nama AS label, mpb_tanggal AS tgl FROM tmpb WHERE mpb_nomor LIKE ? ORDER BY mpb_tanggal DESC LIMIT ${limit}`,
     PO: `SELECT po_nomor AS nomor, po_nomor AS label, po_tanggal AS tgl FROM tpo_hdr WHERE po_nomor LIKE ? ORDER BY po_tanggal DESC LIMIT ${limit}`,
     BPB: `SELECT bpb_nomor AS nomor, bpb_nomor AS label, bpb_tanggal AS tgl FROM tbpb_hdr WHERE bpb_nomor LIKE ? ORDER BY bpb_tanggal DESC LIMIT ${limit}`,
     BPB_NON_BAHAN: `SELECT bpb_nomor AS nomor, bpb_ket AS label, bpb_tanggal AS tgl FROM tgarmenbpb_hdr WHERE bpb_nomor LIKE ? ORDER BY bpb_tanggal DESC LIMIT ${limit}`,

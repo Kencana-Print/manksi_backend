@@ -1270,47 +1270,92 @@ const searchBarangInvProforma = async (
 ) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
-  let params = [];
 
-  // Logika Delphi: Barang tanpa SPK ATAU SPK-nya (SO) punya perusahaan & customer yg sama
-  let whereClause = `
+  // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
+  let paramsBarang = [];
+  let whereBarang = `
     WHERE (s.spk_nomor IS NULL 
        OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ?))
   `;
-  params.push(perushKode, cusKode);
+  paramsBarang.push(perushKode, cusKode);
 
   if (keyword && keyword.trim() !== "") {
-    whereClause += ` AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`;
-    params.push(`%${keyword}%`, `%${keyword}%`);
+    whereBarang += ` AND (b.brg_kode LIKE ? OR b.brg_name LIKE ?)`;
+    paramsBarang.push(`%${keyword}%`, `%${keyword}%`);
   }
 
+  // ── Cabang 2 (BARU): SPK turunan custom job — spk_is_so = 0 ──
+  // Kode/nama item custom (banner, dsb) TIDAK ada di tbarang, cuma di tspk.
+  // Filter perusahaan/customer langsung ke SPK turunan (bukan lewat SO
+  // induk), karena spk_perush_kode/spk_cus_kode sudah ke-set di baris
+  // turunan-nya sendiri sesuai data yang kamu kasih.
+  let paramsSpk = [];
+  let whereSpk = `
+    WHERE s2.spk_is_so = 0
+      AND s2.spk_perush_kode = ?
+      AND s2.spk_cus_kode = ?
+  `;
+  paramsSpk.push(perushKode, cusKode);
+
+  if (keyword && keyword.trim() !== "") {
+    whereSpk += ` AND (s2.spk_nomor LIKE ? OR s2.spk_nama2 LIKE ?)`;
+    paramsSpk.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  // ── Count total gabungan kedua cabang ──
   const [countResult] = await db.query(
-    `SELECT COUNT(*) AS total 
-     FROM tbarang b 
-     LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor AND s.spk_is_so = 1 
-     ${whereClause}`,
-    params,
+    `
+    SELECT
+      (SELECT COUNT(*) FROM tbarang b
+        LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor AND s.spk_is_so = 1
+        ${whereBarang})
+      +
+      (SELECT COUNT(*) FROM tspk s2
+        ${whereSpk})
+      AS total
+    `,
+    [...paramsBarang, ...paramsSpk],
   );
   const total = countResult[0].total;
 
+  // ── Query gabungan (UNION ALL, karena kode barang & kode SPK gak akan
+  // pernah tabrakan — beda ruang kode) ──
   let query = `
-    SELECT 
-      b.brg_kode AS Kode, 
-      b.brg_name AS Nama, 
-      b.brg_ukuran AS Ukuran, 
+    SELECT
+      b.brg_kode AS Kode,
+      b.brg_name AS Nama,
+      b.brg_ukuran AS Ukuran,
       b.brg_harga AS Harga
     FROM tbarang b
     LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor AND s.spk_is_so = 1
-    ${whereClause}
-    ORDER BY b.brg_kode ASC
+    ${whereBarang}
+
+    UNION ALL
+
+    SELECT
+      s2.spk_nomor AS Kode,
+      s2.spk_nama2 AS Nama,
+      COALESCE(
+        NULLIF(s2.spk_ukuran, ''),
+        CONCAT(s2.spk_panjang, 'X', s2.spk_lebar)
+      ) AS Ukuran,
+      s2.spk_harga AS Harga
+    FROM tspk s2
+    ${whereSpk}
+
+    ORDER BY Kode ASC
   `;
 
   if (limitNum > 0) {
     query += ` LIMIT ? OFFSET ?`;
-    params.push(limitNum, offset);
   }
 
-  const [rows] = await db.query(query, params);
+  const allParams = [...paramsBarang, ...paramsSpk];
+  if (limitNum > 0) {
+    allParams.push(limitNum, offset);
+  }
+
+  const [rows] = await db.query(query, allParams);
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
