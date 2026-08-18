@@ -1446,6 +1446,44 @@ const submitRealisasiBedaBahanOtorisasi = async (
     if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
     if (pin.pin_acc) throw new Error("Pengajuan ini sudah pernah diotorisasi.");
 
+    if (statusAcc === "Y") {
+      // ⚠️ GATE WAJIB: approval saja TIDAK CUKUP untuk mengaktifkan.
+      // MKB terkait harus sudah diubah dulu (kode bahan di tmkb_dtl
+      // disesuaikan ke kode yang benar-benar discan) — baru setelah
+      // itu realisasi ini boleh diaktifkan & memotong stok.
+      const [[hdr]] = await conn.query(
+        `SELECT promin_mkb FROM tproduksiminta_hdr WHERE promin_nomor = ?`,
+        [nomor],
+      );
+      if (!hdr?.promin_mkb) {
+        throw new Error(
+          "Realisasi ini tidak terhubung ke MKB manapun — tidak bisa diverifikasi.",
+        );
+      }
+
+      const [mismatchRows] = await conn.query(
+        `SELECT DISTINCT promind_bhn_kode, promind_kodem
+         FROM tproduksiminta_dtl
+         WHERE promind_promin_nomor = ? AND promind_kodem <> promind_bhn_kode`,
+        [nomor],
+      );
+
+      for (const m of mismatchRows) {
+        const [[mkbCheck]] = await conn.query(
+          `SELECT COUNT(*) AS cnt FROM tmkb_dtl
+           WHERE mkbd_mkb_nomor = ? AND mkbd_bhn_kode = ?`,
+          [hdr.promin_mkb, m.promind_bhn_kode],
+        );
+        if (!mkbCheck || mkbCheck.cnt === 0) {
+          throw new Error(
+            `MKB ${hdr.promin_mkb} belum diubah — kode bahan "${m.promind_kodem}" ` +
+              `perlu diganti ke "${m.promind_bhn_kode}" (sesuai yang discan) ` +
+              `di form MKB terlebih dahulu, sebelum realisasi ini bisa di-ACC.`,
+          );
+        }
+      }
+    }
+
     await conn.query(
       `UPDATE tspk_pin5 SET pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
        WHERE pin_trs = 'REALISASI BEDA BAHAN' AND pin_nomor = ? AND pin_urut = 1`,
@@ -1457,11 +1495,8 @@ const submitRealisasiBedaBahanOtorisasi = async (
         `UPDATE tproduksiminta_hdr SET promin_aktif = "Y" WHERE promin_nomor = ?`,
         [nomor],
       );
-      // meniru trigger after_insert (dtl) & dtl2_after_insert yg tadinya
-      // di-skip krn header masih pasif saat baris pertama kali disimpan
       await realisasiBahanFormService.applyStokKeluar(nomor, conn);
     }
-    // statusAcc === "N" -> promin_aktif tetap "N", bahan tidak pernah keluar
 
     await conn.commit();
     return { nomor, peminta: pin.pin_user_minta };

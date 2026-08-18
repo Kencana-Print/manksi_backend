@@ -16,6 +16,10 @@ const getBrowse = async (startDate, endDate) => {
       IFNULL(s.spk_nama, m.mspk_nama) AS NamaSPK, 
       h.promin_jumlah AS Jumlah, 
       IFNULL(s.spk_jumlah, m.mspk_jumlah) AS JmlOrder,
+      -- ⚠️ TAMBAHAN: status aktif fisik — 'N' berarti stok BELUM
+      -- terpotong (biasanya karena ada beda bahan yang belum di-ACC,
+      -- lihat kolom StatusBeda di bawah untuk detail alasannya)
+      h.promin_aktif AS Aktif,
       IFNULL((
         SELECT IFNULL(
           IF(pin_acc="" AND pin_dipakai="", "WAIT",
@@ -26,6 +30,17 @@ const getBrowse = async (startDate, endDate) => {
         WHERE pin_trs="REALISASI MINTA BAHAN" AND pin_nomor=h.promin_nomor 
         ORDER BY pin_urut DESC LIMIT 1
       ), "") AS Ngedit,
+      -- ⚠️ TAMBAHAN: status approval BEDA BAHAN — pin_trs berbeda dari
+      -- Ngedit di atas (yang untuk approval edit-setelah-tutup-buku).
+      -- Dua alur approval ini terpisah, jangan digabung jadi 1 kolom.
+      IFNULL((
+        SELECT IFNULL(
+          IF(pin_acc="" AND pin_dipakai="", "WAIT",
+          IF(pin_acc="Y", "ACC",
+          IF(pin_acc="N", "TOLAK", ""))), "")
+        FROM tspk_pin5 
+        WHERE pin_trs="REALISASI BEDA BAHAN" AND pin_nomor=h.promin_nomor AND pin_urut=1
+      ), "") AS StatusBeda,
       h.user_create AS Usr
     FROM tproduksiminta_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.promin_gdg_asal 

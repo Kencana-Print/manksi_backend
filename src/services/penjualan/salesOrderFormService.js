@@ -464,6 +464,19 @@ const saveData = async (payload, user) => {
     let nomor = header.spk_nomor;
     const divisiStr = String(header.spk_divisi).charAt(0);
 
+    // Divisi 3 dengan Jenis Order murni pengerjaan (SD/SB/TG/PM) — sama
+    // definisinya dengan frontend, HARUS konsisten karena backend adalah
+    // gate terakhir (bukan cuma UI). Ini array TERPISAH dari
+    // ["BR","SB","SD","PL","DP","TG","PM"] yang dipakai di tempat lain
+    // (untuk skip Detail Size divisi 4/6, dan penentuan kode item Kaosan) —
+    // jangan disatukan, karena tujuan pengecualiannya berbeda.
+    const JO_KAOSAN_OPSIONAL = ["SD", "SB", "TG", "PM"];
+    const isJoKaosanOpsional = JO_KAOSAN_OPSIONAL.some((sub) =>
+      String(header.spk_jo_kode || "")
+        .toUpperCase()
+        .includes(sub),
+    );
+
     // ==========================================
     // 1. VALIDASI DATA — TIDAK BERUBAH
     // ==========================================
@@ -532,7 +545,7 @@ const saveData = async (payload, user) => {
         );
       }
     }
-    if (divisiStr === "3") {
+    if (divisiStr === "3" && !isJoKaosanOpsional) {
       if (!dtlKaosan || dtlKaosan.length === 0)
         throw new Error("Detail barang kaosan harus diisi.");
       const sumKaosan = dtlKaosan.reduce(
