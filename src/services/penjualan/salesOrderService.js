@@ -37,7 +37,25 @@ const getBrowseList = async (filters) => {
     canLihatCus,
     canLihatHarga,
   } = filters;
-  let params = [startDate, endDate, startDate, endDate];
+
+  // ⚡ OPTIMASI: startDate dipakai juga sebagai lower-bound filter untuk
+  // subquery agregat sjChk/mp/bpj — supaya MySQL tidak scan SELURUH
+  // histori tsj_dtl/tmutasiproduksi_dtl/tbpj_dtl, cukup baris yang
+  // tanggalnya >= awal periode laporan. Aman selama aktivitas
+  // produksi/pengiriman untuk sebuah SPK/SO selalu terjadi PADA ATAU
+  // SETELAH tanggal SPK/SO itu sendiri (sudah >= startDate karena
+  // SPK/SO-nya sendiri difilter begitu di UNION di bawah). ⚠️ Perlu
+  // diverifikasi dulu terhadap data riil sebelum dianggap final — lihat
+  // query pembanding di komentar service ini / dokumentasi terkait.
+  let params = [
+    startDate,
+    endDate,
+    startDate,
+    endDate, // UNION tspk + tsalesorder (tidak berubah)
+    startDate, // sjChk: tsj_hdr.sj_tanggal >= ?
+    startDate, // mp: tmutasiproduksi_hdr.mph_tanggal >= ?
+    startDate, // bpj: tbpj_hdr.bpj_tanggal >= ?
+  ];
 
   let whereClause = `WHERE 1=1`;
 
@@ -248,7 +266,10 @@ const getBrowseList = async (filters) => {
 
       -- cek sudah ada SJ — 1 row per spk kalau ada minimal 1 SJ
       LEFT JOIN (
-        SELECT DISTINCT sjd_spk_nomor FROM tsj_dtl
+        SELECT DISTINCT sjd_spk_nomor
+        FROM tsj_dtl
+        INNER JOIN tsj_hdr ON sj_nomor = sjd_sj_nomor
+        WHERE sj_tanggal >= ?
       ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
       -- titik proof bordir
@@ -272,6 +293,8 @@ const getBrowseList = async (filters) => {
           SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP018","GP003"), mpd_jumlah, 0)) AS Jahit0,
           SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP019","GP004"), mpd_jumlah, 0)) AS Lipat0
         FROM tmutasiproduksi_dtl
+        INNER JOIN tmutasiproduksi_hdr ON mph_nomor = mpd_mph_nomor
+        WHERE mph_tanggal >= ?
         GROUP BY mpd_spk
       ) mp ON mp.mpd_spk = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
@@ -287,6 +310,8 @@ const getBrowseList = async (filters) => {
           SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP018","GP003"), bpjd_Jumlah, 0)) AS Jahit1,
           SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP019","GP004"), bpjd_Jumlah, 0)) AS Lipat1
         FROM tbpj_dtl
+        INNER JOIN tbpj_hdr ON bpj_nomor = bpjd_bpj_nomor
+        WHERE bpj_tanggal >= ?
         GROUP BY bpjd_spk
       ) bpj ON bpj.bpjd_spk = IFNULL(ppic.spk_nomor, y.spk_nomor)
 

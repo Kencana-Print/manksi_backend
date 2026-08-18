@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const { resolveSoLocation } = require("../penjualan/salesOrderService");
+const realisasiBahanFormService = require("../garmen/realisasiBahanFormService");
 
 // --- 1. GET DATA MASTER (CUSTOMER YANG MINTA ACC) ---
 const getApprovalPiutangMaster = async (query) => {
@@ -1351,6 +1352,127 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
   }
 };
 
+// =========================================================================
+// APPROVAL REALISASI MINTA BAHAN BEDA DENGAN MKB/PERMINTAAN (MENU_ID: 269)
+// ⚠️ pin_trs SENGAJA dibedakan ('REALISASI BEDA BAHAN') dari pin_trs yang
+// sudah dipakai di tproduksimintaService ('REALISASI MINTA BAHAN' untuk
+// approval edit setelah tutup buku). Kalau disamakan, subquery
+// "ORDER BY pin_urut DESC LIMIT 1" di getDetailRealisasi bisa salah ambil
+// baris pin yang bukan miliknya.
+// Row pending dibuat oleh tproduksimintaService.saveData() saat mendeteksi
+// kode bahan hasil scan != kode bahan sesuai MKB/Minta Bahan, lalu
+// promin_aktif di-set 'N' (pasif) sampai baris ini di-ACC.
+// =========================================================================
+
+// --- GET DAFTAR REALISASI BEDA BAHAN (BROWSE) ---
+const getRealisasiBedaBahanList = async (query) => {
+  const { startDate, endDate, belumAccSaja } = query;
+  const dStart =
+    startDate ||
+    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+      .toISOString()
+      .substring(0, 10);
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let sqlCondition = ` WHERE p.pin_trs = 'REALISASI BEDA BAHAN' AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  if (belumAccSaja === "true" || belumAccSaja === true) {
+    sqlCondition += ` AND p.pin_acc = "" `;
+  }
+
+  const sql = `
+    SELECT
+      p.pin_nomor            AS Nomor,
+      h.promin_minta         AS NomorMinta,
+      h.promin_spk_nomor     AS NomorSpk,
+      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
+      h.promin_gdgp_kode     AS GdgProduksi,
+      h.promin_aktif         AS StatusAktif,
+      DATE_FORMAT(h.promin_tanggal, "%d-%m-%Y") AS TglRealisasi,
+      p.pin_ket               AS Keterangan,
+      DATE_FORMAT(p.pin_tgl_minta, "%Y-%m-%d %H:%i:%s") AS TglMinta,
+      p.pin_user_minta        AS Peminta,
+      DATE_FORMAT(p.pin_tgl_pin, "%Y-%m-%d %H:%i:%s")   AS TglAcc,
+      p.pin_user_pin           AS Otorisasi,
+      p.pin_acc                AS Acc
+    FROM tspk_pin5 p
+    LEFT JOIN tproduksiminta_hdr h ON h.promin_nomor = p.pin_nomor
+    LEFT JOIN tspk s     ON s.spk_nomor  = h.promin_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.promin_spk_nomor
+    ${sqlCondition}
+    ORDER BY p.pin_tgl_minta DESC
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd]);
+  return rows;
+};
+
+// --- DETAIL SELISIH (barang yang discan vs yang seharusnya) ---
+const getRealisasiBedaBahanDetail = async (nomor) => {
+  const sql = `
+    SELECT
+      d.promind_kodem   AS KodeDiscan,
+      cm.Bhn_Name       AS NamaDiscan,
+      d.promind_bhn_kode AS KodeSeharusnya,
+      cb.Bhn_Name       AS NamaSeharusnya,
+      d.promind_jumlah  AS Jumlah
+    FROM tproduksiminta_dtl d
+    LEFT JOIN tbahan cm ON cm.Bhn_kode = d.promind_kodem
+    LEFT JOIN tbahan cb ON cb.Bhn_kode = d.promind_bhn_kode
+    WHERE d.promind_promin_nomor = ?
+      AND d.promind_kodem <> d.promind_bhn_kode
+  `;
+  const [rows] = await db.query(sql, [nomor]);
+  return rows;
+};
+
+// --- EKSEKUSI OTORISASI REALISASI BEDA BAHAN ---
+const submitRealisasiBedaBahanOtorisasi = async (
+  nomor,
+  statusAcc,
+  userKode,
+) => {
+  if (!["Y", "N"].includes(statusAcc)) {
+    throw new Error("Status ACC harus Y atau N.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[pin]] = await conn.query(
+      `SELECT pin_user_minta, pin_acc FROM tspk_pin5
+       WHERE pin_trs = 'REALISASI BEDA BAHAN' AND pin_nomor = ? AND pin_urut = 1 FOR UPDATE`,
+      [nomor],
+    );
+    if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
+    if (pin.pin_acc) throw new Error("Pengajuan ini sudah pernah diotorisasi.");
+
+    await conn.query(
+      `UPDATE tspk_pin5 SET pin_tgl_pin = NOW(), pin_user_pin = ?, pin_acc = ?
+       WHERE pin_trs = 'REALISASI BEDA BAHAN' AND pin_nomor = ? AND pin_urut = 1`,
+      [userKode, statusAcc, nomor],
+    );
+
+    if (statusAcc === "Y") {
+      await conn.query(
+        `UPDATE tproduksiminta_hdr SET promin_aktif = "Y" WHERE promin_nomor = ?`,
+        [nomor],
+      );
+      // meniru trigger after_insert (dtl) & dtl2_after_insert yg tadinya
+      // di-skip krn header masih pasif saat baris pertama kali disimpan
+      await realisasiBahanFormService.applyStokKeluar(nomor, conn);
+    }
+    // statusAcc === "N" -> promin_aktif tetap "N", bahan tidak pernah keluar
+
+    await conn.commit();
+    return { nomor, peminta: pin.pin_user_minta };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
@@ -1379,4 +1501,7 @@ module.exports = {
   submitGantiQtyKainOtorisasi,
   getNoPoList,
   submitNoPoOtorisasi,
+  getRealisasiBedaBahanList,
+  getRealisasiBedaBahanDetail,
+  submitRealisasiBedaBahanOtorisasi,
 };

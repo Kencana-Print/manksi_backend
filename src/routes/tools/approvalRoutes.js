@@ -209,4 +209,24 @@ router.post(
   controller.submitNoPoOtorisasi,
 );
 
+// --- APPROVAL REALISASI MINTA BAHAN BEDA DENGAN MKB (MENU_ID: 269) ---
+router.get(
+  "/realisasi-beda-bahan",
+  verifyToken,
+  checkPermission(269, "view"),
+  controller.getRealisasiBedaBahanList,
+);
+router.get(
+  "/realisasi-beda-bahan/:nomor/detail",
+  verifyToken,
+  checkPermission(269, "view"),
+  controller.getRealisasiBedaBahanDetail,
+);
+router.post(
+  "/realisasi-beda-bahan/otorisasi",
+  verifyToken,
+  checkPermission(269, "edit"),
+  controller.submitRealisasiBedaBahanOtorisasi,
+);
+
 module.exports = router;

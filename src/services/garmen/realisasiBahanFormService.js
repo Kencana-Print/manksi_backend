@@ -219,6 +219,112 @@ const getDetailRealisasi = async (nomor) => {
 };
 
 /**
+ * Menerapkan mutasi stok utk semua baris dtl & dtl2 milik 1 realisasi.
+ * Dipanggil SEKALI saat realisasi pindah status pasif -> aktif (approval ACC=Y).
+ * Meniru persis logic trigger after_insert (dtl) & dtl2_after_insert,
+ * karena trigger itu cuma nyala saat event INSERT baris baru, bukan saat
+ * header di-UPDATE belakangan.
+ */
+const applyStokKeluar = async (nomor, conn) => {
+  const [[hdr]] = await conn.query(
+    `SELECT promin_gdg_asal, promin_tanggal, promin_mkb, promin_spk_nomor, promin_minta
+     FROM tproduksiminta_hdr WHERE promin_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Header realisasi tidak ditemukan.");
+
+  const [[minta]] = await conn.query(
+    `SELECT min_cab, min_divisi FROM tmintabahan_hdr WHERE min_nomor = ?`,
+    [hdr.promin_minta],
+  );
+  const acab = minta?.min_cab || "";
+  const adiv = minta?.min_divisi || "";
+
+  let atglmkb = null;
+  if (hdr.promin_mkb) {
+    const [[mkb]] = await conn.query(
+      `SELECT MKB_TANGGAL AS tgl FROM tmkb_hdr WHERE MKB_NOMOR = ?`,
+      [hdr.promin_mkb],
+    );
+    atglmkb = mkb?.tgl ? new Date(mkb.tgl) : null;
+  }
+  const batasMkb = new Date("2022-05-01");
+  const batasCuting = new Date("2026-04-23");
+  const tglRealisasi = new Date(hdr.promin_tanggal);
+
+  // --- Mirror after_insert (dtl) utk tiap baris bahan yg sudah tersimpan ---
+  const [dtlRows] = await conn.query(
+    `SELECT promind_bhn_kode, promind_gross, promind_rs FROM tproduksiminta_dtl WHERE promind_promin_nomor = ?`,
+    [nomor],
+  );
+  for (const d of dtlRows) {
+    await conn.query(
+      `INSERT INTO tmasterstok_bahan (mst_gdg_kode, mst_brg_kode, mst_stok_out, mst_noreferensi, mst_tanggal)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE mst_stok_out = mst_stok_out + VALUES(mst_stok_out)`,
+      [
+        hdr.promin_gdg_asal,
+        d.promind_bhn_kode,
+        d.promind_gross,
+        nomor,
+        hdr.promin_tanggal,
+      ],
+    );
+
+    if (hdr.promin_mkb && atglmkb && atglmkb >= batasMkb) {
+      await conn.query(
+        `INSERT INTO tmasterstok_keepstok (mst_tanggal, mst_noreferensi, mst_spk, mst_brg_kode, mst_stok_out)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE mst_stok_out = mst_stok_out + VALUES(mst_stok_out)`,
+        [
+          hdr.promin_tanggal,
+          nomor,
+          hdr.promin_spk_nomor,
+          d.promind_bhn_kode,
+          d.promind_gross,
+        ],
+      );
+
+      if (d.promind_rs && Number(d.promind_rs) !== 0) {
+        await conn.query(
+          `UPDATE tmasterstok_keepstok SET mst_minta = mst_minta + ?
+           WHERE mst_noreferensi = ? AND mst_spk = ? AND mst_brg_kode = ?`,
+          [
+            d.promind_gross,
+            hdr.promin_mkb,
+            hdr.promin_spk_nomor,
+            d.promind_bhn_kode,
+          ],
+        );
+      }
+    }
+
+    if (adiv === "CUTING" && tglRealisasi >= batasCuting) {
+      await conn.query(
+        `INSERT INTO tmasterstok_cuting (mst_cab, mst_brg_kode, mst_stok_in, mst_noreferensi, mst_tanggal)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE mst_stok_in = mst_stok_in + VALUES(mst_stok_in)`,
+        [acab, d.promind_bhn_kode, d.promind_gross, nomor, hdr.promin_tanggal],
+      );
+    }
+  }
+
+  // --- Mirror dtl2_after_insert utk tiap baris barcode yg sudah tersimpan ---
+  const [dtl2Rows] = await conn.query(
+    `SELECT promind2_barcode, promind2_jumlah FROM tproduksiminta_dtl2 WHERE promind2_promin_nomor = ?`,
+    [nomor],
+  );
+  for (const b of dtl2Rows) {
+    await conn.query(
+      `INSERT INTO tmasterstok_barcode (mst_brg_kode, mst_stok_out, mst_noreferensi, mst_tanggal)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE mst_stok_out = VALUES(mst_stok_out)`,
+      [b.promind2_barcode, b.promind2_jumlah, nomor, hdr.promin_tanggal],
+    );
+  }
+};
+
+/**
  * Simpan Data Realisasi (Create/Edit)
  */
 const saveData = async (payload, user, isEdit = false) => {
@@ -241,14 +347,31 @@ const saveData = async (payload, user, isEdit = false) => {
       );
     }
 
+    // [BARU] Deteksi mismatch: kode bahan yang keluar (d.kode) vs kode yg diminta (d.kodem)
+    const adaBedaBahan = (payload.details || []).some(
+      (d) => d.kode && d.kodem && String(d.kode) !== String(d.kodem),
+    );
+    const isNomorAktif = adaBedaBahan ? "N" : "Y";
+
     if (isEdit) {
-      // UPDATE HEADER
+      // [DIUBAH] DELETE dulu, sebelum header di-UPDATE, supaya trigger before_delete
+      // membaca promin_aktif yg LAMA (state sebelum edit ini) -> reverse stok dg benar.
+      await conn.query(
+        `DELETE FROM tproduksiminta_dtl2 WHERE promind2_promin_nomor=?`,
+        [nomor],
+      );
+      await conn.query(
+        `DELETE FROM tproduksiminta_dtl WHERE promind_promin_nomor=?`,
+        [nomor],
+      );
+
+      // UPDATE HEADER (skrg termasuk promin_aktif yg BARU)
       await conn.query(
         `
         UPDATE tproduksiminta_hdr SET 
           promin_tanggal=?, promin_minta=?, promin_keterangan=?, promin_gdg_asal=?, 
           promin_spk_nomor=?, promin_gdgp_kode=?, promin_jumlah=?, isstatus=?, 
-          date_modified=?, user_modified=? 
+          promin_aktif=?, date_modified=?, user_modified=? 
         WHERE promin_nomor=?
       `,
         [
@@ -260,29 +383,20 @@ const saveData = async (payload, user, isEdit = false) => {
           payload.gudangProduksi,
           payload.jumlah,
           payload.isUtama,
+          isNomorAktif,
           dateModified,
           user.kode,
           nomor,
         ],
       );
 
-      // Update PIN5 jika ACC
+      // Update PIN5 jika ACC (approval edit setelah tutup buku, tidak berubah)
       if (payload.pin_acc === "Y" && !payload.pin_dipakai) {
         await conn.query(
           `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="REALISASI MINTA BAHAN" AND pin_nomor=? AND pin_dipakai=""`,
           [nomor],
         );
       }
-
-      // Hapus detail lama
-      await conn.query(
-        `DELETE FROM tproduksiminta_dtl2 WHERE promind2_promin_nomor=?`,
-        [nomor],
-      );
-      await conn.query(
-        `DELETE FROM tproduksiminta_dtl WHERE promind_promin_nomor=?`,
-        [nomor],
-      );
     } else {
       // INSERT BARU
       const tahun = payload.tanggal.substring(0, 4);
@@ -291,8 +405,8 @@ const saveData = async (payload, user, isEdit = false) => {
       await conn.query(
         `
         INSERT INTO tproduksiminta_hdr 
-        (promin_nomor, promin_tanggal, promin_minta, promin_keterangan, promin_spk_nomor, promin_mkb, promin_gdg_asal, promin_gdgp_kode, promin_jumlah, isstatus, date_create, user_create)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (promin_nomor, promin_tanggal, promin_minta, promin_keterangan, promin_spk_nomor, promin_mkb, promin_gdg_asal, promin_gdgp_kode, promin_jumlah, isstatus, promin_aktif, date_create, user_create)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           nomor,
@@ -305,13 +419,14 @@ const saveData = async (payload, user, isEdit = false) => {
           payload.gudangProduksi,
           payload.jumlah,
           payload.isUtama,
+          isNomorAktif,
           dateModified,
           user.kode,
         ],
       );
     }
 
-    // 2. INSERT DETAILS BARCODE (dtl2)
+    // 2. INSERT DETAILS BARCODE (dtl2) — trigger otomatis gate by promin_aktif skrg
     for (const b of payload.barcodes) {
       if (b.barcode && b.kode) {
         await conn.query(
@@ -324,10 +439,10 @@ const saveData = async (payload, user, isEdit = false) => {
       }
     }
 
-    // 3. INSERT DETAILS MINTA (dtl) & KALKULASI TOTAL
-    let tpo = 0; // Total Minta
-    let tjumlah = 0; // Total Netto form ini (dibatasi minta)
-    let tsudah = 0; // Total sudah (dibatasi minta)
+    // 3. INSERT DETAILS MINTA (dtl) & KALKULASI TOTAL — trigger otomatis gate by promin_aktif skrg
+    let tpo = 0;
+    let tjumlah = 0;
+    let tsudah = 0;
 
     for (const d of payload.details) {
       if (d.kode && d.nama) {
@@ -336,8 +451,6 @@ const saveData = async (payload, user, isEdit = false) => {
         const sudah = parseFloat(d.sudah) || 0;
 
         tpo += minta;
-
-        // Logika batasan Delphi: Jika netto > minta, yang dihitung sbg progres hanya sebatas minta
         tjumlah += netto <= minta ? netto : minta;
         tsudah += sudah <= minta ? sudah : minta;
 
@@ -365,20 +478,51 @@ const saveData = async (payload, user, isEdit = false) => {
     // 4. UPDATE STATUS tmintabahan_hdr.min_close
     const tq = tjumlah + tsudah;
     let minCloseStatus = 0;
-
     if (tq >= tpo && tpo > 0) {
-      minCloseStatus = 1; // Terpenuhi Penuh (Close)
+      minCloseStatus = 1;
     } else if (tq > 0 && tq < tpo) {
-      minCloseStatus = 2; // Terpenuhi Parsial
+      minCloseStatus = 2;
     }
-
     await conn.query(
       `UPDATE tmintabahan_hdr SET min_close=? WHERE min_nomor=?`,
       [minCloseStatus, payload.noMinta],
     );
 
+    // [BARU] 5. Kelola antrian approval MENU_ID 269 kalau ada beda bahan
+    // Hapus dulu pengajuan pending sebelumnya (kalau ada, dan belum di-ACC),
+    // supaya tidak dobel saat user edit ulang realisasi yg sama.
+    const [[pinLama]] = await conn.query(
+      `SELECT pin_acc FROM tspk_pin5 WHERE pin_trs='REALISASI BEDA BAHAN' AND pin_nomor=? AND pin_urut=1`,
+      [nomor],
+    );
+    if (!pinLama || pinLama.pin_acc === "") {
+      await conn.query(
+        `DELETE FROM tspk_pin5 WHERE pin_trs='REALISASI BEDA BAHAN' AND pin_nomor=? AND pin_urut=1`,
+        [nomor],
+      );
+    }
+
+    if (adaBedaBahan) {
+      const bedaList = payload.details
+        .filter((d) => d.kode && d.kodem && String(d.kode) !== String(d.kodem))
+        .map((d) => `${d.kodem} -> ${d.kode}`)
+        .join(", ");
+
+      await conn.query(
+        `INSERT INTO tspk_pin5 
+          (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_program, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_acc, pin_dipakai)
+         VALUES ('REALISASI BEDA BAHAN', ?, 1, 'BEDA', 'REALISASI MINTA BAHAN', ?, ?, NOW(), ?, '', '')`,
+        [
+          nomor,
+          payload.tanggal,
+          `Beda kode diminta -> discan: ${bedaList}`,
+          user.kode,
+        ],
+      );
+    }
+
     await conn.commit();
-    return { nomor };
+    return { nomor, aktif: isNomorAktif, perluApproval: adaBedaBahan };
   } catch (error) {
     await conn.rollback();
     throw error;
@@ -442,5 +586,6 @@ module.exports = {
   getBarcodeInfo,
   getDetailRealisasi,
   saveData,
+  applyStokKeluar,
   getPrintData,
 };

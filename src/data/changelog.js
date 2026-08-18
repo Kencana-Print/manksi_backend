@@ -5,6 +5,24 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.1",
+    date: "2026-08-15",
+    changes: [
+      {
+        type: "added",
+        text: "Pada Realisasi Permintaan Bahan, jika barcode bahan yang discan berbeda dengan permintaan/MKB, maka statusnya menjadi pasif dan stok belum terpotong. Harus meminta approval terlebih dahulu dan MKB-nya diubah agar dapat aktif dan memotong stok bahan barcode",
+      },
+      {
+        type: "added",
+        text: "Sistem Tab: sekarang buka menu baru tidak perlu klik kanan > buka tab baru lagi. Semua halaman yang dibuka akan muncul sebagai tab di bagian atas, tetap dalam satu jendela — hemat memori dan gampang berpindah antar transaksi. Bisa digeser pakai scroll mouse, dinavigasi pakai tombol panah keyboard, dan ditutup satu-per-satu atau sekaligus lewat klik kanan.",
+      },
+      {
+        type: "fixed",
+        text: "Optimasi query browse Sales Order",
+      },
+    ],
+  },
+  {
     version: "1.0.0",
     date: "2026-08-04",
     changes: [

@@ -518,6 +518,60 @@ const submitNoPoOtorisasi = async (req, res) => {
   }
 };
 
+// =========================================================================
+// APPROVAL REALISASI MINTA BAHAN BEDA DENGAN MKB (MENU_ID: 269)
+// =========================================================================
+const getRealisasiBedaBahanList = async (req, res) => {
+  try {
+    const data = await service.getRealisasiBedaBahanList(req.query);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiBedaBahanDetail = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    if (!nomor)
+      return res
+        .status(400)
+        .json({ success: false, message: "Nomor Realisasi wajib dikirim" });
+
+    const data = await service.getRealisasiBedaBahanDetail(nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const submitRealisasiBedaBahanOtorisasi = async (req, res) => {
+  try {
+    const { nomor, status_acc } = req.body;
+    const userKode = req.user.kode;
+
+    if (!nomor || !status_acc) {
+      return res.status(400).json({
+        success: false,
+        message: "Nomor dan Status ACC wajib diisi",
+      });
+    }
+
+    const result = await service.submitRealisasiBedaBahanOtorisasi(
+      nomor,
+      status_acc,
+      userKode,
+    );
+    res.status(200).json({
+      success: true,
+      message: `Berhasil.\nSilahkan info ke ${result.peminta}`,
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getMasterData,
   getPengajuanDtl,
@@ -546,4 +600,7 @@ module.exports = {
   submitGantiQtyKainOtorisasi,
   getNoPoList,
   submitNoPoOtorisasi,
+  getRealisasiBedaBahanList,
+  getRealisasiBedaBahanDetail,
+  submitRealisasiBedaBahanOtorisasi,
 };
