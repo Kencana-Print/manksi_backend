@@ -85,30 +85,31 @@ const getById = async (nomor) => {
   // Detail
   const [dtl] = await db.query(
     `SELECT
-       d.sjd_spk_nomor,
-       s.spk_nama2 AS spk_nama,
-       d.sjd_ukuran,
-       s.spk_jo_kode,
-       s.spk_jumlah,
-       s.spk_harga,
-       d.sjd_jumlah,
-       d.sjd_harga,
-       d.sjd_koli,
-       d.sjd_keterangan,
-       d.sjd_nourut,
-       d.sjd_nokirim,
-       d.sjd_idkirim,
-       IFNULL(z.spks_qty, 0) AS qtyorder,
-       IFNULL(z.spks_size, '') AS size,
-       IFNULL(j.uraian, '') AS uraian
-     FROM tsj_dtl d
-     LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
-     LEFT JOIN tspk_size z
-       ON z.spks_nomor = d.sjd_spk_nomor AND z.spks_size = d.sjd_ukuran
-     LEFT JOIN tjadwalkirim_dtl j
-       ON j.nomor_kirim = d.sjd_nokirim AND j.No_urut = d.sjd_idkirim
-     WHERE d.sjd_sj_nomor = ?
-     ORDER BY d.sjd_nourut`,
+      d.sjd_spk_nomor,
+      s.spk_nama2 AS spk_nama,
+      d.sjd_ukuran,
+      s.spk_jo_kode,
+      s.spk_jumlah,
+      s.spk_harga,
+      d.sjd_jumlah,
+      d.sjd_harga,
+      d.sjd_koli,
+      d.sjd_keterangan,
+      d.sjd_nourut,
+      d.sjd_nokirim,
+      d.sjd_idkirim,
+      IFNULL(z.spks_qty, 0) AS qtyorder,
+      IFNULL(z.spks_size, '') AS size,
+      IFNULL(j.uraian, '') AS uraian,
+      IFNULL(s.spk_so_ref, '') AS so_ref
+    FROM tsj_dtl d
+    LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+    LEFT JOIN tspk_size z
+      ON z.spks_nomor = d.sjd_spk_nomor AND z.spks_size = d.sjd_ukuran
+    LEFT JOIN tjadwalkirim_dtl j
+      ON j.nomor_kirim = d.sjd_nokirim AND j.No_urut = d.sjd_idkirim
+    WHERE d.sjd_sj_nomor = ?
+    ORDER BY d.sjd_nourut`,
     [nomor],
   );
 
@@ -299,6 +300,7 @@ const getSpkDetail = async (
       const sudah = await getSudah(spkNomor, r.spks_size, excludeNomor);
       rows.push({
         SpkNomor: r.spks_nomor,
+        SoNomor: soNomor,
         NamaSpk: r.spk_nama2,
         Ukuran: ukuran,
         Size: r.spks_size,
@@ -341,6 +343,7 @@ const getSpkDetail = async (
       divisiStr === "3" || divisiStr === "4" ? "" : spkInfo.spk_ukuran;
     rows.push({
       SpkNomor: spkInfo.spk_nomor,
+      SoNomor: soNomor,
       NamaSpk: spkInfo.spk_nama2,
       Ukuran: ukuran,
       Size: "",
@@ -381,7 +384,7 @@ const getSpkDetailFromJadwal = async (
   idKirim = 0,
 ) => {
   const [[spkCheck]] = await db.query(
-    `SELECT spk_nomor FROM tspk
+    `SELECT spk_nomor, spk_so_ref FROM tspk
      WHERE spk_nomor = ? AND spk_is_so = 0 AND spk_aktif = 'Y'`,
     [spkNomorTurunan],
   );
@@ -389,13 +392,14 @@ const getSpkDetailFromJadwal = async (
     throw new Error("SPK turunan tidak ditemukan atau sudah tidak aktif.");
   }
   const spkNomor = spkCheck.spk_nomor;
+  // Fallback ke nomor turunan sendiri kalau spk_so_ref kosong (jaga-jaga
+  // data lama yang belum lengkap link-nya)
+  const soNomor = spkCheck.spk_so_ref || spkNomorTurunan;
   const divisiStr = String(divisi).charAt(0);
-
   const [[sizeCheck]] = await db.query(
     `SELECT COUNT(*) AS cnt FROM tspk_size WHERE spks_nomor = ?`,
     [spkNomor],
   );
-
   let rows = [];
   if (sizeCheck.cnt > 0) {
     const [sizes] = await db.query(
@@ -412,6 +416,7 @@ const getSpkDetailFromJadwal = async (
       const sudah = await getSudah(spkNomor, r.spks_size, excludeNomor);
       rows.push({
         SpkNomor: r.spks_nomor,
+        SoNomor: soNomor,
         NamaSpk: r.spk_nama2,
         Ukuran: ukuran,
         Size: r.spks_size,
@@ -441,11 +446,11 @@ const getSpkDetailFromJadwal = async (
       [spkNomor],
     );
     if (!spkInfo) throw new Error("SPK tidak ditemukan.");
-
     const ukuran =
       divisiStr === "3" || divisiStr === "4" ? "" : spkInfo.spk_ukuran;
     rows.push({
       SpkNomor: spkInfo.spk_nomor,
+      SoNomor: soNomor,
       NamaSpk: spkInfo.spk_nama2,
       Ukuran: ukuran,
       Size: "",
@@ -464,7 +469,6 @@ const getSpkDetailFromJadwal = async (
       KetPo: spkInfo.spk_nomor_po || "",
     });
   }
-
   return rows;
 };
 
@@ -1117,7 +1121,8 @@ const getDataCetak = async (nomor) => {
   const [dtl] = await db.query(
     `SELECT d.sjd_spk_nomor, d.sjd_ukuran, d.sjd_jumlah,
             d.sjd_koli, d.sjd_keterangan, d.sjd_nokirim,
-            s.spk_nama, s.spk_nama2, s.spk_panjang, s.spk_lebar
+            s.spk_nama, s.spk_nama2, s.spk_panjang, s.spk_lebar,
+            IFNULL(s.spk_so_ref, '') AS so_ref
      FROM tsj_dtl d
      LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
      WHERE d.sjd_sj_nomor = ?
