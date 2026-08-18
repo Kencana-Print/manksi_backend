@@ -385,6 +385,8 @@ const cekGudangAsal = async (req, res) => {
       }
 
       // 3. Cek LHK sebelumnya
+      const hasPo = await svc.cekPoInternal(nomorSpk);
+
       const lhkPrevMap = {
         GP012: "GP001",
         GP021: "GP015", // qc cutting → butuh LHK cutting
@@ -398,7 +400,7 @@ const cekGudangAsal = async (req, res) => {
       if (gdgAsal === "GP012" || gdgAsal === "GP021") {
         const lhkAsal = gdgAsal === "GP012" ? "GP001" : "GP015";
         const hasLhk = await svc.cekLhk(nomorSpk, lhkAsal);
-        if (!hasLhk) {
+        if (!hasLhk && !hasPo) {
           return res.status(400).json({
             success: false,
             message: "Spk tsb belum input lhk cutting.\nHubungi divisi tsb.",
@@ -407,7 +409,7 @@ const cekGudangAsal = async (req, res) => {
       } else if (gdgAsal === "GP004" || gdgAsal === "GP019") {
         const lhkJahit = gdgAsal === "GP004" ? "GP003" : "GP018";
         const hasLhk = await svc.cekLhk(nomorSpk, lhkJahit);
-        if (!hasLhk) {
+        if (!hasLhk && !hasPo) {
           return res.status(400).json({
             success: false,
             message: "Spk tsb belum input lhk jahit.\nHubungi divisi tsb.",
@@ -422,7 +424,7 @@ const cekGudangAsal = async (req, res) => {
           const hasLhk =
             (await svc.cekLhk(nomorSpk, gdgQcCut)) ||
             (await svc.cekLhk(nomorSpk, "GP021"));
-          if (!hasLhk)
+          if (!hasLhk && !hasPo)
             return res.status(400).json({
               success: false,
               message:
@@ -434,7 +436,7 @@ const cekGudangAsal = async (req, res) => {
           const hasLhk =
             (await svc.cekLhk(nomorSpk, "GP012")) ||
             (await svc.cekLhk(nomorSpk, "GP021"));
-          if (!hasLhk)
+          if (!hasLhk && !hasPo)
             return res.status(400).json({
               success: false,
               message:
@@ -446,33 +448,31 @@ const cekGudangAsal = async (req, res) => {
           const hasLhk =
             (await svc.cekLhk(nomorSpk, "GP010")) ||
             (await svc.cekLhk(nomorSpk, "GP022"));
-          if (!hasLhk)
+          if (!hasLhk && !hasPo)
             return res.status(400).json({
               success: false,
               message: "Spk tsb belum input lhk qc cetak.\nHubungi divisi tsb.",
             });
         }
       }
-
       // Cek LHK Jahit P1 (GP018)
       else if (gdgAsal === "GP018") {
         if (ckcetak) {
           const hasLhk =
             (await svc.cekLhk(nomorSpk, "GP010")) ||
             (await svc.cekLhk(nomorSpk, "GP022"));
-          if (!hasLhk)
+          if (!hasLhk && !hasPo)
             return res.status(400).json({
               success: false,
               message: "Spk tsb belum input lhk qc cetak.\nHubungi divisi tsb.",
             });
         }
       }
-
       // Cek LHK Jahit P4 (GP003)
       else if (gdgAsal === "GP003") {
         if (ckcetak) {
           const hasLhk = await svc.cekLhk(nomorSpk, "GP032");
-          if (!hasLhk)
+          if (!hasLhk && !hasPo)
             return res.status(400).json({
               success: false,
               message: "Spk tsb belum input lhk dc.\nHubungi divisi tsb.",
@@ -483,7 +483,7 @@ const cekGudangAsal = async (req, res) => {
       else if (gdgAsal === "GP010") {
         if (ckcetak) {
           const hasLhk = await svc.cekLhk(nomorSpk, "GP002");
-          if (!hasLhk) {
+          if (!hasLhk && !hasPo) {
             return res.status(400).json({
               success: false,
               message: "Spk tsb belum input lhk cetak.\nHubungi divisi tsb.",
@@ -494,7 +494,7 @@ const cekGudangAsal = async (req, res) => {
           const hasLhk =
             (await svc.cekLhk(nomorSpk, "GP014")) ||
             (await svc.cekLhk(nomorSpk, "GP016"));
-          if (!hasLhk) {
+          if (!hasLhk && !hasPo) {
             return res.status(400).json({
               success: false,
               message: "Spk tsb belum input lhk bordir.\nHubungi divisi tsb.",

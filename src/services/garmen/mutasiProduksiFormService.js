@@ -1569,6 +1569,17 @@ const getApprovalNoPlanStatus = async (nomor) => {
   return "MINTA"; // pin_acc kosong = menunggu approval
 };
 
+// ─────────────────────────────────────────────────────────
+// CEK PO INTERNAL (Tambahkan di bagian bawah sebelum module.exports)
+// ─────────────────────────────────────────────────────────
+const cekPoInternal = async (nomorSpk) => {
+  const [[row]] = await db.query(
+    `SELECT COUNT(*) AS jml FROM tpointernal_hdr WHERE poi_spk_nomor = ?`,
+    [nomorSpk],
+  );
+  return Number(row.jml) > 0;
+};
+
 module.exports = {
   generateNomor,
   getGudangByMutasi,
@@ -1605,4 +1616,5 @@ module.exports = {
   syncApprovalNoPlan,
   getApprovalNoPlanStatus,
   getPlanningPerSpk,
+  cekPoInternal,
 };
