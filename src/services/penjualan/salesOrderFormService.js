@@ -582,14 +582,19 @@ const saveData = async (payload, user) => {
       if (header.spk_cmo) {
         header.spk_cmo_tanggal = new Date();
       }
-      const noPoPendingCreate = await syncNoPoApproval(
-        conn,
-        nomor,
-        header,
-        user,
-      );
-      if (noPoPendingCreate) header.spk_aktif = "N";
-      if (!header.spk_memo) {
+      // Divisi 3 (Kaosan): Nomor PO opsional, TIDAK perlu approval
+      // "SO Tanpa PO" — skip syncNoPoApproval sepenuhnya supaya SO
+      // tetap AKTIF walau spk_nomor_po kosong.
+      if (divisiStr !== "3") {
+        const noPoPendingCreate = await syncNoPoApproval(
+          conn,
+          nomor,
+          header,
+          user,
+        );
+        if (noPoPendingCreate) header.spk_aktif = "N";
+      }
+      if (!header.spk_memo && divisiStr !== "3") {
         if (header.spk_acc_customer !== "Y") {
           throw new Error(
             "Customer belum menyetujui pesanan ini. SO tidak bisa disimpan.",
@@ -608,8 +613,8 @@ const saveData = async (payload, user) => {
         [nomor],
       );
       const existingData = existingRows[0] || {};
-
-      if (!header.spk_memo) {
+      // Divisi 3 (Kaosan) dikecualikan dari gate persetujuan customer
+      if (!header.spk_memo && divisiStr !== "3") {
         const wasAlreadyApproved = existingData.so_acc_customer === "Y";
         if (
           !wasAlreadyApproved &&
@@ -619,12 +624,9 @@ const saveData = async (payload, user) => {
           throw new Error("Tanggal persetujuan customer wajib diisi.");
         }
       }
-      // ── [TAMBAHAN]: Cek perubahan status approve CMO
       if (header.spk_cmo && !existingData.so_cmo) {
-        // Baru saja dicentang approve
         header.spk_cmo_tanggal = new Date();
       } else if (!header.spk_cmo) {
-        // Centang approve dicabut (batal approve)
         header.spk_cmo_tanggal = null;
       }
       header.user_modified = user.kode;
@@ -642,8 +644,16 @@ const saveData = async (payload, user) => {
       if (header.spk_pinjo === "MINTA ACC" || header.spk_pinjo === "TOLAK") {
         header.spk_aktif = "N";
       }
-      const noPoPendingEdit = await syncNoPoApproval(conn, nomor, header, user);
-      if (noPoPendingEdit) header.spk_aktif = "N";
+      // Divisi 3 (Kaosan): sama seperti mode create, Nomor PO opsional
+      if (divisiStr !== "3") {
+        const noPoPendingEdit = await syncNoPoApproval(
+          conn,
+          nomor,
+          header,
+          user,
+        );
+        if (noPoPendingEdit) header.spk_aktif = "N";
+      }
       if (header.kepentingan_acc === "MINTA ACC") {
         await conn.query(
           `INSERT INTO tspk_pin_prioritas (pin_nomor, pin_tgl_minta, pin_user_minta)
