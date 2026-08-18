@@ -217,8 +217,11 @@ const getBrowseList = async (filters) => {
       LEFT JOIN tdivisi v ON y.spk_divisi = v.kode
       LEFT JOIN (SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk) k ON k.lds_spk = y.spk_nomor
       LEFT JOIN (SELECT lcd_spk_nomor, SUM(IFNULL(lcd_qty_Cetak,0)) AS lcd_qty_Cetak, MIN(lch_tanggal) AS lch_tanggal FROM tlhk_cetakmmt_dtl INNER JOIN tlhk_cetakmmt_hdr ON (lch_nomor=lcd_lch_nomor) GROUP BY 1) l ON l.lcd_spk_nomor = y.spk_nomor
-      LEFT JOIN tspk ppic ON ppic.spk_so_ref = y.spk_nomor AND ppic.spk_is_so = 0
-
+      
+      
+      LEFT JOIN tspk ppic ON ppic.spk_so_ref<>'' and  ppic.spk_is_so = 0  and ppic.spk_so_ref = y.spk_nomor
+      
+      
       -- pin_acc/Ngedit — sebelumnya 2 correlated subquery per baris, sekarang 1 JOIN
       LEFT JOIN (
         SELECT p1.pin_nomor, p1.pin_acc, p1.pin_dipakai
