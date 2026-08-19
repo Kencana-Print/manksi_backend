@@ -217,25 +217,25 @@ const getLookups = async (category) => {
     case "satuan_acc":
       return (
         await db.query(
-          "SELECT satuan AS Nama FROM taccesories_satuan ORDER BY satuan ASC",
+          "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
         )
       )[0];
     case "satuan_obat":
       return (
         await db.query(
-          "SELECT os_satuan AS Nama FROM tobat_satuan ORDER BY os_satuan ASC",
+          "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
         )
       )[0];
     case "satuan_sparepart":
       return (
         await db.query(
-          "SELECT ss_satuan AS Nama FROM tsparepart_satuan ORDER BY ss_satuan ASC",
+          "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
         )
       )[0];
     case "satuan_atk":
       return (
         await db.query(
-          "SELECT as_satuan AS Nama FROM tatk_satuan ORDER BY as_satuan ASC",
+          "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
         )
       )[0];
 
