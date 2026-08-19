@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../../controllers/garmen/mkaController");
-const { verifyToken, checkPermission } = require("../../middleware/authMiddleware");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../../middleware/authMiddleware");
 
 const MENU_ID = 57;
 
@@ -33,7 +36,7 @@ router.delete(
 router.get(
   "/export-header",
   verifyToken,
-  checkPermission(MENU_ID, "export"),
+  checkPermission(MENU_ID, "view"),
   controller.exportHeader,
 );
 
@@ -41,7 +44,7 @@ router.get(
 router.get(
   "/export-detail",
   verifyToken,
-  checkPermission(MENU_ID, "export"),
+  checkPermission(MENU_ID, "view"),
   controller.exportDetail,
 );
 
