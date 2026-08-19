@@ -1,5 +1,10 @@
 const db = require("../../../config/database");
 
+// Tanggal migrasi format SPK — sebelum tanggal ini, SO masih punya
+// turunan SPK PPIC lama (via tspk.spk_so_ref). Sesudahnya, skema
+// penomoran berubah sehingga kolom SPK tidak lagi relevan/diisi.
+const SPK_LEGACY_CUTOFF = "2026-08-06";
+
 // ─────────────────────────────────────────────────────────
 // Helper — bangun klausa WHERE + params, sumber SO = UNION
 // tsalesorder (baru) + tspk legacy (spk_is_so=1, pre-migrasi).
@@ -68,7 +73,13 @@ const buildMasterSelect = (canLihatCus) => {
       s.spk_prasj AS Prasj,
       IFNULL(kirim.total, 0) AS Kirim,
       DATE_FORMAT(s.spk_dateline, '%Y-%m-%d') AS Dateline,
-      s.spk_nomor_po AS NomorPO
+      s.spk_nomor_po AS NomorPO,
+      -- ⚠️ Kolom SPK: hanya diisi untuk SO format lama (sebelum
+      -- SPK_LEGACY_CUTOFF), diambil dari turunan SPK PPIC via
+      -- spk_so_ref. Untuk SO format baru (sesudah cutoff), kolom
+      -- ini sengaja dikosongkan — skema penomoran baru tidak lagi
+      -- punya turunan SPK PPIC terpisah dengan pola yang sama.
+      IFNULL(spkref.SpkNomor, '') AS Spk
     FROM (
       SELECT
         spk_nomor, spk_tanggal, spk_divisi, spk_cus_kode, spk_nama, spk_ukuran,
@@ -88,12 +99,6 @@ const buildMasterSelect = (canLihatCus) => {
     ) s
     INNER JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
     LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
-    -- ⚠️ FIX: Kirim TIDAK dibaca dari kolom cache spk_jumlah_kirim/
-    -- so_jumlah_kirim (kolom itu memang tidak pernah di-update oleh
-    -- suratJalanFormService.save() — dihitung live dari tsj_dtl).
-    -- SJ mereferensikan SPK PPIC turunan (bukan nomor SO langsung),
-    -- jadi dijembatani via spk_so_ref dulu, sama pola dengan join SJ
-    -- di getExportData/getDetailByNomor.
     LEFT JOIN (
       SELECT ppic.spk_so_ref AS SoNomor, SUM(d.sjd_jumlah) AS total
       FROM tspk ppic
@@ -102,6 +107,17 @@ const buildMasterSelect = (canLihatCus) => {
       WHERE ppic.spk_is_so = 0 AND h.sj_status_otomatis = 0
       GROUP BY ppic.spk_so_ref
     ) kirim ON kirim.SoNomor = s.spk_nomor
+    -- ⚠️ BARU: turunan SPK PPIC lama (format sebelum migrasi),
+    -- dipetakan dari spk_so_ref sama seperti join "kirim" di atas.
+    -- 1 SO idealnya cuma punya 1 turunan; GROUP_CONCAT sebagai
+    -- pengaman kalau ada lebih dari 1.
+    LEFT JOIN (
+      SELECT ppic.spk_so_ref AS SoNomor,
+        GROUP_CONCAT(ppic.spk_nomor SEPARATOR ', ') AS SpkNomor
+      FROM tspk ppic
+      WHERE ppic.spk_is_so = 0
+      GROUP BY ppic.spk_so_ref
+    ) spkref ON spkref.SoNomor = s.spk_nomor
   `;
 };
 
