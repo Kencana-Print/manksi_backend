@@ -1271,11 +1271,11 @@ const searchBarangInvProforma = async (
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
 
-  // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
+  // ── Cabang 1: barang master reguler — SO check HANYA dari tsalesorder ──
   let paramsBarang = [];
   let whereBarang = `
-    WHERE (s.spk_nomor IS NULL 
-       OR (s.spk_perush_kode = ? AND s.spk_cus_kode = ?))
+    WHERE (so.so_nomor IS NULL 
+       OR (so.so_perush_kode = ? AND so.so_cus_kode = ?))
   `;
   paramsBarang.push(perushKode, cusKode);
 
@@ -1284,11 +1284,8 @@ const searchBarangInvProforma = async (
     paramsBarang.push(`%${keyword}%`, `%${keyword}%`);
   }
 
-  // ── Cabang 2 (BARU): SPK turunan custom job — spk_is_so = 0 ──
+  // ── Cabang 2: SPK turunan custom job — spk_is_so = 0 ──
   // Kode/nama item custom (banner, dsb) TIDAK ada di tbarang, cuma di tspk.
-  // Filter perusahaan/customer langsung ke SPK turunan (bukan lewat SO
-  // induk), karena spk_perush_kode/spk_cus_kode sudah ke-set di baris
-  // turunan-nya sendiri sesuai data yang kamu kasih.
   let paramsSpk = [];
   let whereSpk = `
     WHERE s2.spk_is_so = 0
@@ -1298,7 +1295,7 @@ const searchBarangInvProforma = async (
   paramsSpk.push(perushKode, cusKode);
 
   if (keyword && keyword.trim() !== "") {
-    whereSpk += ` AND (s2.spk_nomor LIKE ? OR s2.spk_nama2 LIKE ?)`;
+    whereSpk += ` AND (s2.spk_nomor LIKE ? OR s2.spk_nama LIKE ?)`;
     paramsSpk.push(`%${keyword}%`, `%${keyword}%`);
   }
 
@@ -1307,7 +1304,7 @@ const searchBarangInvProforma = async (
     `
     SELECT
       (SELECT COUNT(*) FROM tbarang b
-        LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor AND s.spk_is_so = 1
+        LEFT JOIN tsalesorder so ON b.brg_kode = so.so_nomor
         ${whereBarang})
       +
       (SELECT COUNT(*) FROM tspk s2
@@ -1327,14 +1324,14 @@ const searchBarangInvProforma = async (
       b.brg_ukuran AS Ukuran,
       b.brg_harga AS Harga
     FROM tbarang b
-    LEFT JOIN tspk s ON b.brg_kode = s.spk_nomor AND s.spk_is_so = 1
+    LEFT JOIN tsalesorder so ON b.brg_kode = so.so_nomor
     ${whereBarang}
 
     UNION ALL
 
     SELECT
       s2.spk_nomor AS Kode,
-      s2.spk_nama2 AS Nama,
+      s2.spk_nama AS Nama,
       COALESCE(
         NULLIF(s2.spk_ukuran, ''),
         CONCAT(s2.spk_panjang, 'X', s2.spk_lebar)

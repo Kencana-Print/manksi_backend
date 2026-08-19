@@ -201,23 +201,18 @@ const searchBarang = async (
   const offset = (Number(page) - 1) * limitNum;
   const like = `%${q}%`;
 
-  // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
+  // ── Cabang 1: barang master reguler — SO check HANYA dari tsalesorder ──
   let whereBarang = `(
-    NOT EXISTS (
-      SELECT 1 FROM (
-        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
-        UNION ALL
-        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
-      ) sox WHERE sox.Nomor = b.brg_kode
-    )
-    OR EXISTS (
-      SELECT 1 FROM (
-        SELECT spk_nomor AS Nomor, spk_perush_kode AS Perush, spk_cus_kode AS Cus FROM tspk
-        UNION ALL
-        SELECT so_nomor AS Nomor, so_perush_kode AS Perush, so_cus_kode AS Cus FROM tsalesorder
-      ) sox WHERE sox.Nomor = b.brg_kode AND sox.Perush = ? AND sox.Cus = ?
-    )
-  )`;
+  NOT EXISTS (
+    SELECT 1 FROM tsalesorder so WHERE so.so_nomor = b.brg_kode
+  )
+  OR EXISTS (
+    SELECT 1 FROM tsalesorder so
+    WHERE so.so_nomor = b.brg_kode
+      AND so.so_perush_kode = ?
+      AND so.so_cus_kode = ?
+  )
+)`;
   const paramsBarang = [perushKode, cusKode];
 
   if (q) {
