@@ -264,8 +264,9 @@ const getDetail = async (nomor) => {
 
   // E. Grid 3: Barcodes
   const [barcodes] = await db.query(
-    `SELECT d.bard_kode AS kode, b.bhn_name AS nama, d.bard_barcode AS barcode,
-            d.bard_barcode AS barcodex, d.bard_jumlah AS jumlah
+    `SELECT d.bard_kode AS kode, b.bhn_name AS nama, b.bhn_satuan AS satuan,
+          d.bard_barcode AS barcode,
+          d.bard_barcode AS barcodex, d.bard_jumlah AS jumlah
      FROM tbahan_barcode_dtl d
      INNER JOIN tbahan_barcode_hdr h ON h.bar_nomor = d.bard_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.bard_kode
