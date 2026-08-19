@@ -24,6 +24,7 @@ const getBrowse = async (startDate, endDate, kodeBahan = "") => {
 
   const sql = `
     SELECT x.*,
+      (x.BpbBahan + x.ReturMaterial) AS StokIn,
       ((x.StokAwal + x.BpbBahan + x.ReturMaterial + x.Koreksi) - x.RealisasiPermintaan) AS StokAkhir
     FROM (
       SELECT
