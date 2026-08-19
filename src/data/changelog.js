@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.2",
+    date: "2026-08-19",
+    changes: [
+      {
+        type: "added",
+        text: "Laporan baru : Laporan Realisasi Keluar Bahan untuk Gudang",
+      },
+    ],
+  },
+  {
     version: "1.0.1",
     date: "2026-08-15",
     changes: [
