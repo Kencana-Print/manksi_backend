@@ -12,29 +12,36 @@ const db = require("../../config/database");
 // --- BROWSE (master list) ---
 const getBrowseList = async (filters) => {
   const { startDate, endDate, kodeBarang } = filters;
-
   let paramsMKA = [startDate, endDate];
   let extraWhereMKA = "";
-
   let paramsSPK = [startDate, endDate];
   let extraWhereSPK = "";
 
-  if (kodeBarang && kodeBarang.trim() !== "") {
-    extraWhereMKA = ` AND EXISTS (
-      SELECT 1 FROM tmka_dtl d2
-      WHERE d2.mkbd_nomor = h.mkb_nomor
-        AND d2.mkbd_brg_kode = ?
+  const q = (kodeBarang || "").trim();
+  if (q !== "") {
+    // MKA: match kalau ada detail dengan kode aksesoris ini, ATAU
+    // nomor SPK-nya sendiri cocok dengan pencarian.
+    extraWhereMKA = ` AND (
+      EXISTS (
+        SELECT 1 FROM tmka_dtl d2
+        WHERE d2.mkbd_nomor = h.mkb_nomor
+          AND d2.mkbd_brg_kode LIKE ?
+      )
+      OR h.mkb_spk_nomor LIKE ?
     )`;
-    paramsMKA.push(kodeBarang.trim());
+    paramsMKA.push(`%${q}%`, `%${q}%`);
 
-    // Jika difilter berdasarkan kode aksesoris, SPK pending tidak perlu tampil
-    // (karena SPK pending belum memiliki detail aksesoris)
-    extraWhereSPK = ` AND 1=0 `;
+    // SPK pending: sebelumnya SELALU disembunyikan kalau kotak ini
+    // diisi apa pun. Sekarang tetap tampil kalau nomor/nama SPK-nya
+    // cocok dengan pencarian — SPK pending memang belum punya detail
+    // aksesoris, jadi tidak bisa dicocokkan lewat kode barang, tapi
+    // tetap harus bisa dicari lewat nomor/nama SPK-nya sendiri.
+    extraWhereSPK = ` AND (s.spk_nomor LIKE ? OR s.spk_nama LIKE ?)`;
+    paramsSPK.push(`%${q}%`, `%${q}%`);
   }
 
   const [rows] = await db.query(
     `SELECT * FROM (
-       -- 1. Data MKA yang sudah dibuat
        SELECT
          h.mkb_nomor        AS Nomor,
          h.mkb_tanggal      AS Tanggal,
@@ -50,12 +57,9 @@ const getBrowseList = async (filters) => {
        FROM tmka_hdr h
        LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor
        LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
-       WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal <= ?
+       WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
        ${extraWhereMKA}
-
        UNION ALL
-
-       -- 2. Data SPK yang belum dibuatkan MKA
        SELECT
          s.spk_nomor        AS Nomor,
          s.spk_tanggal      AS Tanggal,
@@ -70,7 +74,7 @@ const getBrowseList = async (filters) => {
          'SPK'              AS RowType
        FROM tspk s
        LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
-       WHERE s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+       WHERE s.spk_tanggal >= ? AND s.spk_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
          AND s.spk_aktif = 'Y'
          AND IFNULL(v.divisi, '') NOT IN ('SPANDUK', 'MMT')
          AND NOT EXISTS (SELECT 1 FROM tmka_hdr h WHERE h.mkb_spk_nomor = s.spk_nomor)
@@ -79,7 +83,6 @@ const getBrowseList = async (filters) => {
      ORDER BY z.Tanggal ASC, z.Nomor ASC`,
     [...paramsMKA, ...paramsSPK],
   );
-
   return rows;
 };
 
@@ -257,7 +260,7 @@ const getExportDetail = async (filters) => {
        LEFT JOIN tmka_dtl d ON d.mkbd_nomor = h.mkb_nomor ${extraJoinWhere}
        LEFT JOIN tgarmen_brg b
          ON b.brg_kode = d.mkbd_brg_kode AND b.brg_jenis = 'ACCESORIES'
-       WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal <= ?
+       WHERE h.mkb_tanggal >= ? AND h.mkb_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
      ) z
      WHERE z.Kode IS NOT NULL
      ORDER BY z.Nomor, z.Kode`,
