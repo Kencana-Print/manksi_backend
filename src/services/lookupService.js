@@ -13,25 +13,27 @@ const searchSpk = async (
   let baseQuery,
     whereSearch = "";
 
+  const cusKode = options?.cusKode || "";
+  const perushKode = options?.perushKode || "";
+  const divisi = options?.divisi || "";
+
   if (filterMode === "spk-ppic") {
-    // MKA: hanya SPK PPIC (spk_is_so=0, format SPK-)
     baseQuery = `
       FROM tspk
       WHERE spk_aktif = 'Y'
-        AND spk_divisi IN (3, 4, 6)
         AND spk_cmo <> ''
         AND spk_jumlah <> spk_jumlah_kirim
         AND spk_is_so = 0
     `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(spk_divisi, ?)`;
+      params.push(String(divisi));
+    }
     if (keyword) {
       whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "so") {
-    // MKB: SO (tsalesorder = baru, tspk legacy WHERE spk_is_so=1 = lama
-    // pre-migrasi) + MAP dari tmemospk. tspk_is_so=1 TIDAK LAGI menjadi
-    // satu-satunya sumber SO — data SO baru sekarang hidup di
-    // tsalesorder, jadi harus di-UNION juga.
     baseQuery = `
       FROM (
         SELECT so_nomor AS Nomor, so_nama AS Nama, so_tanggal AS Tanggal,
@@ -52,16 +54,17 @@ const searchSpk = async (
                mspk_divisi, mspk_cmo, 'Y'
         FROM tmemospk
       ) a
-      WHERE Aktif = 'Y' AND Divisi IN (3,4,6) AND CMO <> ''
+      WHERE Aktif = 'Y' AND CMO <> ''
     `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
+      params.push(String(divisi));
+    }
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "mutasi") {
-    // Mutasi Produksi: tspk divisi 3,4,6 (aktif, semua status)
-    // UNION tmemospk divisi 3,4,6
-    // Tidak filter spk_is_so, tidak filter jumlah_kirim
     baseQuery = `
     FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
@@ -69,25 +72,24 @@ const searchSpk = async (
              spk_finishing AS Finishing, spk_divisi AS Divisi,
              spk_cmo AS CMO, spk_aktif AS Aktif
       FROM tspk
-      WHERE spk_aktif = 'Y' AND spk_divisi IN (3,4,6) AND spk_is_so = 0 
+      WHERE spk_aktif = 'Y' AND spk_is_so = 0 
       UNION ALL
       SELECT mspk_nomor, mspk_nama, mspk_tanggal,
              mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing,
              mspk_divisi, mspk_cmo, 'Y'
       FROM tmemospk
-      WHERE mspk_divisi IN (3,4,6)
     ) a
     WHERE Aktif = 'Y'
   `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
+      params.push(String(divisi));
+    }
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "spk-map") {
-    // Minta Bahan Baku: SPK PPIC (spk_is_so=0) + MAP, WAJIB sudah
-    // di-approve CMO. TIDAK termasuk SO — backend getSpkDetailsAndMkb()
-    // menolak SPK yang belum ada CMO-nya, jadi modal ini juga harus
-    // filter CMO <> '' supaya user gak pilih SPK yang bakal ditolak.
     baseQuery = `
     FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
@@ -102,20 +104,17 @@ const searchSpk = async (
              mspk_divisi, mspk_cmo, 'Y'
       FROM tmemospk
     ) a
-    WHERE Aktif = 'Y' AND Divisi IN (3,4,6) AND CMO <> ''
+    WHERE Aktif = 'Y' AND CMO <> ''
   `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
+      params.push(String(divisi));
+    }
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "sj") {
-    // SO: tsalesorder (baru) UNION tspk legacy WHERE spk_is_so=1 (lama).
-    // Kolom di-alias spk_* di kedua sisi supaya selectClause di bawah
-    // (yang literal pakai nama kolom spk_nomor, spk_nama, dst untuk
-    // filterMode sj/spk-ppic) tetap bekerja tanpa perlu disentuh.
-    const cusKode = options?.cusKode || "";
-    const perushKode = options?.perushKode || "";
-    const divisi = options?.divisi || "";
     baseQuery = `
     FROM (
       SELECT so_nomor AS spk_nomor, so_nama AS spk_nama, so_nama2 AS spk_nama2,
@@ -144,18 +143,14 @@ const searchSpk = async (
       params.push(perushKode);
     }
     if (divisi) {
-      baseQuery += ` AND spk_divisi = ?`;
-      params.push(divisi);
+      baseQuery += ` AND FIND_IN_SET(spk_divisi, ?)`;
+      params.push(String(divisi));
     }
     if (keyword) {
       whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ? OR spk_nama2 LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
   } else {
-    // Query UNION standar — untuk halaman lain (MKB, dll). Sekarang
-    // mencakup 3 sumber: tsalesorder (SO baru), tspk (SPK PPIC +
-    // SO legacy, tidak difilter spk_is_so supaya keduanya tetap
-    // tercakup persis seperti perilaku asli), dan tmemospk (MAP).
     baseQuery = `
       FROM (
         SELECT so_nomor AS Nomor, so_nama AS Nama, so_tanggal AS Tanggal,
@@ -172,8 +167,12 @@ const searchSpk = async (
                mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing, mspk_divisi, mspk_cmo, 'Y'
         FROM tmemospk
       ) a
-      WHERE Aktif = 'Y' AND Divisi IN (3,4,6) AND CMO <> ''
+      WHERE Aktif = 'Y' AND CMO <> ''
     `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
+      params.push(String(divisi));
+    }
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
@@ -186,7 +185,6 @@ const searchSpk = async (
   );
   const total = countResult[0].total;
 
-  // SELECT kolom eksplisit untuk mkaOnly, alias untuk non-mkaOnly sudah dari subquery
   const selectClause =
     filterMode === "spk-ppic" || filterMode === "sj"
       ? `SELECT spk_nomor AS Nomor, spk_nama AS Nama,
