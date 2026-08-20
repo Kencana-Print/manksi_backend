@@ -143,6 +143,7 @@ const getBrowseList = async (filters) => {
         y.spk_is_so AS is_so,
         IFNULL(ppic.spk_nomor, "") AS SpkPpic,
         DATE_FORMAT(ppic.spk_tanggal, '%Y-%m-%d') AS TglSpkPpic,
+        IFNULL(ppic.spk_close, 0) AS SpkPpicClose, 
         IFNULL(pin5.pin_acc, "") AS pin_acc,
         IFNULL(pin5.pin_dipakai, "") AS pin_dipakai,
         IFNULL(IF(pin5.pin_acc="" AND pin5.pin_dipakai="","WAIT",IF(pin5.pin_acc="Y" AND pin5.pin_dipakai="","ACC",IF(pin5.pin_acc="N","TOLAK",""))), "") AS Ngedit,
@@ -481,8 +482,8 @@ const requestPin = async (nomor, alasan, userKode) => {
         : lastPin[0].pin_urut + 1;
   }
   const query = `
-    INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
-    VALUES ("SO", ?, ?, ?, ?, NOW(), ?, ?)
+    INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
+    VALUES ("SO", ?, ?, "UBAH", ?, ?, NOW(), ?, ?)
     ON DUPLICATE KEY UPDATE pin_acc="", pin_tgl_minta=NOW(), pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)
   `;
   await db.query(query, [

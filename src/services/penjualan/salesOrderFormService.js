@@ -929,6 +929,95 @@ const saveData = async (payload, user) => {
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
         [nomor, xurut5],
       );
+
+      // ==========================================
+      // 9. SYNC-BACK KE SPK PPIC TURUNAN + REOPEN
+      // Kalau approval "Perubahan Data" (pin_jenis=UBAH) ini baru saja
+      // dipakai (langkah di atas), dan SO ini punya turunan SPK PPIC
+      // yang sedang di-close oleh PPIC (gate: SO tak bisa diedit
+      // selama turunannya masih Open), sinkron field header dari SO
+      // yang baru disimpan ke turunan, lalu reopen (spk_close=0).
+      // Field yang disinkron: kolom yang biasa diisi lewat tab SO
+      // (TabSpk) + TabUkuran — TIDAK termasuk spk_ketbeli/spk_keterangan
+      // (itu murni milik form PPIC, lihat spkFormService.saveData yang
+      // hanya mengizinkan dua field itu diedit dari sisi PPIC).
+      const [turunanRows] = await conn.query(
+        `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0`,
+        [nomor],
+      );
+      if (turunanRows.length > 0) {
+        const turunanNomor = turunanRows[0].spk_nomor;
+        await conn.query(
+          `UPDATE tspk SET
+             spk_nama = ?, spk_nama2 = ?, spk_ukuran = ?, spk_jumlah = ?,
+             spk_dateline = ?, spk_kain = ?, spk_finishing = ?, spk_gramasi = ?,
+             spk_panjang = ?, spk_lebar = ?, spk_tipe = ?, spk_statuskerja = ?,
+             spk_sablon = ?, spk_bordir = ?, spk_sublim = ?,
+             spk_close = 0, spk_close_alasan = '',
+             user_modified = ?, date_modified = NOW()
+           WHERE spk_nomor = ?`,
+          [
+            header.spk_nama,
+            header.spk_nama2,
+            header.spk_ukuran,
+            header.spk_jumlah,
+            header.spk_dateline,
+            header.spk_kain,
+            header.spk_finishing,
+            header.spk_gramasi,
+            header.spk_panjang,
+            header.spk_lebar,
+            header.spk_tipe,
+            header.spk_statuskerja,
+            header.spk_sablon,
+            header.spk_bordir,
+            header.spk_sublim,
+            user.kode,
+            turunanNomor,
+          ],
+        );
+
+        // Sync ulang tspk_size dari dtlSize SO — replace penuh, sama
+        // pola dengan saveSizeList di spkFormService.js (hanya baris
+        // qty > 0 yang disimpan).
+        await conn.query(`DELETE FROM tspk_size WHERE spks_nomor = ?`, [
+          turunanNomor,
+        ]);
+        const validSizes = (dtlSize || []).filter(
+          (item) => Number(item.qty) > 0,
+        );
+        if (validSizes.length > 0) {
+          const vals = validSizes.map((item) => [
+            turunanNomor,
+            item.size,
+            item.qty,
+            item.ld || 0,
+            item.pb || 0,
+            item.ld || 0,
+            item.pl_pendek || 0,
+            item.pl_panjang || 0,
+            item.p_bahu || 0,
+            item.l_lengan || 0,
+            item.l_manset || 0,
+            item.l_pinggang || 0,
+            item.p_celana || 0,
+            item.l_panggul || 0,
+            item.l_paha || 0,
+            item.pesak || 0,
+            item.l_lutut || 0,
+            item.l_bawah || 0,
+          ]);
+          await conn.query(
+            `INSERT INTO tspk_size
+               (spks_nomor, spks_size, spks_qty, spks_a, spks_b,
+                spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
+                spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
+                spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
+             VALUES ?`,
+            [vals],
+          );
+        }
+      }
     }
 
     await conn.commit();

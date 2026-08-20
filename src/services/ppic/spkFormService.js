@@ -821,24 +821,18 @@ const saveData = async (payload, user) => {
             [vals],
           );
         }
-      } else {
-        // Legacy (P01/P02/P05): Alokasi + Babaran
-        if (isEdit && alokasi !== undefined) {
-          await saveAlokasi(conn, nomor, alokasi);
-        }
-        if (payload.babaran !== undefined) {
-          const locked = await isBabaranLocked(nomor, conn);
-          if (!locked) {
-            await saveBabaran(conn, nomor, payload.babaran);
-          }
-          // else: terkunci oleh MKB, save di-skip supaya tidak menimpa
-          // data yang seharusnya dikelola dari form MKB.
+      }
+    } else {
+      // Legacy (P01/P02/P05): Alokasi + Babaran
+      if (isEdit && alokasi !== undefined) {
+        await saveAlokasi(conn, nomor, alokasi);
+      }
+      if (payload.babaran !== undefined) {
+        const locked = await isBabaranLocked(nomor, conn);
+        if (!locked) {
+          await saveBabaran(conn, nomor, payload.babaran);
         }
       }
-    } else if (isEdit && alokasi !== undefined) {
-      // Create sudah di-handle di atas (auto-copy dari SO / payload awal).
-      // Blok ini khusus edit, supaya user bisa update alokasi manual.
-      await saveAlokasi(conn, nomor, alokasi);
     }
 
     await conn.commit();
