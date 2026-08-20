@@ -11,12 +11,11 @@ const db = require("../../../config/database");
 // ─────────────────────────────────────────────
 const getBrowse = async (filters) => {
   const { startDate, endDate, userCabang, userKode, userBagian } = filters;
-
   let params = [startDate, endDate];
   let whereClause = `WHERE s.spk_divisi IN (3, 4, 6)
       AND s.spk_cmo <> ''
       AND s.spk_aktif = 'Y'
-      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?`;
+      AND s.spk_tanggal >= ? AND s.spk_tanggal < DATE_ADD(?, INTERVAL 1 DAY)`;
 
   if (
     userCabang &&
