@@ -73,13 +73,16 @@ const searchInvoiceForCustomer = async (custKode, keyword = "") => {
 // ─────────────────────────────────────────────────────────
 const getSpkDetailForInvoice = async (nomorInvoice) => {
   const [rows] = await db.query(
-    `SELECT d.INVD_Spk_Nomor AS Kode, s.spk_nama AS Nama,
+    `SELECT d.INVD_Spk_Nomor AS Kode,
+            IFNULL(s.spk_nama, b.brg_name) AS Nama,
             d.INVD_Jumlah AS Jumlah, d.INVD_Harga AS Harga,
-            (s.spk_harga - s.spk_hargariil) AS Xfee,
-            s.spk_hargariil AS Riil, s.spk_hargafee AS Fee,
-            (d.INVD_Jumlah * s.spk_hargafee) AS Total
+            IFNULL(s.spk_harga - s.spk_hargariil, 0) AS Xfee,
+            IFNULL(s.spk_hargariil, 0) AS Riil,
+            IFNULL(s.spk_hargafee, 0) AS Fee,
+            (d.INVD_Jumlah * IFNULL(s.spk_hargafee, 0)) AS Total
      FROM tinv_dtl d
-     INNER JOIN tspk s ON s.spk_nomor = d.INVD_Spk_Nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.INVD_Spk_Nomor
+     LEFT JOIN tbarang b ON b.brg_kode = d.INVD_Spk_Nomor
      WHERE d.INVD_inv_nomor = ?`,
     [nomorInvoice],
   );
