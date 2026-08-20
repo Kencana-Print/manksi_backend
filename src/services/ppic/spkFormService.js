@@ -423,9 +423,36 @@ const resolveMkbKeys = async (spkNomor, conn = db) => {
   return keys;
 };
 
+// --- Babaran dari Proof Garmen lini POTONG (tproofgarmen_dtl.pfd_babaran).
+// Proof tidak punya kolom "komponen" terpisah seperti MKB, dan TIDAK
+// punya kolom urutan (pfd_nourut) sama sekali — tabel hanya berkunci
+// pfd_nomor+pfd_kode. Nama bahan dipakai sebagai pengganti kolom
+// Komponen, dan nourut di-generate dari index array (bukan dari DB).
+const getBabaranFromProof = async (keys) => {
+  const [rows] = await db.query(
+    `SELECT b.Bhn_Name AS komponen, d.pfd_warna_kain AS warna,
+            d.pfd_jenis_kain AS jenis, d.pfd_babaran AS babaran
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pfd_kode
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?)
+     ORDER BY h.pf_tanggal DESC, d.pfd_kode`,
+    [keys],
+  );
+  return rows
+    .filter((r) => Number(r.babaran) > 0)
+    .map((r, i) => ({
+      komponen: r.komponen || "",
+      warna: r.warna || "",
+      jenis: r.jenis || "",
+      babaran: Number(r.babaran) || 0,
+      nourut: i + 1,
+    }));
+};
+
 const isBabaranLocked = async (spkNomor, conn = db) => {
   const keys = await resolveMkbKeys(spkNomor, conn);
-  const [[row]] = await conn.query(
+  const [[mkbRow]] = await conn.query(
     `SELECT 1 AS ada
      FROM tmkb_hdr h
      INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
@@ -433,11 +460,23 @@ const isBabaranLocked = async (spkNomor, conn = db) => {
      LIMIT 1`,
     [keys],
   );
-  return !!row;
+  if (mkbRow) return true;
+
+  const [[proofRow]] = await conn.query(
+    `SELECT 1 AS ada
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?) AND d.pfd_babaran > 0
+     LIMIT 1`,
+    [keys],
+  );
+  return !!proofRow;
 };
 
 const getBabaran = async (spkNomor) => {
   const keys = await resolveMkbKeys(spkNomor);
+
+  // Prioritas 1: MKB (lebih detail — per komponen+ketk+warna+jenis)
   const [mkbRows] = await db.query(
     `SELECT d.mkbd_komponen AS komponen, d.mkbd_ketk AS ketk,
             d.mkbd_warna AS warna, d.mkbd_jenis AS jenis,
@@ -448,8 +487,7 @@ const getBabaran = async (spkNomor) => {
      ORDER BY h.mkb_tanggal DESC, d.mkbd_nourut ASC`,
     [keys],
   );
-
-  const rows = mkbRows
+  const mkbFiltered = mkbRows
     .filter((r) => Number(r.babaran) > 0)
     .map((r) => ({
       komponen: `${r.komponen || ""} ${r.ketk || ""}`.trim(),
@@ -458,11 +496,17 @@ const getBabaran = async (spkNomor) => {
       babaran: Number(r.babaran) || 0,
       nourut: r.nourut,
     }));
-
-  if (rows.length > 0) {
-    return { rows, source: "mkb" };
+  if (mkbFiltered.length > 0) {
+    return { rows: mkbFiltered, source: "mkb" };
   }
 
+  // Prioritas 2: Proof Garmen lini POTONG
+  const proofRows = await getBabaranFromProof(keys);
+  if (proofRows.length > 0) {
+    return { rows: proofRows, source: "proof" };
+  }
+
+  // Prioritas 3: fallback manual (editable)
   const [manualRows] = await db.query(
     `SELECT spkb_komponen AS komponen, spkb_warna AS warna,
             spkb_jenis AS jenis, spkb_babaran AS babaran,
