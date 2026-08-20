@@ -112,7 +112,6 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
 // Sesuai Delphi cxButton4Click
 // ─────────────────────────────────────────────────────────
 const deleteData = async (nomor, userKode) => {
-  // Get invoice dulu sebelum hapus
   const [[hdr]] = await db.query(
     `SELECT sj_inv_sm FROM tsj_hdr WHERE sj_nomor = ?`,
     [nomor],
@@ -123,10 +122,29 @@ const deleteData = async (nomor, userKode) => {
   try {
     await conn.beginTransaction();
 
+    // ── FIX: hapus child rows dulu secara eksplisit, biar trigger
+    // before_delete masing-masing jalan dan membalikkan
+    // spk_jumlah_kirim / spk_prasj / tmasterstok_jadi / brg_stok ──
+    await conn.query(`DELETE FROM tsj_approve WHERE sja_nomor = ?`, [nomor]);
+    await conn.query(`DELETE FROM tsj_dtl WHERE sjd_sj_nomor = ?`, [nomor]);
+
     // 1. Hapus SJ by nomor
     await conn.query(`DELETE FROM tsj_hdr WHERE sj_nomor = ?`, [nomor]);
 
-    // 2. Hapus SJ invoice otomatis (keterangan = nomor SJ)
+    // 2. Hapus SJ invoice otomatis (keterangan = nomor SJ) — sama,
+    // pastikan child-nya juga dibersihkan dulu kalau ada
+    const [otoHdr] = await conn.query(
+      `SELECT sj_nomor FROM tsj_hdr WHERE sj_keterangan = ?`,
+      [nomor],
+    );
+    for (const oh of otoHdr) {
+      await conn.query(`DELETE FROM tsj_approve WHERE sja_nomor = ?`, [
+        oh.sj_nomor,
+      ]);
+      await conn.query(`DELETE FROM tsj_dtl WHERE sjd_sj_nomor = ?`, [
+        oh.sj_nomor,
+      ]);
+    }
     await conn.query(`DELETE FROM tsj_hdr WHERE sj_keterangan = ?`, [nomor]);
 
     // 3. Hapus invoice jika ada
