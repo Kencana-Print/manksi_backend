@@ -132,12 +132,12 @@ const getBrowseList = async (filters) => {
         y.spk_kain AS Kain, y.spk_finishing AS Finishing,
         ${hargaCol}
         y.date_create AS Created, y.spk_jumlah AS Pesan,
-        y.spk_jumlah_kirim AS Kirim,
-        (y.spk_jumlah - y.spk_jumlah_kirim) AS Kurang,
+        IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim) AS Kirim,
+        (y.spk_jumlah - IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim)) AS Kurang,
         sl.sal_nama AS Sales, ${groupCusCol}
         y.spk_nomor_po AS PO, y.spk_ketpo AS KetPO,
         y.spk_tgl_po AS DatePO, y.spk_DatelinePO AS DatelinePO,
-        IF(y.spk_close=1, "Closed", "Open") AS Status,
+        IF(y.spk_close=1 OR IFNULL(ppic.spk_close, 0)=1, "Closed", "Open") AS Status,
         y.spk_close_alasan AS AlasanClose, y.spk_pen_nomor AS NoPenawaran,
         y.spk_memo AS MAP, y.spk_repeat AS 'Repeat', y.spk_aktif AS Aktif,
         y.spk_is_so AS is_so,
@@ -380,9 +380,10 @@ const deleteOrder = async (nomor, userDetails) => {
   const table = loc === "new" ? "tsalesorder" : "tspk";
   const prefix = loc === "new" ? "so_" : "spk_";
   const [rows] = await db.query(
-    `SELECT ${prefix}tanggal AS tanggal, ${prefix}mppb AS mppb, ${prefix}jumlah_kirim AS jumlah_kirim
+    `SELECT ${prefix}tanggal AS tanggal, ${prefix}mppb AS mppb, ${prefix}jumlah_kirim AS jumlah_kirim,
+            (SELECT IFNULL(SUM(spk_jumlah_kirim), 0) FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0) AS ppic_kirim
      FROM ${table} WHERE ${prefix}nomor = ?`,
-    [nomor],
+    [nomor, nomor],
   );
   const data = rows[0];
 
