@@ -127,6 +127,7 @@ const getDetail = async (nomor) => {
     keteranganKhusus,
     alokasi,
     dtlKaosan,
+    babaranResult,
   ] = await Promise.all([
     getSizeList(nomor),
     isPremium ? getKomponenSpk(nomor) : { ListPotong: [], ListCetakBordir: [] },
@@ -135,7 +136,8 @@ const getDetail = async (nomor) => {
       : { header: null, proof: [], sewing: [] },
     isPremium ? getKeteranganKhusus(nomor) : [],
     getAlokasi(nomor),
-    isKaosan ? getSpkKaosanList(nomor) : [], // ← BARU
+    isKaosan ? getSpkKaosanList(nomor) : [],
+    !isPremium ? getBabaran(nomor) : { rows: [], source: "manual" },
   ]);
 
   const [masterKet] = isPremium
@@ -160,6 +162,8 @@ const getDetail = async (nomor) => {
     keteranganKhusus,
     ketKomponenList: masterKet,
     alokasi,
+    babaran: babaranResult.rows,
+    babaranSource: babaranResult.source,
   };
 };
 
@@ -401,6 +405,103 @@ const saveAlokasi = async (conn, spkNomor, list) => {
      VALUES ?`,
     [vals],
   );
+};
+
+// --- Resolve kandidat nomor yang mungkin dipakai sebagai mkb_spk_nomor.
+// MKB kadang dibuat SEBELUM SPK PPIC ada (langsung dari SO), jadi
+// mkb_spk_nomor tersimpan sebagai so_nomor (spk_so_ref), bukan
+// spk_nomor final. Sama pola dengan resolveSoRef di mutasiProduksiService
+// dan identifier = spk_memo || spk_so_ref di refreshKomponenFromProof.
+const resolveMkbKeys = async (spkNomor, conn = db) => {
+  const [[row]] = await conn.query(
+    `SELECT spk_so_ref, spk_memo FROM tspk WHERE spk_nomor = ?`,
+    [spkNomor],
+  );
+  const keys = [spkNomor];
+  if (row?.spk_so_ref) keys.push(row.spk_so_ref);
+  if (row?.spk_memo) keys.push(row.spk_memo);
+  return keys;
+};
+
+const isBabaranLocked = async (spkNomor, conn = db) => {
+  const keys = await resolveMkbKeys(spkNomor, conn);
+  const [[row]] = await conn.query(
+    `SELECT 1 AS ada
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?) AND d.mkbd_babaran > 0
+     LIMIT 1`,
+    [keys],
+  );
+  return !!row;
+};
+
+const getBabaran = async (spkNomor) => {
+  const keys = await resolveMkbKeys(spkNomor);
+  const [mkbRows] = await db.query(
+    `SELECT d.mkbd_komponen AS komponen, d.mkbd_ketk AS ketk,
+            d.mkbd_warna AS warna, d.mkbd_jenis AS jenis,
+            d.mkbd_babaran AS babaran, d.mkbd_nourut AS nourut
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?)
+     ORDER BY h.mkb_tanggal DESC, d.mkbd_nourut ASC`,
+    [keys],
+  );
+
+  const rows = mkbRows
+    .filter((r) => Number(r.babaran) > 0)
+    .map((r) => ({
+      komponen: `${r.komponen || ""} ${r.ketk || ""}`.trim(),
+      warna: r.warna || "",
+      jenis: r.jenis || "",
+      babaran: Number(r.babaran) || 0,
+      nourut: r.nourut,
+    }));
+
+  if (rows.length > 0) {
+    return { rows, source: "mkb" };
+  }
+
+  const [manualRows] = await db.query(
+    `SELECT spkb_komponen AS komponen, spkb_warna AS warna,
+            spkb_jenis AS jenis, spkb_babaran AS babaran,
+            spkb_nourut AS nourut
+     FROM tspk_babaran WHERE spkb_nomor = ? ORDER BY spkb_nourut`,
+    [spkNomor],
+  );
+  return { rows: manualRows, source: "manual" };
+};
+
+const saveBabaran = async (conn, spkNomor, list) => {
+  await conn.query(`DELETE FROM tspk_babaran WHERE spkb_nomor = ?`, [spkNomor]);
+  const rows = (list || []).filter((item) => item.komponen);
+  if (rows.length === 0) return;
+
+  const vals = rows.map((item, i) => [
+    spkNomor,
+    item.komponen,
+    item.warna || "",
+    item.jenis || "",
+    Number(item.babaran) || 0,
+    i + 1,
+  ]);
+  await conn.query(
+    `INSERT INTO tspk_babaran
+       (spkb_nomor, spkb_komponen, spkb_warna, spkb_jenis, spkb_babaran, spkb_nourut)
+     VALUES ?`,
+    [vals],
+  );
+
+  // Sesuai Delphi simpandata: sinkron babaran ke tmkb_dtl kalau nourut
+  // baris ini cocok dengan baris MKB yang sudah ada untuk SPK ini.
+  for (let i = 0; i < rows.length; i++) {
+    await conn.query(
+      `UPDATE tmkb_dtl, tmkb_hdr SET mkbd_babaran = ?
+       WHERE mkb_nomor = mkbd_mkb_nomor AND mkb_spk_nomor = ? AND mkbd_nourut = ?`,
+      [Number(rows[i].babaran) || 0, spkNomor, i + 1],
+    );
+  }
 };
 
 // --- Ambil alokasi milik SO sumber, sebagai REFERENSI awal saja
@@ -675,6 +776,19 @@ const saveData = async (payload, user) => {
             `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES ?`,
             [vals],
           );
+        }
+      } else {
+        // Legacy (P01/P02/P05): Alokasi + Babaran
+        if (isEdit && alokasi !== undefined) {
+          await saveAlokasi(conn, nomor, alokasi);
+        }
+        if (payload.babaran !== undefined) {
+          const locked = await isBabaranLocked(nomor, conn);
+          if (!locked) {
+            await saveBabaran(conn, nomor, payload.babaran);
+          }
+          // else: terkunci oleh MKB, save di-skip supaya tidak menimpa
+          // data yang seharusnya dikelola dari form MKB.
         }
       }
     } else if (isEdit && alokasi !== undefined) {
@@ -1458,6 +1572,8 @@ module.exports = {
   isPremiumWorkshop,
   getAlokasi,
   saveAlokasi,
+  getBabaran,
+  saveBabaran,
   getSoAlokasiReference,
   getSpkKaosanList,
   saveSpkKaosan,
