@@ -72,7 +72,7 @@ const getBrowseList = async (filters) => {
       (x.Pesan - (x.Lipat0 + x.Lipat1 + x.lpt1)) AS Kurang_Lipat
     FROM (
       SELECT 
-        s.spk_nomor AS Nomor, s.user_create AS MO, s.spk_cmo AS CMO,
+        s.spk_nomor AS Nomor, s.spk_mo AS MO, s.spk_cmo AS CMO, s.user_create AS Pembuat,
         s.spk_tanggal AS Tanggal, s.spk_dateline AS Dateline,
         s.spk_statuskerja AS Kepentingan, v.divisi AS Divisi,
         s.spk_cus_kode AS KodeCustomer, ${custNameCol}

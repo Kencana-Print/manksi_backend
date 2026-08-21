@@ -717,6 +717,7 @@ const saveData = async (payload, user) => {
       const newHeader = { ...soHeader };
       delete newHeader.spk_nomor;
       delete newHeader.spk_is_so;
+      newHeader.spk_mo = soHeader.user_create || soHeader.spk_mo || "";
       newHeader.spk_nomor = nomor;
       newHeader.spk_is_so = 0;
       newHeader.spk_so_ref = so_nomor;
