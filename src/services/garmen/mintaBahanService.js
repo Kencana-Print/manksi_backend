@@ -329,7 +329,7 @@ const submitAjukanPerubahan = async (
   return await db.query(query, [
     nomor,
     nextUrut,
-    tgl || null, // pin_tgl_trs — tanggal dokumen minta bahan
+    tgl ? new Date(tgl).toISOString().split("T")[0] : null,
     alasan, // pin_ket
     userKode,
     alasan, // pin_alasan
