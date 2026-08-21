@@ -132,7 +132,7 @@ const getBrowseList = async (filters) => {
         y.spk_kain AS Kain, y.spk_finishing AS Finishing,
         ${hargaCol}
         y.date_create AS Created, y.spk_jumlah AS Pesan,
-        IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim) AS Kirim,
+        IFNULL(sjKirim.total_kirim, 0) AS Kirim,
         (y.spk_jumlah - IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim)) AS Kurang,
         sl.sal_nama AS Sales, ${groupCusCol}
         y.spk_nomor_po AS PO, y.spk_ketpo AS KetPO,
@@ -272,6 +272,12 @@ const getBrowseList = async (filters) => {
         INNER JOIN tsj_hdr ON sj_nomor = sjd_sj_nomor
         WHERE sj_tanggal >= ?
       ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
+
+      LEFT JOIN (
+        SELECT sjd_spk_nomor, SUM(sjd_jumlah) AS total_kirim
+        FROM tsj_dtl
+        GROUP BY sjd_spk_nomor
+      ) sjKirim ON sjKirim.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
       -- titik proof bordir
       LEFT JOIN (
