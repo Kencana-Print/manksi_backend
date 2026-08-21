@@ -193,6 +193,7 @@ const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
 const kartuStokBahanRoutes = require("./routes/laporan/gudang-garmen/kartuStokBahanRoutes");
 const realisasiKeluarBahanRoutes = require("./routes/laporan/gudang-garmen/realisasiKeluarBahanRoutes");
+const umurStokBahanRoutes = require("./routes/laporan/gudang-garmen/umurStokBahanRoutes");
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const mutasiStokBahanRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBahanRoutes");
 const stokAccVsMkaRoutes = require("./routes/laporan/gudang-garmen/stokAccVsMkaRoutes");
@@ -583,6 +584,7 @@ app.use(
   "/api/laporan/gudang-garmen/realisasi-keluar-bahan",
   realisasiKeluarBahanRoutes,
 );
+app.use("/api/laporan/gudang-garmen/umur-stok-bahan", umurStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/stok-acc-vs-mka", stokAccVsMkaRoutes);
 app.use("/api/laporan/gudang-garmen/stok-dc", stokDcRoutes);
 app.use("/api/laporan/gudang-garmen/stok-barang-jadi", stokBarangJadiRoutes);
