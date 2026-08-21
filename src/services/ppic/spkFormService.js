@@ -823,14 +823,43 @@ const saveData = async (payload, user) => {
         }
       }
     } else {
-      // Legacy (P01/P02/P05): Alokasi + Babaran
+      // ─────────────────────────────────────────────
+      // CABANG PREMIUM vs LEGACY — hanya P04 yang proses
+      // Komponen/Layout-Proses(Excel)/Keterangan; selain itu simpan Babaran.
+      // Alokasi disimpan untuk KEDUA flow — P04 bisa punya alokasi warisan
+      // dari SO (multi-alamat pengiriman), meski tab-nya cuma muncul di
+      // frontend kalau memang ada datanya.
+      // ─────────────────────────────────────────────
       if (isEdit && alokasi !== undefined) {
         await saveAlokasi(conn, nomor, alokasi);
       }
-      if (payload.babaran !== undefined) {
-        const locked = await isBabaranLocked(nomor, conn);
-        if (!locked) {
-          await saveBabaran(conn, nomor, payload.babaran);
+      if (isPremiumWorkshop(cabForFlow)) {
+        await refreshKomponenFromProof(conn, nomor, komponenSpk || {});
+        if (keteranganKhusus !== undefined) {
+          await saveKeteranganKhusus(conn, nomor, keteranganKhusus);
+        }
+        if (payload.ketKomponenList !== undefined) {
+          await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
+            nomor,
+          ]);
+          const checked = (payload.ketKomponenList || []).filter(
+            (k) => k.checked,
+          );
+          if (checked.length > 0) {
+            const vals = checked.map((k) => [nomor, k.kode, k.ket || ""]);
+            await conn.query(
+              `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES ?`,
+              [vals],
+            );
+          }
+        }
+      } else {
+        // Legacy (P01/P02/P05): Babaran
+        if (payload.babaran !== undefined) {
+          const locked = await isBabaranLocked(nomor, conn);
+          if (!locked) {
+            await saveBabaran(conn, nomor, payload.babaran);
+          }
         }
       }
     }
