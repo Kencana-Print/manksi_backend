@@ -13,11 +13,21 @@ const db = require("../../../config/database");
 // bukan di-exclude — supaya stok tidak "hilang" dari laporan.
 // ─────────────────────────────────────────────
 const getBrowse = async (tanggal, kodeBahan = "") => {
+  // Ekstraksi Kode via PREFIX-MATCHING ke tbahan (bukan menebak
+  // separator) — data mst_brg_kode ternyata sangat tidak konsisten:
+  // kadang pakai '-', kadang huruf (K/R), kadang TANPA separator
+  // sama sekali (barcode 16 digit murni). Satu-satunya cara yang
+  // robust terhadap semua variasi ini: coba cocokkan prefix 8/9/10
+  // karakter langsung ke kode yang BENAR-BENAR ada di tbahan.
   let where = `c.mst_aktif = 'Y' AND c.mst_tanggal <= ?`;
   const params = [tanggal];
   if (kodeBahan) {
-    where += ` AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) = ?`;
-    params.push(kodeBahan);
+    where += ` AND (
+      LEFT(c.mst_brg_kode, 9) = ?
+      OR LEFT(c.mst_brg_kode, 8) = ?
+      OR LEFT(c.mst_brg_kode, 10) = ?
+    )`;
+    params.push(kodeBahan, kodeBahan, kodeBahan);
   }
   const sql = `
     SELECT
@@ -36,10 +46,13 @@ const getBrowse = async (tanggal, kodeBahan = "") => {
       END AS Status
     FROM (
       SELECT
-        LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) AS Kode,
         c.mst_brg_kode AS Barcode,
+        COALESCE(b9.Bhn_kode, b10.Bhn_kode, b8.Bhn_kode) AS Kode,
         SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
       FROM tmasterstok_barcode c
+      LEFT JOIN tbahan b9 ON b9.Bhn_kode = LEFT(c.mst_brg_kode, 9)
+      LEFT JOIN tbahan b10 ON b10.Bhn_kode = LEFT(c.mst_brg_kode, 10)
+      LEFT JOIN tbahan b8 ON b8.Bhn_kode = LEFT(c.mst_brg_kode, 8)
       WHERE ${where}
       GROUP BY c.mst_brg_kode
     ) x
