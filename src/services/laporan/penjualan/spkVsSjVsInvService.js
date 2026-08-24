@@ -86,7 +86,8 @@ const buildMasterSelect = (canLihatCus) => {
         spk_jo_kode, spk_jumlah, spk_prasj, spk_dateline,
         spk_nomor_po, spk_perush_kode, spk_sal_kode, spk_aktif
       FROM tspk
-      WHERE spk_is_so = 0
+      WHERE spk_is_so = 1 
+         OR (spk_is_so = 0 AND (spk_so_ref IS NULL OR spk_so_ref = ''))
       UNION ALL
       SELECT
         so_nomor AS spk_nomor, so_tanggal AS spk_tanggal, so_divisi AS spk_divisi,
@@ -100,12 +101,14 @@ const buildMasterSelect = (canLihatCus) => {
     INNER JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
     LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
     LEFT JOIN (
-      SELECT ppic.spk_so_ref AS SoNomor, SUM(d.sjd_jumlah) AS total
-      FROM tspk ppic
-      INNER JOIN tsj_dtl d ON d.sjd_spk_nomor = ppic.spk_nomor
+      SELECT 
+        IFNULL(NULLIF(ppic.spk_so_ref, ''), d.sjd_spk_nomor) AS SoNomor, 
+        SUM(d.sjd_jumlah) AS total
+      FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
-      WHERE ppic.spk_is_so = 0 AND h.sj_status_otomatis = 0
-      GROUP BY ppic.spk_so_ref
+      LEFT JOIN tspk ppic ON ppic.spk_nomor = d.sjd_spk_nomor AND ppic.spk_is_so = 0
+      WHERE h.sj_approve <> 2
+      GROUP BY IFNULL(NULLIF(ppic.spk_so_ref, ''), d.sjd_spk_nomor)
     ) kirim ON kirim.SoNomor = s.spk_nomor
     -- ⚠️ BARU: turunan SPK PPIC lama (format sebelum migrasi),
     -- dipetakan dari spk_so_ref sama seperti join "kirim" di atas.
@@ -175,8 +178,10 @@ const getExportData = async (query, canLihatCus = false) => {
   // tidak diperlukan — join sekarang presisi via relasi terstruktur.
   const { ppicToSo, ppicNomorList } = await getPpicMapForSoList(nomorList);
 
+  const targetNomorList = Array.from(new Set([...nomorList, ...ppicNomorList]));
+
   let sjDetails = [];
-  if (ppicNomorList.length > 0) {
+  if (targetNomorList.length > 0) {
     const sjSql = `
       SELECT
         d.sjd_spk_nomor AS PpicNomor,
@@ -194,9 +199,8 @@ const getExportData = async (query, canLihatCus = false) => {
         AND d.sjd_spk_nomor IN (?)
       ORDER BY d.sjd_spk_nomor, h.sj_tanggal
     `;
-    const [rows] = await db.query(sjSql, [ppicNomorList]);
-    // Petakan balik ke nomor SO supaya frontend tetap group by SO
-    // (kontrak SpkNomor dipertahankan, isinya sekarang = SO Nomor)
+    const [rows] = await db.query(sjSql, [targetNomorList]);
+
     sjDetails = rows.map((r) => ({
       ...r,
       SpkNomor: ppicToSo[r.PpicNomor] || r.PpicNomor,
@@ -230,27 +234,26 @@ const getExportData = async (query, canLihatCus = false) => {
 const getDetailByNomor = async (nomor) => {
   const { ppicNomorList } = await getPpicMapForSoList([nomor]);
 
-  let sjDetails = [];
-  if (ppicNomorList.length > 0) {
-    const sjSql = `
-      SELECT
-        h.sj_nomor AS NomorSJ,
-        DATE_FORMAT(h.sj_tanggal, '%Y-%m-%d') AS TanggalSJ,
-        g.gdg_nama AS Gudang,
-        d.sjd_ukuran AS Ukuran,
-        d.sjd_jumlah AS Jumlah,
-        h.sj_alamat_customer AS Alamat,
-        h.sj_kota_customer AS Kota
-      FROM tsj_hdr h
-      INNER JOIN tgudang g ON g.gdg_kode = h.sj_gdg_kode
-      INNER JOIN tsj_dtl d ON d.sjd_sj_nomor = h.sj_nomor
-      WHERE h.sj_approve <> 2
-        AND d.sjd_spk_nomor IN (?)
-      ORDER BY h.sj_tanggal
-    `;
-    const [rows] = await db.query(sjSql, [ppicNomorList]);
-    sjDetails = rows;
-  }
+  // Combined targets: cari yang langsung pakai nomor SO ATAU via PPIC turunan
+  const targets = Array.from(new Set([nomor, ...ppicNomorList]));
+
+  const sjSql = `
+    SELECT
+      h.sj_nomor AS NomorSJ,
+      DATE_FORMAT(h.sj_tanggal, '%Y-%m-%d') AS TanggalSJ,
+      g.gdg_nama AS Gudang,
+      d.sjd_ukuran AS Ukuran,
+      d.sjd_jumlah AS Jumlah,
+      h.sj_alamat_customer AS Alamat,
+      h.sj_kota_customer AS Kota
+    FROM tsj_hdr h
+    INNER JOIN tgudang g ON g.gdg_kode = h.sj_gdg_kode
+    INNER JOIN tsj_dtl d ON d.sjd_sj_nomor = h.sj_nomor
+    WHERE h.sj_approve <> 2
+      AND d.sjd_spk_nomor IN (?)
+    ORDER BY h.sj_tanggal
+  `;
+  const [sjDetails] = await db.query(sjSql, [targets]);
 
   const invSql = `
     SELECT
