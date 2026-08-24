@@ -86,7 +86,7 @@ const buildMasterSelect = (canLihatCus) => {
         spk_jo_kode, spk_jumlah, spk_prasj, spk_dateline,
         spk_nomor_po, spk_perush_kode, spk_sal_kode, spk_aktif
       FROM tspk
-      WHERE spk_is_so = 1
+      WHERE spk_is_so = 0
       UNION ALL
       SELECT
         so_nomor AS spk_nomor, so_tanggal AS spk_tanggal, so_divisi AS spk_divisi,
