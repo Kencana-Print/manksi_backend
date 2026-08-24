@@ -26,6 +26,45 @@ const mapSpkHeaderToSo = (header) => {
   return out;
 };
 
+// ============================================================
+// HELPER BARU: cek SPK PPIC turunan + status Ngedit (Pengajuan
+// Perubahan Data). Dipakai baik di getDetail (utk ditampilkan ke
+// form) maupun di saveData (utk GATE keras server-side).
+// ============================================================
+const getPpicTurunanInfo = async (conn, nomor) => {
+  const runner = conn || db;
+  const [ppicRows] = await runner.query(
+    `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
+    [nomor],
+  );
+  const ppic = ppicRows[0] || null;
+
+  const [pin5Rows] = await runner.query(
+    `SELECT p1.pin_acc, p1.pin_dipakai
+     FROM tspk_pin5 p1
+     INNER JOIN (
+       SELECT pin_nomor, MAX(pin_urut) AS max_urut
+       FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
+     ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
+     WHERE p1.pin_trs = "SO" AND p1.pin_nomor = ?`,
+    [nomor],
+  );
+  let ngedit = "";
+  if (pin5Rows.length > 0) {
+    const p = pin5Rows[0];
+    if (p.pin_acc === "" && p.pin_dipakai === "") ngedit = "WAIT";
+    else if (p.pin_acc === "Y" && p.pin_dipakai === "") ngedit = "ACC";
+    else if (p.pin_acc === "N") ngedit = "TOLAK";
+  }
+
+  return {
+    HasSpkPpic: ppic ? 1 : 0,
+    SpkPpic: ppic ? ppic.spk_nomor : "",
+    SpkPpicClose: ppic ? Number(ppic.spk_close) : 0,
+    Ngedit: ngedit,
+  };
+};
+
 // --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
 // hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
 const generateNomor = async (conn, perushKode, joKode) => {
@@ -187,12 +226,18 @@ const getDetailFromNew = async (nomor, headerRows) => {
   }
 
   header[0].isSalesOrder = true;
-  header[0].isLegacy = false; // ⬅ BARU
+  header[0].isLegacy = false;
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
   header[0].nopo_acc = nopo_acc;
   header[0].spk_aktif = spk_aktif;
+
+  const ppicInfo = await getPpicTurunanInfo(null, nomor);
+  header[0].HasSpkPpic = ppicInfo.HasSpkPpic;
+  header[0].SpkPpic = ppicInfo.SpkPpic;
+  header[0].SpkPpicClose = ppicInfo.SpkPpicClose;
+  header[0].Ngedit = ppicInfo.Ngedit;
 
   const [alokasi] = await db.query(
     `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
@@ -296,6 +341,15 @@ const getDetailLegacy = async (nomor, legacyRows) => {
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
   header[0].nopo_acc = nopo_acc;
+
+  // SPK legacy (spk_nomor = nomor itu sendiri, bukan referensi
+  // via spk_so_ref) tidak mungkin punya "turunan PPIC" dalam arti yang
+  // sama — tetap disertakan dengan nilai default supaya kontrak field
+  // ke frontend konsisten (form tidak perlu null-check terpisah).
+  header[0].HasSpkPpic = 0;
+  header[0].SpkPpic = "";
+  header[0].SpkPpicClose = 0;
+  header[0].Ngedit = "";
 
   // Size — tspk_size sudah dipakai konsisten di modul lain (mis.
   // mutasiProduksiFormService) sebagai tabel size utk SPK legacy.
@@ -613,6 +667,41 @@ const saveData = async (payload, user) => {
         [nomor],
       );
       const existingData = existingRows[0] || {};
+
+      // ==========================================
+      //  GATE KERAS — SPK PPIC turunan masih Open.
+      // Ini adalah satu-satunya sumber kebenaran; validasi di frontend
+      // (validateSave) hanya UX, TIDAK boleh jadi satu-satunya lapisan
+      // karena endpoint ini bisa dipanggil langsung.
+      // Pengecualian: kalau save ini adalah eksekusi "Pengajuan
+      // Perubahan Data" yang SUDAH di-ACC (xminta5==="ACC" && xurut5),
+      // maka boleh lanjut — inilah jalur resmi utk edit SO yang
+      // turunannya sudah close tapi butuh approval PIN5.
+      // ==========================================
+      const ppicInfo = await getPpicTurunanInfo(conn, nomor);
+      const isApprovedChangeFlow = xminta5 === "ACC" && !!xurut5;
+
+      if (
+        ppicInfo.HasSpkPpic &&
+        ppicInfo.SpkPpicClose !== 1 &&
+        !isApprovedChangeFlow
+      ) {
+        throw new Error(
+          `SO ini sudah memiliki SPK PPIC turunan (${ppicInfo.SpkPpic}) yang masih Open. ` +
+            `Minta PPIC untuk meng-close SPK PPIC tersebut terlebih dahulu sebelum SO ini bisa diubah.`,
+        );
+      }
+      if (
+        ppicInfo.HasSpkPpic &&
+        ppicInfo.SpkPpicClose === 1 &&
+        ppicInfo.Ngedit !== "ACC" &&
+        !isApprovedChangeFlow
+      ) {
+        throw new Error(
+          `SPK PPIC turunan sudah di-close. Silakan ajukan "Pengajuan Perubahan Data" ` +
+            `(menu Tindakan) dan tunggu ACC sebelum mengubah SO ini.`,
+        );
+      }
       // Divisi 3 (Kaosan) dikecualikan dari gate persetujuan customer
       if (!header.spk_memo && divisiStr !== "3") {
         const wasAlreadyApproved = existingData.so_acc_customer === "Y";
