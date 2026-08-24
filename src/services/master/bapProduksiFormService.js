@@ -48,7 +48,10 @@ const getById = async (nomor) => {
       h.bap_sumber AS SumberMasalah, 
       h.bap_solusi AS Solusi, 
       h.bap_jawab AS Pertanggungjawaban, 
-      h.bap_apv AS Approve
+      h.bap_apv AS Approve,
+      h.bap_spk_nomor AS LegacySpk,
+      h.bap_jumlah AS LegacyJumlah,
+      h.bap_harga AS LegacyHarga
     FROM tkpi_bapproduksi h
     WHERE h.bap_nomor = ?
   `;
@@ -90,14 +93,43 @@ const getById = async (nomor) => {
     [nomor],
   );
   data.Karyawan = karyawanRows;
-  // [BARU] Load daftar SPK (multi-baris)
+  // --- Daftar SPK (multi-baris, skema baru) ---
   const [spkRows] = await db.query(
     `SELECT bapspk_spk_nomor AS Spk, bapspk_spk_nama AS SpkNama,
             bapspk_jumlah AS Jumlah, bapspk_harga AS Harga
      FROM tkpi_bap_spk WHERE bapspk_bap_nomor = ? ORDER BY bapspk_nourut`,
     [nomor],
   );
-  data.SpkList = spkRows;
+  // [BARU] BACKWARD COMPAT — BAP lama (dibuat sebelum fitur multi-SPK)
+  // tidak punya baris di tkpi_bap_spk sama sekali, datanya masih
+  // tersimpan di kolom lama header (bap_spk_nomor/jumlah/harga).
+  // Kalau tabel detail kosong TAPI kolom lama terisi, bangun satu
+  // baris SpkList dari situ — nama SPK di-lookup ulang karena kolom
+  // lama tidak menyimpannya.
+  if (spkRows.length === 0 && data.LegacySpk) {
+    const [[legacySpkInfo]] = await db.query(
+      `SELECT * FROM (
+         SELECT spk_nomor AS Nomor, spk_nama AS Nama FROM tspk
+         UNION ALL
+         SELECT mspk_nomor AS Nomor, mspk_nama AS Nama FROM tmemospk
+       ) final WHERE Nomor = ? LIMIT 1`,
+      [data.LegacySpk],
+    );
+    data.SpkList = [
+      {
+        Spk: data.LegacySpk,
+        SpkNama: legacySpkInfo?.Nama || "",
+        Jumlah: Number(data.LegacyJumlah) || 0,
+        Harga: Number(data.LegacyHarga) || 0,
+      },
+    ];
+  } else {
+    data.SpkList = spkRows;
+  }
+  // Bersihkan field internal yang cuma dipakai untuk fallback ini
+  delete data.LegacySpk;
+  delete data.LegacyJumlah;
+  delete data.LegacyHarga;
   return data;
 };
 
@@ -245,14 +277,38 @@ const getPrintData = async (nomor) => {
   const [rows] = await db.query(query, [nomor]);
   if (rows.length === 0) return null;
   const data = rows[0];
-  // [BARU] Ambil daftar SPK multi-baris, sama seperti getById
+  // Daftar SPK (multi-baris, skema baru)
   const [spkRows] = await db.query(
     `SELECT bapspk_spk_nomor AS Spk, bapspk_spk_nama AS SpkNama,
             bapspk_jumlah AS Jumlah, bapspk_harga AS Harga
      FROM tkpi_bap_spk WHERE bapspk_bap_nomor = ? ORDER BY bapspk_nourut`,
     [nomor],
   );
-  data.SpkList = spkRows;
+  // [BARU] BACKWARD COMPAT — sama pola dengan getById: BAP lama
+  // (dibuat sebelum fitur multi-SPK) tidak punya baris di
+  // tkpi_bap_spk, datanya masih di kolom lama header. Kalau tabel
+  // detail kosong TAPI kolom lama terisi, bangun satu baris SpkList
+  // dari situ supaya halaman cetak tidak menampilkan tabel SPK kosong.
+  if (spkRows.length === 0 && data.bap_spk_nomor) {
+    const [[legacySpkInfo]] = await db.query(
+      `SELECT * FROM (
+         SELECT spk_nomor AS Nomor, spk_nama AS Nama FROM tspk
+         UNION ALL
+         SELECT mspk_nomor AS Nomor, mspk_nama AS Nama FROM tmemospk
+       ) final WHERE Nomor = ? LIMIT 1`,
+      [data.bap_spk_nomor],
+    );
+    data.SpkList = [
+      {
+        Spk: data.bap_spk_nomor,
+        SpkNama: legacySpkInfo?.Nama || "",
+        Jumlah: Number(data.bap_jumlah) || 0,
+        Harga: Number(data.bap_harga) || 0,
+      },
+    ];
+  } else {
+    data.SpkList = spkRows;
+  }
   return data;
 };
 
