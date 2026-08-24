@@ -41,12 +41,12 @@ const getPpicTurunanInfo = async (conn, nomor) => {
 
   const [pin5Rows] = await runner.query(
     `SELECT p1.pin_acc, p1.pin_dipakai
-     FROM tspk_pin5 p1
-     INNER JOIN (
-       SELECT pin_nomor, MAX(pin_urut) AS max_urut
-       FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
-     ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
-     WHERE p1.pin_trs = "SO" AND p1.pin_nomor = ?`,
+    FROM tspk_pin5 p1
+    INNER JOIN (
+      SELECT pin_nomor, MAX(pin_urut) AS max_urut
+      FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
+    ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
+    WHERE p1.pin_trs = "SO" AND p1.pin_nomor = ?`,
     [nomor],
   );
   let ngedit = "";
@@ -57,11 +57,23 @@ const getPpicTurunanInfo = async (conn, nomor) => {
     else if (p.pin_acc === "N") ngedit = "TOLAK";
   }
 
+  const [ubahPinRows] = await runner.query(
+    `SELECT pin_urut FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="UBAH" AND pin_nomor=?
+       AND pin_acc="Y" AND pin_dipakai=""
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  const approvedUbahUrut =
+    ubahPinRows.length > 0 ? ubahPinRows[0].pin_urut : null;
+
   return {
     HasSpkPpic: ppic ? 1 : 0,
     SpkPpic: ppic ? ppic.spk_nomor : "",
     SpkPpicClose: ppic ? Number(ppic.spk_close) : 0,
     Ngedit: ngedit,
+    HasApprovedUbah: approvedUbahUrut !== null, // ⬅ dipakai gate
+    approvedUbahUrut, // ⬅ dipakai tandai pin_dipakai
   };
 };
 
@@ -238,6 +250,7 @@ const getDetailFromNew = async (nomor, headerRows) => {
   header[0].SpkPpic = ppicInfo.SpkPpic;
   header[0].SpkPpicClose = ppicInfo.SpkPpicClose;
   header[0].Ngedit = ppicInfo.Ngedit;
+  header[0].HasApprovedUbah = ppicInfo.HasApprovedUbah;
 
   const [alokasi] = await db.query(
     `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
@@ -350,6 +363,7 @@ const getDetailLegacy = async (nomor, legacyRows) => {
   header[0].SpkPpic = "";
   header[0].SpkPpicClose = 0;
   header[0].Ngedit = "";
+  header[0].HasApprovedUbah = false;
 
   // Size — tspk_size sudah dipakai konsisten di modul lain (mis.
   // mutasiProduksiFormService) sebagai tabel size utk SPK legacy.
@@ -512,6 +526,12 @@ const saveData = async (payload, user) => {
     isSalesOrder,
   } = payload;
 
+  // ⬅ BARU: dipakai gate PPIC turunan (isEdit) DAN sync-back/reopen
+  // (step 9) — dihitung sekali, self-detected, tidak lagi bergantung
+  // pada xminta5/xurut5 dari payload (yang faktanya tidak pernah
+  // dikirim frontend, sehingga sync-back sebelumnya jadi dead code).
+  let approvedUbahPin = null; // { urut } kalau ada pin "UBAH" siap dipakai
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -669,32 +689,33 @@ const saveData = async (payload, user) => {
       const existingData = existingRows[0] || {};
 
       // ==========================================
-      //  GATE KERAS — SPK PPIC turunan masih Open.
+      // ⬅ GATE KERAS — SPK PPIC turunan masih Open.
       // Ini adalah satu-satunya sumber kebenaran; validasi di frontend
       // (validateSave) hanya UX, TIDAK boleh jadi satu-satunya lapisan
       // karena endpoint ini bisa dipanggil langsung.
       // Pengecualian: kalau save ini adalah eksekusi "Pengajuan
-      // Perubahan Data" yang SUDAH di-ACC (xminta5==="ACC" && xurut5),
-      // maka boleh lanjut — inilah jalur resmi utk edit SO yang
-      // turunannya sudah close tapi butuh approval PIN5.
+      // Perubahan Data" yang SUDAH di-ACC, boleh lanjut — inilah jalur
+      // resmi utk edit SO yang turunannya sudah close tapi butuh
+      // approval PIN5.
       // ==========================================
       const ppicInfo = await getPpicTurunanInfo(conn, nomor);
-      const isApprovedChangeFlow = xminta5 === "ACC" && !!xurut5;
+      const isApprovedChangeFlow = ppicInfo.HasApprovedUbah;
+      if (isApprovedChangeFlow)
+        approvedUbahPin = { urut: ppicInfo.approvedUbahUrut };
 
-      if (
-        ppicInfo.HasSpkPpic &&
-        ppicInfo.SpkPpicClose !== 1 &&
-        !isApprovedChangeFlow
-      ) {
+      // GATE 1: SPK PPIC masih Open → tolak TANPA pengecualian apa pun
+      if (ppicInfo.HasSpkPpic && ppicInfo.SpkPpicClose !== 1) {
         throw new Error(
           `SO ini sudah memiliki SPK PPIC turunan (${ppicInfo.SpkPpic}) yang masih Open. ` +
             `Minta PPIC untuk meng-close SPK PPIC tersebut terlebih dahulu sebelum SO ini bisa diubah.`,
         );
       }
+
+      // GATE 2: SPK PPIC sudah Close, tapi belum ada ACC Perubahan Data
+      // ⬅ Pengecualian isApprovedChangeFlow HANYA berlaku di sini
       if (
         ppicInfo.HasSpkPpic &&
         ppicInfo.SpkPpicClose === 1 &&
-        ppicInfo.Ngedit !== "ACC" &&
         !isApprovedChangeFlow
       ) {
         throw new Error(
@@ -1011,25 +1032,17 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 8. PATCH: UPDATE PIN 5 BULAN BERIKUTNYA — TIDAK BERUBAH
+    // 8 & 9. Kalau ada approval "Perubahan Data" (UBAH) yang sudah
+    // ACC dan belum dipakai, tandai dipakai + sync-back & reopen SPK
+    // PPIC turunan. Self-detected (approvedUbahPin), tidak lagi
+    // menunggu xminta5/xurut5 dari payload.
     // ==========================================
-    if (xminta5 === "ACC" && xurut5) {
+    if (approvedUbahPin) {
       await conn.query(
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
-        [nomor, xurut5],
+        [nomor, approvedUbahPin.urut],
       );
 
-      // ==========================================
-      // 9. SYNC-BACK KE SPK PPIC TURUNAN + REOPEN
-      // Kalau approval "Perubahan Data" (pin_jenis=UBAH) ini baru saja
-      // dipakai (langkah di atas), dan SO ini punya turunan SPK PPIC
-      // yang sedang di-close oleh PPIC (gate: SO tak bisa diedit
-      // selama turunannya masih Open), sinkron field header dari SO
-      // yang baru disimpan ke turunan, lalu reopen (spk_close=0).
-      // Field yang disinkron: kolom yang biasa diisi lewat tab SO
-      // (TabSpk) + TabUkuran — TIDAK termasuk spk_ketbeli/spk_keterangan
-      // (itu murni milik form PPIC, lihat spkFormService.saveData yang
-      // hanya mengizinkan dua field itu diedit dari sisi PPIC).
       const [turunanRows] = await conn.query(
         `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0`,
         [nomor],
