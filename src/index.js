@@ -40,6 +40,8 @@ const bapProduksiRoutes = require("./routes/master/bapProduksiRoutes");
 const bapProduksiFormRoutes = require("./routes/master/bapProduksiFormRoutes");
 const complainCustomerRoutes = require("./routes/master/complainCustomerRoutes");
 const complainCustomerFormRoutes = require("./routes/master/complainCustomerFormRoutes");
+const kendalaRoutes = require("./routes/master/kendalaRoutes");
+const kendalaFormRoutes = require("./routes/master/kendalaFormRoutes");
 
 // PPIC Routes
 const proofRoutes = require("./routes/ppic/proofRoutes");
@@ -385,6 +387,8 @@ app.use("/api/master/bap-produksi", bapProduksiRoutes);
 app.use("/api/master/bap-produksi-form", bapProduksiFormRoutes);
 app.use("/api/master/complain-customer", complainCustomerRoutes);
 app.use("/api/master/complain-customer-form", complainCustomerFormRoutes);
+app.use("/api/master/kendala", kendalaRoutes);
+app.use("/api/master/kendala-form", kendalaFormRoutes);
 
 app.use("/api/pembelian/mkb/form", mkbFormRoutes);
 app.use("/api/pembelian/mkb", mkbRoutes);
