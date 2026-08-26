@@ -123,7 +123,7 @@ const getDetailForm = async (nomor, userCabang) => {
   const qHdr = `
     SELECT h.*, 
            IFNULL(DATE_FORMAT(h.re_apv,"%Y-%m-%d %H:%i:%s"),"") AS apv,
-           t.min_tanggal, t.min_cab, t.user_create AS peminta,
+           t.min_tanggal, ifnull(t.min_cab,'') AS min_cab , ifnull(t.user_create,'') AS peminta,
            IFNULL(s.spk_nama, m.mspk_nama) AS spknama,
            IFNULL(s.spk_jumlah, m.mspk_jumlah) AS spkjml,
            k.mkb_tanggal
@@ -138,34 +138,65 @@ const getDetailForm = async (nomor, userCabang) => {
   if (hdrRows.length === 0) throw new Error("Data realisasi tidak ditemukan.");
   const header = hdrRows[0];
 
-  // PERBAIKAN KRUSIAL: Gunakan header.re_cab untuk mencari stok, BUKAN userCabang!
-  const reqData = await getPermintaanDetail(
-    header.re_minta,
-    header.re_cab, // <--- Perbaikan disini
-    nomor, // <--- Perbaikan abaikan ID
-    true,
-  );
+  let reqData = { header: {}, details: [] };
 
-  const qRed = `SELECT red_brg_kode, red_jumlah, red_keterangan FROM tgarmenrealisasi_dtl WHERE red_nomor = ?`;
+  // JIKA ADA NO MINTA: Tarik detail dari permintaan
+  if (header.re_minta && header.re_minta.trim() !== "") {
+    reqData = await getPermintaanDetail(
+      header.re_minta,
+      header.re_cab,
+      nomor,
+      true
+    );
+  }
+
+  // Tarik detail barang dari tabel realisasi
+  const qRed = `
+    SELECT d.red_brg_kode, d.red_jumlah, d.red_keterangan,
+           b.brg_nama, b.brg_satuan
+    FROM tgarmenrealisasi_dtl d
+    LEFT JOIN tgarmen_brg b ON b.brg_kode = d.red_brg_kode
+    WHERE d.red_nomor = ?
+    ORDER BY d.red_urut
+  `;
   const [redRows] = await db.query(qRed, [nomor]);
-  const redMap = {};
-  redRows.forEach(
-    (r) =>
-      (redMap[r.red_brg_kode] = { jml: r.red_jumlah, ket: r.red_keterangan }),
-  );
 
-  const details = reqData.details.map((d) => {
-    if (redMap[d.kode]) {
-      d.jumlah = parseFloat(redMap[d.kode].jml) || 0;
-      d.ket = redMap[d.kode].ket || "";
-    }
-    return d;
-  });
+  let details = [];
+
+  if (header.re_minta && header.re_minta.trim() !== "") {
+    // Jika dari Permintaan: Mapping detail permintaan dengan jumlah realisasi
+    const redMap = {};
+    redRows.forEach(
+      (r) =>
+        (redMap[r.red_brg_kode] = { jml: r.red_jumlah, ket: r.red_keterangan })
+    );
+
+    details = reqData.details.map((d) => {
+      if (redMap[d.kode]) {
+        d.jumlah = parseFloat(redMap[d.kode].jml) || 0;
+        d.ket = redMap[d.kode].ket || "";
+      }
+      return d;
+    });
+  } else {
+    // JIKA TANPA NO MINTA (Langsung Sparepart): Map item langsung dari detail realisasi
+    details = redRows.map((r) => ({
+      kode: r.red_brg_kode,
+      nama: r.brg_nama || "",
+      satuan: r.brg_satuan || "",
+      stk: 0,
+      minta: 0,
+      sudah: 0,
+      kurang: 0,
+      jumlah: parseFloat(r.red_jumlah) || 0,
+      ket: r.red_keterangan || "",
+    }));
+  }
 
   const pinInfo = await checkPinStatus(nomor, db);
   header.pin_status = pinInfo.status;
 
-  return { header, reqHeader: reqData.header, details };
+  return { header, reqHeader: reqData.header || {}, details };
 };
 
 const saveData = async (payload, user) => {
@@ -177,19 +208,10 @@ const saveData = async (payload, user) => {
     const isEdit = !!nomor;
     const { jenis, tanggal, noMinta, spk, mka, keterangan, cabMinta } = payload;
     const tglTrs = new Date(tanggal);
-    const now = new Date();
-    const dateModified =
-      now.getFullYear() +
-      "-" +
-      String(now.getMonth() + 1).padStart(2, "0") +
-      "-" +
-      String(now.getDate()).padStart(2, "0") +
-      " " +
-      String(now.getHours()).padStart(2, "0") +
-      ":" +
-      String(now.getMinutes()).padStart(2, "0") +
-      ":" +
-      String(now.getSeconds()).padStart(2, "0");
+    const dateModified = new Date()
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
     const userCabang = user.cabang;
     let pinInfo = { status: "MINTA", urut: 0 };
 
