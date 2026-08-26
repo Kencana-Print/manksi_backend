@@ -633,6 +633,24 @@ const cekKomponenIdentifikasi = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// GET TERIMA SEBELUMNYA — dipakai FE hitung warning "beda dari
+// LHK sebelumnya" (non-blocking) saat input Jumlah di Detail.
+// GET /api/garmen/mutasi-produksi-form/terima-sebelumnya?nomorSpk=&gdgAsal=&excludeNomor=
+// ─────────────────────────────────────────────────────────
+const getTerimaSebelumnya = async (req, res) => {
+  try {
+    const { nomorSpk, gdgAsal, excludeNomor = "" } = req.query;
+    if (!nomorSpk || !gdgAsal) {
+      return res.json({ success: true, data: [] });
+    }
+    const data = await svc.getTerimaSebelumnya(nomorSpk, gdgAsal, excludeNomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getGudangByMutasi,
   getSpkInfo,
@@ -657,4 +675,5 @@ module.exports = {
   searchBahanBySuffix,
   getDataCetak,
   cekKomponenIdentifikasi,
+  getTerimaSebelumnya,
 };

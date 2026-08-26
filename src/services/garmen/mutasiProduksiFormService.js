@@ -1580,6 +1580,25 @@ const cekPoInternal = async (nomorSpk) => {
   return Number(row.jml) > 0;
 };
 
+// ─────────────────────────────────────────────────────────
+// GET TERIMA SEBELUMNYA (generalisasi getTerimaGp032 buat SEMUA
+// lini, bukan cuma DC). "Terima" = total qty yang sudah pernah
+// dikirim MASUK ke gdgAsal saat ini dari proses sebelumnya
+// (mph_gdgtujuan = gdgAsal), per kode+size. Ini jadi acuan "LHK
+// proses sebelumnya" buat warning non-blocking di frontend.
+// ─────────────────────────────────────────────────────────
+const getTerimaSebelumnya = async (nomorSpk, gdgAsal, excludeNomor = "") => {
+  const [rows] = await db.query(
+    `SELECT d.mpd_bhn_kode AS kode, d.mpd_size AS size, SUM(d.mpd_jumlah) AS qty
+     FROM tmutasiproduksi_hdr h
+     INNER JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
+     WHERE h.mph_spk_nomor = ? AND h.mph_gdgtujuan = ? AND h.mph_nomor <> ?
+     GROUP BY d.mpd_bhn_kode, d.mpd_size`,
+    [nomorSpk, gdgAsal, excludeNomor || ""],
+  );
+  return rows;
+};
+
 module.exports = {
   generateNomor,
   getGudangByMutasi,
@@ -1617,4 +1636,5 @@ module.exports = {
   getApprovalNoPlanStatus,
   getPlanningPerSpk,
   cekPoInternal,
+  getTerimaSebelumnya,
 };
