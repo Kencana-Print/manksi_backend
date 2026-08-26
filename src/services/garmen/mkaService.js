@@ -224,6 +224,53 @@ const getDetail = async (nomor) => {
   return rows;
 };
 
+// --- DETAIL REALISASI per kode — drill-down saat Status SPK CLOSE
+// tapi Status MKA masih OPEN (produksi sudah selesai, tapi ada
+// aksesoris yang belum lengkap direalisasi Gudang). Beda dari
+// getDetail() (Ready/Free dari stok) — ini fokus ke Diminta vs
+// Realisasi aktual per kode, sumber datanya sama dgn agregasi
+// BelumSiapCount di getBrowseList, cuma di sini per-baris bukan count.
+// ─────────────────────────────────────────────
+const getDetailRealisasi = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT
+       z.Kode,
+       z.NamaAksesoris,
+       z.Satuan,
+       z.Diminta,
+       z.Realisasi,
+       (z.Diminta - z.Realisasi) AS Kurang,
+       IF(z.Realisasi >= z.Diminta, 'SIAP', 'BELUM') AS StatusSiap
+     FROM (
+       SELECT
+         d.mkbd_brg_kode AS Kode,
+         IF(
+           IFNULL(b.brg_note, '') = '',
+           b.brg_nama,
+           CONCAT(b.brg_nama, ' - ', b.brg_note)
+         ) AS NamaAksesoris,
+         b.brg_satuan AS Satuan,
+         SUM(d.mkbd_jumlah) AS Diminta,
+         IFNULL((
+           SELECT SUM(i.red_jumlah)
+           FROM tgarmenrealisasi_hdr j
+           INNER JOIN tgarmenrealisasi_dtl i ON i.red_nomor = j.re_nomor
+           WHERE j.re_spk_nomor = h.mkb_spk_nomor
+             AND i.red_brg_kode = d.mkbd_brg_kode
+         ), 0) AS Realisasi
+       FROM tmka_hdr h
+       INNER JOIN tmka_dtl d ON d.mkbd_nomor = h.mkb_nomor
+       LEFT JOIN tgarmen_brg b
+         ON b.brg_kode = d.mkbd_brg_kode AND b.brg_jenis = 'ACCESORIES'
+       WHERE h.mkb_nomor = ?
+       GROUP BY d.mkbd_brg_kode, b.brg_nama, b.brg_note, b.brg_satuan
+     ) z
+     ORDER BY StatusSiap DESC, z.Kode`,
+    [nomor],
+  );
+  return rows;
+};
+
 // --- DELETE ---
 // Hapus detail dulu, baru header (bukan seperti bug Delphi)
 const deleteData = async (nomor) => {
@@ -342,6 +389,7 @@ const getExportDetail = async (filters) => {
 module.exports = {
   getBrowseList,
   getDetail,
+  getDetailRealisasi,
   deleteData,
   getExportHeader,
   getExportDetail,

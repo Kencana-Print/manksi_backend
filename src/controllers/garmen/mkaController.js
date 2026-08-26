@@ -1,3 +1,6 @@
+const {
+  getDetailRealisasi,
+} = require("../../services/garmen/mintaBahanService");
 const service = require("../../services/garmen/mkaService");
 
 const getBrowse = async (req, res) => {
@@ -31,6 +34,21 @@ const getDetail = async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiDetail = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    if (!nomor) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Nomor wajib diisi" });
+    }
+    const data = await service.getDetailRealisasi(nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -81,6 +99,7 @@ const exportDetail = async (req, res) => {
 module.exports = {
   getBrowse,
   getDetail,
+  getRealisasiDetail,
   deleteData,
   exportHeader,
   exportDetail,
