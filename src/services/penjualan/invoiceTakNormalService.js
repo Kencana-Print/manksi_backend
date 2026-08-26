@@ -363,8 +363,84 @@ const cekBisaUbah = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
   getBrowse(tglAwal, tglAkhir, canLihatCus);
-const getExportDetail = async (tglAwal, tglAkhir) =>
-  getBrowseDetailBarang(tglAwal, tglAkhir);
+// ═══════════════════════════════════════════════════════════
+// EXPORT DETAIL — flat per baris barang, TAPI ikut sertakan semua
+// kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
+// per Nomor dan render header cuma sekali per grup — replika Delphi.
+// ═══════════════════════════════════════════════════════════
+const getExportDetail = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCol = canLihatCus
+    ? "c.cus_nama AS NamaCustomer,"
+    : `"" AS NamaCustomer,`;
+
+  const [rows] = await db.query(
+    `SELECT
+       a.inv_nomor                                    AS Nomor,
+       DATE_FORMAT(a.inv_tanggal,'%Y-%m-%d')          AS Tanggal,
+       v.divisi                                        AS Divisi,
+       ${custCol}
+       a.inv_keterangan                                 AS Keterangan,
+       IF(a.inv_sts_pro=0,'Normal', IF(a.inv_sts_pro=1,'Proforma','Tidak Normal')) AS Status,
+       IF(a.inv_status_otomatis=1,'Otomatis','Normal') AS Otomatis,
+       (
+         SELECT (SUM(invd_harga*invd_jumlah) - a.inv_disc) *
+           IF(a.inv_sts_ppn=1, ((100+a.inv_ppn)/100), 1)
+         FROM tinv_dtl WHERE invd_inv_nomor = a.inv_nomor
+       )                                                AS Total,
+       CAST(a.inv_no_fp AS CHAR(60))                    AS Faktur_Pajak,
+       IF(a.isexportppn=1,'Sudah Export','Belum')       AS Stat_Exp,
+       IFNULL((
+         SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = a.inv_nomor
+       ), 0)                                            AS Bayar,
+       (
+         SELECT tanggal FROM piutang_kredit_detail pkd
+         INNER JOIN piutang_kredit_header pkh ON pkd.nomor = pkh.nomor
+         WHERE pkd.kredit <> 0 AND pkd.nota = a.inv_nomor
+         ORDER BY tanggal DESC LIMIT 1
+       )                                                AS Tanggal_Pelunasan,
+       (
+         SELECT tbd.tanggal FROM terima_bayar_debet tbd
+         INNER JOIN piutang_kredit_detail pkd ON pkd.no_bukti = tbd.nomor
+         WHERE pkd.nota = a.inv_nomor
+         ORDER BY tbd.tanggal DESC LIMIT 1
+       )                                                AS Tanggal_Bayar,
+       a.user_create                                    AS Usr,
+       DATE_FORMAT(a.date_create,'%d-%m-%Y %T')         AS Created,
+       IFNULL((
+         SELECT
+           IFNULL(IF(pin_acc='' AND pin_dipakai='','WAITING',
+             IF(pin_acc='Y' AND pin_dipakai='','ACC',
+               IF(pin_acc='Y' AND pin_dipakai='Y','ACC - USED',
+                 IF(pin_acc='N','REJECTED','')))),'')
+         FROM tspk_pin5
+         WHERE pin_trs = 'INV TAKNORMAL' AND pin_nomor = a.inv_nomor
+         ORDER BY pin_urut DESC LIMIT 1
+       ), '')                                           AS ACC_Edit,
+       (
+         SELECT pin_alasan FROM tspk_pin5
+         WHERE pin_trs = 'INV TAKNORMAL' AND pin_nomor = a.inv_nomor
+         ORDER BY pin_urut DESC LIMIT 1
+       )                                                AS Alasan,
+       d.invd_spk_nomor     AS Kode,
+       b.brg_name           AS Nama,
+       d.invd_ukuran        AS Ukuran,
+       d.invd_jumlah        AS Jumlah,
+       d.invd_harga         AS Harga,
+       s.spk_hargariil      AS HargaRiil,
+       s.spk_hargaFEE       AS Fee
+     FROM tinv_dtl d
+     INNER JOIN tinv_hdr a ON a.inv_nomor = d.invd_inv_nomor
+     INNER JOIN tcustomer c ON a.inv_cus_kode = c.cus_kode
+     LEFT JOIN tdivisi v ON v.kode = a.inv_divisi
+     INNER JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+     WHERE a.inv_sts_pro = 2
+       AND a.inv_tanggal >= ? AND a.inv_tanggal <= ?
+     ORDER BY a.inv_nomor`,
+    [tglAwal, tglAkhir],
+  );
+  return rows;
+};
 
 module.exports = {
   getBrowse,

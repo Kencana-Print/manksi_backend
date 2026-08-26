@@ -132,8 +132,50 @@ const deleteData = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
   getBrowse(tglAwal, tglAkhir, canLihatCus);
-const getExportDetail = async (tglAwal, tglAkhir) =>
-  getBrowseDetail(tglAwal, tglAkhir);
+// ─────────────────────────────────────────────────────────
+// EXPORT DETAIL — flat per baris detail, TAPI ikut sertakan semua
+// kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
+// per Nomor SJ dan render header cuma sekali per grup.
+// ─────────────────────────────────────────────────────────
+const getExportDetail = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `a.sj_cus_kode AS KdCus,
+       c.cus_nama AS Customer,
+       a.sj_alamat_customer AS Alamat,
+       a.sj_kota_customer AS Kota,`
+    : `"" AS KdCus,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
+  const [rows] = await db.query(
+    `SELECT
+       a.sj_nomor                                     AS Nomor,
+       DATE_FORMAT(a.sj_tanggal,'%Y-%m-%d')            AS Tanggal,
+       v.divisi                                        AS Divisi,
+       ${custCols}
+       a.sj_keterangan                                  AS Keterangan,
+       g.gdg_nama                                       AS Gudang,
+       DATE_FORMAT(a.date_create,'%d-%m-%Y %T')         AS Created,
+       d.sjd_spk_nomor  AS Kode,
+       s.spk_nama       AS Nama,
+       s.spk_ukuran     AS Ukuran,
+       s.spk_panjang    AS Panjang,
+       s.spk_lebar      AS Lebar,
+       d.sjd_jumlah     AS Jumlah,
+       d.sjd_keterangan AS KetDetail
+     FROM tsj_hdr_bayangan a
+     INNER JOIN tsj_dtl_bayangan d ON d.sjd_sj_nomor = a.sj_nomor
+     INNER JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     INNER JOIN tgudang g ON g.gdg_kode = a.sj_gdg_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = a.sj_cus_kode
+     LEFT JOIN tdivisi v ON v.kode = a.sj_divisi
+     WHERE a.sj_tanggal >= ? AND a.sj_tanggal <= ?
+     ORDER BY a.sj_nomor`,
+    [tglAwal, tglAkhir],
+  );
+  return rows;
+};
 
 module.exports = {
   getBrowse,

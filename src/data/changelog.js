@@ -5,6 +5,20 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.4",
+    date: "2026-08-26",
+    changes: [
+      {
+        type: "added",
+        text: "Fitur Baru : Agenda Kerja per Departemen, agenda dapat diinputkan oleh PIC per departemen dan bisa dilihat sesuai departemen masing-masing",
+      },
+      {
+        type: "fixed",
+        text: "Perbaikan Export (terutama di bagian Penjualan)",
+      },
+    ],
+  },
+  {
     version: "1.0.3",
     date: "2026-08-21",
     changes: [

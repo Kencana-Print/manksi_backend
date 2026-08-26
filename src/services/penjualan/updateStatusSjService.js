@@ -100,8 +100,83 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
 
 const getExportData = async (tglAwal, tglAkhir, canLihatCus = false) =>
   getBrowse(tglAwal, tglAkhir, canLihatCus);
-const getExportDetail = async (tglAwal, tglAkhir) =>
-  getBrowseDetail(tglAwal, tglAkhir);
+// ═══════════════════════════════════════════════════════════
+// EXPORT DETAIL — flat per baris detail, TAPI ikut sertakan semua
+// kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
+// per Nomor SJ dan render header cuma sekali per grup.
+// ═══════════════════════════════════════════════════════════
+const getExportDetail = async (tglAwal, tglAkhir, canLihatCus = false) => {
+  const custCols = canLihatCus
+    ? `c.cus_kode AS KodeCustomer,
+       c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS KodeCustomer,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
+  const [rows] = await db.query(
+    `SELECT
+       Nomor, Tanggal, Divisi,
+       KodeCustomer, Customer, Alamat, Kota,
+       Status, Expedisi, Kurir, Nomor_Resi, Tanggal_Kirim, Biaya_Kirim,
+       Total_Qty,
+       IF(Total_Qty > 0, Biaya_Kirim / Total_Qty, 0) AS Harga,
+       Tanggal_Terima, Penerima_Barang, Tanggal_Terima_Sj,
+       Contact_Person, Tanggal_Konfirmasi, Tanggal_Terima_1, Tanggal_SerahTerima,
+       SpkNomor, NamaBarang, Ukuran, Panjang, Lebar, Jumlah, KetDetail
+     FROM (
+       SELECT
+         h.sj_nomor                                  AS Nomor,
+         DATE_FORMAT(h.sj_tanggal, '%Y-%m-%d')        AS Tanggal,
+         d.divisi                                     AS Divisi,
+         ${custCols}
+         s.stssj_nama                                  AS Status,
+         h.expedisi                                    AS Expedisi,
+         h.kurir                                       AS Kurir,
+         h.nomor_resi                                  AS Nomor_Resi,
+         DATE_FORMAT(h.tanggal_kirim, '%Y-%m-%d')      AS Tanggal_Kirim,
+         h.biaya_kirim                                 AS Biaya_Kirim,
+         (
+           SELECT SUM(
+             IF(spk.spk_jo_kode IN ('MI','MT'), spk.spk_panjang * spk.spk_lebar,
+               IF(spk.spk_jo_kode IN ('SP','UU','LT','BN','BB','BD'), spk.spk_panjang, 1)
+             ) * sjd.sjd_jumlah
+           )
+           FROM tsj_dtl sjd
+           INNER JOIN tspk spk ON spk.spk_nomor = sjd.sjd_spk_nomor
+           WHERE sjd.sjd_sj_nomor = h.sj_nomor
+         )                                              AS Total_Qty,
+         DATE_FORMAT(h.tanggal_kembali, '%Y-%m-%d')    AS Tanggal_Terima,
+         h.penerima_barang                              AS Penerima_Barang,
+         DATE_FORMAT(h.tanggal_terima_sj, '%Y-%m-%d')  AS Tanggal_Terima_Sj,
+         h.contact_person                               AS Contact_Person,
+         DATE_FORMAT(h.tanggal_konfirmasi, '%Y-%m-%d') AS Tanggal_Konfirmasi,
+         DATE_FORMAT(h.tanggal_terima, '%Y-%m-%d')     AS Tanggal_Terima_1,
+         DATE_FORMAT(h.tanggal_serahterima, '%Y-%m-%d')AS Tanggal_SerahTerima,
+         d2.sjd_spk_nomor  AS SpkNomor,
+         s2.spk_nama       AS NamaBarang,
+         s2.spk_ukuran     AS Ukuran,
+         s2.spk_panjang    AS Panjang,
+         s2.spk_lebar      AS Lebar,
+         d2.sjd_jumlah     AS Jumlah,
+         d2.sjd_keterangan AS KetDetail
+       FROM tsj_hdr h
+       INNER JOIN tcustomer c ON h.sj_cus_kode = c.cus_kode
+       INNER JOIN tstatussj s ON s.stssj_kode = h.sj_stssj_kode
+       LEFT JOIN tdivisi d ON d.kode = h.sj_divisi
+       INNER JOIN tsj_dtl d2 ON d2.sjd_sj_nomor = h.sj_nomor
+       INNER JOIN tspk s2 ON s2.spk_nomor = d2.sjd_spk_nomor
+       WHERE h.sj_status_otomatis <> 1
+         AND h.sj_tanggal >= ?
+         AND h.sj_tanggal <= ?
+       ORDER BY h.sj_nomor, d2.sjd_nourut
+     ) Final`,
+    [tglAwal, tglAkhir],
+  );
+  return rows;
+};
 
 // ═══════════════════════════════════════════════════════════
 // FORM — Update Status

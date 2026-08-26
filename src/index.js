@@ -282,6 +282,8 @@ const userFormRoutes = require("./routes/tools/userFormRoutes");
 const approvalRoutes = require("./routes/tools/approvalRoutes");
 const relationshipMapRoutes = require("./routes/tools/relationshipMapRoutes");
 const informasiBahanRoutes = require("./routes/tools/informasiBahanRoutes");
+const agendaKerjaRoutes = require("./routes/tools/agendaKerjaRoutes");
+const agendaPicRoutes = require("./routes/tools/agendaPicRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
 
@@ -745,6 +747,8 @@ app.use("/api/tools/user-form", userFormRoutes);
 app.use("/api/tools/approval", approvalRoutes);
 app.use("/api/tools/relationship-map", relationshipMapRoutes);
 app.use("/api/tools/sistem-informasi-bahan", informasiBahanRoutes);
+app.use("/api/tools/agenda-kerja", agendaKerjaRoutes);
+app.use("/api/tools/agenda-pic", agendaPicRoutes);
 
 app.use("/api/system/version", versionRoutes);
 

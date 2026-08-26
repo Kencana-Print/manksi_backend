@@ -394,8 +394,68 @@ const getExportData = async (
   cabang = "",
   canLihatCus = false,
 ) => getBrowse(tglAwal, tglAkhir, cabang, canLihatCus);
-const getExportDetail = async (tglAwal, tglAkhir, cabang = "") =>
-  getBrowseDetail(tglAwal, tglAkhir, cabang);
+// ═══════════════════════════════════════════════════════════
+// EXPORT DETAIL — flat per baris detail, TAPI ikut sertakan semua
+// kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
+// per Nomor SJ dan render header cuma sekali per grup.
+// ═══════════════════════════════════════════════════════════
+const getExportDetail = async (
+  tglAwal,
+  tglAkhir,
+  cabang = "",
+  canLihatCus = false,
+) => {
+  let gudangFilter = "";
+  const params = [tglAwal, tglAkhir];
+
+  const gdgKode = CABANG_GUDANG_MAP[cabang];
+  if (gdgKode) {
+    gudangFilter = ` AND h.sj_gdg_kode = ?`;
+    params.push(gdgKode);
+  }
+
+  const custCols = canLihatCus
+    ? `h.sj_cus_kode AS KodeCustomer,
+       c.cus_nama AS Customer,
+       h.sj_alamat_customer AS Alamat,
+       h.sj_kota_customer AS Kota,`
+    : `"" AS KodeCustomer,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
+  const [rows] = await db.query(
+    `SELECT
+       IF(h.sj_approve=1,'Sudah', IF(h.sj_approve=2,'Batal','')) AS Approved,
+       v.divisi                                  AS Divisi,
+       h.sj_nomor                                AS Nomor,
+       DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d')      AS Tanggal,
+       h.sj_gdg_kode                              AS KodeGdg,
+       g.gdg_nama                                 AS Gudang,
+       ${custCols}
+       h.sj_keterangan                             AS Keterangan,
+       d.sjd_spk_nomor  AS SpkNomor,
+       s.spk_nama       AS NamaBarang,
+       d.sjd_ukuran     AS Ukuran,
+       s.spk_panjang    AS Panjang,
+       s.spk_lebar      AS Lebar,
+       d.sjd_jumlah     AS Jumlah,
+       d.sjd_keterangan AS KetDetail
+     FROM tsj_hdr h
+     INNER JOIN tsj_dtl d ON h.sj_nomor = d.sjd_sj_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     LEFT JOIN tgudang g ON g.gdg_kode = h.sj_gdg_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = h.sj_cus_kode
+     LEFT JOIN tdivisi v ON v.kode = h.sj_divisi
+     WHERE h.sj_status_otomatis = 0
+       AND h.date_create >= '2020-08-24'
+       AND h.sj_tanggal >= ? AND h.sj_tanggal <= ?
+       ${gudangFilter}
+     ORDER BY h.sj_nomor`,
+    params,
+  );
+  return rows;
+};
 
 // ═══════════════════════════════════════════════════════════
 // DIVISI LIST untuk bulk dialog (filter dropdown)

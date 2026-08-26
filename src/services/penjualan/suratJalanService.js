@@ -247,8 +247,65 @@ const getExportData = async (
   return getBrowse(tglAwal, tglAkhir, divisi, canLihatCus);
 };
 
-const getExportDetail = async (tglAwal, tglAkhir) => {
-  return getBrowseDetail(tglAwal, tglAkhir);
+// ─────────────────────────────────────────────────────────
+// EXPORT DETAIL — flat per baris detail, TAPI ikut sertakan semua
+// kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
+// per Nomor SJ dan render header cuma sekali per grup.
+// ─────────────────────────────────────────────────────────
+const getExportDetail = async (
+  tglAwal,
+  tglAkhir,
+  divisi = 0,
+  canLihatCus = false,
+) => {
+  let divisiFilter = "";
+  if (divisi === 1) divisiFilter = " AND gdg_jadi = 1";
+  if (divisi === 4) divisiFilter = " AND gdg_jadi = 4";
+
+  const custCols = canLihatCus
+    ? `a.sj_cus_kode AS KdCus,
+       c.cus_nama AS Customer,
+       a.sj_alamat_customer AS Alamat,
+       a.sj_kota_customer AS Kota,`
+    : `"" AS KdCus,
+       "" AS Customer,
+       "" AS Alamat,
+       "" AS Kota,`;
+
+  const [rows] = await db.query(
+    `SELECT
+       a.sj_nomor                                          AS Nomor,
+       DATE_FORMAT(a.sj_tanggal, '%Y-%m-%d')              AS Tanggal,
+       d.divisi                                            AS Divisi,
+       a.sj_inv_sm                                        AS Invoice,
+       ${custCols}
+       a.sj_keterangan                                    AS Keterangan,
+       g.gdg_nama                                         AS Gudang,
+       IF(a.sj_approve=2,'Batal',
+         IF(a.sj_approve=1,'Sudah',''))                   AS Approved,
+       DATE_FORMAT(a.date_create, '%d-%m-%Y %T')          AS Created,
+       sjd.sjd_spk_nomor     AS SPK,
+       s.spk_nama            AS Nama,
+       sjd.sjd_ukuran        AS Ukuran,
+       s.spk_panjang         AS Panjang,
+       s.spk_lebar           AS Lebar,
+       sjd.sjd_jumlah        AS Jumlah,
+       sjd.sjd_koli          AS Koli,
+       sjd.sjd_keterangan    AS KetDetail,
+       sjd.sjd_nokirim       AS NoKirim
+     FROM tsj_hdr a
+     INNER JOIN tsj_dtl sjd ON sjd.sjd_sj_nomor = a.sj_nomor
+     INNER JOIN tspk s ON s.spk_nomor = sjd.sjd_spk_nomor
+     INNER JOIN tgudang g ON g.gdg_kode = a.sj_gdg_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = a.sj_cus_kode
+     LEFT JOIN tdivisi d ON d.kode = a.sj_divisi
+     WHERE a.sj_status_otomatis = 0
+       AND a.sj_tanggal >= ? AND a.sj_tanggal <= ?
+       ${divisiFilter}
+     ORDER BY a.sj_nomor, sjd.sjd_nourut`,
+    [tglAwal, tglAkhir],
+  );
+  return rows;
 };
 
 // ─────────────────────────────────────────────────────────

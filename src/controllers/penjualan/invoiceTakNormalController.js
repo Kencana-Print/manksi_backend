@@ -121,13 +121,10 @@ const getExportData = async (req, res) => {
 };
 
 const getExportDetail = async (req, res) => {
-  try {
-    const { tglAwal, tglAkhir } = req.query;
-    const data = await svc.getExportDetail(tglAwal, tglAkhir);
-    res.json({ success: true, data });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  const { tglAwal, tglAkhir } = req.query;
+  const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+  const data = await svc.getExportDetail(tglAwal, tglAkhir, canLihatCus);
+  res.json({ success: true, data });
 };
 
 module.exports = {
