@@ -18,6 +18,14 @@ const resolveSoLocation = async (nomor) => {
   return rows[0]?.src || null;
 };
 
+const isValidDateStr = (s) => {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return false;
+  const year = Number(s.substring(0, 4));
+  return year >= 2000 && year <= 2100; // sesuaikan batas wajar bisnis
+};
+
 // --- GET BROWSE LIST ---
 // Sumber "s" adalah UNION ALL: SO lama (tspk, spk_is_so=1) + SO baru
 // (tsalesorder), kolom di-alias supaya namanya identik dengan tspk
@@ -37,6 +45,13 @@ const getBrowseList = async (filters) => {
     canLihatCus,
     canLihatHarga,
   } = filters;
+
+  if (!isValidDateStr(startDate) || !isValidDateStr(endDate)) {
+    throw new Error("Rentang tanggal tidak valid.");
+  }
+  if (new Date(startDate) > new Date(endDate)) {
+    throw new Error("Tanggal awal tidak boleh lebih besar dari tanggal akhir.");
+  }
 
   // ⚡ OPTIMASI: startDate dipakai juga sebagai lower-bound filter untuk
   // subquery agregat sjChk/mp/bpj — supaya MySQL tidak scan SELURUH
