@@ -128,11 +128,8 @@ const getById = async (nomor) => {
 // CEK STATUS PELUNASAN — sesuai Delphi cekstatuspelunasan
 // ─────────────────────────────────────────────────────────
 const cekStatusPelunasan = async (nomor) => {
-  const [[row]] = await db.query(
-    `SELECT kredit FROM piutang_debet WHERE nota = ?`,
-    [nomor],
-  );
-  return row ? Number(row.kredit) > 0 : false;
+  const total = await getDebet(nomor);
+  return total > 0;
 };
 
 // ─────────────────────────────────────────────────────────
@@ -140,10 +137,11 @@ const cekStatusPelunasan = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const getDebet = async (nomor) => {
   const [[row]] = await db.query(
-    `SELECT kredit FROM piutang_debet WHERE nota = ?`,
+    `SELECT IFNULL(SUM(kredit), 0) AS total_kredit
+     FROM piutang_kredit_detail WHERE nota = ?`,
     [nomor],
   );
-  return row ? Number(row.kredit) || 0 : 0;
+  return row ? Number(row.total_kredit) || 0 : 0;
 };
 
 // ─────────────────────────────────────────────────────────
@@ -860,11 +858,7 @@ const getDataCetak = async (nomor) => {
     grandTotal = totalBarang - disc;
   }
 
-  const [[debetRow]] = await db.query(
-    `SELECT kredit FROM piutang_debet WHERE nota = ?`,
-    [nomor],
-  );
-  const uangMuka = round(debetRow ? debetRow.kredit : 0);
+  const uangMuka = round(await getDebet(nomor));
   const nilaiPiutang = grandTotal - uangMuka;
 
   return {

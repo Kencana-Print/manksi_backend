@@ -144,10 +144,19 @@ const saveData = async (payload, user) => {
     let nomor = payload.nomor; // Jika baru dari RETL, isinya RETL/xxx. Jika edit, isinya RETP/xxx.
     const isEdit = nomor.startsWith("RETP");
     const noReturLog = isEdit ? payload.proret_log : nomor; // Menyimpan histori nomor log
-    const dateModified = new Date()
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " ");
+    const now = new Date();
+    const dateModified =
+      now.getFullYear() +
+      "-" +
+      String(now.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(now.getDate()).padStart(2, "0") +
+      " " +
+      String(now.getHours()).padStart(2, "0") +
+      ":" +
+      String(now.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(now.getSeconds()).padStart(2, "0");
 
     // 1. Validasi Tutup Buku
     const tglTrs = new Date(payload.tanggal);

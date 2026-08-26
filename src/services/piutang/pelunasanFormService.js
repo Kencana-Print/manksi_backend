@@ -147,7 +147,7 @@ const getInfoInvoice = async (nota) => {
 
   const [bayarRows] = await db.query(
     `SELECT IFNULL(SUM(kredit), 0) AS total_terbayar 
-     FROM piutang_debet 
+     FROM piutang_kredit_detail 
      WHERE nota = ?`,
     [nota],
   );

@@ -26,6 +26,57 @@ const mapSpkHeaderToSo = (header) => {
   return out;
 };
 
+// ============================================================
+// HELPER BARU: cek SPK PPIC turunan + status Ngedit (Pengajuan
+// Perubahan Data). Dipakai baik di getDetail (utk ditampilkan ke
+// form) maupun di saveData (utk GATE keras server-side).
+// ============================================================
+const getPpicTurunanInfo = async (conn, nomor) => {
+  const runner = conn || db;
+  const [ppicRows] = await runner.query(
+    `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
+    [nomor],
+  );
+  const ppic = ppicRows[0] || null;
+
+  const [pin5Rows] = await runner.query(
+    `SELECT p1.pin_acc, p1.pin_dipakai
+    FROM tspk_pin5 p1
+    INNER JOIN (
+      SELECT pin_nomor, MAX(pin_urut) AS max_urut
+      FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
+    ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
+    WHERE p1.pin_trs = "SO" AND p1.pin_nomor = ?`,
+    [nomor],
+  );
+  let ngedit = "";
+  if (pin5Rows.length > 0) {
+    const p = pin5Rows[0];
+    if (p.pin_acc === "" && p.pin_dipakai === "") ngedit = "WAIT";
+    else if (p.pin_acc === "Y" && p.pin_dipakai === "") ngedit = "ACC";
+    else if (p.pin_acc === "N") ngedit = "TOLAK";
+  }
+
+  const [ubahPinRows] = await runner.query(
+    `SELECT pin_urut FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="UBAH" AND pin_nomor=?
+       AND pin_acc="Y" AND pin_dipakai=""
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  const approvedUbahUrut =
+    ubahPinRows.length > 0 ? ubahPinRows[0].pin_urut : null;
+
+  return {
+    HasSpkPpic: ppic ? 1 : 0,
+    SpkPpic: ppic ? ppic.spk_nomor : "",
+    SpkPpicClose: ppic ? Number(ppic.spk_close) : 0,
+    Ngedit: ngedit,
+    HasApprovedUbah: approvedUbahUrut !== null, // ⬅ dipakai gate
+    approvedUbahUrut, // ⬅ dipakai tandai pin_dipakai
+  };
+};
+
 // --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
 // hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
 const generateNomor = async (conn, perushKode, joKode) => {
@@ -187,12 +238,19 @@ const getDetailFromNew = async (nomor, headerRows) => {
   }
 
   header[0].isSalesOrder = true;
-  header[0].isLegacy = false; // ⬅ BARU
+  header[0].isLegacy = false;
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
   header[0].nopo_acc = nopo_acc;
   header[0].spk_aktif = spk_aktif;
+
+  const ppicInfo = await getPpicTurunanInfo(null, nomor);
+  header[0].HasSpkPpic = ppicInfo.HasSpkPpic;
+  header[0].SpkPpic = ppicInfo.SpkPpic;
+  header[0].SpkPpicClose = ppicInfo.SpkPpicClose;
+  header[0].Ngedit = ppicInfo.Ngedit;
+  header[0].HasApprovedUbah = ppicInfo.HasApprovedUbah;
 
   const [alokasi] = await db.query(
     `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
@@ -296,6 +354,16 @@ const getDetailLegacy = async (nomor, legacyRows) => {
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
   header[0].nopo_acc = nopo_acc;
+
+  // SPK legacy (spk_nomor = nomor itu sendiri, bukan referensi
+  // via spk_so_ref) tidak mungkin punya "turunan PPIC" dalam arti yang
+  // sama — tetap disertakan dengan nilai default supaya kontrak field
+  // ke frontend konsisten (form tidak perlu null-check terpisah).
+  header[0].HasSpkPpic = 0;
+  header[0].SpkPpic = "";
+  header[0].SpkPpicClose = 0;
+  header[0].Ngedit = "";
+  header[0].HasApprovedUbah = false;
 
   // Size — tspk_size sudah dipakai konsisten di modul lain (mis.
   // mutasiProduksiFormService) sebagai tabel size utk SPK legacy.
@@ -458,6 +526,12 @@ const saveData = async (payload, user) => {
     isSalesOrder,
   } = payload;
 
+  // ⬅ BARU: dipakai gate PPIC turunan (isEdit) DAN sync-back/reopen
+  // (step 9) — dihitung sekali, self-detected, tidak lagi bergantung
+  // pada xminta5/xurut5 dari payload (yang faktanya tidak pernah
+  // dikirim frontend, sehingga sync-back sebelumnya jadi dead code).
+  let approvedUbahPin = null; // { urut } kalau ada pin "UBAH" siap dipakai
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -613,6 +687,42 @@ const saveData = async (payload, user) => {
         [nomor],
       );
       const existingData = existingRows[0] || {};
+
+      // ==========================================
+      // ⬅ GATE KERAS — SPK PPIC turunan masih Open.
+      // Ini adalah satu-satunya sumber kebenaran; validasi di frontend
+      // (validateSave) hanya UX, TIDAK boleh jadi satu-satunya lapisan
+      // karena endpoint ini bisa dipanggil langsung.
+      // Pengecualian: kalau save ini adalah eksekusi "Pengajuan
+      // Perubahan Data" yang SUDAH di-ACC, boleh lanjut — inilah jalur
+      // resmi utk edit SO yang turunannya sudah close tapi butuh
+      // approval PIN5.
+      // ==========================================
+      const ppicInfo = await getPpicTurunanInfo(conn, nomor);
+      const isApprovedChangeFlow = ppicInfo.HasApprovedUbah;
+      if (isApprovedChangeFlow)
+        approvedUbahPin = { urut: ppicInfo.approvedUbahUrut };
+
+      // GATE 1: SPK PPIC masih Open → tolak TANPA pengecualian apa pun
+      if (ppicInfo.HasSpkPpic && ppicInfo.SpkPpicClose !== 1) {
+        throw new Error(
+          `SO ini sudah memiliki SPK PPIC turunan (${ppicInfo.SpkPpic}) yang masih Open. ` +
+            `Minta PPIC untuk meng-close SPK PPIC tersebut terlebih dahulu sebelum SO ini bisa diubah.`,
+        );
+      }
+
+      // GATE 2: SPK PPIC sudah Close, tapi belum ada ACC Perubahan Data
+      // ⬅ Pengecualian isApprovedChangeFlow HANYA berlaku di sini
+      if (
+        ppicInfo.HasSpkPpic &&
+        ppicInfo.SpkPpicClose === 1 &&
+        !isApprovedChangeFlow
+      ) {
+        throw new Error(
+          `SPK PPIC turunan sudah di-close. Silakan ajukan "Pengajuan Perubahan Data" ` +
+            `(menu Tindakan) dan tunggu ACC sebelum mengubah SO ini.`,
+        );
+      }
       // Divisi 3 (Kaosan) dikecualikan dari gate persetujuan customer
       if (!header.spk_memo && divisiStr !== "3") {
         const wasAlreadyApproved = existingData.so_acc_customer === "Y";
@@ -922,13 +1032,94 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 8. PATCH: UPDATE PIN 5 BULAN BERIKUTNYA — TIDAK BERUBAH
+    // 8 & 9. Kalau ada approval "Perubahan Data" (UBAH) yang sudah
+    // ACC dan belum dipakai, tandai dipakai + sync-back & reopen SPK
+    // PPIC turunan. Self-detected (approvedUbahPin), tidak lagi
+    // menunggu xminta5/xurut5 dari payload.
     // ==========================================
-    if (xminta5 === "ACC" && xurut5) {
+    if (approvedUbahPin) {
       await conn.query(
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
-        [nomor, xurut5],
+        [nomor, approvedUbahPin.urut],
       );
+
+      const [turunanRows] = await conn.query(
+        `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0`,
+        [nomor],
+      );
+      if (turunanRows.length > 0) {
+        const turunanNomor = turunanRows[0].spk_nomor;
+        await conn.query(
+          `UPDATE tspk SET
+             spk_nama = ?, spk_nama2 = ?, spk_ukuran = ?, spk_jumlah = ?,
+             spk_dateline = ?, spk_kain = ?, spk_finishing = ?, spk_gramasi = ?,
+             spk_panjang = ?, spk_lebar = ?, spk_tipe = ?, spk_statuskerja = ?,
+             spk_sablon = ?, spk_bordir = ?, spk_sublim = ?,
+             spk_close = 0, spk_close_alasan = '',
+             user_modified = ?, date_modified = NOW()
+           WHERE spk_nomor = ?`,
+          [
+            header.spk_nama,
+            header.spk_nama2,
+            header.spk_ukuran,
+            header.spk_jumlah,
+            header.spk_dateline,
+            header.spk_kain,
+            header.spk_finishing,
+            header.spk_gramasi,
+            header.spk_panjang,
+            header.spk_lebar,
+            header.spk_tipe,
+            header.spk_statuskerja,
+            header.spk_sablon,
+            header.spk_bordir,
+            header.spk_sublim,
+            user.kode,
+            turunanNomor,
+          ],
+        );
+
+        // Sync ulang tspk_size dari dtlSize SO — replace penuh, sama
+        // pola dengan saveSizeList di spkFormService.js (hanya baris
+        // qty > 0 yang disimpan).
+        await conn.query(`DELETE FROM tspk_size WHERE spks_nomor = ?`, [
+          turunanNomor,
+        ]);
+        const validSizes = (dtlSize || []).filter(
+          (item) => Number(item.qty) > 0,
+        );
+        if (validSizes.length > 0) {
+          const vals = validSizes.map((item) => [
+            turunanNomor,
+            item.size,
+            item.qty,
+            item.ld || 0,
+            item.pb || 0,
+            item.ld || 0,
+            item.pl_pendek || 0,
+            item.pl_panjang || 0,
+            item.p_bahu || 0,
+            item.l_lengan || 0,
+            item.l_manset || 0,
+            item.l_pinggang || 0,
+            item.p_celana || 0,
+            item.l_panggul || 0,
+            item.l_paha || 0,
+            item.pesak || 0,
+            item.l_lutut || 0,
+            item.l_bawah || 0,
+          ]);
+          await conn.query(
+            `INSERT INTO tspk_size
+               (spks_nomor, spks_size, spks_qty, spks_a, spks_b,
+                spks_ld, spks_pl_pendek, spks_pl_panjang, spks_p_bahu,
+                spks_l_lengan, spks_l_manset, spks_l_pinggang, spks_p_celana,
+                spks_l_panggul, spks_l_paha, spks_pesak, spks_l_lutut, spks_l_bawah)
+             VALUES ?`,
+            [vals],
+          );
+        }
+      }
     }
 
     await conn.commit();

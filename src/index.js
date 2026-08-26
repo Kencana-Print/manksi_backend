@@ -40,6 +40,8 @@ const bapProduksiRoutes = require("./routes/master/bapProduksiRoutes");
 const bapProduksiFormRoutes = require("./routes/master/bapProduksiFormRoutes");
 const complainCustomerRoutes = require("./routes/master/complainCustomerRoutes");
 const complainCustomerFormRoutes = require("./routes/master/complainCustomerFormRoutes");
+const kendalaRoutes = require("./routes/master/kendalaRoutes");
+const kendalaFormRoutes = require("./routes/master/kendalaFormRoutes");
 
 // PPIC Routes
 const proofRoutes = require("./routes/ppic/proofRoutes");
@@ -140,6 +142,8 @@ const mkbRoutes = require("./routes/pembelian/mkbRoutes");
 const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
 const poBahanRoutes = require("./routes/pembelian/poBahanRoutes");
 const poBahanFormRoutes = require("./routes/pembelian/poBahanFormRoutes");
+const poExternalGarmenRoutes = require("./routes/pembelian/poExternalGarmenRoutes");
+const poExternalGarmenFormRoutes = require("./routes/pembelian/poExternalGarmenFormRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -193,6 +197,7 @@ const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 const lapStokBahanBarcodeRoutes = require("./routes/laporan/gudang-garmen/laporanStokBahanBarcodeRoutes");
 const kartuStokBahanRoutes = require("./routes/laporan/gudang-garmen/kartuStokBahanRoutes");
 const realisasiKeluarBahanRoutes = require("./routes/laporan/gudang-garmen/realisasiKeluarBahanRoutes");
+const umurStokBahanRoutes = require("./routes/laporan/gudang-garmen/umurStokBahanRoutes");
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const mutasiStokBahanRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBahanRoutes");
 const stokAccVsMkaRoutes = require("./routes/laporan/gudang-garmen/stokAccVsMkaRoutes");
@@ -384,11 +389,15 @@ app.use("/api/master/bap-produksi", bapProduksiRoutes);
 app.use("/api/master/bap-produksi-form", bapProduksiFormRoutes);
 app.use("/api/master/complain-customer", complainCustomerRoutes);
 app.use("/api/master/complain-customer-form", complainCustomerFormRoutes);
+app.use("/api/master/kendala", kendalaRoutes);
+app.use("/api/master/kendala-form", kendalaFormRoutes);
 
 app.use("/api/pembelian/mkb/form", mkbFormRoutes);
 app.use("/api/pembelian/mkb", mkbRoutes);
 app.use("/api/pembelian/po-bahan", poBahanRoutes);
 app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
+app.use("/api/pembelian/po-external-garmen", poExternalGarmenRoutes);
+app.use("/api/pembelian/po-external-garmen/form", poExternalGarmenFormRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
@@ -583,6 +592,7 @@ app.use(
   "/api/laporan/gudang-garmen/realisasi-keluar-bahan",
   realisasiKeluarBahanRoutes,
 );
+app.use("/api/laporan/gudang-garmen/umur-stok-bahan", umurStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/stok-acc-vs-mka", stokAccVsMkaRoutes);
 app.use("/api/laporan/gudang-garmen/stok-dc", stokDcRoutes);
 app.use("/api/laporan/gudang-garmen/stok-barang-jadi", stokBarangJadiRoutes);

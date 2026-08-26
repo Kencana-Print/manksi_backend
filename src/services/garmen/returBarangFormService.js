@@ -166,7 +166,7 @@ const getFormData = async (nomor) => {
       nama: r.Nama,
       satuan: r.brg_satuan,
       minta,
-      jumlah: Number(r.retd_Jumlah),
+      jumlah: Number(r.retd_jumlah),
       sudah,
       keterangan: r.retd_keterangan,
       spk: r.retd_spk,

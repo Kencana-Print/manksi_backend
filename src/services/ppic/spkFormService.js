@@ -127,6 +127,7 @@ const getDetail = async (nomor) => {
     keteranganKhusus,
     alokasi,
     dtlKaosan,
+    babaranResult,
   ] = await Promise.all([
     getSizeList(nomor),
     isPremium ? getKomponenSpk(nomor) : { ListPotong: [], ListCetakBordir: [] },
@@ -135,7 +136,8 @@ const getDetail = async (nomor) => {
       : { header: null, proof: [], sewing: [] },
     isPremium ? getKeteranganKhusus(nomor) : [],
     getAlokasi(nomor),
-    isKaosan ? getSpkKaosanList(nomor) : [], // ← BARU
+    isKaosan ? getSpkKaosanList(nomor) : [],
+    !isPremium ? getBabaran(nomor) : { rows: [], source: "manual" },
   ]);
 
   const [masterKet] = isPremium
@@ -160,6 +162,8 @@ const getDetail = async (nomor) => {
     keteranganKhusus,
     ketKomponenList: masterKet,
     alokasi,
+    babaran: babaranResult.rows,
+    babaranSource: babaranResult.source,
   };
 };
 
@@ -403,6 +407,147 @@ const saveAlokasi = async (conn, spkNomor, list) => {
   );
 };
 
+// --- Resolve kandidat nomor yang mungkin dipakai sebagai mkb_spk_nomor.
+// MKB kadang dibuat SEBELUM SPK PPIC ada (langsung dari SO), jadi
+// mkb_spk_nomor tersimpan sebagai so_nomor (spk_so_ref), bukan
+// spk_nomor final. Sama pola dengan resolveSoRef di mutasiProduksiService
+// dan identifier = spk_memo || spk_so_ref di refreshKomponenFromProof.
+const resolveMkbKeys = async (spkNomor, conn = db) => {
+  const [[row]] = await conn.query(
+    `SELECT spk_so_ref, spk_memo FROM tspk WHERE spk_nomor = ?`,
+    [spkNomor],
+  );
+  const keys = [spkNomor];
+  if (row?.spk_so_ref) keys.push(row.spk_so_ref);
+  if (row?.spk_memo) keys.push(row.spk_memo);
+  return keys;
+};
+
+// --- Babaran dari Proof Garmen lini POTONG (tproofgarmen_dtl.pfd_babaran).
+// Proof tidak punya kolom "komponen" terpisah seperti MKB, dan TIDAK
+// punya kolom urutan (pfd_nourut) sama sekali — tabel hanya berkunci
+// pfd_nomor+pfd_kode. Nama bahan dipakai sebagai pengganti kolom
+// Komponen, dan nourut di-generate dari index array (bukan dari DB).
+const getBabaranFromProof = async (keys) => {
+  const [rows] = await db.query(
+    `SELECT b.Bhn_Name AS komponen, d.pfd_warna_kain AS warna,
+            d.pfd_jenis_kain AS jenis, d.pfd_babaran AS babaran
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pfd_kode
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?)
+     ORDER BY h.pf_tanggal DESC, d.pfd_kode`,
+    [keys],
+  );
+  return rows
+    .filter((r) => Number(r.babaran) > 0)
+    .map((r, i) => ({
+      komponen: r.komponen || "",
+      warna: r.warna || "",
+      jenis: r.jenis || "",
+      babaran: Number(r.babaran) || 0,
+      nourut: i + 1,
+    }));
+};
+
+const isBabaranLocked = async (spkNomor, conn = db) => {
+  const keys = await resolveMkbKeys(spkNomor, conn);
+  const [[mkbRow]] = await conn.query(
+    `SELECT 1 AS ada
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?) AND d.mkbd_babaran > 0
+     LIMIT 1`,
+    [keys],
+  );
+  if (mkbRow) return true;
+
+  const [[proofRow]] = await conn.query(
+    `SELECT 1 AS ada
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?) AND d.pfd_babaran > 0
+     LIMIT 1`,
+    [keys],
+  );
+  return !!proofRow;
+};
+
+const getBabaran = async (spkNomor) => {
+  const keys = await resolveMkbKeys(spkNomor);
+
+  // Prioritas 1: MKB (lebih detail — per komponen+ketk+warna+jenis)
+  const [mkbRows] = await db.query(
+    `SELECT d.mkbd_komponen AS komponen, d.mkbd_ketk AS ketk,
+            d.mkbd_warna AS warna, d.mkbd_jenis AS jenis,
+            d.mkbd_babaran AS babaran, d.mkbd_nourut AS nourut
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?)
+     ORDER BY h.mkb_tanggal DESC, d.mkbd_nourut ASC`,
+    [keys],
+  );
+  const mkbFiltered = mkbRows
+    .filter((r) => Number(r.babaran) > 0)
+    .map((r) => ({
+      komponen: `${r.komponen || ""} ${r.ketk || ""}`.trim(),
+      warna: r.warna || "",
+      jenis: r.jenis || "",
+      babaran: Number(r.babaran) || 0,
+      nourut: r.nourut,
+    }));
+  if (mkbFiltered.length > 0) {
+    return { rows: mkbFiltered, source: "mkb" };
+  }
+
+  // Prioritas 2: Proof Garmen lini POTONG
+  const proofRows = await getBabaranFromProof(keys);
+  if (proofRows.length > 0) {
+    return { rows: proofRows, source: "proof" };
+  }
+
+  // Prioritas 3: fallback manual (editable)
+  const [manualRows] = await db.query(
+    `SELECT spkb_komponen AS komponen, spkb_warna AS warna,
+            spkb_jenis AS jenis, spkb_babaran AS babaran,
+            spkb_nourut AS nourut
+     FROM tspk_babaran WHERE spkb_nomor = ? ORDER BY spkb_nourut`,
+    [spkNomor],
+  );
+  return { rows: manualRows, source: "manual" };
+};
+
+const saveBabaran = async (conn, spkNomor, list) => {
+  await conn.query(`DELETE FROM tspk_babaran WHERE spkb_nomor = ?`, [spkNomor]);
+  const rows = (list || []).filter((item) => item.komponen);
+  if (rows.length === 0) return;
+
+  const vals = rows.map((item, i) => [
+    spkNomor,
+    item.komponen,
+    item.warna || "",
+    item.jenis || "",
+    Number(item.babaran) || 0,
+    i + 1,
+  ]);
+  await conn.query(
+    `INSERT INTO tspk_babaran
+       (spkb_nomor, spkb_komponen, spkb_warna, spkb_jenis, spkb_babaran, spkb_nourut)
+     VALUES ?`,
+    [vals],
+  );
+
+  // Sesuai Delphi simpandata: sinkron babaran ke tmkb_dtl kalau nourut
+  // baris ini cocok dengan baris MKB yang sudah ada untuk SPK ini.
+  for (let i = 0; i < rows.length; i++) {
+    await conn.query(
+      `UPDATE tmkb_dtl, tmkb_hdr SET mkbd_babaran = ?
+       WHERE mkb_nomor = mkbd_mkb_nomor AND mkb_spk_nomor = ? AND mkbd_nourut = ?`,
+      [Number(rows[i].babaran) || 0, spkNomor, i + 1],
+    );
+  }
+};
+
 // --- Ambil alokasi milik SO sumber, sebagai REFERENSI awal saja
 // (tombol "copy dari SO" di frontend, bukan auto-copy) — SO-aware
 // karena SO bisa hidup di tsalesorder (baru) atau tspk legacy. ---
@@ -572,6 +717,7 @@ const saveData = async (payload, user) => {
       const newHeader = { ...soHeader };
       delete newHeader.spk_nomor;
       delete newHeader.spk_is_so;
+      newHeader.spk_mo = soHeader.user_create || soHeader.spk_mo || "";
       newHeader.spk_nomor = nomor;
       newHeader.spk_is_so = 0;
       newHeader.spk_so_ref = so_nomor;
@@ -677,10 +823,46 @@ const saveData = async (payload, user) => {
           );
         }
       }
-    } else if (isEdit && alokasi !== undefined) {
-      // Create sudah di-handle di atas (auto-copy dari SO / payload awal).
-      // Blok ini khusus edit, supaya user bisa update alokasi manual.
-      await saveAlokasi(conn, nomor, alokasi);
+    } else {
+      // ─────────────────────────────────────────────
+      // CABANG PREMIUM vs LEGACY — hanya P04 yang proses
+      // Komponen/Layout-Proses(Excel)/Keterangan; selain itu simpan Babaran.
+      // Alokasi disimpan untuk KEDUA flow — P04 bisa punya alokasi warisan
+      // dari SO (multi-alamat pengiriman), meski tab-nya cuma muncul di
+      // frontend kalau memang ada datanya.
+      // ─────────────────────────────────────────────
+      if (isEdit && alokasi !== undefined) {
+        await saveAlokasi(conn, nomor, alokasi);
+      }
+      if (isPremiumWorkshop(cabForFlow)) {
+        await refreshKomponenFromProof(conn, nomor, komponenSpk || {});
+        if (keteranganKhusus !== undefined) {
+          await saveKeteranganKhusus(conn, nomor, keteranganKhusus);
+        }
+        if (payload.ketKomponenList !== undefined) {
+          await conn.query(`DELETE FROM tspk_ketkomponen WHERE skk_spk = ?`, [
+            nomor,
+          ]);
+          const checked = (payload.ketKomponenList || []).filter(
+            (k) => k.checked,
+          );
+          if (checked.length > 0) {
+            const vals = checked.map((k) => [nomor, k.kode, k.ket || ""]);
+            await conn.query(
+              `INSERT INTO tspk_ketkomponen (skk_spk, skk_kode, skk_ket) VALUES ?`,
+              [vals],
+            );
+          }
+        }
+      } else {
+        // Legacy (P01/P02/P05): Babaran
+        if (payload.babaran !== undefined) {
+          const locked = await isBabaranLocked(nomor, conn);
+          if (!locked) {
+            await saveBabaran(conn, nomor, payload.babaran);
+          }
+        }
+      }
     }
 
     await conn.commit();
@@ -1458,6 +1640,8 @@ module.exports = {
   isPremiumWorkshop,
   getAlokasi,
   saveAlokasi,
+  getBabaran,
+  saveBabaran,
   getSoAlokasiReference,
   getSpkKaosanList,
   saveSpkKaosan,

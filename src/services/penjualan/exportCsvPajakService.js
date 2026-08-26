@@ -91,11 +91,11 @@ const getExportInvoices = async (
 ) => {
   const [invoices] = await db.query(
     `SELECT
-       a.inv_nomor, a.inv_tanggal, a.inv_ppn, a.inv_cus_alamat,
-       a.inv_no_fp,
-       c.cus_npwp, c.cus_nama_npwp, c.cus_alamat_npwp, c.cus_email,
-       p.perush_npwp, p.perush_namanpwp, p.perush_alamatnpwp,
-       p.perush_kdpos, p.perush_telp
+      a.inv_nomor, DATE_FORMAT(a.inv_tanggal, '%Y-%m-%d') AS inv_tanggal, a.inv_ppn, a.inv_cus_alamat,
+      a.inv_no_fp,
+      c.cus_npwp, c.cus_nama_npwp, c.cus_alamat_npwp, c.cus_email,
+      p.perush_npwp, p.perush_namanpwp, p.perush_alamatnpwp,
+      p.perush_kdpos, p.perush_telp
      FROM tinv_hdr a
      INNER JOIN tcustomer c ON c.cus_kode = a.inv_cus_kode
      INNER JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
@@ -165,10 +165,10 @@ const cleanNpwp = (v) => (v || "").replace(/\./g, "").replace(/-/g, "");
 const cleanDots = (v) => (v || "").replace(/\./g, "");
 const dec3 = (v) => Number(v || 0).toFixed(3);
 const fmtDateSlash = (v) => {
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return "";
-  const p = (n) => String(n).padStart(2, "0");
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+  if (!v) return "";
+  const [y, m, d] = String(v).split("-");
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y}`;
 };
 
 const generateCsv = async (tglAwal, tglAkhir, cusKode, perushKode, nomor) => {
@@ -195,9 +195,8 @@ const generateCsv = async (tglAwal, tglAkhir, cusKode, perushKode, nomor) => {
     const noFpNoDots = cleanDots(inv.inv_no_fp);
     const kdJenisTransaksi = noFpNoDots.substring(0, 2);
     const nomorFakturTrimmed = noFpNoDots.slice(3); // Copy(s,4,len-3)
-    const tgl = new Date(inv.inv_tanggal);
-    const masaPajak = tgl.getMonth() + 1;
-    const tahunPajak = tgl.getFullYear();
+    const [tahunPajak, masaPajakRaw] = inv.inv_tanggal.split("-").map(Number);
+    const masaPajak = masaPajakRaw;
     const npwp = cleanNpwp(inv.cus_npwp);
     const alamatLengkap = inv.inv_cus_alamat || inv.cus_alamat_npwp || "";
 
@@ -358,7 +357,8 @@ const generateXlsxBuffer = async (
 
     const row = shFaktur.getRow(4 + idx);
     row.getCell(1).value = String(baris);
-    row.getCell(2).value = new Date(inv.inv_tanggal);
+    const [y, m, d] = inv.inv_tanggal.split("-").map(Number);
+    row.getCell(2).value = new Date(Date.UTC(y, m - 1, d));
     row.getCell(2).numFmt = "mm-dd-yy";
     row.getCell(3).value = "Normal";
     row.getCell(4).value = kodeTransaksi;

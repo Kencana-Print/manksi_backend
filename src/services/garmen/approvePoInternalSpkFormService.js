@@ -245,7 +245,19 @@ const saveApprove = async (nomorSj, payload, user) => {
     await conn.beginTransaction();
 
     let mpNomor = null;
-    const dateNow = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const now = new Date();
+    const dateNow =
+      now.getFullYear() +
+      "-" +
+      String(now.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(now.getDate()).padStart(2, "0") +
+      " " +
+      String(now.getHours()).padStart(2, "0") +
+      ":" +
+      String(now.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(now.getSeconds()).padStart(2, "0");
 
     if (!cmt) {
       mpNomor = await generateMpNomor(tanggal, conn);

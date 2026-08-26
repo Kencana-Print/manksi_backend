@@ -18,6 +18,14 @@ const resolveSoLocation = async (nomor) => {
   return rows[0]?.src || null;
 };
 
+const isValidDateStr = (s) => {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return false;
+  const year = Number(s.substring(0, 4));
+  return year >= 2000 && year <= 2100; // sesuaikan batas wajar bisnis
+};
+
 // --- GET BROWSE LIST ---
 // Sumber "s" adalah UNION ALL: SO lama (tspk, spk_is_so=1) + SO baru
 // (tsalesorder), kolom di-alias supaya namanya identik dengan tspk
@@ -37,6 +45,13 @@ const getBrowseList = async (filters) => {
     canLihatCus,
     canLihatHarga,
   } = filters;
+
+  if (!isValidDateStr(startDate) || !isValidDateStr(endDate)) {
+    throw new Error("Rentang tanggal tidak valid.");
+  }
+  if (new Date(startDate) > new Date(endDate)) {
+    throw new Error("Tanggal awal tidak boleh lebih besar dari tanggal akhir.");
+  }
 
   // ⚡ OPTIMASI: startDate dipakai juga sebagai lower-bound filter untuk
   // subquery agregat sjChk/mp/bpj — supaya MySQL tidak scan SELURUH
@@ -132,17 +147,18 @@ const getBrowseList = async (filters) => {
         y.spk_kain AS Kain, y.spk_finishing AS Finishing,
         ${hargaCol}
         y.date_create AS Created, y.spk_jumlah AS Pesan,
-        y.spk_jumlah_kirim AS Kirim,
-        (y.spk_jumlah - y.spk_jumlah_kirim) AS Kurang,
+        IFNULL(sjKirim.total_kirim, 0) AS Kirim,
+        (y.spk_jumlah - IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim)) AS Kurang,
         sl.sal_nama AS Sales, ${groupCusCol}
         y.spk_nomor_po AS PO, y.spk_ketpo AS KetPO,
         y.spk_tgl_po AS DatePO, y.spk_DatelinePO AS DatelinePO,
-        IF(y.spk_close=1, "Closed", "Open") AS Status,
+        IF(y.spk_close=1 OR IFNULL(ppic.spk_close, 0)=1, "Closed", "Open") AS Status,
         y.spk_close_alasan AS AlasanClose, y.spk_pen_nomor AS NoPenawaran,
         y.spk_memo AS MAP, y.spk_repeat AS 'Repeat', y.spk_aktif AS Aktif,
         y.spk_is_so AS is_so,
         IFNULL(ppic.spk_nomor, "") AS SpkPpic,
         DATE_FORMAT(ppic.spk_tanggal, '%Y-%m-%d') AS TglSpkPpic,
+        IFNULL(ppic.spk_close, 0) AS SpkPpicClose, 
         IFNULL(pin5.pin_acc, "") AS pin_acc,
         IFNULL(pin5.pin_dipakai, "") AS pin_dipakai,
         IFNULL(IF(pin5.pin_acc="" AND pin5.pin_dipakai="","WAIT",IF(pin5.pin_acc="Y" AND pin5.pin_dipakai="","ACC",IF(pin5.pin_acc="N","TOLAK",""))), "") AS Ngedit,
@@ -272,6 +288,12 @@ const getBrowseList = async (filters) => {
         WHERE sj_tanggal >= ?
       ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
+      LEFT JOIN (
+        SELECT sjd_spk_nomor, SUM(sjd_jumlah) AS total_kirim
+        FROM tsj_dtl
+        GROUP BY sjd_spk_nomor
+      ) sjKirim ON sjKirim.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
+
       -- titik proof bordir
       LEFT JOIN (
         SELECT h.pf_spk_nomor, COUNT(*) AS titik
@@ -379,9 +401,10 @@ const deleteOrder = async (nomor, userDetails) => {
   const table = loc === "new" ? "tsalesorder" : "tspk";
   const prefix = loc === "new" ? "so_" : "spk_";
   const [rows] = await db.query(
-    `SELECT ${prefix}tanggal AS tanggal, ${prefix}mppb AS mppb, ${prefix}jumlah_kirim AS jumlah_kirim
+    `SELECT ${prefix}tanggal AS tanggal, ${prefix}mppb AS mppb, ${prefix}jumlah_kirim AS jumlah_kirim,
+            (SELECT IFNULL(SUM(spk_jumlah_kirim), 0) FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0) AS ppic_kirim
      FROM ${table} WHERE ${prefix}nomor = ?`,
-    [nomor],
+    [nomor, nomor],
   );
   const data = rows[0];
 
@@ -481,8 +504,8 @@ const requestPin = async (nomor, alasan, userKode) => {
         : lastPin[0].pin_urut + 1;
   }
   const query = `
-    INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
-    VALUES ("SO", ?, ?, ?, ?, NOW(), ?, ?)
+    INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
+    VALUES ("SO", ?, ?, "UBAH", ?, ?, NOW(), ?, ?)
     ON DUPLICATE KEY UPDATE pin_acc="", pin_tgl_minta=NOW(), pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)
   `;
   await db.query(query, [

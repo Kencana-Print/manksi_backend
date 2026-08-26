@@ -4,8 +4,9 @@ const getBrowse = async (startDate, endDate, userCabang, isAccKor) => {
   let params = [];
   let whereClause = `WHERE h.bap_tanggal >= ? AND h.bap_tanggal <= ?`;
   params.push(startDate, endDate);
-
-  if (userCabang && !isAccKor) {
+  // HO- dan user AccKor bisa lihat semua cabang.
+  // Selain itu (cabang biasa), dibatasi hanya BAP milik cabangnya sendiri.
+  if (userCabang && userCabang !== "HO-" && !isAccKor) {
     whereClause += ` AND h.bap_cab = ?`;
     params.push(userCabang);
   }
