@@ -27,6 +27,7 @@ router.get("/nama-gudang", verifyToken, ctrl.getNamaGudang);
 router.get("/proses-sebelumnya", verifyToken, ctrl.getProsesSebelumnya);
 router.get("/bahan-suffix", verifyToken, ctrl.searchBahanBySuffix);
 router.get("/cek-komponen", verifyToken, ctrl.cekKomponenIdentifikasi);
+router.get("/terima-sebelumnya", verifyToken, ctrl.getTerimaSebelumnya);
 
 // ── STATIC POST ───────────────────────────────────────────────────────
 router.post("/cek-gudang-asal", verifyToken, ctrl.cekGudangAsal);

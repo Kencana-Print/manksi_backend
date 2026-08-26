@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.3",
+    date: "2026-08-21",
+    changes: [
+      {
+        type: "added",
+        text: "Laporan baru : Laporan Umur Stock Bahan untuk Gudang Bahan",
+      },
+    ],
+  },
+  {
     version: "1.0.2",
     date: "2026-08-19",
     changes: [

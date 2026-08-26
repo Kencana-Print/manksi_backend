@@ -333,10 +333,19 @@ const saveData = async (payload, user, isEdit = false) => {
 
   try {
     let nomor = payload.nomor;
-    const dateModified = new Date()
-      .toISOString()
-      .slice(0, 19)
-      .replace("T", " ");
+    const now = new Date();
+    const dateModified =
+      now.getFullYear() +
+      "-" +
+      String(now.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(now.getDate()).padStart(2, "0") +
+      " " +
+      String(now.getHours()).padStart(2, "0") +
+      ":" +
+      String(now.getMinutes()).padStart(2, "0") +
+      ":" +
+      String(now.getSeconds()).padStart(2, "0");
 
     // 1. VALIDASI TUTUP BUKU
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();

@@ -72,7 +72,7 @@ const getBrowseList = async (filters) => {
       (x.Pesan - (x.Lipat0 + x.Lipat1 + x.lpt1)) AS Kurang_Lipat
     FROM (
       SELECT 
-        s.spk_nomor AS Nomor, s.user_create AS MO, s.spk_cmo AS CMO,
+        s.spk_nomor AS Nomor, s.spk_mo AS MO, s.spk_cmo AS CMO, s.user_create AS Pembuat,
         s.spk_tanggal AS Tanggal, s.spk_dateline AS Dateline,
         s.spk_statuskerja AS Kepentingan, v.divisi AS Divisi,
         s.spk_cus_kode AS KodeCustomer, ${custNameCol}
@@ -258,13 +258,11 @@ const requestPin = async (nomor, alasan, userKode) => {
     [nomor],
   );
   if (spk.length === 0) throw new Error("SPK tidak ditemukan.");
-
   const [lastPin] = await db.query(
     `SELECT pin_urut, pin_dipakai FROM tspk_pin5
      WHERE pin_trs="SPK" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
     [nomor],
   );
-
   let urut = 1;
   if (lastPin.length > 0) {
     urut =
@@ -272,11 +270,10 @@ const requestPin = async (nomor, alasan, userKode) => {
         ? lastPin[0].pin_urut
         : lastPin[0].pin_urut + 1;
   }
-
   await db.query(
     `INSERT INTO tspk_pin5
-       (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ("SPK", ?, ?, ?, ?, NOW(), ?, ?)
+       (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
+     VALUES ("SPK", ?, ?, "UBAH", ?, ?, NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        pin_acc="", pin_tgl_minta=NOW(),
        pin_user_minta=VALUES(pin_user_minta),

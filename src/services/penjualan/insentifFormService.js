@@ -52,13 +52,14 @@ const searchInvoiceForCustomer = async (custKode, keyword = "") => {
   }
   const [rows] = await db.query(
     `SELECT p.nota AS Invoice, DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
-            ROUND(p.debet, 0) AS Nominal, ROUND(p.kredit, 0) AS Bayar,
-            ROUND((p.debet - p.kredit), 0) AS Sisa
-     FROM piutang_debet p
-     INNER JOIN tinv_hdr h ON h.INV_nomor = p.nota
-     WHERE ${where}
-     ORDER BY p.tanggal DESC
-     LIMIT 100`,
+          ROUND(p.debet, 0) AS Nominal,
+          ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS Bayar,
+          ROUND(p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS Sisa
+    FROM piutang_debet p
+    INNER JOIN tinv_hdr h ON h.INV_nomor = p.nota
+    WHERE ${where}
+    ORDER BY p.tanggal DESC
+    LIMIT 100`,
     params,
   );
   return rows;
@@ -72,13 +73,16 @@ const searchInvoiceForCustomer = async (custKode, keyword = "") => {
 // ─────────────────────────────────────────────────────────
 const getSpkDetailForInvoice = async (nomorInvoice) => {
   const [rows] = await db.query(
-    `SELECT d.INVD_Spk_Nomor AS Kode, s.spk_nama AS Nama,
+    `SELECT d.INVD_Spk_Nomor AS Kode,
+            IFNULL(s.spk_nama, b.brg_name) AS Nama,
             d.INVD_Jumlah AS Jumlah, d.INVD_Harga AS Harga,
-            (s.spk_harga - s.spk_hargariil) AS Xfee,
-            s.spk_hargariil AS Riil, s.spk_hargafee AS Fee,
-            (d.INVD_Jumlah * s.spk_hargafee) AS Total
+            IFNULL(s.spk_harga - s.spk_hargariil, 0) AS Xfee,
+            IFNULL(s.spk_hargariil, 0) AS Riil,
+            IFNULL(s.spk_hargafee, 0) AS Fee,
+            (d.INVD_Jumlah * IFNULL(s.spk_hargafee, 0)) AS Total
      FROM tinv_dtl d
-     INNER JOIN tspk s ON s.spk_nomor = d.INVD_Spk_Nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.INVD_Spk_Nomor
+     LEFT JOIN tbarang b ON b.brg_kode = d.INVD_Spk_Nomor
      WHERE d.INVD_inv_nomor = ?`,
     [nomorInvoice],
   );
@@ -126,14 +130,15 @@ const checkInvoice = async (custKode, nomorInvoice) => {
   // 1. Cek tinv_flag (invoice normal yang sudah dipakaikan ke tak-normal)
   const [flagRows] = await db.query(
     `SELECT f.invf_normal AS nota, DATE_FORMAT(n.tanggal, '%d-%m-%Y') AS tgl,
-            ROUND(n.debet, 0) AS debet, ROUND(t.kredit, 0) AS kredit,
-            ROUND((t.debet - t.kredit), 0) AS sisa,
-            u.inv_no_fp AS nofp, u.INV_Keterangan AS ket, f.invf_taknormal AS invt
-     FROM tinv_flag f
-     LEFT JOIN piutang_debet n ON n.nota = f.invf_normal
-     LEFT JOIN piutang_debet t ON t.nota = f.invf_taknormal
-     LEFT JOIN tinv_hdr u ON u.INV_nomor = f.invf_taknormal
-     WHERE f.invf_normal = ? AND n.customer = ?`,
+          ROUND(n.debet, 0) AS debet,
+          ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0) AS kredit,
+          ROUND(t.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0) AS sisa,
+          u.inv_no_fp AS nofp, u.INV_Keterangan AS ket, f.invf_taknormal AS invt
+    FROM tinv_flag f
+    LEFT JOIN piutang_debet n ON n.nota = f.invf_normal
+    LEFT JOIN piutang_debet t ON t.nota = f.invf_taknormal
+    LEFT JOIN tinv_hdr u ON u.INV_nomor = f.invf_taknormal
+    WHERE f.invf_normal = ? AND n.customer = ?`,
     [nomorInvoice, custKode],
   );
   if (flagRows.length > 0) {
@@ -153,12 +158,13 @@ const checkInvoice = async (custKode, nomorInvoice) => {
       if (invpro) {
         // Invoice Proforma — kredit/sisa dari sisi proforma
         const [proRows] = await db.query(
-          `SELECT ROUND(p.kredit, 0) AS kredit,
-                  ROUND((p.debet - p.kredit), 0) AS sisa,
-                  h.inv_no_fp AS nofp, h.inv_keterangan AS ket, p.nota AS invt
-           FROM piutang_debet p
-           LEFT JOIN tinv_hdr h ON h.INV_nomor = p.nota
-           WHERE p.nota = ? AND p.customer = ?`,
+          `SELECT
+              ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS kredit,
+              ROUND(p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS sisa,
+              h.inv_no_fp AS nofp, h.inv_keterangan AS ket, p.nota AS invt
+          FROM piutang_debet p
+          LEFT JOIN tinv_hdr h ON h.INV_nomor = p.nota
+          WHERE p.nota = ? AND p.customer = ?`,
           [invpro, custKode],
         );
         if (proRows.length > 0) {
@@ -177,12 +183,13 @@ const checkInvoice = async (custKode, nomorInvoice) => {
         // Invoice normal biasa
         const [normRows] = await db.query(
           `SELECT p.nota, DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS tgl,
-                  ROUND(p.debet, 0) AS debet, ROUND(p.kredit, 0) AS kredit,
-                  ROUND((p.debet - p.kredit), 0) AS sisa,
-                  h.inv_no_fp AS nofp, h.inv_keterangan AS ket
-           FROM piutang_debet p
-           LEFT JOIN tinv_hdr h ON h.INV_nomor = p.nota
-           WHERE p.nota = ? AND p.customer = ?`,
+              ROUND(p.debet, 0) AS debet,
+              ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS kredit,
+              ROUND(p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0) AS sisa,
+              h.inv_no_fp AS nofp, h.inv_keterangan AS ket
+          FROM piutang_debet p
+          LEFT JOIN tinv_hdr h ON h.INV_nomor = p.nota
+          WHERE p.nota = ? AND p.customer = ?`,
           [nomorInvoice, custKode],
         );
         if (normRows.length > 0) {
@@ -237,22 +244,26 @@ const checkInvoice = async (custKode, nomorInvoice) => {
 const getById = async (nomor) => {
   const [rows] = await db.query(
     `SELECT h.fee_nomor, h.fee_tanggal, h.fee_bank, h.fee_rekening, h.fee_atasnama,
-            d.feed_inv_nomor, d.feed_invt_nomor,
-            DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS tgl,
-            ROUND(p.debet, 0) AS debet,
-            IF(d.feed_invt_nomor <> '', ROUND(t.kredit, 0), ROUND(p.kredit, 0)) AS kredit,
-            IF(d.feed_invt_nomor <> '', ROUND(t.debet - t.kredit, 0), ROUND(p.debet - p.kredit, 0)) AS sisa,
-            IF(d.feed_invt_nomor <> '', u.inv_no_fp, i.inv_no_fp) AS nofp,
-            IF(d.feed_invt_nomor <> '', u.inv_keterangan, i.inv_keterangan) AS ket,
-            p.customer, c.Cus_nama, c.Cus_alamat, c.Cus_kota
-     FROM tpengajuan_fee h
-     INNER JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
-     LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
-     LEFT JOIN piutang_debet t ON t.nota = d.feed_invt_nomor
-     LEFT JOIN tinv_hdr i ON i.INV_nomor = d.feed_inv_nomor
-     LEFT JOIN tinv_hdr u ON u.INV_nomor = d.feed_invt_nomor
-     LEFT JOIN tcustomer c ON c.Cus_kode = h.fee_cus_kode
-     WHERE h.fee_nomor = ?`,
+          d.feed_inv_nomor, d.feed_invt_nomor,
+          DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS tgl,
+          ROUND(p.debet, 0) AS debet,
+          IF(d.feed_invt_nomor <> '',
+             ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0),
+             ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0)) AS kredit,
+          IF(d.feed_invt_nomor <> '',
+             ROUND(t.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0),
+             ROUND(p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0)) AS sisa,
+          IF(d.feed_invt_nomor <> '', u.inv_no_fp, i.inv_no_fp) AS nofp,
+          IF(d.feed_invt_nomor <> '', u.inv_keterangan, i.inv_keterangan) AS ket,
+          p.customer, c.Cus_nama, c.Cus_alamat, c.Cus_kota
+    FROM tpengajuan_fee h
+    INNER JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
+    LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
+    LEFT JOIN piutang_debet t ON t.nota = d.feed_invt_nomor
+    LEFT JOIN tinv_hdr i ON i.INV_nomor = d.feed_inv_nomor
+    LEFT JOIN tinv_hdr u ON u.INV_nomor = d.feed_invt_nomor
+    LEFT JOIN tcustomer c ON c.Cus_kode = h.fee_cus_kode
+    WHERE h.fee_nomor = ?`,
     [nomor],
   );
   if (rows.length === 0)
@@ -394,7 +405,11 @@ const save = async (payload, user) => {
 const getSisaAktual = async (nomorInvoice, invt) => {
   const nota = invt && invt.trim() !== "" ? invt : nomorInvoice;
   const [rows] = await db.query(
-    `SELECT ROUND((debet - kredit), 0) AS sisa FROM piutang_debet WHERE nota = ?`,
+    `SELECT
+       ROUND(p.debet - IFNULL((
+         SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota
+       ), 0), 0) AS sisa
+     FROM piutang_debet p WHERE p.nota = ?`,
     [nota],
   );
   return rows.length > 0 ? Number(rows[0].sisa) || 0 : 0;

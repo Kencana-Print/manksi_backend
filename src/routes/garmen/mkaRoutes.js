@@ -24,6 +24,13 @@ router.get(
   controller.getDetail,
 );
 
+router.get(
+  "/realisasi-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getRealisasiDetail,
+);
+
 // Delete
 router.delete(
   "/",

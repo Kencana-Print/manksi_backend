@@ -125,24 +125,31 @@ const getSpkOrMemoDetail = async (nomor) => {
 // detail SPK/Memo terkait (untuk re-display field readonly).
 // ─────────────────────────────────────────────
 const getDetailForm = async (nomor) => {
-  const [rows] = await db.query(`SELECT * FROM tcomplain WHERE tc_nomor = ?`, [
-    nomor,
-  ]);
+  const [rows] = await db.query(
+    `SELECT
+       tc_nomor, tc_spk_nomor, tc_cus_kode, tc_description, tc_nama,
+       DATE_FORMAT(tc_date, '%Y-%m-%d') AS tc_date,
+       tc_image1, tc_image2, tc_image3,
+       user_create, user_modified,
+       tc_receive, tc_send, tc_informed, tc_final, tc_holding, tc_further,
+       DATE_FORMAT(tc_date_signature, '%Y-%m-%d') AS tc_date_signature,
+       tc_jenis, tc_action,
+       tc_1, tc_2, tc_3, tc_4,
+       tc_ket_div1, tc_ket_div2, tc_ket_div3
+     FROM tcomplain
+     WHERE tc_nomor = ?`,
+    [nomor],
+  );
   if (rows.length === 0) throw new Error("Nomor Complain tersebut tidak ada.");
-
   const header = rows[0];
-
   let spkDetail = null;
   if (header.tc_spk_nomor) {
     try {
       spkDetail = await getSpkOrMemoDetail(header.tc_spk_nomor);
     } catch {
-      // SPK/Memo referensi mungkin sudah tidak aktif/terhapus —
-      // tetap tampilkan data complain apa adanya, field SPK kosong.
       spkDetail = null;
     }
   }
-
   return { header, spkDetail };
 };
 

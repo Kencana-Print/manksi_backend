@@ -30,20 +30,20 @@ const getBrowseList = async (startDate, endDate) => {
 
   const [detailRows] = await db.query(
     `SELECT
-       d.feed_nomor AS Nomor,
-       d.feed_inv_nomor AS Invoice,
-       j.INV_tanggal AS TglInvoice,
-       j.inv_no_fp AS FakturPajak,
-       p.debet AS Nominal,
-       p.kredit AS Bayar,
-       (p.debet - p.kredit) AS SisaPiutang,
-       j.INV_Keterangan AS Keterangan
-     FROM tpengajuan_fee h
-     INNER JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
-     LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
-     LEFT JOIN tinv_hdr j ON j.INV_nomor = d.feed_inv_nomor
-     WHERE h.fee_tanggal >= ? AND h.fee_tanggal <= ?
-     ORDER BY d.feed_nomor`,
+      d.feed_nomor AS Nomor,
+      d.feed_inv_nomor AS Invoice,
+      j.INV_tanggal AS TglInvoice,
+      j.inv_no_fp AS FakturPajak,
+      p.debet AS Nominal,
+      IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0) AS Bayar,
+      (p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0)) AS SisaPiutang,
+      j.INV_Keterangan AS Keterangan
+    FROM tpengajuan_fee h
+    INNER JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
+    LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
+    LEFT JOIN tinv_hdr j ON j.INV_nomor = d.feed_inv_nomor
+    WHERE h.fee_tanggal >= ? AND h.fee_tanggal <= ?
+    ORDER BY d.feed_nomor`,
     params,
   );
 
@@ -141,7 +141,9 @@ const getCetakData = async (nomor) => {
        IF(d.feed_invt_nomor <> '', u.INV_Keterangan, j.INV_Keterangan) AS Keterangan,
        ROUND(p.debet, 0) AS Total,
        IF(d.feed_invt_nomor <> '', u.inv_no_fp, j.inv_no_fp) AS FakturPajak,
-       IF(d.feed_invt_nomor <> '', ROUND(t.kredit, 0), ROUND(p.kredit, 0)) AS Bayar,
+       IF(d.feed_invt_nomor <> '',
+        ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0),
+        ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0)) AS Bayar,
        (SELECT DATE_FORMAT(a.tanggal, '%d-%m-%Y')
         FROM terima_bayar_debet a
         INNER JOIN piutang_kredit_detail b ON b.no_bukti = a.nomor

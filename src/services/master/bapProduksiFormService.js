@@ -48,35 +48,26 @@ const getById = async (nomor) => {
       h.bap_sumber AS SumberMasalah, 
       h.bap_solusi AS Solusi, 
       h.bap_jawab AS Pertanggungjawaban, 
-      h.bap_spk_nomor AS SPK, 
-      IFNULL(s.spk_nama, m.mspk_nama) AS SpkNama,
-      h.bap_jumlah AS Jumlah, 
-      h.bap_harga AS Harga,
-      h.bap_apv AS Approve
+      h.bap_apv AS Approve,
+      h.bap_spk_nomor AS LegacySpk,
+      h.bap_jumlah AS LegacyJumlah,
+      h.bap_harga AS LegacyHarga
     FROM tkpi_bapproduksi h
-    LEFT JOIN tspk s ON s.spk_nomor = h.bap_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = h.bap_spk_nomor
     WHERE h.bap_nomor = ?
   `;
   const [rows] = await db.query(query, [nomor]);
   if (rows.length === 0) return null;
-
   const data = rows[0];
-
-  // --- CEK STATUS PIN 5 (PENGUBAHAN DATA) ---
+  // --- CEK STATUS PIN 5 (tidak berubah) ---
   const [pinRows] = await db.query(
-    `
-    SELECT pin_urut, pin_acc, pin_dipakai 
-    FROM tspk_pin5 
-    WHERE pin_trs = "BAP PRODUKSI" AND pin_nomor = ? 
-    ORDER BY pin_urut DESC LIMIT 1
-  `,
+    `SELECT pin_urut, pin_acc, pin_dipakai 
+     FROM tspk_pin5 
+     WHERE pin_trs = "BAP PRODUKSI" AND pin_nomor = ? 
+     ORDER BY pin_urut DESC LIMIT 1`,
     [nomor],
   );
-
-  data.StatusEdit = ""; // Default kosong
+  data.StatusEdit = "";
   data.UrutPin5 = 0;
-
   if (pinRows.length > 0) {
     const pin = pinRows[0];
     data.UrutPin5 = pin.pin_urut;
@@ -87,26 +78,58 @@ const getById = async (nomor) => {
     } else if (pin.pin_acc === "N") {
       data.StatusEdit = "TOLAK";
     } else if (pin.pin_acc === "Y" && pin.pin_dipakai === "Y") {
-      data.StatusEdit = ""; // Sudah dipakai, normal kembali
+      data.StatusEdit = "";
     } else {
       data.StatusEdit = "MINTA";
     }
   }
-
-  // Load kategori
   const [kategoriRows] = await db.query(
     `SELECT bapk_kategori AS kategori FROM tkpi_bap_kategori WHERE bapk_bap_nomor = ?`,
     [nomor],
   );
   data.Kategori = kategoriRows.map((r) => r.kategori);
-
-  // Load karyawan
   const [karyawanRows] = await db.query(
     `SELECT bapkr_nik AS nik, bapkr_nama AS nama FROM tkpi_bap_karyawan WHERE bapkr_bap_nomor = ?`,
     [nomor],
   );
   data.Karyawan = karyawanRows;
-
+  // --- Daftar SPK (multi-baris, skema baru) ---
+  const [spkRows] = await db.query(
+    `SELECT bapspk_spk_nomor AS Spk, bapspk_spk_nama AS SpkNama,
+            bapspk_jumlah AS Jumlah, bapspk_harga AS Harga
+     FROM tkpi_bap_spk WHERE bapspk_bap_nomor = ? ORDER BY bapspk_nourut`,
+    [nomor],
+  );
+  // [BARU] BACKWARD COMPAT — BAP lama (dibuat sebelum fitur multi-SPK)
+  // tidak punya baris di tkpi_bap_spk sama sekali, datanya masih
+  // tersimpan di kolom lama header (bap_spk_nomor/jumlah/harga).
+  // Kalau tabel detail kosong TAPI kolom lama terisi, bangun satu
+  // baris SpkList dari situ — nama SPK di-lookup ulang karena kolom
+  // lama tidak menyimpannya.
+  if (spkRows.length === 0 && data.LegacySpk) {
+    const [[legacySpkInfo]] = await db.query(
+      `SELECT * FROM (
+         SELECT spk_nomor AS Nomor, spk_nama AS Nama FROM tspk
+         UNION ALL
+         SELECT mspk_nomor AS Nomor, mspk_nama AS Nama FROM tmemospk
+       ) final WHERE Nomor = ? LIMIT 1`,
+      [data.LegacySpk],
+    );
+    data.SpkList = [
+      {
+        Spk: data.LegacySpk,
+        SpkNama: legacySpkInfo?.Nama || "",
+        Jumlah: Number(data.LegacyJumlah) || 0,
+        Harga: Number(data.LegacyHarga) || 0,
+      },
+    ];
+  } else {
+    data.SpkList = spkRows;
+  }
+  // Bersihkan field internal yang cuma dipakai untuk fallback ini
+  delete data.LegacySpk;
+  delete data.LegacyJumlah;
+  delete data.LegacyHarga;
   return data;
 };
 
@@ -115,16 +138,19 @@ const save = async (data, userKode, isNewMode) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-
     let nomor = data.Nomor;
-
-    const jumlah = Number(data.Jumlah) || 0;
-    const harga = Number(data.Harga) || 0;
-    const approve = data.Approve ? userKode : ""; // Jika dicentang, isi dengan user yang login (harus ada pengecekan AccKor di frontend)
-
+    const approve = data.Approve ? userKode : "";
+    // [BARU] SpkList dari payload — fallback ke array kosong kalau tidak dikirim
+    const spkList = (data.SpkList || []).filter((s) => s.Spk);
+    // Kolom lama tetap diisi dari baris SPK pertama (kompatibilitas mundur)
+    const firstSpk = spkList[0] || {
+      Spk: "",
+      SpkNama: "",
+      Jumlah: 0,
+      Harga: 0,
+    };
     if (isNewMode) {
       nomor = await generateNomor(data.Cab, data.Tanggal);
-
       const insertQuery = `
         INSERT INTO tkpi_bapproduksi (
           bap_nomor, bap_tanggal, bap_cab, bap_tipe, bap_bag, bap_bagnama, 
@@ -144,13 +170,12 @@ const save = async (data, userKode, isNewMode) => {
         data.Solusi,
         data.Pertanggungjawaban,
         approve,
-        data.SPK,
-        jumlah,
-        harga,
+        firstSpk.Spk,
+        Number(firstSpk.Jumlah) || 0,
+        Number(firstSpk.Harga) || 0,
         userKode,
       ]);
     } else {
-      // UPDATE MODE
       const updateQuery = `
         UPDATE tkpi_bapproduksi SET 
           bap_tanggal = ?, bap_cab = ?, bap_tipe = ?, bap_bag = ?, bap_bagnama = ?, 
@@ -169,25 +194,20 @@ const save = async (data, userKode, isNewMode) => {
         data.Solusi,
         data.Pertanggungjawaban,
         approve,
-        data.SPK,
-        jumlah,
-        harga,
+        firstSpk.Spk,
+        Number(firstSpk.Jumlah) || 0,
+        Number(firstSpk.Harga) || 0,
         userKode,
         nomor,
       ]);
-
-      // Jika dia ngedit lewat jalur PIN 5 ACC, update pin_dipakai jadi "Y"
       if (data.StatusEdit === "ACC" && data.UrutPin5 > 0) {
         await conn.query(
-          `
-          UPDATE tspk_pin5 SET pin_dipakai = "Y" 
-          WHERE pin_trs = "BAP PRODUKSI" AND pin_nomor = ? AND pin_urut = ?
-        `,
+          `UPDATE tspk_pin5 SET pin_dipakai = "Y" 
+           WHERE pin_trs = "BAP PRODUKSI" AND pin_nomor = ? AND pin_urut = ?`,
           [nomor, data.UrutPin5],
         );
       }
     }
-    // Hapus & insert ulang kategori
     await conn.query(`DELETE FROM tkpi_bap_kategori WHERE bapk_bap_nomor = ?`, [
       nomor,
     ]);
@@ -199,8 +219,6 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
     }
-
-    // Hapus & insert ulang karyawan
     await conn.query(
       `DELETE FROM tkpi_bap_karyawan WHERE bapkr_bap_nomor = ?`,
       [nomor],
@@ -215,7 +233,28 @@ const save = async (data, userKode, isNewMode) => {
         }
       }
     }
-
+    // [BARU] Hapus & insert ulang daftar SPK
+    await conn.query(`DELETE FROM tkpi_bap_spk WHERE bapspk_bap_nomor = ?`, [
+      nomor,
+    ]);
+    if (spkList.length > 0) {
+      for (let i = 0; i < spkList.length; i++) {
+        const s = spkList[i];
+        await conn.query(
+          `INSERT INTO tkpi_bap_spk 
+             (bapspk_bap_nomor, bapspk_nourut, bapspk_spk_nomor, bapspk_spk_nama, bapspk_jumlah, bapspk_harga)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            nomor,
+            i + 1,
+            s.Spk,
+            s.SpkNama || "",
+            Number(s.Jumlah) || 0,
+            Number(s.Harga) || 0,
+          ],
+        );
+      }
+    }
     await conn.commit();
     return nomor;
   } catch (error) {
@@ -230,16 +269,47 @@ const getPrintData = async (nomor) => {
   const query = `
     SELECT 
       h.*, 
-      b.kb_nama, 
-      IFNULL(s.spk_nama, m.mspk_nama) AS namaspk
+      b.kb_nama
     FROM tkpi_bapproduksi h
     LEFT JOIN kpi.tbagian b ON b.kb_kode = h.bap_bag
-    LEFT JOIN tspk s ON s.spk_nomor = h.bap_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = h.bap_spk_nomor
     WHERE h.bap_nomor = ?
   `;
   const [rows] = await db.query(query, [nomor]);
-  return rows.length > 0 ? rows[0] : null;
+  if (rows.length === 0) return null;
+  const data = rows[0];
+  // Daftar SPK (multi-baris, skema baru)
+  const [spkRows] = await db.query(
+    `SELECT bapspk_spk_nomor AS Spk, bapspk_spk_nama AS SpkNama,
+            bapspk_jumlah AS Jumlah, bapspk_harga AS Harga
+     FROM tkpi_bap_spk WHERE bapspk_bap_nomor = ? ORDER BY bapspk_nourut`,
+    [nomor],
+  );
+  // [BARU] BACKWARD COMPAT — sama pola dengan getById: BAP lama
+  // (dibuat sebelum fitur multi-SPK) tidak punya baris di
+  // tkpi_bap_spk, datanya masih di kolom lama header. Kalau tabel
+  // detail kosong TAPI kolom lama terisi, bangun satu baris SpkList
+  // dari situ supaya halaman cetak tidak menampilkan tabel SPK kosong.
+  if (spkRows.length === 0 && data.bap_spk_nomor) {
+    const [[legacySpkInfo]] = await db.query(
+      `SELECT * FROM (
+         SELECT spk_nomor AS Nomor, spk_nama AS Nama FROM tspk
+         UNION ALL
+         SELECT mspk_nomor AS Nomor, mspk_nama AS Nama FROM tmemospk
+       ) final WHERE Nomor = ? LIMIT 1`,
+      [data.bap_spk_nomor],
+    );
+    data.SpkList = [
+      {
+        Spk: data.bap_spk_nomor,
+        SpkNama: legacySpkInfo?.Nama || "",
+        Jumlah: Number(data.bap_jumlah) || 0,
+        Harga: Number(data.bap_harga) || 0,
+      },
+    ];
+  } else {
+    data.SpkList = spkRows;
+  }
+  return data;
 };
 
 module.exports = { getById, getSpkDetail, save, getPrintData };
