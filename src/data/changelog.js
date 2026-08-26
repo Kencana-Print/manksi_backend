@@ -13,6 +13,10 @@ const changelog = [
         text: "Fitur Baru : Agenda Kerja per Departemen, agenda dapat diinputkan oleh PIC per departemen dan bisa dilihat sesuai departemen masing-masing",
       },
       {
+        type: "added",
+        text: "Warning/peringatan ketika input Mutasi Produksi, jumlah tidak sesuai dengan mutasi/LHK proses sebelumnya",
+      },
+      {
         type: "fixed",
         text: "Perbaikan Export (terutama di bagian Penjualan)",
       },
