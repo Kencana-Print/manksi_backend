@@ -1581,13 +1581,14 @@ const getAktivitasHariIniCount = async () => {
   return Number(rows[0]?.total || 0);
 };
 
-// ── 3. Trend SPK 7 hari terakhir (untuk C3 chart) ──
+// ── 3. Trend SPK vs SO vs MAP, 7 hari terakhir (untuk C3 chart) ──
 const getTrendSpk7Hari = async () => {
   const sql = `
     SELECT
       DATE_FORMAT(tgl, '%d/%m')   AS label,
       IFNULL(spk_baru, 0)         AS spk_baru,
-      IFNULL(penawaran_baru, 0)   AS penawaran_baru
+      IFNULL(so_baru, 0)          AS so_baru,
+      IFNULL(map_baru, 0)         AS map_baru
     FROM (
       SELECT DATE_SUB(CURDATE(), INTERVAL n DAY) AS tgl
       FROM (
@@ -1603,11 +1604,19 @@ const getTrendSpk7Hari = async () => {
       GROUP BY DATE(spk_tanggal)
     ) s ON s.tgl_spk = dates.tgl
     LEFT JOIN (
-      SELECT DATE(pen_tanggal) AS tgl_pen, COUNT(*) AS penawaran_baru
-      FROM tpenawaran_hdr
-      WHERE pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-      GROUP BY DATE(pen_tanggal)
-    ) p ON p.tgl_pen = dates.tgl
+      SELECT DATE(so_tanggal) AS tgl_so, COUNT(*) AS so_baru
+      FROM tsalesorder
+      WHERE so_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+        AND so_aktif = 'Y'
+      GROUP BY DATE(so_tanggal)
+    ) so ON so.tgl_so = dates.tgl
+    LEFT JOIN (
+      SELECT DATE(mspk_tanggal) AS tgl_map, COUNT(*) AS map_baru
+      FROM tmemospk
+      WHERE mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+        AND mspk_aktif = 'Y'
+      GROUP BY DATE(mspk_tanggal)
+    ) m ON m.tgl_map = dates.tgl
     ORDER BY tgl ASC
   `;
   const [rows] = await db.query(sql);
