@@ -143,6 +143,7 @@ const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
 const poBahanRoutes = require("./routes/pembelian/poBahanRoutes");
 const poBahanFormRoutes = require("./routes/pembelian/poBahanFormRoutes");
 const poExternalGarmenRoutes = require("./routes/pembelian/poExternalGarmenRoutes");
+const poExternalGarmenFormRoutes = require("./routes/pembelian/poExternalGarmenFormRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -396,6 +397,7 @@ app.use("/api/pembelian/mkb", mkbRoutes);
 app.use("/api/pembelian/po-bahan", poBahanRoutes);
 app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
 app.use("/api/pembelian/po-external-garmen", poExternalGarmenRoutes);
+app.use("/api/pembelian/po-external-garmen/form", poExternalGarmenFormRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);

@@ -295,6 +295,32 @@ const ajukanPerubahan = async (nomor, urut, alasan, userKode) => {
   }
 };
 
+// ─────────────────────────────────────────────
+// STATUS PENGAJUAN — replikasi persis cekClose Delphi.
+// Dipakai Form service utk badge (StatusEdit) + guard simpan.
+// Beda dgn getPengajuanInfo (yg cuma return boolean perluPengajuan):
+// ini return label WAIT/ACC/TOLAK/MINTA persis spt yg ditampilkan
+// user (imgtglwait/imgtglacc/imgtgltolak/imgtglminta).
+// ─────────────────────────────────────────────
+const getStatusPengajuan = async (nomor, tanggal) => {
+  if (!(await isTutupBuku(tanggal))) return { status: "", urut: 0 };
+  const [pinRows] = await db.query(
+    `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5
+     WHERE pin_trs = ? AND pin_nomor = ? ORDER BY pin_urut DESC LIMIT 1`,
+    [PIN_TRS, nomor],
+  );
+  if (pinRows.length === 0) return { status: "MINTA", urut: 0 };
+  const { pin_urut, pin_acc, pin_dipakai } = pinRows[0];
+  if (pin_acc === "" && pin_dipakai === "")
+    return { status: "WAIT", urut: pin_urut };
+  if (pin_acc === "Y" && pin_dipakai === "")
+    return { status: "ACC", urut: pin_urut };
+  if (pin_acc === "N") return { status: "TOLAK", urut: pin_urut };
+  // pin_acc='Y' & pin_dipakai='Y' (sudah terpakai) → balik ke MINTA
+  // (replika persis else branch terakhir cekClose Delphi)
+  return { status: "MINTA", urut: pin_urut };
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -303,4 +329,6 @@ module.exports = {
   remove,
   getPengajuanInfo,
   ajukanPerubahan,
+  isTutupBuku,
+  getStatusPengajuan,
 };

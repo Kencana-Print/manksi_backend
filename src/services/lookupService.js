@@ -114,6 +114,22 @@ const searchSpk = async (
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
+  } else if (filterMode === "po-external") {
+    // Replika persis F1 edtNomorSPK di ufrmPOexternal.pas:
+    // spk_cmo<>"" and spk_close=0 and spk_divisi in (3,4,6) and spk_aktif="Y"
+    // ⚠️ ASUMSI kolom spk_close ada di tspk — tolong konfirmasi via
+    // SHOW COLUMNS FROM tspk kalau beda.
+    baseQuery = `
+      FROM tspk
+      WHERE spk_aktif = 'Y'
+        AND spk_cmo <> ''
+        AND spk_close = 0
+        AND spk_divisi IN (3,4,6)
+    `;
+    if (keyword) {
+      whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
   } else if (filterMode === "sj") {
     baseQuery = `
     FROM (
@@ -186,7 +202,9 @@ const searchSpk = async (
   const total = countResult[0].total;
 
   const selectClause =
-    filterMode === "spk-ppic" || filterMode === "sj"
+    filterMode === "spk-ppic" ||
+    filterMode === "sj" ||
+    filterMode === "po-external"
       ? `SELECT spk_nomor AS Nomor, spk_nama AS Nama,
               spk_nama2 AS Nama2,
               DATE_FORMAT(spk_tanggal, '%Y-%m-%d') AS Tanggal,
@@ -196,7 +214,9 @@ const searchSpk = async (
       : `SELECT *`;
 
   const orderByCol =
-    filterMode === "spk-ppic" || filterMode === "sj"
+    filterMode === "spk-ppic" ||
+    filterMode === "sj" ||
+    filterMode === "po-external"
       ? "spk_tanggal"
       : "Tanggal";
 
