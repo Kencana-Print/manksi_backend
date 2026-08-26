@@ -14,11 +14,6 @@ const generateNomor = async (conn, tanggal) => {
   return `AG/${String(next).padStart(5, "0")}/${tahun}`;
 };
 
-// ─────────────────────────────────────────────
-// CEK PIC — apakah user ini terdaftar sbg PIC agenda utk bagian+
-// cabang dia sendiri. Dipakai gate create DAN dikirim ke FE (biar
-// tombol Tambah bisa disable kalau bukan PIC).
-// ─────────────────────────────────────────────
 const isPicAgenda = async (userKode, bagian, cabang) => {
   const [[row]] = await db.query(
     `SELECT 1 AS ada FROM tagenda_pic
@@ -45,7 +40,7 @@ const getBrowse = async (startDate, endDate, userBagian, userCab) => {
   }
   query += ` ORDER BY ag_tanggal ASC, ag_nomor ASC`;
   const [rows] = await db.query(query, params);
-  return rows;
+  return rows.map((r) => ({ ...r, Sumber: "MANUAL" }));
 };
 
 const getBadgeCount = async (userBagian, userCab) => {
@@ -75,11 +70,6 @@ const getById = async (nomor) => {
   return rows[0] || null;
 };
 
-// ─────────────────────────────────────────────
-// SAVE — create & edit. Cabang disimpan konsisten: HO- utk user HO,
-// cabang asli utk user cabang spesifik. Create digate isPicAgenda();
-// edit tetap hanya user_create yang boleh.
-// ─────────────────────────────────────────────
 const save = async (data, user) => {
   const { ag_nomor, ag_tanggal, ag_judul, ag_keterangan } = data;
 
@@ -112,7 +102,6 @@ const save = async (data, user) => {
       return { nomor: ag_nomor };
     }
 
-    // CREATE — gate: harus terdaftar sbg PIC bagian+cabang sendiri
     const boleh = await isPicAgenda(user.kode, user.bagian, cabangToStore);
     if (!boleh) {
       throw new Error(
