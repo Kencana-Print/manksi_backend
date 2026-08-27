@@ -681,13 +681,14 @@ const searchPenawaranDetail = async (penawaranNomor) => {
   const query = `
     SELECT pend_id AS id, pend_nama_barang AS Nama, pend_bahan AS Bahan, 
            pend_ukuran AS Ukuran, pend_satuan AS Satuan, pend_qty AS Qty, 
-           pend_harga AS Harga, (pend_qty * pend_harga) AS Total
+           pend_harga AS Harga, (pend_qty * pend_harga) AS Total,
+           pend_minta AS Minta
     FROM tpenawaran_dtl
     WHERE pend_pen_nomor = ?
     ORDER BY pend_id
   `;
   const [rows] = await db.query(query, [penawaranNomor]);
-  return { items: rows }; // Tanpa pagination karena datanya spesifik per Header
+  return { items: rows };
 };
 
 // --- FUNGSI UNTUK MODAL SEARCH MAP GARMEN ---

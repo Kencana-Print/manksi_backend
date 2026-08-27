@@ -59,13 +59,11 @@ const uploadGambar = [
       if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
 
       const imageUrl = `/images/mppb/${finalName}`;
-      res
-        .status(200)
-        .json({
-          success: true,
-          message: "Gambar berhasil diupload.",
-          imageUrl,
-        });
+      res.status(200).json({
+        success: true,
+        message: "Gambar berhasil diupload.",
+        imageUrl,
+      });
     } catch (error) {
       if (req.file && fs.existsSync(req.file.path)) {
         try {
@@ -77,4 +75,13 @@ const uploadGambar = [
   },
 ];
 
-module.exports = { getDetail, saveData, uploadGambar };
+const getMintaHargaDetail = async (req, res) => {
+  try {
+    const data = await mppbFormService.getMintaHargaDetail(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { getDetail, saveData, uploadGambar, getMintaHargaDetail };

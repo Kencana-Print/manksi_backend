@@ -37,7 +37,8 @@ const getDetailForm = async (nomor) => {
   const qHdr = `
     SELECT 
       mpb_nomor, mpb_tanggal, mpb_divisi, mpb_nama, mpb_ukuran, 
-      mpb_bahan, mpb_gramasi, mpb_jmlorder, mpb_ket, mpb_dokumen, 
+      mpb_bahan, mpb_gramasi, mpb_jmlorder, mpb_ket, mpb_dokumen,
+      mpb_pen_nomor, mpb_pen_id,
       date_create, user_create
     FROM tmpb 
     WHERE mpb_nomor = ?
@@ -46,20 +47,51 @@ const getDetailForm = async (nomor) => {
   if (hdrRows.length === 0) throw new Error("Data MPPB tidak ditemukan.");
   const header = hdrRows[0];
 
+  // Info Penawaran terhubung — read-only display, sumber sama dgn
+  // searchPenawaranDetail di lookupService (field shape disamakan:
+  // id, Nama, Bahan, Ukuran, Satuan, Qty, Harga, Total)
+  if (header.mpb_pen_nomor && header.mpb_pen_id) {
+    const [penRows] = await db.query(
+      `SELECT d.pend_id AS id, d.pend_nama_barang AS Nama, d.pend_bahan AS Bahan,
+              d.pend_ukuran AS Ukuran, d.pend_satuan AS Satuan, d.pend_qty AS Qty,
+              d.pend_harga AS Harga, (d.pend_qty * d.pend_harga) AS Total,
+              h.pen_tanggal AS TanggalPenawaran, c.cus_nama AS NamaCustomer
+       FROM tpenawaran_dtl d
+       INNER JOIN tpenawaran_hdr h ON h.pen_nomor = d.pend_pen_nomor
+       LEFT JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+       WHERE d.pend_pen_nomor = ? AND d.pend_id = ?`,
+      [header.mpb_pen_nomor, header.mpb_pen_id],
+    );
+    header.PenawaranDetail = penRows[0] || null;
+  } else {
+    header.PenawaranDetail = null;
+  }
+
   const pinInfo = await checkPinStatus(nomor, db);
   header.pin_status = pinInfo.status;
 
-  // JALUR KOREKSI: Hitung isTutupBuku asli berdasarkan tanggal penutupan periode
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
   const tglDokumen = new Date(header.mpb_tanggal);
   header.isTutupBuku = false;
-
-  // Jika tanggal di bawah tgl close dan tidak memegang status ACC PIN, maka dikunci
   if (zdtClose && tglDokumen <= zdtClose && pinInfo.status !== "ACC") {
     header.isTutupBuku = true;
   }
 
   return header;
+};
+
+// --- GET DETAIL MINTA HARGA (sumber auto-fill dari Penawaran) ---
+const getMintaHargaDetail = async (nomorMintaHarga) => {
+  const query = `
+    SELECT h.mh_nomor, h.mh_divisi, h.mh_nama, h.mh_kain, h.mh_ukuran, 
+           h.mh_gramasi, h.mh_jmlorder, h.mh_status, h.mh_ket
+    FROM tmintaharga h
+    WHERE h.mh_nomor = ?
+  `;
+  const [rows] = await db.query(query, [nomorMintaHarga]);
+  if (rows.length === 0)
+    throw new Error("Data Permintaan Harga tidak ditemukan.");
+  return rows[0];
 };
 
 // --- SIMPAN DATA FORM ---
@@ -80,7 +112,14 @@ const saveData = async (payload, user) => {
       jumlahOrder,
       keterangan,
       noDokumen,
+      penNomor,
+      penId,
     } = payload;
+
+    // ── Validasi wajib: MPPB harus link ke Penawaran ──
+    if (!penNomor || !penId) {
+      throw new Error("No. Penawaran wajib dipilih.");
+    }
 
     const tglTrs = new Date(tanggal);
     const now = new Date();
@@ -98,7 +137,6 @@ const saveData = async (payload, user) => {
       String(now.getSeconds()).padStart(2, "0");
     let pinInfo = { status: "MINTA", urut: 0 };
 
-    // 1. Validasi Tutup Buku
     if (isEdit) {
       pinInfo = await checkPinStatus(nomor, conn);
     }
@@ -109,12 +147,13 @@ const saveData = async (payload, user) => {
       );
     }
 
-    // 2. Simpan atau Update
     if (isEdit) {
       await conn.query(
         `UPDATE tmpb SET 
          mpb_tanggal=?, mpb_divisi=?, mpb_nama=?, mpb_ukuran=?, mpb_bahan=?,
-         mpb_gramasi=?, mpb_jmlorder=?, mpb_ket=?, mpb_dokumen=?, date_modified=?, user_modified=?
+         mpb_gramasi=?, mpb_jmlorder=?, mpb_ket=?, mpb_dokumen=?,
+         mpb_pen_nomor=?, mpb_pen_id=?,
+         date_modified=?, user_modified=?
          WHERE mpb_nomor=?`,
         [
           tanggal,
@@ -126,6 +165,8 @@ const saveData = async (payload, user) => {
           jumlahOrder || 0,
           keterangan || "",
           noDokumen || "",
+          penNomor,
+          penId,
           dateModified,
           user.kode,
           nomor,
@@ -137,8 +178,9 @@ const saveData = async (payload, user) => {
       await conn.query(
         `INSERT INTO tmpb 
          (mpb_nomor, mpb_tanggal, mpb_divisi, mpb_nama, mpb_ukuran, mpb_bahan, mpb_gramasi,
-          mpb_jmlorder, mpb_ket, mpb_dokumen, date_create, user_create)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          mpb_jmlorder, mpb_ket, mpb_dokumen, mpb_pen_nomor, mpb_pen_id,
+          date_create, user_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           tanggal,
@@ -150,13 +192,14 @@ const saveData = async (payload, user) => {
           jumlahOrder || 0,
           keterangan || "",
           noDokumen || "",
+          penNomor,
+          penId,
           dateModified,
           user.kode,
         ],
       );
     }
 
-    // 3. Update PIN jika status ACC
     if (isEdit && pinInfo.status === "ACC") {
       await conn.query(
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="MPPB" AND pin_nomor=? AND pin_urut=?`,
@@ -174,7 +217,4 @@ const saveData = async (payload, user) => {
   }
 };
 
-module.exports = {
-  getDetailForm,
-  saveData,
-};
+module.exports = { getDetailForm, saveData, getMintaHargaDetail };

@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.5",
+    date: "2026-08-27",
+    changes: [
+      {
+        type: "added",
+        text: "Baru : Saat buat MPPB, harus memanggil nomor Penawaran dan Detail Penawarannya, kalau tidak maka tidak bisa disimpan",
+      },
+    ],
+  },
+  {
     version: "1.0.4",
     date: "2026-08-26",
     changes: [

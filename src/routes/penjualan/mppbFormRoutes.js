@@ -10,6 +10,12 @@ const MENU_ID = "150";
 
 router.use(verifyToken);
 
+router.get(
+  "/minta-harga/:nomor",
+  checkPermission(MENU_ID, "view"),
+  controller.getMintaHargaDetail,
+);
+
 // Mendapatkan detail form (Mode Edit)
 router.get("/:nomor", checkPermission(MENU_ID, "view"), controller.getDetail);
 
