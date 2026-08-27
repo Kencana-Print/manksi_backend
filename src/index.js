@@ -107,6 +107,7 @@ const bpbJasaFormRoutes = require("./routes/garmen/bpbJasaFormRoutes");
 const mkaGarmenRoutes = require("./routes/garmen/mkaRoutes");
 const mkaFormRoutes = require("./routes/garmen/mkaFormRoutes");
 const spkGudangRoutes = require("./routes/garmen/spkGudangRoutes");
+const spkGudangFormRoutes = require("./routes/garmen/spkGudangFormRoutes");
 
 const poInternalMapRoutes = require("./routes/garmen/poInternalMapRoutes");
 const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
@@ -491,6 +492,7 @@ app.use("/api/garmen/bpb-jasa-form", bpbJasaFormRoutes);
 app.use("/api/garmen/mka", mkaGarmenRoutes);
 app.use("/api/garmen/mka-form", mkaFormRoutes);
 app.use("/api/garmen/spk-gudang", spkGudangRoutes);
+app.use("/api/garmen/spk-gudang/form", spkGudangFormRoutes);
 
 app.use("/api/garmen/po-internal-map", poInternalMapRoutes);
 app.use("/api/garmen/po-internal-map/surat-jalan", poInternalMapSjRoutes);

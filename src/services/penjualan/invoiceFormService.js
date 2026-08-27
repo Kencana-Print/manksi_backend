@@ -473,18 +473,25 @@ const save = async (data, userKode, isNew) => {
   if (!validDetail.length)
     throw new Error("Tidak ada detail, tidak dapat di simpan.");
 
-  // Cek status pelunasan saat edit — sesuai Delphi
+  // Cek tutup buku dulu — hasilnya juga dipakai utk keputusan gate
+  // pelunasan di bawah (bukan cuma buat error periode di akhir).
+  const tutupBuku = await cekTutupBuku(Tanggal, Xminta5);
+
+  // Cek status pelunasan saat edit — HANYA diblokir kalau periode
+  // invoice ini SUDAH closing (tutupBuku.boleh === false). Selama masih
+  // dalam periode terbuka (bulan berjalan) atau sudah ACC pengajuan
+  // perubahan, invoice yang sudah dibuat pelunasan tetap boleh diedit —
+  // gate ini cuma relevan buat mencegah edit invoice lunas di periode
+  // yang sudah closing dan belum diajukan perubahannya.
   if (!isNew) {
     const sudahLunas = await cekStatusPelunasan(NomorInv);
-    if (sudahLunas) {
+    if (sudahLunas && !tutupBuku.boleh) {
       throw new Error(
         "Invoice ini sudah dibuat pelunasan, tidak bisa di edit.",
       );
     }
   }
 
-  // Cek tutup buku
-  const tutupBuku = await cekTutupBuku(Tanggal, Xminta5);
   if (!tutupBuku.boleh) {
     throw new Error(tutupBuku.message);
   }
