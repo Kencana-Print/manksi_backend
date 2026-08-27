@@ -28,6 +28,15 @@ const lookupJenisKain = async (req, res) => {
   }
 };
 
+const getLenganList = async (req, res) => {
+  try {
+    const data = await service.getLenganList();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const searchBarcode = async (req, res) => {
   try {
     const { kdKain, q } = req.query;
@@ -95,6 +104,46 @@ const lookupWarna = async (req, res) => {
   }
 };
 
+const searchJenisKainKaosan = async (req, res) => {
+  try {
+    const { q = "", page = 1, limit = 50 } = req.query;
+    const data = await service.searchJenisKainKaosan(q, page, limit);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchWarna = async (req, res) => {
+  try {
+    const { q = "", page = 1, limit = 50 } = req.query;
+    const data = await service.searchWarnaKaosan(q, page, limit);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const searchJenisKain = async (req, res) => {
+  try {
+    const { q = "", page = 1, limit = 50 } = req.query;
+    const data = await service.searchJenisKain(q, page, limit);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getDataCetak = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const data = await service.getDataCetak(nomor);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 const save = async (req, res) => {
   try {
     const result = await service.save(req.body, req.user);
@@ -115,5 +164,10 @@ module.exports = {
   resolveBarcode,
   searchBahan,
   lookupWarna,
+  searchJenisKainKaosan,
+  searchWarna,
+  searchJenisKain,
+  getLenganList,
+  getDataCetak,
   save,
 };

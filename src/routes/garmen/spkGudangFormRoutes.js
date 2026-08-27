@@ -39,6 +39,36 @@ router.get(
   controller.lookupWarna,
 );
 router.get(
+  "/search-jenis-kain-kaosan",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.searchJenisKainKaosan,
+);
+router.get(
+  "/search-warna",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.searchWarna,
+);
+router.get(
+  "/search-jenis-kain",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.searchJenisKain,
+);
+router.get(
+  "/lengan-list",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getLenganList,
+);
+router.get(
+  "/cetak/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getDataCetak,
+);
+router.get(
   "/:nomor",
   verifyToken,
   checkPermission(MENU_ID, "view"),

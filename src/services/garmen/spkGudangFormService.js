@@ -197,7 +197,14 @@ const searchBahanNonBarcode = async (kdKain, q = "") => {
      LIMIT 50`,
     [kdKain, `%${q}%`, `%${q}%`],
   );
-  return rows;
+  // Sertakan stok per kode — sebelumnya kosong sama sekali di mode
+  // non-barcode, bikin kolom Stok di hasil search selalu 0.
+  return Promise.all(
+    rows.map(async (r) => ({
+      ...r,
+      Stok: await getStokBahan(r.Kode),
+    })),
+  );
 };
 
 // ─────────────────────────────────────────────
@@ -215,6 +222,82 @@ const lookupWarnaByKode = async (kode) => {
     [abwkode],
   );
   return rows[0] || null;
+};
+
+// ─────────────────────────────────────────────
+// SEARCH JENIS KAIN KAOSAN (F1 edtkdkaink — retail.tjeniskain)
+// ─────────────────────────────────────────────
+const searchJenisKainKaosan = async (q = "", page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  const like = `%${q}%`;
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM retail.tjeniskain
+     WHERE kode LIKE ? OR JenisKain LIKE ?`,
+    [like, like],
+  );
+  const [rows] = await db.query(
+    `SELECT kode AS Kode, JenisKain AS Nama
+     FROM retail.tjeniskain
+     WHERE kode LIKE ? OR JenisKain LIKE ?
+     ORDER BY JenisKain
+     LIMIT ? OFFSET ?`,
+    [like, like, Number(limit), offset],
+  );
+  return { items: rows, total, page: Number(page), limit: Number(limit) };
+};
+
+// ─────────────────────────────────────────────
+// SEARCH WARNA (F1 clwarna — retail.twarna)
+// ─────────────────────────────────────────────
+const searchWarnaKaosan = async (q = "", page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  const like = `%${q}%`;
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM retail.twarna
+     WHERE kode LIKE ? OR warna LIKE ?`,
+    [like, like],
+  );
+  const [rows] = await db.query(
+    `SELECT kode AS Kode, warna AS Nama
+     FROM retail.twarna
+     WHERE kode LIKE ? OR warna LIKE ?
+     ORDER BY warna
+     LIMIT ? OFFSET ?`,
+    [like, like, Number(limit), offset],
+  );
+  return { items: rows, total, page: Number(page), limit: Number(limit) };
+};
+
+// ─────────────────────────────────────────────
+// SEARCH JENIS KAIN (F1 edtkdkain — tbahan_jenis)
+// ─────────────────────────────────────────────
+const searchJenisKain = async (q = "", page = 1, limit = 50) => {
+  const offset = (Number(page) - 1) * Number(limit);
+  const like = `%${q}%`;
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tbahan_jenis
+     WHERE bj_kode LIKE ? OR bj_nama LIKE ?`,
+    [like, like],
+  );
+  const [rows] = await db.query(
+    `SELECT bj_kode AS Kode, bj_nama AS Nama
+     FROM tbahan_jenis
+     WHERE bj_kode LIKE ? OR bj_nama LIKE ?
+     ORDER BY bj_nama
+     LIMIT ? OFFSET ?`,
+    [like, like, Number(limit), offset],
+  );
+  return { items: rows, total, page: Number(page), limit: Number(limit) };
+};
+
+// ─────────────────────────────────────────────
+// GET LIST LENGAN (retail.tlengan) — untuk dropdown Lengan
+// ─────────────────────────────────────────────
+const getLenganList = async () => {
+  const [rows] = await db.query(
+    `SELECT lengan FROM retail.tlengan ORDER BY lengan`,
+  );
+  return rows.map((r) => r.lengan);
 };
 
 // ─────────────────────────────────────────────
@@ -308,6 +391,33 @@ const getById = async (nomor) => {
   }
 
   return { header, spesifikasiKain, spkItems, approval };
+};
+
+// ─────────────────────────────────────────────
+// GET DATA CETAK — replikasi query `cetak()` Delphi
+// ─────────────────────────────────────────────
+const getDataCetak = async (nomor) => {
+  const [[row]] = await db.query(
+    `SELECT
+       s.*,
+       j.bj_nama AS jenis,
+       p.pab_nama,
+       CONCAT(s.spg_jenis, ' ', s.spg_finishing, ' ', s.spg_lengan, ' ', j.bj_nama) AS nama,
+       (
+         SELECT CAST(GROUP_CONCAT(CONCAT(i.spgi_spk, '= ', w.bw_nama) SEPARATOR '\n') AS CHAR)
+         FROM tspk_gudangitem i
+         INNER JOIN tbahan_warna w ON w.bw_kode = i.spgi_bwkode
+         WHERE i.spgi_nomor = s.spg_nomor
+       ) AS warna,
+       DATE_FORMAT(s.date_create, '%d-%m-%Y %H:%i:%s') AS created
+     FROM tspk_gudang s
+     LEFT JOIN tpabrik p ON p.pab_kode = s.spg_workshop
+     LEFT JOIN tbahan_jenis j ON j.bj_kode = s.spg_kain
+     WHERE s.spg_nomor = ?`,
+    [nomor],
+  );
+  if (!row) throw new Error("Data tidak ditemukan.");
+  return row;
 };
 
 // ─────────────────────────────────────────────
@@ -559,8 +669,13 @@ module.exports = {
   resolveBarcode,
   searchBahanNonBarcode,
   lookupWarnaByKode,
+  searchJenisKainKaosan,
+  searchWarnaKaosan,
+  searchJenisKain,
+  getLenganList,
   getApprovalStatus,
   needsApprovalCheck,
   getById,
+  getDataCetak,
   save,
 };
