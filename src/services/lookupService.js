@@ -1817,32 +1817,36 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   let params = [];
-
   let whereClause = `WHERE 1=1`;
-
   if (keyword && keyword.trim() !== "") {
-    whereClause += ` AND (h.mkb_nomor LIKE ? OR h.mkb_spk_nomor LIKE ? OR s.spk_nama LIKE ? OR m.mspk_nama LIKE ?)`;
-    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    whereClause += ` AND (h.mkb_nomor LIKE ? OR h.mkb_spk_nomor LIKE ? OR so.so_nama LIKE ? OR s.spk_nama LIKE ? OR m.mspk_nama LIKE ?)`;
+    params.push(
+      `%${keyword}%`,
+      `%${keyword}%`,
+      `%${keyword}%`,
+      `%${keyword}%`,
+      `%${keyword}%`,
+    );
   }
-
   const [countResult] = await db.query(
     `
     SELECT COUNT(*) AS total 
     FROM tmkb_hdr h
+    LEFT JOIN tsalesorder so ON so.so_nomor = h.mkb_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
     ${whereClause}
   `,
     params,
   );
-
   let query = `
     SELECT 
       h.mkb_nomor AS Nomor, 
       DATE_FORMAT(h.mkb_tanggal, "%d-%m-%Y") AS Tanggal, 
       h.mkb_spk_nomor AS SPK_Nomor, 
-      IFNULL(s.spk_nama, m.mspk_nama) AS Nama
+      IFNULL(so.so_nama, IFNULL(s.spk_nama, m.mspk_nama)) AS Nama
     FROM tmkb_hdr h
+    LEFT JOIN tsalesorder so ON so.so_nomor = h.mkb_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = h.mkb_spk_nomor AND s.spk_aktif = "Y"
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.mkb_spk_nomor
     ${whereClause} 
@@ -1850,7 +1854,6 @@ const searchMkb = async (keyword, page = 1, limit = 50) => {
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
-
   const [rows] = await db.query(query, params);
   return {
     items: rows,
