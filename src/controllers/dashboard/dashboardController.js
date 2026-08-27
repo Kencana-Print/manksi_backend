@@ -38,6 +38,15 @@ const getSpkSummary = async (req, res) => {
   }
 };
 
+const getSoSummary = async (req, res) => {
+  try {
+    const data = await service.getSoSummary(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getPoBahanSisa = async (req, res) => {
   try {
     const data = await service.getPoBahanSisa(req.user);
@@ -697,6 +706,7 @@ module.exports = {
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
+  getSoSummary,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,

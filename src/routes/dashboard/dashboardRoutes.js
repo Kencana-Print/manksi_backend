@@ -13,6 +13,7 @@ router.get(
   controller.getPenawaranBelumSpk,
 );
 router.get("/spk-summary", verifyToken, controller.getSpkSummary);
+router.get("/so-summary", verifyToken, controller.getSoSummary);
 router.get("/po-bahan-sisa", verifyToken, controller.getPoBahanSisa);
 router.get(
   "/po-bahan-bpb-summary",

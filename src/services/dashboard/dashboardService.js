@@ -158,6 +158,38 @@ const getSpkSummary = async (user) => {
   return rows[0];
 };
 
+// ──────────────────────────────────────────────
+// Ringkasan SO (Sales Order) — alur baru Marketing/MO, TERPISAH dari
+// SPK (murni ranah produksi). Relasi 1:1 via so_spk_ref (index sudah
+// ada: idx_so_spk_ref) — LEFT JOIN langsung ke tspk, bukan EXISTS/scan.
+// ──────────────────────────────────────────────
+const getSoSummary = async (user) => {
+  const super_ = isSuperViewer(user);
+  let whereExtra = "";
+  if (!super_ && user.divisi) {
+    whereExtra = `AND so.so_divisi = ${db.escape(String(user.divisi))}`;
+  }
+  const sql = `
+    SELECT
+      COUNT(*) AS TotalAktif,
+      SUM(CASE WHEN so.so_spk_ref IS NULL OR so.so_spk_ref = ''
+            THEN 1 ELSE 0 END) AS BelumSpk,
+      SUM(CASE WHEN (so.so_jumlah - so.so_jumlah_kirim) > 0
+            THEN 1 ELSE 0 END) AS BelumKirim,
+      SUM(CASE WHEN so.so_spk_ref IS NOT NULL AND so.so_spk_ref <> ''
+            AND IFNULL(s.spk_jumlah_jadi, 0) < so.so_jumlah
+            THEN 1 ELSE 0 END) AS BelumJadi
+    FROM tsalesorder so
+    LEFT JOIN tspk s ON s.spk_nomor = so.so_spk_ref AND s.spk_aktif = 'Y'
+    WHERE so.so_aktif = 'Y'
+      AND so.so_close = 0
+      AND so.so_tanggal >= '2024-01-01'
+      ${whereExtra}
+  `;
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
 // ── PO Bahan dengan sisa MKB (seminggu terakhir) ──
 const getPoBahanSisa = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -2470,6 +2502,7 @@ module.exports = {
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
+  getSoSummary,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
