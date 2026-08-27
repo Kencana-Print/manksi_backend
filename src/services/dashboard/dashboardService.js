@@ -1034,6 +1034,34 @@ const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+// Ganti subquery `spk` (LEFT JOIN ke tspk) yang muncul di 4 tempat
+// (sqlMetric, sqlTren, sqlDistribusi di getRealisasiPenawaranDashboard,
+// dan sqlDetail di getRealisasiPenawaranDetail) dengan versi UNION
+// tspk + tsalesorder ini — nama alias di query luar TETAP "spk"
+// (gak perlu ganti nama alias-nya), cukup isi definisinya diganti.
+const REALISASI_SUBQUERY_DEF = `
+  SELECT
+    pen_nomor,
+    COUNT(*)                          AS TotalSPK,
+    MIN(nomor_realisasi)              AS SpkPertama,
+    MIN(tgl_realisasi)                AS TglSpkPertama,
+    DATEDIFF(MIN(tgl_realisasi), MIN(tgl_pen)) AS HariKonversi
+  FROM (
+    SELECT s.spk_pen_nomor AS pen_nomor, s.spk_nomor AS nomor_realisasi,
+           s.spk_tanggal AS tgl_realisasi, h2.pen_tanggal AS tgl_pen
+    FROM tspk s
+    INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
+    WHERE s.spk_aktif = 'Y' AND s.spk_pen_nomor IS NOT NULL AND s.spk_pen_nomor <> ''
+    UNION ALL
+    SELECT so.so_pen_nomor AS pen_nomor, so.so_nomor AS nomor_realisasi,
+           so.so_tanggal AS tgl_realisasi, h3.pen_tanggal AS tgl_pen
+    FROM tsalesorder so
+    INNER JOIN tpenawaran_hdr h3 ON h3.pen_nomor = so.so_pen_nomor
+    WHERE so.so_aktif = 'Y' AND so.so_pen_nomor IS NOT NULL AND so.so_pen_nomor <> ''
+  ) u
+  GROUP BY pen_nomor
+`;
+
 // ── Dashboard Realisasi Penawaran ──
 const getRealisasiPenawaranDashboard = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -1068,18 +1096,7 @@ const getRealisasiPenawaranDashboard = async (user) => {
             THEN h.pen_nomor END) AS BelumKonversi,
       ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
     FROM tpenawaran_hdr h
-    LEFT JOIN (
-      SELECT
-        spk_pen_nomor,
-        MIN(spk_tanggal) AS TglSpkPertama,
-        DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
-      FROM tspk s
-      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
-      WHERE s.spk_aktif = 'Y'
-        AND s.spk_pen_nomor IS NOT NULL
-        AND s.spk_pen_nomor <> ''
-      GROUP BY s.spk_pen_nomor
-    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
@@ -1092,17 +1109,7 @@ const getRealisasiPenawaranDashboard = async (user) => {
       COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL THEN h.pen_nomor END) AS Konversi,
       ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
     FROM tpenawaran_hdr h
-    LEFT JOIN (
-      SELECT
-        spk_pen_nomor,
-        DATEDIFF(MIN(spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
-      FROM tspk s
-      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
-      WHERE s.spk_aktif = 'Y'
-        AND s.spk_pen_nomor IS NOT NULL
-        AND s.spk_pen_nomor <> ''
-      GROUP BY s.spk_pen_nomor
-    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
@@ -1177,20 +1184,7 @@ const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
       spk.HariKonversi
     FROM tpenawaran_hdr h
     INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
-    LEFT JOIN (
-      SELECT
-        s.spk_pen_nomor,
-        COUNT(*)                                          AS TotalSPK,
-        MIN(s.spk_nomor)                                  AS SpkPertama,
-        MIN(s.spk_tanggal)                                AS TglSpkPertama,
-        DATEDIFF(MIN(s.spk_tanggal), MIN(h2.pen_tanggal)) AS HariKonversi
-      FROM tspk s
-      INNER JOIN tpenawaran_hdr h2 ON h2.pen_nomor = s.spk_pen_nomor
-      WHERE s.spk_aktif = 'Y'
-        AND s.spk_pen_nomor IS NOT NULL
-        AND s.spk_pen_nomor <> ''
-      GROUP BY s.spk_pen_nomor
-    ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
@@ -1206,73 +1200,83 @@ const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
 const getMapVsSpkDashboard = async (user, startDate, endDate) => {
   const bagian = (user.bagian || "").toUpperCase();
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
-
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
   const paramsMetric = [dStart, dEnd];
   const paramsDivisi = [dStart, dEnd];
-
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
     whereExtra = "AND m.mspk_divisi = ?";
     paramsMetric.push(String(user.divisi));
     paramsDivisi.push(String(user.divisi));
   }
-
+  // Konversi MAP dicek ke DUA sumber: tspk (SPK format lama) DAN
+  // tsalesorder (SO baru) — MAP yg sudah jadi SO tetap dihitung
+  // "sudah" (bukan lagi "belum"), sesuai migrasi SO.
   const sqlMetric = `
     SELECT
       COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
-      COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NOT NULL THEN m.mspk_nomor END) AS SudahSPK,
-      COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NULL     THEN m.mspk_nomor END) AS BelumSPK,
-      IFNULL(SUM(IF(spk.spk_nomor IS NOT NULL,
-            spk.spk_harga * spk.spk_jumlah,
+      COUNT(DISTINCT CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL THEN m.mspk_nomor END) AS SudahSO,
+      COUNT(DISTINCT CASE WHEN COALESCE(spk.nomor, so.nomor) IS NULL THEN m.mspk_nomor END) AS BelumSO,
+      IFNULL(SUM(IF(COALESCE(spk.nomor, so.nomor) IS NOT NULL,
+            IFNULL(spk.nilai, so.nilai),
             m.mspk_harga  * m.mspk_rencana_order)), 0) AS TotalNilai,
-      IFNULL(SUM(CASE WHEN spk.spk_nomor IS NOT NULL
-            THEN spk.spk_harga * spk.spk_jumlah ELSE 0 END), 0) AS NilaiSudahSPK,
-      IFNULL(SUM(CASE WHEN spk.spk_nomor IS NULL
-            THEN m.mspk_harga * m.mspk_rencana_order ELSE 0 END), 0) AS NilaiBelumSPK
+      IFNULL(SUM(CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL
+            THEN IFNULL(spk.nilai, so.nilai) ELSE 0 END), 0) AS NilaiSudahSO,
+      IFNULL(SUM(CASE WHEN COALESCE(spk.nomor, so.nomor) IS NULL
+            THEN m.mspk_harga * m.mspk_rencana_order ELSE 0 END), 0) AS NilaiBelumSO
     FROM tmemospk m
     INNER JOIN tcustomer c ON c.cus_kode = m.mspk_cus_kode
-    LEFT  JOIN tspk spk ON spk.spk_memo = m.mspk_nomor AND spk.spk_aktif = 'Y'
+    LEFT JOIN (
+      SELECT spk_memo, spk_nomor AS nomor, spk_harga * spk_jumlah AS nilai
+      FROM tspk WHERE spk_aktif = 'Y'
+    ) spk ON spk.spk_memo = m.mspk_nomor
+    LEFT JOIN (
+      SELECT so_memo, so_nomor AS nomor, so_harga * so_jumlah AS nilai
+      FROM tsalesorder WHERE so_aktif = 'Y'
+    ) so ON so.so_memo = m.mspk_nomor
     WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
     ${whereExtra}
   `;
-
   const sqlDivisi = `
-    SELECT Divisi, TotalMAP, SudahSPK, NilaiSPK, NilaiPotensi
+    SELECT Divisi, TotalMAP, SudahSO, NilaiSO, NilaiPotensi
     FROM (
       SELECT
         IFNULL(d.Divisi, 'LAINNYA') AS Divisi,
         COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
-        COUNT(DISTINCT CASE WHEN spk.spk_nomor IS NOT NULL THEN m.mspk_nomor END) AS SudahSPK,
-        IFNULL(SUM(CASE WHEN spk.spk_nomor IS NOT NULL
-              THEN spk.spk_harga * spk.spk_jumlah ELSE 0 END), 0) AS NilaiSPK,
-        IFNULL(SUM(CASE WHEN spk.spk_nomor IS NULL
+        COUNT(DISTINCT CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL THEN m.mspk_nomor END) AS SudahSO,
+        IFNULL(SUM(CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL
+              THEN IFNULL(spk.nilai, so.nilai) ELSE 0 END), 0) AS NilaiSO,
+        IFNULL(SUM(CASE WHEN COALESCE(spk.nomor, so.nomor) IS NULL
               THEN m.mspk_harga * m.mspk_rencana_order ELSE 0 END), 0) AS NilaiPotensi
       FROM tmemospk m
-      LEFT JOIN tdivisi d   ON d.kode = m.mspk_divisi
-      LEFT JOIN tspk spk    ON spk.spk_memo = m.mspk_nomor AND spk.spk_aktif = 'Y'
+      LEFT JOIN tdivisi d ON d.kode = m.mspk_divisi
+      LEFT JOIN (
+        SELECT spk_memo, spk_nomor AS nomor, spk_harga * spk_jumlah AS nilai
+        FROM tspk WHERE spk_aktif = 'Y'
+      ) spk ON spk.spk_memo = m.mspk_nomor
+      LEFT JOIN (
+        SELECT so_memo, so_nomor AS nomor, so_harga * so_jumlah AS nilai
+        FROM tsalesorder WHERE so_aktif = 'Y'
+      ) so ON so.so_memo = m.mspk_nomor
       WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
       ${whereExtra}
       GROUP BY m.mspk_divisi, d.Divisi
     ) x
-    ORDER BY (x.NilaiSPK + x.NilaiPotensi) DESC
+    ORDER BY (x.NilaiSO + x.NilaiPotensi) DESC
   `;
-
   const [[metricRows], [divisiRows]] = await Promise.all([
     db.query(sqlMetric, paramsMetric),
     db.query(sqlDivisi, paramsDivisi),
   ]);
-
   return { metric: metricRows[0] || {}, divisi: divisiRows };
 };
 
-const getMapBelumSpk = async (
+const getMapBelumSo = async (
   user,
   limit = 20,
   offset = 0,
@@ -1281,14 +1285,12 @@ const getMapBelumSpk = async (
 ) => {
   const bagian = (user.bagian || "").toUpperCase();
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
-
   const dStart =
     startDate ||
     new Date(new Date().getFullYear(), new Date().getMonth(), 1)
       .toISOString()
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
   const params = [dStart, dEnd];
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
@@ -1296,7 +1298,6 @@ const getMapBelumSpk = async (
     params.push(String(user.divisi));
   }
   params.push(limit, offset);
-
   const sql = `
     SELECT
       m.mspk_nomor                             AS Nomor,
@@ -1316,10 +1317,13 @@ const getMapBelumSpk = async (
         SELECT 1 FROM tspk s
         WHERE s.spk_memo = m.mspk_nomor AND s.spk_aktif = 'Y'
       )
+      AND NOT EXISTS (
+        SELECT 1 FROM tsalesorder so
+        WHERE so.so_memo = m.mspk_nomor AND so.so_aktif = 'Y'
+      )
     ORDER BY m.mspk_tanggal ASC
     LIMIT ? OFFSET ?
   `;
-
   const [rows] = await db.query(sql, params);
   return rows;
 };
@@ -2480,7 +2484,7 @@ module.exports = {
   getRealisasiPenawaranDashboard,
   getRealisasiPenawaranDetail,
   getMapVsSpkDashboard,
-  getMapBelumSpk,
+  getMapBelumSo,
   getMapVsSjDashboard,
   getMapBelumKirim,
   getSpkBelumMkbCount,

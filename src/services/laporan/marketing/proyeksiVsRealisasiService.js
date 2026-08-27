@@ -1,24 +1,15 @@
 const db = require("../../../config/database");
 
 // ─────────────────────────────────────────────────────────
-// Replikasi ufrmBrowseProyeksi.btnRefreshClick — TAPI direstrukturisasi
-// dari CROSS JOIN tcustomer×tjenisorder (Cartesian product tanpa
-// kondisi ON, lalu difilter belakangan) menjadi enumerasi pasangan
-// (cus_kode, jo_kode) yang BENAR-BENAR punya transaksi (union dari 3
-// sumber, masing2 sudah difilter >0 persis kondisi WHERE asli),
-// baru di-JOIN ke tcustomer/tjenisorder buat ambil nama. Hasil akhir
-// identik, tapi jauh lebih murah — CROSS JOIN semua customer x semua
-// jenis order bisa puluhan-ribu baris cuma buat dibuang >95%-nya.
-// ⚠️ Query asli TIDAK filter cus_aktif/jo_aktif sama sekali (beda dari
-// modul lain) — direplikasi apa adanya.
-// ⚠️ Subquery B/C/D TIDAK ada HAVING — kalau grup jumlahnya pas 0,
-// tetap tampil 0.00 (bukan null/blank), asal row itu lolos filter
-// gara-gara salah satu metrik LAIN positif. Direplikasi persis.
-// ⚠️ Urutan params HARUS PERSIS urutan tekstual '?' — subquery B/C/D
-// dipakai 2x secara tekstual (sekali di union "keys", sekali lagi di
-// LEFT JOIN nilai aktual), jadi param-nya juga diduplikasi sesuai
-// urutan tekstual tsb (pola bug yang sama seperti planSpkVsRealisasi).
+// Replikasi ufrmBrowseProyeksi.btnRefreshClick — direstrukturisasi
+// dari CROSS JOIN tcustomer×tjenisorder jadi enumerasi pasangan
+// (cus_kode, jo_kode) yg beneran punya transaksi.
+//
+// Sumber data MURNI tsalesorder — tspk (SPK/SO format lama) SENGAJA
+// TIDAK disertakan. Laporan ini jadi hanya mencakup data sejak
+// tsalesorder mulai dipakai, bukan histori penuh.
 // ─────────────────────────────────────────────────────────
+
 const buildB = (startDate) => ({
   sql: `
     SELECT mspk_cus_kode AS cus_kode, mspk_jo_kode AS jo_kode,
@@ -26,7 +17,8 @@ const buildB = (startDate) => ({
     FROM tmemospk
     WHERE mspk_tanggal >= DATE_SUB(?, INTERVAL 90 DAY)
       AND mspk_nomor NOT IN (
-        SELECT spk_memo FROM tspk WHERE spk_aktif = 'Y' AND spk_tanggal < ?
+        SELECT so_memo FROM tsalesorder
+        WHERE so_aktif = 'Y' AND so_tanggal < ?
       )
     GROUP BY mspk_cus_kode, mspk_jo_kode
   `,
@@ -35,32 +27,31 @@ const buildB = (startDate) => ({
 
 const buildC = (startDate, endDate) => ({
   sql: `
-    SELECT spk_cus_kode AS cus_kode, spk_jo_kode AS jo_kode,
-      SUM(spk_jumlah * spk_harga) AS total_realisasi_memo
-    FROM tspk
-    WHERE spk_aktif = 'Y' AND spk_tanggal >= ? AND spk_tanggal <= ?
-      AND spk_memo IN (
-        SELECT mspk_nomor FROM tmemospk WHERE mspk_tanggal >= DATE_SUB(?, INTERVAL 90 DAY)
+    SELECT so_cus_kode AS cus_kode, so_jo_kode AS jo_kode,
+      SUM(so_jumlah * so_harga) AS total_realisasi_memo
+    FROM tsalesorder
+    WHERE so_aktif = 'Y' AND so_tanggal >= ? AND so_tanggal <= ?
+      AND so_memo IN (
+        SELECT mspk_nomor FROM tmemospk
+        WHERE mspk_tanggal >= DATE_SUB(?, INTERVAL 90 DAY)
       )
-    GROUP BY spk_cus_kode, spk_jo_kode
+    GROUP BY so_cus_kode, so_jo_kode
   `,
   params: [startDate, endDate, startDate],
 });
 
 const buildD = (startDate, endDate) => ({
   sql: `
-    SELECT spk_cus_kode AS cus_kode, spk_jo_kode AS jo_kode,
-      SUM(spk_jumlah * spk_harga) AS total_realisasi_all
-    FROM tspk
-    WHERE spk_aktif = 'Y' AND spk_tanggal >= ? AND spk_tanggal <= ?
-    GROUP BY spk_cus_kode, spk_jo_kode
+    SELECT so_cus_kode AS cus_kode, so_jo_kode AS jo_kode,
+      SUM(so_jumlah * so_harga) AS total_realisasi_all
+    FROM tsalesorder
+    WHERE so_aktif = 'Y' AND so_tanggal >= ? AND so_tanggal <= ?
+    GROUP BY so_cus_kode, so_jo_kode
   `,
   params: [startDate, endDate],
 });
 
 const getBrowse = async (startDate, endDate) => {
-  // dipakai 2x tekstual — sekali di "keys" (union, difilter >0),
-  // sekali di LEFT JOIN nilai aktual (tanpa filter)
   const b1 = buildB(startDate);
   const c1 = buildC(startDate, endDate);
   const d1 = buildD(startDate, endDate);
@@ -101,9 +92,6 @@ const getBrowse = async (startDate, endDate) => {
 
   const [rows] = await db.query(sql, params);
 
-  // mysql2 balikin SUM() sebagai string — normalisasi, tapi tetap null
-  // kalau memang null (bukan dipaksa 0), biar frontend bisa bedain
-  // "blank" (null, LEFT JOIN gak ketemu) vs "0.00" (ketemu, sum-nya nol)
   return rows.map((r) => ({
     ...r,
     TotalMemo: r.TotalMemo !== null ? Number(r.TotalMemo) : null,

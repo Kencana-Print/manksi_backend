@@ -1,15 +1,212 @@
 const db = require("../../../config/database");
 
+const SO_CUTOFF = "2026-08-06";
+
 // ─────────────────────────────────────────────────────────
-// Whitelist divisi — filter SQL & suffix kolom target dinamis
-// (cus_{tahun}{suffix}). Karena nilainya hardcoded di sini (bukan dari
-// input user), aman dipakai langsung sebagai fragment SQL / nama kolom
-// tanpa risiko injection.
-// ⚠️ "FIT U" saya petakan ke cabang `else` Delphi (spk_divisi=6, suffix
-// "6") — Delphi tidak eksplisit menamai cabang ini, cuma fallback kalau
-// cbDivisi.Text tidak cocok SPANDUK/KAOSAN/GARMEN MEDIUM/GARMEN
-// PREMIUM/MMT. Kalau ternyata "FIT U" itu bukan divisi=6, tolong
-// dikoreksi.
+// Replikasi PERSIS TfrmTargetSpk.btnRefreshClick (versi yang beneran
+// dipanggil tombol Refresh — BUKAN `alldept`, yang kelihatannya
+// prosedur legacy gak terpasang ke tombol manapun di form ini).
+//
+// Perbedaan besar dari implementasi web sebelumnya:
+// 1. SATU baris per customer, TIDAK ADA pivot per-divisi. "ALL DIVISI"
+//    di Delphi cuma berarti idivisi IN (1,3,4,5) digabung jadi SATU
+//    angka SPK, bukan kolom SP/GM/GP/MMT terpisah.
+// 2. Target dibaca dari tabel `tcustomer_target` (GROUP BY cust_kode,
+//    cust_tahun, filter cust_divisi IN (...) + opsional cust_spktipe),
+//    BUKAN dari kolom statis `tcustomer.cus_{tahun}{suffix}`.
+// 3. Setiap periode (tahun dipilih, -1, -2, -3) UNION ALL tspk
+//    (< cutoff) + tsalesorder (>= cutoff) — ini yg bikin tahun 2026
+//    akhirnya muncul.
+// 4. Nama_Sales pakai fallback chain: sales dari th (tahun dipilih) →
+//    th1 → th2 → th3 → kosong. Beda dari KodeSales/NamaSales biasa
+//    (yg selalu dari cus_sales master, independen dari transaksi).
+// ─────────────────────────────────────────────────────────
+
+// idivisi + filter tipe per opsi dropdown — replikasi cabang if/else
+// cbDivisi.Text di Delphi
+const DIVISI_CONFIG = {
+  SPANDUK: { idivisi: "1", tipe: null },
+  KAOSAN: { idivisi: "3", tipe: null },
+  GARMEN_MEDIUM: { idivisi: "4", tipe: "MEDIUM" },
+  GARMEN_PREMIUM: { idivisi: "4", tipe: "PREMIUM" },
+  MMT: { idivisi: "5", tipe: null },
+  FIT_U: { idivisi: "6", tipe: null },
+  // ALL DIVISI Delphi: idivisi='1,3,4,5', TANPA filter tipe (digabung
+  // medium+premium jadi satu, KAOSAN ikut, FIT_U TIDAK ikut)
+  ALL: { idivisi: "1,3,4,5", tipe: null },
+};
+
+const buildPeriods = (startDate, endDate) => {
+  const sd = new Date(startDate);
+  const ed = new Date(endDate);
+  const tahun = sd.getFullYear();
+  if (ed.getFullYear() !== tahun) {
+    throw new Error("Periode tahun harus sama.");
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  const mkDate = (year, month, day) => `${year}-${pad(month + 1)}-${pad(day)}`;
+  const nDay = sd.getDate();
+  const nMonth = sd.getMonth();
+  const nDay2 = ed.getDate();
+  const nMonth2 = ed.getMonth();
+  const n3 = tahun - 3;
+  const n2 = tahun - 2;
+  const n1 = tahun - 1;
+  return {
+    tahun,
+    n3,
+    n2,
+    n1,
+    p0: [startDate, endDate], // tahun dipilih — pakai tanggal asli
+    p1: [mkDate(n1, nMonth, nDay), mkDate(n1, nMonth2, nDay2)],
+    p2: [mkDate(n2, nMonth, nDay), mkDate(n2, nMonth2, nDay2)],
+    p3: [mkDate(n3, nMonth, nDay), mkDate(n3, nMonth2, nDay2)],
+  };
+};
+
+// Bangun 1 blok subquery "thX" — UNION ALL tspk(<cutoff) + tsalesorder(>=cutoff),
+// GROUP BY per customer. ANY_VALUE() dipakai utk sal_kode/sal_nama karena
+// Delphi asli GROUP BY spk_cus_kode saja (bukan strict), MySQL modern
+// (ONLY_FULL_GROUP_BY) butuh pembungkus itu biar gak error.
+const buildThSubquery = (idivisi, tipe, dateRange) => {
+  const [dStart, dEnd] = dateRange;
+  const tipeSpk = tipe ? ` AND spk_tipe = '${tipe}'` : "";
+  const tipeSo = tipe ? ` AND so_tipe = '${tipe}'` : "";
+  return {
+    sql: `
+      SELECT spk_cus_kode, MAX(spk_sal_kode) AS spk_sal_kode,
+             MAX(sal_nama) AS sal_nama, SUM(spk_total) AS spk_total
+      FROM (
+        SELECT spk_cus_kode, spk_sal_kode, sal_nama,
+               SUM(spk_jumlah * spk_harga) AS spk_total
+        FROM tspk
+        LEFT JOIN tsales ON sal_kode = spk_sal_kode
+        WHERE spk_tanggal >= ? AND spk_tanggal <= ? AND spk_tanggal < '${SO_CUTOFF}'
+          AND spk_divisi IN (${idivisi})${tipeSpk}
+          AND spk_cmo <> '' AND spk_aktif = 'Y'
+        GROUP BY spk_cus_kode, spk_sal_kode
+        UNION ALL
+        SELECT so_cus_kode, so_sal_kode, sal_nama,
+               SUM(so_jumlah * so_harga) AS spk_total
+        FROM tsalesorder
+        LEFT JOIN tsales ON sal_kode = so_sal_kode
+        WHERE so_tanggal >= ? AND so_tanggal <= ? AND so_tanggal >= '${SO_CUTOFF}'
+          AND so_divisi IN (${idivisi})${tipeSo}
+          AND so_cmo <> '' AND so_aktif = 'Y'
+        GROUP BY so_cus_kode
+      ) thx
+      GROUP BY spk_cus_kode
+    `,
+    params: [dStart, dEnd, dStart, dEnd],
+  };
+};
+
+const getBrowse = async (query) => {
+  const {
+    startDate,
+    endDate,
+    divisi = "ALL",
+    salesKode = "",
+    cusKode = "",
+  } = query;
+
+  if (!startDate || !endDate) {
+    throw new Error("Periode tanggal wajib diisi.");
+  }
+  const cfg = DIVISI_CONFIG[divisi];
+  if (!cfg) throw new Error(`Divisi "${divisi}" tidak dikenal.`);
+
+  const periods = buildPeriods(startDate, endDate);
+  const th = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p0);
+  const th1 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p1);
+  const th2 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p2);
+  const th3 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p3);
+
+  const targetTipeFilter = cfg.tipe ? ` AND cust_spktipe = '${cfg.tipe}'` : "";
+
+  let extraWhere = "";
+  const extraParams = [];
+  if (salesKode) {
+    extraWhere += " AND c.cus_sales = ?";
+    extraParams.push(salesKode);
+  }
+  if (cusKode) {
+    extraWhere += " AND c.cus_kode = ?";
+    extraParams.push(cusKode);
+  }
+
+  const sql = `
+    SELECT
+      c.cus_kode AS Kode, c.cus_nama AS Customer, c.cus_alamat AS Alamat,
+      IF(th.sal_nama IS NOT NULL, th.sal_nama,
+        IF(th1.sal_nama IS NOT NULL, th1.sal_nama,
+          IF(th2.sal_nama IS NOT NULL, th2.sal_nama,
+            IF(th3.sal_nama IS NOT NULL, th3.sal_nama, '')))) AS NamaSalesTransaksi,
+      IFNULL(th3.spk_total, 0) AS Spk3,
+      IFNULL(th2.spk_total, 0) AS Spk2,
+      IFNULL(th1.spk_total, 0) AS Spk1,
+      (IFNULL(th3.spk_total, 0) + IFNULL(th2.spk_total, 0) + IFNULL(th1.spk_total, 0))
+        / NULLIF(
+            (IF(IFNULL(th3.spk_total, 0) > 0, 1, 0)
+             + IF(IFNULL(th2.spk_total, 0) > 0, 1, 0)
+             + IF(IFNULL(th1.spk_total, 0) > 0, 1, 0)),
+            0
+          ) AS Average,
+      IFNULL(t.cust_Target, 0) AS Target,
+      IFNULL(th.spk_total, 0) AS Actual,
+      ROUND(IFNULL(
+        IFNULL(th.spk_total, 0) / NULLIF(
+          (IFNULL(th3.spk_total, 0) + IFNULL(th2.spk_total, 0) + IFNULL(th1.spk_total, 0)) / 3,
+          0
+        ), 0
+      ), 2) AS PctAverage,
+      ROUND(IFNULL(IFNULL(th.spk_total, 0) / NULLIF(t.cust_Target, 0), 0), 2) AS PctTarget,
+      c.cus_sales AS KodeSales, a.sal_nama AS NamaSales
+    FROM tcustomer c
+    LEFT JOIN tsales a ON a.sal_kode = c.cus_sales
+    LEFT JOIN (
+      SELECT cust_kode, cust_tahun, SUM(cust_target) AS cust_Target
+      FROM tcustomer_target
+      WHERE cust_divisi IN (${cfg.idivisi})${targetTipeFilter}
+      GROUP BY cust_kode, cust_tahun
+    ) t ON t.cust_tahun = ? AND t.cust_kode = c.cus_kode
+    LEFT JOIN (${th.sql}) th ON th.spk_cus_kode = c.cus_kode
+    LEFT JOIN (${th1.sql}) th1 ON th1.spk_cus_kode = c.cus_kode
+    LEFT JOIN (${th2.sql}) th2 ON th2.spk_cus_kode = c.cus_kode
+    LEFT JOIN (${th3.sql}) th3 ON th3.spk_cus_kode = c.cus_kode
+    WHERE c.cus_iscabang = 0 AND c.cus_aktif = 0
+    ${extraWhere}
+    ORDER BY Average DESC
+  `;
+
+  const params = [
+    periods.tahun,
+    ...th.params,
+    ...th1.params,
+    ...th2.params,
+    ...th3.params,
+    ...extraParams,
+  ];
+
+  const [rows] = await db.query(sql, params);
+
+  return {
+    meta: {
+      tahun: periods.tahun,
+      n3: periods.n3,
+      n2: periods.n2,
+      n1: periods.n1,
+    },
+    rows,
+  };
+};
+
+// ─────────────────────────────────────────────────────────
+// DIVISI_MAP (lama) — dipakai KHUSUS oleh fungsi Setting di bawah.
+// Beda shape dari DIVISI_CONFIG (yg dipakai getBrowse baru) karena
+// Setting masih baca-tulis kolom statis tcustomer.cus_{tahun}{suffix},
+// BELUM disamakan ke tcustomer_target (nunggu konfirmasi kamu soal
+// itu — lihat pertanyaan sebelumnya).
 // ─────────────────────────────────────────────────────────
 const DIVISI_MAP = {
   SPANDUK: { filter: "s.spk_divisi = 1", suffix: "1" },
@@ -26,334 +223,14 @@ const DIVISI_MAP = {
   FIT_U: { filter: "s.spk_divisi = 6", suffix: "6" },
 };
 
-// ⚠️ Mode "ALL DIVISI" di Delphi (alldept) CUMA menghitung 4 divisi ini
-// (case x of 1..4). KAOSAN & FIT_U sengaja TIDAK diikutkan — replikasi
-// apa adanya, bukan kelalaian kita.
-const ALL_DIVISI_KEYS = ["SPANDUK", "GARMEN_MEDIUM", "GARMEN_PREMIUM", "MMT"];
-const ALL_DIVISI_PREFIX = {
-  SPANDUK: "sp",
-  GARMEN_MEDIUM: "gm",
-  GARMEN_PREMIUM: "gp",
-  MMT: "mmt",
-};
-
 // ─────────────────────────────────────────────────────────
-// Helper — hitung rentang tanggal n3/n2/n1 (3/2/1 tahun sebelum tahun
-// acuan), replikasi persis EncodeDate(n, nMonth, nDay) Delphi: bulan
-// & tanggal ikut startdate/enddate yang dipilih user, cuma tahunnya
-// mundur.
-// ─────────────────────────────────────────────────────────
-const buildPeriods = (startDate, endDate) => {
-  const sd = new Date(startDate);
-  const ed = new Date(endDate);
-  const tahun = sd.getFullYear();
-
-  if (ed.getFullYear() !== tahun) {
-    throw new Error("Periode tahun harus sama.");
-  }
-
-  const pad = (n) => String(n).padStart(2, "0");
-  const mkDate = (year, month, day) => `${year}-${pad(month + 1)}-${pad(day)}`;
-
-  const nDay = sd.getDate();
-  const nMonth = sd.getMonth();
-  const nDay2 = ed.getDate();
-  const nMonth2 = ed.getMonth();
-
-  const n3 = tahun - 3;
-  const n2 = tahun - 2;
-  const n1 = tahun - 1;
-
-  return {
-    tahun,
-    n3,
-    n2,
-    n1,
-    dt3a: mkDate(n3, nMonth, nDay),
-    dt3b: mkDate(n3, nMonth2, nDay2),
-    dt2a: mkDate(n2, nMonth, nDay),
-    dt2b: mkDate(n2, nMonth2, nDay2),
-    dt1a: mkDate(n1, nMonth, nDay),
-    dt1b: mkDate(n1, nMonth2, nDay2),
-  };
-};
-
-// ─────────────────────────────────────────────────────────
-// Bangun 1 blok subquery "level-x" (raw per-customer metrics) untuk 1
-// divisi — dipakai baik oleh mode single-divisi maupun di-UNION ALL
-// untuk mode ALL DIVISI.
-// ⚠️ `c.cus_aktif = 0` berarti AKTIF (bukan 'Y'/1 seperti tabel lain
-// di codebase) — replikasi persis dari WHERE Delphi asli.
-// ─────────────────────────────────────────────────────────
-const buildXQuery = (divisiKey, periods, extraWhere, params) => {
-  const { filter, suffix } = DIVISI_MAP[divisiKey];
-  const { tahun, dt3a, dt3b, dt2a, dt2b, dt1a, dt1b } = periods;
-  const targetCol = `cus_${tahun}${suffix}`;
-
-  const sql = `
-    SELECT c.cus_kode AS Kode, c.cus_nama AS Customer, c.cus_alamat AS Alamat,
-      IFNULL((
-        SELECT e.sal_nama FROM tspk s
-        LEFT JOIN tsales e ON e.sal_kode = s.spk_sal_kode
-        WHERE s.spk_cus_kode = c.cus_kode AND ${filter}
-        ORDER BY s.spk_tanggal DESC LIMIT 1
-      ), '') AS Sales,
-      IFNULL((
-        SELECT SUM(s.spk_jumlah * s.spk_harga) FROM tspk s
-        WHERE ${filter} AND s.spk_cmo <> '' AND s.spk_aktif = 'Y'
-          AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
-          AND s.spk_cus_kode = c.cus_kode
-      ), 0) AS Spk3,
-      IFNULL((
-        SELECT SUM(s.spk_jumlah * s.spk_harga) FROM tspk s
-        WHERE ${filter} AND s.spk_cmo <> '' AND s.spk_aktif = 'Y'
-          AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
-          AND s.spk_cus_kode = c.cus_kode
-      ), 0) AS Spk2,
-      IFNULL((
-        SELECT SUM(s.spk_jumlah * s.spk_harga) FROM tspk s
-        WHERE ${filter} AND s.spk_cmo <> '' AND s.spk_aktif = 'Y'
-          AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
-          AND s.spk_cus_kode = c.cus_kode
-      ), 0) AS Spk1,
-      IFNULL((
-        SELECT SUM(s.spk_jumlah * s.spk_harga) FROM tspk s
-        WHERE ${filter} AND s.spk_cmo <> '' AND s.spk_aktif = 'Y'
-          AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
-          AND s.spk_cus_kode = c.cus_kode
-      ), 0) AS Actual,
-      c.${targetCol} AS Target,
-      c.cus_sales AS KodeSales,
-      a.sal_nama AS NamaSales
-    FROM tcustomer c
-    LEFT JOIN tsales a ON a.sal_kode = c.cus_sales
-    WHERE c.cus_iscabang = 0 AND c.cus_aktif = 0
-    ${extraWhere}
-  `;
-  params.push(
-    dt3a,
-    dt3b,
-    dt2a,
-    dt2b,
-    dt1a,
-    dt1b,
-    periods._startDate,
-    periods._endDate,
-  );
-  return sql;
-};
-
-// ─────────────────────────────────────────────────────────
-// Bungkus x-query jadi y-level (Average) lalu z-level (%Average,
-// %Target) — persis nesting Delphi. `label` opsional dipakai buat
-// UNION ALL mode ALL DIVISI (kolom `Divisi` literal).
-// ─────────────────────────────────────────────────────────
-const wrapYZ = (xSql, label = null) => `
-  SELECT z.*
-    ${label ? `, ${label} AS Divisi` : ""}
-  FROM (
-    SELECT y.Kode, y.Customer, y.Alamat, y.Sales, y.Spk3, y.Spk2, y.Spk1, y.Actual,
-      IF(y.s3 + y.s2 + y.s1 = 0, 0, (y.Spk3 + y.Spk2 + y.Spk1) / (y.s3 + y.s2 + y.s1)) AS Average,
-      y.Target, y.KodeSales, y.NamaSales
-    FROM (
-      SELECT x.Kode, x.Customer, x.Alamat, x.Sales, x.Spk3, x.Spk2, x.Spk1, x.Actual,
-        IF(x.Spk3 = 0, 0, 1) AS s3,
-        IF(x.Spk2 = 0, 0, 1) AS s2,
-        IF(x.Spk1 = 0, 0, 1) AS s1,
-        x.Target, x.KodeSales, x.NamaSales
-      FROM (${xSql}) x
-    ) y
-  ) z
-`;
-
-// ─────────────────────────────────────────────────────────
-// MODE SINGLE DIVISI — replikasi TfrmTargetSpk.btnRefreshClick
-// ─────────────────────────────────────────────────────────
-const getBrowseSingleDivisi = async (
-  divisiKey,
-  startDate,
-  endDate,
-  salesKode,
-  cusKode,
-) => {
-  const periods = buildPeriods(startDate, endDate);
-  periods._startDate = startDate;
-  periods._endDate = endDate;
-
-  let extraWhere = "";
-  const params = [];
-  if (salesKode) {
-    extraWhere += " AND c.cus_sales = ?";
-  }
-  if (cusKode) {
-    extraWhere += " AND c.cus_kode = ?";
-  }
-
-  const xSql = buildXQuery(divisiKey, periods, extraWhere, params);
-  // buildXQuery push params tanggal dulu — extraWhere params (sales/cus)
-  // harus disisipkan SETELAH params tanggal karena urutan tekstual ?
-  // di SQL: WHERE clause (sales/cus) muncul di akhir teks x-query.
-  if (salesKode) params.push(salesKode);
-  if (cusKode) params.push(cusKode);
-
-  const finalSql = `
-    SELECT
-      z.Kode, z.Customer, z.Alamat, z.Sales,
-      z.Spk3, z.Spk2, z.Spk1, z.Average, z.Target, z.Actual,
-      IF(z.Average = 0, 0, z.Actual / z.Average) AS PctAverage,
-      IF(z.Target = 0, 0, z.Actual / z.Target) AS PctTarget,
-      z.KodeSales, z.NamaSales
-    FROM (${wrapYZ(xSql)}) z
-    ORDER BY z.Average DESC
-  `;
-
-  try {
-    const [rows] = await db.query(finalSql, params);
-    return {
-      meta: {
-        tahun: periods.tahun,
-        n3: periods.n3,
-        n2: periods.n2,
-        n1: periods.n1,
-      },
-      rows,
-    };
-  } catch (err) {
-    if (err.code === "ER_BAD_FIELD_ERROR") {
-      const { suffix } = DIVISI_MAP[divisiKey];
-      throw new Error(
-        `Kolom target untuk tahun ${periods.tahun} (cus_${periods.tahun}${suffix}) belum ada di tabel tcustomer. Hubungi admin untuk menambahkan kolom ini.`,
-      );
-    }
-    throw err;
-  }
-};
-
-// ─────────────────────────────────────────────────────────
-// MODE ALL DIVISI — replikasi TfrmTargetSpk.alldept, TANPA temp table.
-// UNION ALL 4 divisi (SPANDUK, GARMEN_MEDIUM, GARMEN_PREMIUM, MMT),
-// lalu 1 GROUP BY dengan conditional MAX/SUM per divisi — persis hasil
-// akhir query pivot Delphi, tapi 1 query murni tanpa CREATE/INSERT
-// manual per baris.
-// ─────────────────────────────────────────────────────────
-const getBrowseAllDivisi = async (startDate, endDate, salesKode, cusKode) => {
-  const periods = buildPeriods(startDate, endDate);
-  periods._startDate = startDate;
-  periods._endDate = endDate;
-
-  let extraWhere = "";
-  if (salesKode) extraWhere += " AND c.cus_sales = ?";
-  if (cusKode) extraWhere += " AND c.cus_kode = ?";
-
-  const unionParts = [];
-  const params = [];
-  for (const key of ALL_DIVISI_KEYS) {
-    const xParams = [];
-    const xSql = buildXQuery(key, periods, extraWhere, xParams);
-    if (salesKode) xParams.push(salesKode);
-    if (cusKode) xParams.push(cusKode);
-    unionParts.push(wrapYZ(xSql, `'${key}'`));
-    params.push(...xParams);
-  }
-  const unionSql = unionParts.join(" UNION ALL ");
-
-  const prefixCase = (key, expr) => {
-    const p = ALL_DIVISI_PREFIX[key];
-    return `SUM(IF(t.Divisi = '${key}', ${expr}, 0)) AS ${p}_${expr === "1" ? "count" : expr.toLowerCase()}`;
-  };
-
-  const selectParts = [
-    `t.Kode AS kode`,
-    `MAX(t.Customer) AS customer`,
-    `MAX(t.Alamat) AS alamat`,
-  ];
-  for (const key of ALL_DIVISI_KEYS) {
-    const p = ALL_DIVISI_PREFIX[key];
-    selectParts.push(`MAX(IF(t.Divisi = '${key}', t.Sales, '')) AS ${p}_sales`);
-    selectParts.push(`SUM(IF(t.Divisi = '${key}', t.Spk3, 0)) AS ${p}_spk3`);
-    selectParts.push(`SUM(IF(t.Divisi = '${key}', t.Spk2, 0)) AS ${p}_spk2`);
-    selectParts.push(`SUM(IF(t.Divisi = '${key}', t.Spk1, 0)) AS ${p}_spk1`);
-    selectParts.push(
-      `SUM(IF(t.Divisi = '${key}', t.Average, 0)) AS ${p}_average`,
-    );
-    selectParts.push(
-      `SUM(IF(t.Divisi = '${key}', t.Target, 0)) AS ${p}_target`,
-    );
-    selectParts.push(
-      `SUM(IF(t.Divisi = '${key}', t.Actual, 0)) AS ${p}_actual`,
-    );
-    selectParts.push(
-      `SUM(IF(t.Divisi = '${key}' AND t.Average <> 0, t.Actual / t.Average, 0)) AS ${p}_pct_average`,
-    );
-    selectParts.push(
-      `SUM(IF(t.Divisi = '${key}' AND t.Target <> 0, t.Actual / t.Target, 0)) AS ${p}_pct_target`,
-    );
-  }
-  selectParts.push(
-    `MAX(t.KodeSales) AS kodeSales`,
-    `MAX(t.NamaSales) AS namaSales`,
-  );
-
-  const finalSql = `
-    SELECT ${selectParts.join(",\n      ")}
-    FROM (${unionSql}) t
-    GROUP BY t.Kode
-    ORDER BY t.Kode
-  `;
-
-  try {
-    const [rows] = await db.query(finalSql, params);
-    return {
-      meta: {
-        tahun: periods.tahun,
-        n3: periods.n3,
-        n2: periods.n2,
-        n1: periods.n1,
-      },
-      rows,
-    };
-  } catch (err) {
-    if (err.code === "ER_BAD_FIELD_ERROR") {
-      throw new Error(
-        `Kolom target untuk tahun ${periods.tahun} belum lengkap di tabel tcustomer (butuh cus_${periods.tahun}1, cus_${periods.tahun}4M, cus_${periods.tahun}4P, cus_${periods.tahun}5). Hubungi admin.`,
-      );
-    }
-    throw err;
-  }
-};
-
-// ─────────────────────────────────────────────────────────
-// ENTRY POINT
-// ─────────────────────────────────────────────────────────
-const getBrowse = async (query) => {
-  const {
-    startDate,
-    endDate,
-    divisi = "ALL",
-    salesKode = "",
-    cusKode = "",
-  } = query;
-  if (!startDate || !endDate) {
-    throw new Error("Periode tanggal wajib diisi.");
-  }
-
-  if (divisi === "ALL") {
-    return getBrowseAllDivisi(startDate, endDate, salesKode, cusKode);
-  }
-
-  if (!DIVISI_MAP[divisi]) {
-    throw new Error(`Divisi "${divisi}" tidak dikenal.`);
-  }
-
-  return getBrowseSingleDivisi(divisi, startDate, endDate, salesKode, cusKode);
-};
-
-// ─────────────────────────────────────────────────────────
-// SETTING — replikasi TfrmTargetSpk2. Beda dari browse laporan: pakai
-// YEAR(spk_tanggal)=n (bukan rentang tanggal bebas), dan HANYA 1
-// divisi per panggilan (tidak ada mode "ALL" di Setting — Target
-// disimpan per kolom per divisi, jadi harus jelas divisi mana yang
-// mau di-edit).
+// SETTING — replikasi TfrmTargetSpk2. Pakai YEAR(spk_tanggal)=n
+// (bukan rentang tanggal bebas), 1 divisi per panggilan.
+// ⚠️ MASIH baca-tulis kolom statis tcustomer.cus_{tahun}{suffix} —
+// BELUM disamakan ke tcustomer_target yg sekarang dipakai getBrowse.
+// Ini artinya edit Target lewat Setting SAAT INI TIDAK NYAMBUNG ke
+// angka Target yg tampil di laporan (beda sumber data). Perlu
+// diputuskan & disamakan sebelum fitur Setting ini reliable dipakai.
 // ─────────────────────────────────────────────────────────
 const buildXQuerySettingByYear = (divisiKey, tahun, extraWhere, params) => {
   const { filter, suffix } = DIVISI_MAP[divisiKey];
@@ -361,7 +238,6 @@ const buildXQuerySettingByYear = (divisiKey, tahun, extraWhere, params) => {
   const n3 = tahun - 3;
   const n2 = tahun - 2;
   const n1 = tahun - 1;
-
   const sql = `
     SELECT c.cus_kode AS Kode, c.cus_nama AS Customer, c.cus_alamat AS Alamat,
       IFNULL((
@@ -397,6 +273,23 @@ const buildXQuerySettingByYear = (divisiKey, tahun, extraWhere, params) => {
   return sql;
 };
 
+const wrapYZ = (xSql) => `
+  SELECT z.*
+  FROM (
+    SELECT y.Kode, y.Customer, y.Alamat, y.Sales, y.Spk3, y.Spk2, y.Spk1, y.Actual,
+      IF(y.s3 + y.s2 + y.s1 = 0, 0, (y.Spk3 + y.Spk2 + y.Spk1) / (y.s3 + y.s2 + y.s1)) AS Average,
+      y.Target, y.KodeSales, y.NamaSales
+    FROM (
+      SELECT x.Kode, x.Customer, x.Alamat, x.Sales, x.Spk3, x.Spk2, x.Spk1, x.Actual,
+        IF(x.Spk3 = 0, 0, 1) AS s3,
+        IF(x.Spk2 = 0, 0, 1) AS s2,
+        IF(x.Spk1 = 0, 0, 1) AS s1,
+        x.Target, x.KodeSales, x.NamaSales
+      FROM (${xSql}) x
+    ) y
+  ) z
+`;
+
 const getSettingList = async (
   tahun,
   divisiKey,
@@ -410,7 +303,6 @@ const getSettingList = async (
   if (!tahunNum || tahunNum < 2000 || tahunNum > 2100) {
     throw new Error("Tahun tidak valid.");
   }
-
   let extraWhere = "";
   const params = [];
   if (salesKode) {
@@ -421,7 +313,6 @@ const getSettingList = async (
     extraWhere += " AND c.cus_kode = ?";
     params.push(cusKode);
   }
-
   const xSql = buildXQuerySettingByYear(
     divisiKey,
     tahunNum,
@@ -434,7 +325,6 @@ const getSettingList = async (
     FROM (${wrapYZ(xSql)}) z
     ORDER BY z.Kode
   `;
-
   try {
     const [rows] = await db.query(finalSql, params);
     const n3 = tahunNum - 3;
@@ -452,12 +342,6 @@ const getSettingList = async (
   }
 };
 
-// ─────────────────────────────────────────────────────────
-// UPDATE TARGET — tulis ke kolom dinamis cus_{tahun}{suffix}.
-// targetCol dibangun dari whitelist DIVISI_MAP + tahun tervalidasi
-// integer, jadi aman diselipkan langsung ke teks SQL (bukan dari
-// input bebas user).
-// ─────────────────────────────────────────────────────────
 const updateTarget = async (kode, tahun, divisiKey, targetValue) => {
   if (!DIVISI_MAP[divisiKey]) {
     throw new Error(`Divisi "${divisiKey}" tidak dikenal.`);
@@ -466,10 +350,8 @@ const updateTarget = async (kode, tahun, divisiKey, targetValue) => {
   if (!tahunNum) throw new Error("Tahun tidak valid.");
   const nilai = Number(targetValue);
   if (Number.isNaN(nilai)) throw new Error("Target harus berupa angka.");
-
   const { suffix } = DIVISI_MAP[divisiKey];
   const targetCol = `cus_${tahunNum}${suffix}`;
-
   try {
     await db.query(`UPDATE tcustomer SET ${targetCol} = ? WHERE cus_kode = ?`, [
       nilai,
@@ -486,15 +368,6 @@ const updateTarget = async (kode, tahun, divisiKey, targetValue) => {
   return { kode, tahun: tahunNum, divisi: divisiKey, target: nilai };
 };
 
-// ─────────────────────────────────────────────────────────
-// UPDATE KODE SALES — replikasi TfrmTargetSpk2.cxGrdMasterEditValueChanged
-// (cabang KODESALES) & cxGrdMasterEditKeyDown (F1). Validasi sales
-// harus ada & aktif sebelum update, sesuai Delphi.
-// ⚠️ tsales.sal_aktif divalidasi sebagai string 'Y' (turunan dari cek
-// eksplisit .AsString='N' di edtSalesExit) — beda konvensi dari
-// tcustomer.cus_aktif=0 di modul yang sama, sengaja dipertahankan
-// per-tabel, bukan disamakan paksa.
-// ─────────────────────────────────────────────────────────
 const updateKodeSales = async (kode, kodeSalesBaru) => {
   const [[sales]] = await db.query(
     `SELECT sal_kode, sal_nama, sal_aktif FROM tsales WHERE sal_kode = ?`,
@@ -506,12 +379,10 @@ const updateKodeSales = async (kode, kodeSalesBaru) => {
   if (String(sales.sal_aktif) !== "Y") {
     throw new Error("Status sales tsb pasif.");
   }
-
   await db.query(`UPDATE tcustomer SET cus_sales = ? WHERE cus_kode = ?`, [
     kodeSalesBaru.toUpperCase(),
     kode,
   ]);
-
   return {
     kode,
     kodeSales: kodeSalesBaru.toUpperCase(),
@@ -521,9 +392,9 @@ const updateKodeSales = async (kode, kodeSalesBaru) => {
 
 module.exports = {
   getBrowse,
+  DIVISI_CONFIG,
   getSettingList,
   updateTarget,
   updateKodeSales,
   DIVISI_MAP,
-  ALL_DIVISI_KEYS,
 };

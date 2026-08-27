@@ -223,7 +223,7 @@ const getMapBelumSpk = async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = parseInt(req.query.offset) || 0;
     const { startDate, endDate } = req.query;
-    const data = await service.getMapBelumSpk(
+    const data = await service.getMapBelumSo(
       req.user,
       limit,
       offset,

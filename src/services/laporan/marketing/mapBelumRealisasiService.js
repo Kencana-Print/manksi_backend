@@ -7,7 +7,6 @@ const getBrowse = async (query) => {
   const dStart = startDate || today;
   const dEnd = endDate || today;
 
-  // Default sort: tanggal ASC, bisa diswitch ke nominal DESC
   const orderBy =
     sortByNominal === "1"
       ? "ORDER BY Nominal DESC, s.MSPK_Nomor ASC"
@@ -46,6 +45,9 @@ const getBrowse = async (query) => {
       AND s.MSPK_Nomor NOT IN (
         SELECT m.spk_memo FROM tspk m
         WHERE m.spk_aktif = 'Y' AND m.spk_memo <> ''
+        UNION ALL
+        SELECT so.so_memo FROM tsalesorder so
+        WHERE so.so_aktif = 'Y' AND so.so_memo <> ''
       )
       AND s.Mspk_Tanggal >= ?
       AND s.Mspk_Tanggal <= ?

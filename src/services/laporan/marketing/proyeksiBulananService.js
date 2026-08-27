@@ -55,7 +55,6 @@ const getProyeksi = async (startDate, endDate) => {
     "d.pend_panjang",
     "d.pend_lebar",
   );
-
   const sql = `
     SELECT c.cus_nama AS Customer, s.mspk_nama AS NamaSpk, sl.sal_nama AS Sales,
            dv.divisi AS Divisi, s.mspk_tipe AS Tipe, s.mspk_panjang AS Panjang,
@@ -68,11 +67,10 @@ const getProyeksi = async (startDate, endDate) => {
     LEFT JOIN tsales sl ON sl.sal_kode = s.mspk_sal_kode
     WHERE s.mspk_tanggal BETWEEN ? AND ?
       AND s.mspk_aktif = 'Y'
-      AND s.mspk_nomor NOT IN (SELECT DISTINCT spk_memo FROM tspk)
+      AND s.mspk_nomor NOT IN (SELECT DISTINCT spk_memo FROM tspk WHERE spk_memo <> '')
+      AND s.mspk_nomor NOT IN (SELECT DISTINCT so_memo FROM tsalesorder WHERE so_memo <> '')
       AND s.mspk_rencana_order > 0
-
     UNION ALL
-
     SELECT c.cus_nama AS Customer, d.pend_nama_barang AS NamaSpk, sl.sal_nama AS Sales,
            dv.divisi AS Divisi, h.pen_tipe AS Tipe, d.pend_panjang AS Panjang,
            d.pend_lebar AS Lebar, ${jmPen} AS JumlahMeter,
@@ -87,11 +85,10 @@ const getProyeksi = async (startDate, endDate) => {
       AND h.pen_cetaktotal = 0
       AND d.pend_status = ''
       AND h.pen_nomor NOT IN (SELECT DISTINCT mspk_pen_nomor FROM tmemospk)
-      AND h.pen_nomor NOT IN (SELECT DISTINCT spk_pen_nomor FROM tspk)
+      AND h.pen_nomor NOT IN (SELECT DISTINCT spk_pen_nomor FROM tspk WHERE spk_pen_nomor <> '')
+      AND h.pen_nomor NOT IN (SELECT DISTINCT so_pen_nomor FROM tsalesorder WHERE so_pen_nomor <> '')
     GROUP BY d.pend_pen_nomor
-
     UNION ALL
-
     SELECT c.cus_nama AS Customer, d.pend_nama_barang AS NamaSpk, sl.sal_nama AS Sales,
            dv.divisi AS Divisi, h.pen_tipe AS Tipe, d.pend_panjang AS Panjang,
            d.pend_lebar AS Lebar, ${jmPen} AS JumlahMeter,
@@ -106,7 +103,8 @@ const getProyeksi = async (startDate, endDate) => {
       AND h.pen_cetaktotal = 1
       AND d.pend_status = ''
       AND h.pen_nomor NOT IN (SELECT DISTINCT mspk_pen_nomor FROM tmemospk)
-      AND h.pen_nomor NOT IN (SELECT DISTINCT spk_pen_nomor FROM tspk)
+      AND h.pen_nomor NOT IN (SELECT DISTINCT spk_pen_nomor FROM tspk WHERE spk_pen_nomor <> '')
+      AND h.pen_nomor NOT IN (SELECT DISTINCT so_pen_nomor FROM tsalesorder WHERE so_pen_nomor <> '')
   `;
   const params = [startDate, endDate, startDate, endDate, startDate, endDate];
   const [rows] = await db.query(sql, params);
