@@ -96,30 +96,120 @@ const getSpkInfo = async (nomorSpk) => {
 };
 
 // ─────────────────────────────────────────────────────────
-// GET KOMPONEN LIST (dari tspk_babaran)
-// Dipakai untuk dropdown Komponen di header
+// GET KOMPONEN LIST (untuk dropdown Komponen di header)
+// FIX: sebelumnya fallback ke tkomponen (master penuh) kalau
+// tspk_babaran kosong — tapi tspk_babaran MEMANG sengaja kosong untuk
+// SPK yang babaran-nya bersumber dari MKB/Proof (lihat isBabaranLocked
+// di spkFormService.js), jadi dropdown selalu nampilin SEMUA komponen
+// master walau cuma sebagian yang relevan. Sekarang pakai prioritas
+// sumber yang sama dengan getBabaranStd: MKB dulu, Proof POTONG,
+// baru fallback tspk_babaran — TANPA fallback ke master tkomponen lagi.
+// Kalau semua sumber kosong, dropdown akan kosong (bukan nampilin
+// master) — itu sudah benar, artinya SPK ini belum ada babaran sama
+// sekali dari manapun.
 // ─────────────────────────────────────────────────────────
 const getKomponenList = async (nomorSpk) => {
-  const [rows] = await db.query(
+  const [spkRow] = await db.query(
+    `SELECT spk_so_ref, spk_memo FROM tspk WHERE spk_nomor = ?`,
+    [nomorSpk],
+  );
+  const [[soRefRow]] = spkRow.length ? [spkRow] : [[null]];
+  const mkbKeys = [nomorSpk];
+  if (soRefRow?.spk_so_ref) mkbKeys.push(soRefRow.spk_so_ref);
+  if (soRefRow?.spk_memo) mkbKeys.push(soRefRow.spk_memo);
+
+  // Prioritas 1: MKB
+  const [mkbRows] = await db.query(
+    `SELECT
+       TRIM(CONCAT(d.mkbd_komponen, ' ', IFNULL(d.mkbd_ketk, ''))) AS komponen,
+       MAX(d.mkbd_babaran) AS babaran
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?) AND d.mkbd_babaran > 0
+     GROUP BY TRIM(CONCAT(d.mkbd_komponen, ' ', IFNULL(d.mkbd_ketk, '')))
+     ORDER BY komponen`,
+    [mkbKeys],
+  );
+  if (mkbRows.length > 0) return mkbRows;
+
+  // Prioritas 2: Proof Garmen lini POTONG
+  const [proofRows] = await db.query(
+    `SELECT b.Bhn_Name AS komponen, MAX(d.pfd_babaran) AS babaran
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pfd_kode
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?) AND d.pfd_babaran > 0
+     GROUP BY b.Bhn_Name
+     ORDER BY komponen`,
+    [mkbKeys],
+  );
+  if (proofRows.length > 0) return proofRows;
+
+  // Prioritas 3: fallback manual tspk_babaran
+  const [manualRows] = await db.query(
     `SELECT spkb_komponen AS komponen, spkb_babaran AS babaran
      FROM tspk_babaran
      WHERE spkb_nomor = ?
      ORDER BY spkb_komponen`,
     [nomorSpk],
   );
-  if (rows.length > 0) return rows;
-
-  // Fallback ke tkomponen (SPK lama)
-  const [fallback] = await db.query(
-    `SELECT komponen, 0 AS babaran FROM tkomponen ORDER BY komponen`,
-  );
-  return fallback;
+  return manualRows;
 };
 
 // ─────────────────────────────────────────────────────────
 // GET BABARAN STANDAR per SPK + Komponen
+// FIX: sebelumnya cuma baca tspk_babaran (fallback manual), yang
+// SENGAJA dibiarkan kosong oleh spkFormService.saveData() kalau MKB
+// atau Proof Garmen sudah punya babaran (lihat isBabaranLocked di
+// spkFormService.js) — jadi babaran yang sumbernya MKB/Proof selalu
+// kebaca 0 di sini walau sebenarnya ada & kelihatan di form SPK PPIC.
+// Sekarang samakan prioritas dengan spkFormService.getBabaran():
+// MKB dulu, baru Proof Garmen POTONG, baru fallback tspk_babaran.
+// Juga resolve key MKB (SPK kadang dibuat sesudah MKB, jadi
+// mkb_spk_nomor bisa tersimpan sbg so_nomor/spk_memo, bukan
+// spk_nomor final) — sama persis pola resolveMkbKeys di
+// spkFormService.js.
 // ─────────────────────────────────────────────────────────
 const getBabaranStd = async (nomorSpk, komponen) => {
+  const [[spkRow]] = await db.query(
+    `SELECT spk_so_ref, spk_memo FROM tspk WHERE spk_nomor = ?`,
+    [nomorSpk],
+  );
+  const mkbKeys = [nomorSpk];
+  if (spkRow?.spk_so_ref) mkbKeys.push(spkRow.spk_so_ref);
+  if (spkRow?.spk_memo) mkbKeys.push(spkRow.spk_memo);
+
+  // Prioritas 1: MKB — komponen di MKB tersimpan sbg "KOMPONEN KETK"
+  // gabungan (lihat spkFormService.getBabaran: `${komponen} ${ketk}`.trim()),
+  // jadi match longgar pakai LIKE komponen di depan.
+  const [mkbRows] = await db.query(
+    `SELECT d.mkbd_babaran AS babaran
+     FROM tmkb_hdr h
+     INNER JOIN tmkb_dtl d ON d.mkbd_mkb_nomor = h.mkb_nomor
+     WHERE h.mkb_spk_nomor IN (?) AND d.mkbd_babaran > 0
+       AND TRIM(CONCAT(d.mkbd_komponen, ' ', IFNULL(d.mkbd_ketk, ''))) = ?
+     ORDER BY h.mkb_tanggal DESC
+     LIMIT 1`,
+    [mkbKeys, komponen],
+  );
+  if (mkbRows.length > 0) return Number(mkbRows[0].babaran) || 0;
+
+  // Prioritas 2: Proof Garmen lini POTONG — dikunci per nama bahan
+  // (komponen di Proof = nama bahan, bukan field komponen terpisah)
+  const [proofRows] = await db.query(
+    `SELECT d.pfd_babaran AS babaran
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pfd_kode
+     WHERE h.pf_lini = 'POTONG' AND h.pf_spk_nomor IN (?)
+       AND d.pfd_babaran > 0 AND b.Bhn_Name = ?
+     ORDER BY h.pf_tanggal DESC
+     LIMIT 1`,
+    [mkbKeys, komponen],
+  );
+  if (proofRows.length > 0) return Number(proofRows[0].babaran) || 0;
+
+  // Prioritas 3: fallback manual tspk_babaran
   const [[row]] = await db.query(
     `SELECT IFNULL(spkb_babaran, 0) AS babaran
      FROM tspk_babaran
