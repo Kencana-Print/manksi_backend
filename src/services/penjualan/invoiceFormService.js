@@ -95,6 +95,8 @@ const getById = async (nomor) => {
     if (!pin5.pin_acc && !pin5.pin_dipakai) xminta5 = "WAIT";
     else if (pin5.pin_acc === "Y" && !pin5.pin_dipakai) xminta5 = "ACC";
     else if (pin5.pin_acc === "N") xminta5 = "TOLAK";
+    else if (pin5.pin_acc === "Y" && pin5.pin_dipakai === "Y")
+      xminta5 = ""; // sudah dipakai — closed loop, tidak perlu approval baru
     else xminta5 = "MINTA";
   }
 
