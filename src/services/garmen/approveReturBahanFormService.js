@@ -95,7 +95,7 @@ const getDetailApprove = async (nomor) => {
           id: d.no, // Referensi ke baris detail atas
           kode: d.kode,
           nama: d.nama,
-          barcode: `${d.kode}-${yy}${String(i).padStart(4, "0")}`, // Format: KODE-YY0001
+          barcode: `${d.kode}-${yy}${String(10000 + i).slice(-4)}`,
           jumlah: parseInt(d.roll) === 1 ? parseFloat(d.jumlah) : 0, // Jika >1 roll, jumlah diset 0 untuk diisi manual oleh user
         });
         i++;
