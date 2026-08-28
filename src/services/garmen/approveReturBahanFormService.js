@@ -141,9 +141,12 @@ const saveData = async (payload, user) => {
   await conn.beginTransaction();
 
   try {
-    let nomor = payload.nomor; // Jika baru dari RETL, isinya RETL/xxx. Jika edit, isinya RETP/xxx.
-    const isEdit = nomor.startsWith("RETP");
-    const noReturLog = isEdit ? payload.proret_log : nomor; // Menyimpan histori nomor log
+    let nomor = payload.nomor; // RETP/xxx kalau edit approve yang sudah ada, kosong kalau approve baru
+    const isEdit = !!nomor && nomor.startsWith("RETP");
+    // proret_log SELALU berisi nomor RETL asal — baik saat insert baru maupun
+    // edit — jangan derive dari `nomor` (yang kosong untuk kasus baru). Field
+    // ini yang jadi kunci LEFT JOIN status approve di Browse.
+    const noReturLog = payload.proret_log;
     const now = new Date();
     const dateModified =
       now.getFullYear() +
