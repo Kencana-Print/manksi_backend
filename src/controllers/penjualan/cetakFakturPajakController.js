@@ -40,9 +40,22 @@ const searchInvoice = async (req, res) => {
   }
 };
 
+const hapusNomorPajak = async (req, res) => {
+  try {
+    const { nomor } = req.body;
+    await svc.hapusNomorPajak(nomor);
+    res
+      .status(200)
+      .json({ success: true, message: "Nomor Pajak berhasil dihapus." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   checkNomor,
   saveAndGetDataCetak,
   getDataCetak,
   searchInvoice,
+  hapusNomorPajak,
 };

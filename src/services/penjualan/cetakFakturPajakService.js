@@ -165,9 +165,34 @@ const searchInvoice = async (q = "", page = 1, limit = 50) => {
   return { items: rows, total, page: Number(page), limit: limitNum };
 };
 
+// ─────────────────────────────────────────────────────────
+// HAPUS NOMOR PAJAK — kembalikan inv_no_fp jadi kosong.
+// Begitu ini jalan, kolom Faktur_Pajak di Browse Invoice otomatis
+// ikut hilang di fetch berikutnya — getBrowse() SELECT langsung dari
+// inv_no_fp, tidak ada cache/staging (lihat catatan deviasi Delphi
+// #1 di atas file ini: tabel `tampung` sudah dihapus total).
+// ─────────────────────────────────────────────────────────
+const hapusNomorPajak = async (nomor) => {
+  if (!nomor) throw new Error("Nomor Penjualan wajib diisi.");
+
+  const [[hdr]] = await db.query(
+    `SELECT inv_nomor, inv_no_fp FROM tinv_hdr WHERE inv_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Nomor Penjualan tidak ditemukan.");
+  if (!hdr.inv_no_fp) {
+    throw new Error("Invoice ini belum punya Nomor Pajak.");
+  }
+
+  await db.query(`UPDATE tinv_hdr SET inv_no_fp = '' WHERE inv_nomor = ?`, [
+    nomor,
+  ]);
+};
+
 module.exports = {
   checkNomor,
   saveAndGetDataCetak,
   getDataCetak,
   searchInvoice,
+  hapusNomorPajak,
 };

@@ -47,6 +47,18 @@ const getSoSummary = async (req, res) => {
   }
 };
 
+const getSoAktifTrend = async (req, res) => {
+  try {
+    const data = await service.getSoAktifTrend(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || { mingguIni: 0, mingguLalu: 0, delta: null },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPoBahanSisa = async (req, res) => {
   try {
     const data = await service.getPoBahanSisa(req.user);
@@ -310,6 +322,22 @@ const getApprovalPendingCount = async (req, res) => {
   try {
     const data = await service.getApprovalPendingCount();
     res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getCompanyPulseSummary = async (req, res) => {
+  try {
+    const data = await service.getCompanyPulseSummary(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || {
+        revenueMtd: 0,
+        outstandingAr: 0,
+        approvalPendingTotal: 0,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -707,6 +735,7 @@ module.exports = {
   getPenawaranBelumSpk,
   getSpkSummary,
   getSoSummary,
+  getSoAktifTrend,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
@@ -728,6 +757,7 @@ module.exports = {
   getAktivitasHariIni,
   getTrendSpk7Hari,
   getApprovalPendingCount,
+  getCompanyPulseSummary,
   getPipelineSpkProduksi,
   getBahanKurangCount,
   getBahanKurangList,

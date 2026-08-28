@@ -39,4 +39,6 @@ router.post(
   ctrl.saveAndGetDataCetak,
 );
 
+router.post("/hapus-nomor-pajak", verifyToken, ctrl.hapusNomorPajak);
+
 module.exports = router;

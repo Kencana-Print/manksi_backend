@@ -190,6 +190,44 @@ const getSoSummary = async (user) => {
   return rows[0];
 };
 
+// ── SO Aktif — Trend Delta (minggu ini vs minggu lalu) ──
+// Hitung SO baru terbit (so_tanggal) minggu ini vs minggu lalu.
+// "Minggu ini" = 7 hari terakhir termasuk hari ini, "minggu lalu" =
+// 7 hari sebelum itu.
+const getSoAktifTrend = async (user) => {
+  const super_ = isSuperViewer(user);
+  let whereExtra = "";
+  if (!super_ && user.divisi) {
+    whereExtra = `AND so.so_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const sql = `
+    SELECT
+      SUM(CASE WHEN so.so_tanggal >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            THEN 1 ELSE 0 END) AS MingguIni,
+      SUM(CASE WHEN so.so_tanggal >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+            AND so.so_tanggal < DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            THEN 1 ELSE 0 END) AS MingguLalu
+    FROM tsalesorder so
+    WHERE so.so_aktif = 'Y'
+      AND so.so_tanggal >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+      ${whereExtra}
+  `;
+  const [rows] = await db.query(sql);
+  const r = rows[0] || {};
+  const mingguIni = Number(r.MingguIni) || 0;
+  const mingguLalu = Number(r.MingguLalu) || 0;
+
+  let delta = null; // null = tidak terbandingkan (minggu lalu 0)
+  if (mingguLalu > 0) {
+    delta = Math.round(((mingguIni - mingguLalu) / mingguLalu) * 10000) / 100;
+  } else if (mingguIni === 0) {
+    delta = 0;
+  }
+
+  return { mingguIni, mingguLalu, delta };
+};
+
 // ── PO Bahan dengan sisa MKB (seminggu terakhir) ──
 const getPoBahanSisa = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -2497,12 +2535,58 @@ const getSpkTerkirimBelumTagihList = async (
   return rows;
 };
 
+// ── Company Pulse Strip — ringkasan level perusahaan (Revenue MTD +
+// Outstanding AR + Approval Pending), khusus isSuperViewer/Finance/Direksi.
+// Query ringan: subset dari sqlSummary getPiutangDashboard (skip top5/
+// overdue/trend yang berat), + reuse getApprovalPendingCount yang sudah
+// ada tapi belum ke-export.
+const getCompanyPulseSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+  if (!allowed.includes(bagian)) return null;
+
+  const sqlRevenue = `
+    SELECT 
+      (SELECT SUM(debet) - SUM(
+          IFNULL((
+            SELECT SUM(kredit) FROM piutang_kredit_detail d 
+            INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
+            WHERE d.nota = p.nota
+          ), 0)
+      ) FROM piutang_debet p WHERE p.flag = 0) AS TotalOutstanding,
+      
+      (SELECT SUM(debet) FROM piutang_debet 
+      WHERE flag = 0 
+      AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+      ) AS InvoiceBulanIni
+  `;
+
+  const [[revRows], approvalRow] = await Promise.all([
+    db.query(sqlRevenue),
+    getApprovalPendingCount(),
+  ]);
+
+  const approval = approvalRow || {};
+  const approvalPendingTotal = Object.values(approval).reduce(
+    (s, v) => s + Number(v || 0),
+    0,
+  );
+
+  return {
+    revenueMtd: Number(revRows[0]?.InvoiceBulanIni) || 0,
+    outstandingAr: Number(revRows[0]?.TotalOutstanding) || 0,
+    approvalPendingTotal,
+    approvalBreakdown: approval, // opsional, buat tooltip breakdown nanti kalau mau
+  };
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
   getSoSummary,
+  getSoAktifTrend,
   getPoBahanSisa,
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
@@ -2552,4 +2636,6 @@ module.exports = {
   getMapFunnel,
   getProyeksiVsRealisasiSummary,
   getPipelineMenggantung,
+  getApprovalPendingCount,
+  getCompanyPulseSummary,
 };
