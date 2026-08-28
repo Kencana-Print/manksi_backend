@@ -1474,8 +1474,8 @@ const JO_KATEGORI = {
 };
 const getStandarUkuran = async (joKode, varian = "STANDAR") => {
   const jo = String(joKode || "").toUpperCase();
-  const kategori = JO_KATEGORI[jo];
-  if (!kategori) return [];
+
+  const kategori = JO_KATEGORI[jo] || "ATASAN";
   const kategoriList =
     kategori === "WEARPACK" ? ["ATASAN", "BAWAHAN"] : [kategori];
   const [allSizes] = await db.query(

@@ -148,11 +148,13 @@ const getBrowseList = async (filters) => {
         ${hargaCol}
         y.date_create AS Created, y.spk_jumlah AS Pesan,
         IFNULL(sjKirim.total_kirim, 0) AS Kirim,
-        (y.spk_jumlah - IF(ppic.spk_nomor IS NOT NULL, ppic.spk_jumlah_kirim, y.spk_jumlah_kirim)) AS Kurang,
+        (y.spk_jumlah - IFNULL(sjKirim.total_kirim, 0)) AS Kurang,
         sl.sal_nama AS Sales, ${groupCusCol}
         y.spk_nomor_po AS PO, y.spk_ketpo AS KetPO,
         y.spk_tgl_po AS DatePO, y.spk_DatelinePO AS DatelinePO,
-        IF(y.spk_close=1 OR IFNULL(ppic.spk_close, 0)=1, "Closed", "Open") AS Status,
+        IF(y.spk_close=1 OR IFNULL(ppic.spk_close, 0)=1, 
+          IF(ppic.spk_nomor IS NOT NULL, "Closed (PPIC)", "Closed"), 
+          "Open") AS Status,
         y.spk_close_alasan AS AlasanClose, y.spk_pen_nomor AS NoPenawaran,
         y.spk_memo AS MAP, y.spk_repeat AS 'Repeat', y.spk_aktif AS Aktif,
         y.spk_is_so AS is_so,
