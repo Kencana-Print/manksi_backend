@@ -18,7 +18,7 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     filterBagian = `AND h.re_bagian = '${user.bagian}'`;
   }
 
-  // 1. Query Master (Termasuk status PIN 5)
+  // 1. Query Master Realisasi (Termasuk status PIN 5)
   const qMaster = `
     SELECT 
       h.re_nomor AS Nomor, h.re_jenis AS Jenis, h.re_tanggal AS Tanggal, 
@@ -34,16 +34,45 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
         FROM tspk_pin5 
         WHERE pin_trs="REALISASI MINTA GARMEN" AND pin_nomor=h.re_nomor 
         ORDER BY pin_urut DESC LIMIT 1
-      ),"") AS Ngedit
+      ),"") AS Ngedit,
+      'REALISASI' AS RowType
     FROM tgarmenrealisasi_hdr h 
     LEFT JOIN tspk s ON s.spk_nomor = h.re_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.re_spk_nomor 
     WHERE h.re_tanggal >= ? AND h.re_tanggal <= ? AND h.re_jenis = ?
     ${filterCabang} ${filterBagian}
-    ORDER BY h.re_nomor DESC
   `;
 
-  // 2. Query Detail
+  // 1b. Query Permintaan yang MASIH OPEN (belum direalisasi sama sekali) —
+  // replikasi pola "SPK belum ada MKA" di mkaService.getBrowseList, supaya
+  // baris merah ini bisa langsung dipilih user & dibawa ke form Baru.
+  let filterCabangMinta = "";
+  if (cabang && cabang !== "ALL") {
+    filterCabangMinta = `AND min_cab = '${cabang}'`;
+  }
+  let filterBagianMinta = "";
+  if (
+    jenis === "SPAREPART" &&
+    (user.bagian === "TEKNISI" || user.bagian === "IT")
+  ) {
+    filterBagianMinta = `AND min_bagian = '${user.bagian}'`;
+  }
+  const qOpenMinta = `
+    SELECT
+      min_nomor AS Nomor, min_jenis AS Jenis, min_tanggal AS Tanggal,
+      DATE_FORMAT(date_create, "%H:%i:%s") AS Jam, min_nomor AS NoMinta,
+      NULL AS Approve, min_ket AS Keterangan, min_cab AS Cab, user_create AS Usr,
+      min_spk_nomor AS SPK, NULL AS NamaSpk, NULL AS JmlSPK,
+      '' AS Ngedit,
+      'MINTA' AS RowType
+    FROM tgarmenminta_hdr
+    WHERE min_tanggal >= ? AND min_tanggal <= ? AND min_jenis = ? AND min_close = 0
+    ${filterCabangMinta} ${filterBagianMinta}
+  `;
+
+  const qUnion = `SELECT * FROM (${qMaster} UNION ALL ${qOpenMinta}) z ORDER BY z.Tanggal DESC, z.Nomor DESC`;
+
+  // 2. Query Detail — hanya relevan untuk baris RowType REALISASI
   const qDetail = `
     SELECT 
       d.red_nomor AS Nomor, d.red_brg_kode AS Kode, 
@@ -57,11 +86,11 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     ORDER BY d.red_nomor, d.red_brg_kode
   `;
 
-  const params = [startDate, endDate, jenis];
-  const [masterRows] = await db.query(qMaster, params);
-  const [detailRows] = await db.query(qDetail, params);
+  const paramsUnion = [startDate, endDate, jenis, startDate, endDate, jenis];
+  const [masterRows] = await db.query(qUnion, paramsUnion);
+  const [detailRows] = await db.query(qDetail, [startDate, endDate, jenis]);
 
-  // Mapping detail ke dalam master
+  // Mapping detail ke dalam master (baris RowType MINTA tidak punya detail)
   const result = masterRows.map((master) => ({
     ...master,
     details: detailRows.filter((d) => d.Nomor === master.Nomor),

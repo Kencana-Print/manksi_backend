@@ -62,7 +62,7 @@ const getPermintaanDetail = async (
 
   // Filter Close hanya berlaku saat Buat Baru
   if (!bypassCloseCheck) {
-    qHdr += ` AND h.min_close IN (0, 2)`;
+    qHdr += ` AND h.min_close = 0`;
   }
 
   const [hdrRows] = await db.query(qHdr, [nomorMinta]);
@@ -146,7 +146,7 @@ const getDetailForm = async (nomor, userCabang) => {
       header.re_minta,
       header.re_cab,
       nomor,
-      true
+      true,
     );
   }
 
@@ -168,7 +168,7 @@ const getDetailForm = async (nomor, userCabang) => {
     const redMap = {};
     redRows.forEach(
       (r) =>
-        (redMap[r.red_brg_kode] = { jml: r.red_jumlah, ket: r.red_keterangan })
+        (redMap[r.red_brg_kode] = { jml: r.red_jumlah, ket: r.red_keterangan }),
     );
 
     details = reqData.details.map((d) => {

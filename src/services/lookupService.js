@@ -891,8 +891,8 @@ const searchMintaBahan = async (keyword, page = 1, limit = 50) => {
   const offset = (pageNum - 1) * limitNum;
 
   let params = [];
-  // Syarat: Belum close (min_close <> 1) dan sudah di-ACC (min_apv = 'Y')
-  let whereClause = `WHERE min_close <> 1`;
+  // Hanya Permintaan yang benar-benar belum direalisasi sama sekali
+  let whereClause = `WHERE min_close = 0`;
 
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (min_nomor LIKE ? OR min_spk_nomor LIKE ?)`;
@@ -1227,7 +1227,7 @@ const searchPermintaanBarangGarmen = async (
 
   // Sesuai Delphi (edtMintaExit & F1 lookup):
   // Filter status Buka(0) atau Proses(2), sesuai jenisnya
-  let whereClause = `WHERE min_close IN (0,2) AND min_jenis = ?`;
+  let whereClause = `WHERE min_close = 0 AND min_jenis = ?`;
   params.push(jenis);
 
   // Jika jenis SPAREPART, batasi sesuai bagian user (TEKNISI / IT)

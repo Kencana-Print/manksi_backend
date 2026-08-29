@@ -4,7 +4,7 @@ const db = require("../../config/database");
  * Mendapatkan data utama Browse Realisasi Minta Bahan
  */
 const getBrowse = async (startDate, endDate) => {
-  const query = `
+  const qMaster = `
     SELECT 
       h.promin_nomor AS Nomor, 
       DATE_FORMAT(h.promin_tanggal, '%Y-%m-%d') AS Tanggal, 
@@ -16,9 +16,6 @@ const getBrowse = async (startDate, endDate) => {
       IFNULL(s.spk_nama, m.mspk_nama) AS NamaSPK, 
       h.promin_jumlah AS Jumlah, 
       IFNULL(s.spk_jumlah, m.mspk_jumlah) AS JmlOrder,
-      -- ⚠️ TAMBAHAN: status aktif fisik — 'N' berarti stok BELUM
-      -- terpotong (biasanya karena ada beda bahan yang belum di-ACC,
-      -- lihat kolom StatusBeda di bawah untuk detail alasannya)
       h.promin_aktif AS Aktif,
       IFNULL((
         SELECT IFNULL(
@@ -30,9 +27,6 @@ const getBrowse = async (startDate, endDate) => {
         WHERE pin_trs="REALISASI MINTA BAHAN" AND pin_nomor=h.promin_nomor 
         ORDER BY pin_urut DESC LIMIT 1
       ), "") AS Ngedit,
-      -- ⚠️ TAMBAHAN: status approval BEDA BAHAN — pin_trs berbeda dari
-      -- Ngedit di atas (yang untuk approval edit-setelah-tutup-buku).
-      -- Dua alur approval ini terpisah, jangan digabung jadi 1 kolom.
       IFNULL((
         SELECT IFNULL(
           IF(pin_acc="" AND pin_dipakai="", "WAIT",
@@ -41,17 +35,51 @@ const getBrowse = async (startDate, endDate) => {
         FROM tspk_pin5 
         WHERE pin_trs="REALISASI BEDA BAHAN" AND pin_nomor=h.promin_nomor AND pin_urut=1
       ), "") AS StatusBeda,
-      h.user_create AS Usr
+      h.user_create AS Usr,
+      'REALISASI' AS RowType
     FROM tproduksiminta_hdr h
     LEFT JOIN tgudang g ON g.gdg_kode = h.promin_gdg_asal 
     LEFT JOIN tgudangproduksi gp ON gp.gdgp_kode = h.promin_gdgp_kode
     LEFT JOIN tspk s ON s.spk_nomor = h.promin_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.promin_spk_nomor 
     WHERE h.promin_tanggal >= ? AND h.promin_tanggal <= ?
-    ORDER BY h.promin_nomor
   `;
-  const [rows] = await db.query(query, [startDate, endDate]);
-  return rows;
+
+  // Permintaan Bahan yang masih Open (min_close=0) — belum direalisasi
+  // sama sekali. tmintabahan_hdr TIDAK punya kolom gudang/jumlah header
+  // (itu baru muncul di level tproduksiminta_hdr/dtl saat direalisasi),
+  // jadi Gudang/GdgProduksi/Jumlah/JmlOrder dikosongkan untuk baris ini.
+  const qOpenMinta = `
+    SELECT
+      h.min_nomor AS Nomor,
+      DATE_FORMAT(h.min_tanggal, '%Y-%m-%d') AS Tanggal,
+      h.min_nomor AS NoMinta,
+      '' AS Gudang,
+      '' AS GdgProduksi,
+      h.min_ket AS Keterangan,
+      h.min_spk_nomor AS SPK,
+      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSPK,
+      0 AS Jumlah,
+      IFNULL(s.spk_jumlah, m.mspk_jumlah) AS JmlOrder,
+      'Y' AS Aktif,
+      '' AS Ngedit,
+      '' AS StatusBeda,
+      h.user_create AS Usr,
+      'MINTA' AS RowType
+    FROM tmintabahan_hdr h
+    LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
+    WHERE h.min_tanggal >= ? AND h.min_tanggal <= ? AND h.min_close = 0
+  `;
+
+  const query = `SELECT * FROM (${qMaster} UNION ALL ${qOpenMinta}) z ORDER BY z.Nomor`;
+  const [rows] = await db.query(query, [
+    startDate,
+    endDate,
+    startDate,
+    endDate,
+  ]);
+  return rows.map((r) => ({ ...r, Aktif: r.Aktif ?? "Y" }));
 };
 
 /**
