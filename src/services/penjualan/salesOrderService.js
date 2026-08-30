@@ -170,7 +170,7 @@ const getBrowseList = async (filters) => {
         y.spk_keterangan AS Keterangan, y.spk_invdc AS 'Pesanan/Invoice',
         y.spk_ketbatal AS StsPembatalan,
         IF(ppic.spk_nomor IS NOT NULL, 1, 0) AS HasSpkPpic,
-        IF(sjChk.sjd_spk_nomor IS NOT NULL, 1, 0) AS HasSj,
+        IF(sjChk.sjd_spk_nomor IS NOT NULL OR stbjChk.stbjd_spk_nomor IS NOT NULL, 1, 0) AS HasSj,
 
         IFNULL(ppic.spk_jumlah_jadi, 0) AS Jadi,
         IFNULL(ppic.spk_cetak_count, 0) AS CetakCount,
@@ -289,6 +289,11 @@ const getBrowseList = async (filters) => {
         INNER JOIN tsj_hdr ON sj_nomor = sjd_sj_nomor
         WHERE sj_tanggal >= ?
       ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
+
+      LEFT JOIN (
+        SELECT DISTINCT stbjd_spk_nomor
+        FROM tstbj_dtl
+      ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
       -- titik proof bordir
       LEFT JOIN (
