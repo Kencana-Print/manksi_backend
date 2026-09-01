@@ -57,16 +57,17 @@ const getById = async (nomor) => {
   // Detail — sesuai Delphi loaddataall, JOIN tspk + tbarang
   const [dtl] = await db.query(
     `SELECT
-       d.invd_sj_nomor, d.invd_spk_nomor, d.invd_ukuran,
-       d.invd_jumlah, d.invd_harga, d.invd_nourut,
-       IFNULL(s.spk_nama2, x.brg_name) AS spk_nama2,
-       (s.spk_jumlah_inv - d.invd_jumlah) AS jml_inv,
-       (s.spk_jumlah - s.spk_jumlah_inv + d.invd_jumlah) AS kurang
-     FROM tinv_dtl d
-     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-     LEFT JOIN tbarang x ON x.brg_kode = d.invd_spk_nomor
-     WHERE d.invd_inv_nomor = ?
-     ORDER BY d.invd_nourut, d.invd_sj_nomor DESC`,
+      d.invd_sj_nomor, d.invd_spk_nomor, d.invd_ukuran,
+      d.invd_jumlah, d.invd_harga, d.invd_nourut,
+      COALESCE(so.so_nama2, s.spk_nama2, x.brg_name) AS spk_nama2,
+      (s.spk_jumlah_inv - d.invd_jumlah) AS jml_inv,
+      (s.spk_jumlah - s.spk_jumlah_inv + d.invd_jumlah) AS kurang
+    FROM tinv_dtl d
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tbarang x ON x.brg_kode = d.invd_spk_nomor
+    WHERE d.invd_inv_nomor = ?
+    ORDER BY d.invd_nourut, d.invd_sj_nomor DESC`,
     [nomor],
   );
 
@@ -284,16 +285,9 @@ const loadBarangDetail = async (kode, perushKode) => {
   let jumlahInv = 0;
 
   if (barang) {
-    // ── Cabang 1: barang master reguler (logic lama, tidak berubah) ──
-    itemInfo = {
-      Kode: barang.brg_kode,
-      Nama: barang.brg_name,
-      Ukuran: barang.brg_ukuran,
-      Harga: barang.brg_harga,
-    };
-
     const [[soNew]] = await db.query(
       `SELECT
+          so.so_nama2,
           so.so_jumlah AS jumlah_total,
           IFNULL((
             SELECT SUM(d.invd_jumlah)
@@ -307,22 +301,28 @@ const loadBarangDetail = async (kode, perushKode) => {
 
     const [[soLegacy]] = !soNew
       ? await db.query(
-          `SELECT spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv
+          `SELECT spk_nama2, spk_jumlah AS jumlah_total, spk_jumlah_inv AS jumlah_inv
            FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1 AND spk_aktif = 'Y'`,
           [kode],
         )
       : [[null]];
 
     const so = soNew || soLegacy;
+
+    // Prioritas nama: so_nama2 (SO baru/legacy) > brg_name (fallback tbarang)
+    itemInfo = {
+      Kode: barang.brg_kode,
+      Nama: so?.so_nama2 || barang.brg_name,
+      Ukuran: barang.brg_ukuran,
+      Harga: barang.brg_harga,
+    };
+
     if (so) {
       jumlahTotal = Number(so.jumlah_total) || 0;
       jumlahInv = Number(so.jumlah_inv) || 0;
     }
   } else {
-    // ── Cabang 2 (BARU): SPK turunan custom job — spk_is_so = 0 ──
-    // Kode/nama custom (banner, dsb) tidak ada di tbarang, cuma di tspk.
-    // Jumlah/Kurang dihitung langsung dari SPK ini (bukan via SO induk),
-    // karena SPK turunan punya spk_jumlah/spk_jumlah_inv sendiri.
+    // Cabang 2 — SPK custom job (spk_is_so=0), tidak berubah
     const [[spkCustom]] = await db.query(
       `SELECT spk_nomor, spk_nama, spk_ukuran, spk_harga,
         spk_jumlah, spk_jumlah_inv
@@ -337,7 +337,7 @@ const loadBarangDetail = async (kode, perushKode) => {
 
     itemInfo = {
       Kode: spkCustom.spk_nomor,
-      Nama: spkCustom.spk_nama, // ← ganti dari spk_nama2
+      Nama: spkCustom.spk_nama,
       Ukuran: spkCustom.spk_ukuran,
       Harga: spkCustom.spk_harga,
     };
@@ -833,14 +833,15 @@ const getDataCetak = async (nomor) => {
 
   const [dtl] = await db.query(
     `SELECT
-       d.invd_spk_nomor, d.invd_ukuran, d.invd_jumlah, d.invd_harga,
-       d.invd_nourut,
-       IFNULL(s.spk_nama2, x.brg_name) AS nama_barang
-     FROM tinv_dtl d
-     LEFT JOIN tspk s    ON s.spk_nomor = d.invd_spk_nomor
-     LEFT JOIN tbarang x ON x.brg_kode  = d.invd_spk_nomor
-     WHERE d.invd_inv_nomor = ?
-     ORDER BY d.invd_nourut, d.invd_sj_nomor DESC`,
+      d.invd_spk_nomor, d.invd_ukuran, d.invd_jumlah, d.invd_harga,
+      d.invd_nourut,
+      COALESCE(so.so_nama2, s.spk_nama2, x.brg_name) AS nama_barang
+    FROM tinv_dtl d
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+    LEFT JOIN tspk s    ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tbarang x ON x.brg_kode  = d.invd_spk_nomor
+    WHERE d.invd_inv_nomor = ?
+    ORDER BY d.invd_nourut, d.invd_sj_nomor DESC`,
     [nomor],
   );
 
