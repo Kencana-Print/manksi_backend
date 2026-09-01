@@ -1229,7 +1229,7 @@ const save = async (data, userKode, isNewMode) => {
 
   const {
     Tanggal,
-    Cab,
+    Cab: CabFromClient,
     Keterangan,
     NomorSpk,
     GdgAsal,
@@ -1255,6 +1255,13 @@ const save = async (data, userKode, isNewMode) => {
     pin5Urut = null,
     pin5Status = "",
   } = data;
+
+  // FIX: jangan percaya Cab dari frontend — selalu turunkan dari
+  // gudang asal (gdgp_cab), sumber kebenaran tunggal. Fallback ke
+  // nilai frontend hanya kalau gudang asal entah kenapa tidak
+  // ditemukan (harusnya tidak pernah terjadi kalau GdgAsal valid).
+  const gudangAsalInfo = await getNamaGudangProduksi(GdgAsal);
+  const Cab = gudangAsalInfo?.gdgp_cab || CabFromClient || "";
 
   // Filter detail: hanya baris dengan total qty > 0
   const validDetail = Detail.filter((d) => {
