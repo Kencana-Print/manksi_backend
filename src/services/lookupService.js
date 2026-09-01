@@ -2003,7 +2003,7 @@ const searchPoBahanBuka = async (keyword, page = 1, limit = 50) => {
 
 const searchPermintaanBeliGarmen = async (keyword, jenis) => {
   let params = [jenis];
-  let whereClause = `WHERE h.mb_status NOT IN ("CLOSE", "DICLOSE") AND h.mb_jenis = ? AND h.mb_nomor NOT IN (SELECT DISTINCT IFNULL(po_mb_nomor, '') FROM tgarmenpo_hdr)`;
+  let whereClause = `WHERE h.mb_status NOT IN ("CLOSE", "DICLOSE") AND h.mb_jenis = ? `;
 
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (h.mb_nomor LIKE ? OR h.mb_ket LIKE ?)`;
