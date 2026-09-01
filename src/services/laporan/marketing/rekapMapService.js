@@ -40,8 +40,16 @@ const getRekap = async (query) => {
             m.mspk_rencana_order)
         ) AS jml,
         (
+          -- FIX: exclude SPK "turunan produksi" (spk_so_ref terisi) —
+          -- baris ini mewarisi spk_memo dari SO induknya, jadi kalau
+          -- ikut dihitung di sini akan double-count dengan subquery
+          -- tsalesorder di bawah (SO yang sama dihitung 2x: sekali
+          -- sebagai SO, sekali sebagai turunan SPK-nya).
+          -- Subquery ini SEKARANG hanya menangkap SPK legacy murni
+          -- (dibuat sebelum migrasi ke tsalesorder, bukan turunan SO).
           IFNULL((SELECT SUM(spk_harga * spk_jumlah) FROM tspk
-                  WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor), 0)
+                  WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor
+                    AND (spk_so_ref IS NULL OR spk_so_ref = '')), 0)
           +
           IFNULL((SELECT SUM(so_harga * so_jumlah) FROM tsalesorder
                   WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor), 0)
@@ -90,8 +98,10 @@ const getDetail = async (query) => {
           m.mspk_rencana_order)
       )                              AS Jml,
       (
+        -- FIX: sama seperti getRekap — exclude SPK turunan produksi
         IFNULL((SELECT SUM(spk_harga * spk_jumlah) FROM tspk
-                WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor), 0)
+                WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor
+                  AND (spk_so_ref IS NULL OR spk_so_ref = '')), 0)
         +
         IFNULL((SELECT SUM(so_harga * so_jumlah) FROM tsalesorder
                 WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor), 0)
