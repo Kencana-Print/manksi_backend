@@ -62,7 +62,7 @@ const getPermintaanDetail = async (
 
   // Filter Close hanya berlaku saat Buat Baru
   if (!bypassCloseCheck) {
-    qHdr += ` AND h.min_close = 0`;
+    qHdr += ` AND h.min_close IN (0, 2)`;
   }
 
   const [hdrRows] = await db.query(qHdr, [nomorMinta]);
@@ -199,6 +199,66 @@ const getDetailForm = async (nomor, userCabang) => {
   return { header, reqHeader: reqData.header || {}, details };
 };
 
+// Dipanggil setelah detail baru selesai di-insert, menggantikan
+// blok penghitungan tpo/tjumlah/tsudah/minClose yang lama.
+const recalcMinClose = async (conn, noMinta) => {
+  const [rows] = await conn.query(
+    `SELECT
+       d.mind_brg_kode AS kode,
+       d.mind_jumlah AS minta,
+       IFNULL((
+         SELECT SUM(LEAST(rd.red_jumlah, d.mind_jumlah - IFNULL(prev.sudah_lain, 0)))
+         FROM tgarmenrealisasi_hdr rh
+         INNER JOIN tgarmenrealisasi_dtl rd ON rd.red_nomor = rh.re_nomor
+         WHERE rh.re_minta = d.mind_nomor AND rd.red_brg_kode = d.mind_brg_kode
+       ), 0) AS realisasi_kotor
+     FROM tgarmenminta_dtl d
+     LEFT JOIN (SELECT 0 AS sudah_lain) prev ON 1=1
+     WHERE d.mind_nomor = ?`,
+    [noMinta],
+  );
+
+  // Pendekatan lebih sederhana & tepat: jumlahkan langsung SUM realisasi
+  // per item, cap di level ITEM (bukan digabung lintas item), baru
+  // dibandingkan ke minta ITEM tsb — supaya tidak ada over-counting.
+  const [dtlRows] = await conn.query(
+    `SELECT
+       d.mind_brg_kode AS kode,
+       d.mind_jumlah AS minta,
+       IFNULL((
+         SELECT SUM(rd.red_jumlah)
+         FROM tgarmenrealisasi_hdr rh
+         INNER JOIN tgarmenrealisasi_dtl rd ON rd.red_nomor = rh.re_nomor
+         WHERE rh.re_minta = ? AND rd.red_brg_kode = d.mind_brg_kode
+       ), 0) AS total_realisasi
+     FROM tgarmenminta_dtl d
+     WHERE d.mind_nomor = ?`,
+    [noMinta, noMinta],
+  );
+
+  let tpo = 0;
+  let tqCapped = 0;
+  let adaYangTerisi = false;
+
+  for (const r of dtlRows) {
+    const minta = parseFloat(r.minta) || 0;
+    const realisasi = parseFloat(r.total_realisasi) || 0;
+    const cappedRealisasi = Math.min(realisasi, minta); // ← cap PER ITEM, gabungan sudah+baru
+    tpo += minta;
+    tqCapped += cappedRealisasi;
+    if (cappedRealisasi > 0) adaYangTerisi = true;
+  }
+
+  let minClose = 0;
+  if (tpo > 0 && tqCapped >= tpo) minClose = 1;
+  else if (adaYangTerisi) minClose = 2;
+
+  await conn.query(
+    `UPDATE tgarmenminta_hdr SET min_close=? WHERE min_nomor=?`,
+    [minClose, noMinta],
+  );
+};
+
 const saveData = async (payload, user) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
@@ -284,21 +344,15 @@ const saveData = async (payload, user) => {
     await conn.query(`DELETE FROM tgarmenrealisasi_dtl WHERE red_nomor=?`, [
       nomor,
     ]);
+
+    // ── INSERT detail — TIDAK BERUBAH, tapi sekarang variabel
+    // tpo/tjumlah/tsudah TIDAK dihitung lagi di sini ──
     const detailValues = [];
     let noUrut = 1;
-    let tpo = 0;
-    let tjumlah = 0;
-    let tsudah = 0;
 
     for (const d of payload.details) {
       const jml = parseFloat(d.jumlah) || 0;
       if (!d.kode || d.nama === "") continue;
-
-      const minta = parseFloat(d.minta) || 0;
-      const sudah = parseFloat(d.sudah) || 0;
-      tpo += minta;
-      tjumlah += jml <= minta ? jml : minta;
-      tsudah += sudah <= minta ? sudah : minta;
 
       if (jml > 0) {
         detailValues.push([nomor, d.kode, jml, noUrut, d.ket || ""]);
@@ -313,15 +367,21 @@ const saveData = async (payload, user) => {
       );
     }
 
-    const tq = tjumlah + tsudah;
-    let minClose = 0;
-    if (tq >= tpo && tpo > 0) minClose = 1;
-    else if (tq > 0 && tq < tpo) minClose = 2;
-
-    await conn.query(
-      `UPDATE tgarmenminta_hdr SET min_close=? WHERE min_nomor=?`,
-      [minClose, noMinta],
-    );
+    // ══════════════════════════════════════════════════════
+    // GANTI TOTAL blok lama:
+    //   const tq = tjumlah + tsudah;
+    //   let minClose = 0;
+    //   if (tq >= tpo && tpo > 0) minClose = 1;
+    //   else if (tq > 0 && tq < tpo) minClose = 2;
+    //   await conn.query(`UPDATE tgarmenminta_hdr SET min_close=? WHERE min_nomor=?`, [minClose, noMinta]);
+    //
+    // DENGAN satu baris ini — dipanggil SETELAH detail baru
+    // selesai di-insert (di atas), supaya realisasi dari SAVE
+    // INI SENDIRI ikut terhitung saat query ulang ke DB:
+    // ══════════════════════════════════════════════════════
+    if (noMinta) {
+      await recalcMinClose(conn, noMinta);
+    }
 
     if (isEdit && pinInfo.status === "ACC") {
       await conn.query(
