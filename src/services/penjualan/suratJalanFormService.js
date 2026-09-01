@@ -121,9 +121,10 @@ const getById = async (nomor) => {
          FROM tsj_dtl d2
          INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
          WHERE h2.sj_status_otomatis = 0
-           AND d2.sjd_spk_nomor = ?
-           AND d2.sjd_ukuran = ?
-           AND d2.sjd_sj_nomor <> ?`,
+         AND h2.sj_approve <> 2
+         AND d2.sjd_spk_nomor = ?
+         AND d2.sjd_ukuran = ?
+         AND d2.sjd_sj_nomor <> ?`,
         [row.sjd_spk_nomor, row.sjd_ukuran, nomor],
       );
       row.sudah = r.sudah;
@@ -134,8 +135,9 @@ const getById = async (nomor) => {
          FROM tsj_dtl d2
          INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
          WHERE h2.sj_status_otomatis = 0
-           AND d2.sjd_spk_nomor = ?
-           AND d2.sjd_sj_nomor <> ?`,
+         AND h2.sj_approve <> 2
+         AND d2.sjd_spk_nomor = ?
+         AND d2.sjd_sj_nomor <> ?`,
         [row.sjd_spk_nomor, nomor],
       );
       row.sudah = r.sudah;
@@ -205,6 +207,7 @@ const getSudah = async (spkNomor, ukuran = "", excludeNomor = "") => {
        FROM tsj_dtl d
        INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
        WHERE h.sj_status_otomatis = 0
+         AND h.sj_approve <> 2
          AND d.sjd_spk_nomor = ?
          AND d.sjd_ukuran = ?
          AND d.sjd_sj_nomor <> ?`,
@@ -217,6 +220,7 @@ const getSudah = async (spkNomor, ukuran = "", excludeNomor = "") => {
        FROM tsj_dtl d
        INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
        WHERE h.sj_status_otomatis = 0
+         AND h.sj_approve <> 2
          AND d.sjd_spk_nomor = ?
          AND d.sjd_sj_nomor <> ?`,
       [spkNomor, excludeNomor],
