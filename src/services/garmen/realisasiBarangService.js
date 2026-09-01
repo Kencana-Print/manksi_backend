@@ -18,7 +18,6 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     filterBagian = `AND h.re_bagian = '${user.bagian}'`;
   }
 
-  // 1. Query Master Realisasi (Termasuk status PIN 5)
   const qMaster = `
     SELECT 
       h.re_nomor AS Nomor, h.re_jenis AS Jenis, h.re_tanggal AS Tanggal, 
@@ -43,9 +42,6 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     ${filterCabang} ${filterBagian}
   `;
 
-  // 1b. Query Permintaan yang MASIH OPEN (belum direalisasi sama sekali) —
-  // replikasi pola "SPK belum ada MKA" di mkaService.getBrowseList, supaya
-  // baris merah ini bisa langsung dipilih user & dibawa ke form Baru.
   let filterCabangMinta = "";
   if (cabang && cabang !== "ALL") {
     filterCabangMinta = `AND min_cab = '${cabang}'`;
@@ -57,6 +53,11 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
   ) {
     filterBagianMinta = `AND min_bagian = '${user.bagian}'`;
   }
+
+  // FIX: min_close IN (0,2) — permintaan yang SEBAGIAN direalisasi
+  // (min_close=2) harus tetap muncul sebagai baris "bisa ditarik",
+  // supaya sisa Kurang-nya bisa diambil lewat dokumen realisasi BARU
+  // (bukan edit dokumen lama yang sudah approved & terkunci).
   const qOpenMinta = `
     SELECT
       min_nomor AS Nomor, min_jenis AS Jenis, min_tanggal AS Tanggal,
@@ -66,13 +67,12 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
       '' AS Ngedit,
       'MINTA' AS RowType
     FROM tgarmenminta_hdr
-    WHERE min_tanggal >= ? AND min_tanggal <= ? AND min_jenis = ? AND min_close = 0
+    WHERE min_tanggal >= ? AND min_tanggal <= ? AND min_jenis = ? AND min_close IN (0, 2)
     ${filterCabangMinta} ${filterBagianMinta}
   `;
 
   const qUnion = `SELECT * FROM (${qMaster} UNION ALL ${qOpenMinta}) z ORDER BY z.Tanggal DESC, z.Nomor DESC`;
 
-  // 2. Query Detail — hanya relevan untuk baris RowType REALISASI
   const qDetail = `
     SELECT 
       d.red_nomor AS Nomor, d.red_brg_kode AS Kode, 
@@ -86,15 +86,65 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     ORDER BY d.red_nomor, d.red_brg_kode
   `;
 
+  // BARU: detail permintaan (tgarmenminta_dtl) untuk baris RowType
+  // MINTA — supaya expand menunjukkan APA yang diminta, plus berapa
+  // yang sudah/kurang, bukan cuma pesan placeholder kosong.
+  const qMintaDetail = `
+    SELECT
+      d.mind_nomor AS Nomor,
+      d.mind_brg_kode AS Kode,
+      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama," - ",b.brg_note)) AS Nama,
+      b.brg_satuan AS Satuan,
+      d.mind_jumlah AS Minta,
+      IFNULL((
+        SELECT SUM(rd.red_jumlah)
+        FROM tgarmenrealisasi_hdr rh
+        INNER JOIN tgarmenrealisasi_dtl rd ON rd.red_nomor = rh.re_nomor
+        WHERE rh.re_minta = d.mind_nomor AND rd.red_brg_kode = d.mind_brg_kode
+      ), 0) AS Sudah
+    FROM tgarmenminta_dtl d
+    INNER JOIN tgarmenminta_hdr h ON h.min_nomor = d.mind_nomor
+    LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mind_brg_kode
+    WHERE h.min_tanggal >= ? AND h.min_tanggal <= ? AND h.min_jenis = ? AND h.min_close IN (0, 2)
+    ${filterCabangMinta} ${filterBagianMinta}
+    ORDER BY d.mind_nomor, d.mind_brg_kode
+  `;
+
   const paramsUnion = [startDate, endDate, jenis, startDate, endDate, jenis];
   const [masterRows] = await db.query(qUnion, paramsUnion);
   const [detailRows] = await db.query(qDetail, [startDate, endDate, jenis]);
+  const [mintaDetailRowsRaw] = await db.query(qMintaDetail, [
+    startDate,
+    endDate,
+    jenis,
+  ]);
 
-  // Mapping detail ke dalam master (baris RowType MINTA tidak punya detail)
-  const result = masterRows.map((master) => ({
-    ...master,
-    details: detailRows.filter((d) => d.Nomor === master.Nomor),
-  }));
+  const mintaDetailRows = mintaDetailRowsRaw.map((r) => {
+    const minta = parseFloat(r.Minta) || 0;
+    const sudah = parseFloat(r.Sudah) || 0;
+    const kurang = Math.max(0, minta - sudah);
+    return {
+      Nomor: r.Nomor,
+      Kode: r.Kode,
+      Nama: r.Nama,
+      Satuan: r.Satuan,
+      Jumlah: minta,
+      Keterangan: `Sudah: ${sudah.toLocaleString("id-ID")} / Kurang: ${kurang.toLocaleString("id-ID")}`,
+    };
+  });
+
+  const result = masterRows.map((master) => {
+    if (master.RowType === "MINTA") {
+      return {
+        ...master,
+        details: mintaDetailRows.filter((d) => d.Nomor === master.Nomor),
+      };
+    }
+    return {
+      ...master,
+      details: detailRows.filter((d) => d.Nomor === master.Nomor),
+    };
+  });
 
   return result;
 };
