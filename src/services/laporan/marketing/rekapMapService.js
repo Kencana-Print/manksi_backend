@@ -41,10 +41,10 @@ const getRekap = async (query) => {
         ) AS jml,
         (
           IFNULL((SELECT SUM(spk_harga * spk_jumlah) FROM tspk
-                  WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor), 0)
+                  WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor and spk_tanggal<='2026-08-05'), 0)
           +
           IFNULL((SELECT SUM(so_harga * so_jumlah) FROM tsalesorder
-                  WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor), 0)
+                  WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor and so_tanggal>='2026-08-06'), 0)
         ) AS realisasi
       FROM tmemospk m
       INNER JOIN tsales   s ON s.sal_kode   = m.mspk_sal_kode
@@ -91,10 +91,10 @@ const getDetail = async (query) => {
       )                              AS Jml,
       (
         IFNULL((SELECT SUM(spk_harga * spk_jumlah) FROM tspk
-                WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor), 0)
+                WHERE spk_aktif = 'Y' AND spk_memo = m.mspk_nomor and spk_tanggal<='2026-08-05'), 0)
         +
         IFNULL((SELECT SUM(so_harga * so_jumlah) FROM tsalesorder
-                WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor), 0)
+                WHERE so_aktif = 'Y' AND so_memo = m.mspk_nomor and so_tanggal>='2026-08-06'), 0)
       )                              AS Realisasi,
       m.mspk_confirm                 AS Note
     FROM tmemospk m
