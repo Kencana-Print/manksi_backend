@@ -118,10 +118,10 @@ const getById = async (nomor) => {
     if (row.size) {
       const [[r]] = await db.query(
         `SELECT IFNULL(SUM(d2.sjd_jumlah),0) AS sudah
-         FROM tsj_dtl d2
-         INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
-         WHERE h2.sj_status_otomatis = 0
-         AND h2.sj_approve <> 2
+          FROM tsj_dtl d2
+          INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
+          WHERE h2.sj_status_otomatis = 0
+         AND h2.sj_approve = 1
          AND d2.sjd_spk_nomor = ?
          AND d2.sjd_ukuran = ?
          AND d2.sjd_sj_nomor <> ?`,
@@ -132,10 +132,10 @@ const getById = async (nomor) => {
     } else {
       const [[r]] = await db.query(
         `SELECT IFNULL(SUM(d2.sjd_jumlah),0) AS sudah
-         FROM tsj_dtl d2
-         INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
-         WHERE h2.sj_status_otomatis = 0
-         AND h2.sj_approve <> 2
+          FROM tsj_dtl d2
+          INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
+          WHERE h2.sj_status_otomatis = 0
+         AND h2.sj_approve = 1
          AND d2.sjd_spk_nomor = ?
          AND d2.sjd_sj_nomor <> ?`,
         [row.sjd_spk_nomor, nomor],
@@ -207,7 +207,7 @@ const getSudah = async (spkNomor, ukuran = "", excludeNomor = "") => {
        FROM tsj_dtl d
        INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
        WHERE h.sj_status_otomatis = 0
-         AND h.sj_approve <> 2
+         AND h.sj_approve = 1
          AND d.sjd_spk_nomor = ?
          AND d.sjd_ukuran = ?
          AND d.sjd_sj_nomor <> ?`,
@@ -220,7 +220,7 @@ const getSudah = async (spkNomor, ukuran = "", excludeNomor = "") => {
        FROM tsj_dtl d
        INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
        WHERE h.sj_status_otomatis = 0
-         AND h.sj_approve <> 2
+         AND h.sj_approve = 1
          AND d.sjd_spk_nomor = ?
          AND d.sjd_sj_nomor <> ?`,
       [spkNomor, excludeNomor],
