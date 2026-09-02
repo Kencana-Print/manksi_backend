@@ -478,9 +478,13 @@ const getDetailForm = async (nomor) => {
   );
 
   const [dtlRows] = await db.query(
-    `SELECT d.poid_bhn_kode, b.bhn_name, b.bhn_satuan, d.poid_size, d.poid_jumlah
+    `SELECT d.poid_bhn_kode,
+       COALESCE(b.bhn_name, g.brg_nama) AS bhn_name,
+       COALESCE(b.bhn_satuan, g.brg_satuan) AS bhn_satuan,
+       d.poid_size, d.poid_jumlah
      FROM tpointernal_dtl d
      LEFT JOIN tbahan b ON b.bhn_kode = d.poid_bhn_kode
+     LEFT JOIN tgarmen_brg g ON g.brg_kode = d.poid_bhn_kode AND g.brg_jenis = 'ACCESORIES'
      WHERE d.poid_nomor = ?
      ORDER BY d.poid_bhn_kode, d.poid_size`,
     [nomor],
@@ -684,6 +688,7 @@ const getPrintData = async (nomor) => {
             IFNULL(so.so_kain, IFNULL(s.spk_kain, m.mspk_kain)) AS bahan,
             IFNULL(so.so_ukuran, IFNULL(s.spk_ukuran, m.mspk_ukuran)) AS ukuran,
             IFNULL(so.so_jumlah, IFNULL(s.spk_jumlah, m.mspk_jumlah)) AS jumlah,
+            IFNULL(so.so_cab, s.spk_cab) AS SpkCab, tu.user_bagian AS UserBagian,
             h.poi_jasa_kode, j.jasa_nama,
             h.poi_cab, c.pab_nama AS namacab,
             h.poi_sup, u.pab_nama AS namasup,
@@ -704,6 +709,8 @@ const getPrintData = async (nomor) => {
      LEFT JOIN tpabrik c ON c.pab_kode = h.poi_cab
      LEFT JOIN tpabrik u ON u.pab_kode = h.poi_sup
      LEFT JOIN tbahan b ON b.bhn_kode = d.poid_bhn_kode
+     LEFT JOIN tgarmen_brg g ON g.brg_kode = d.poid_bhn_kode AND g.brg_jenis = 'ACCESORIES'
+     LEFT JOIN tuser tu ON tu.user_kode = h.user_create
      WHERE h.poi_nomor = ?`,
     [nomor],
   );
@@ -724,6 +731,8 @@ const getPrintData = async (nomor) => {
     JumlahSpk: rows[0].jumlah,
     JasaKode: rows[0].poi_jasa_kode,
     JasaNama: rows[0].jasa_nama,
+    SpkCab: rows[0].SpkCab || "",
+    UserBagian: rows[0].UserBagian || "",
     GdgKode: rows[0].poi_cab,
     GdgNama: rows[0].namacab,
     SupKode: rows[0].poi_sup,
