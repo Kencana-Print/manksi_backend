@@ -48,6 +48,15 @@ const loadBahan = async (req, res) => {
   }
 };
 
+const loadAccesories = async (req, res) => {
+  try {
+    const data = await service.loadAccesories(req.body);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 const getById = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -88,6 +97,7 @@ module.exports = {
   checkSpk,
   checkJasa,
   loadBahan,
+  loadAccesories,
   getById,
   save,
   getPrintData,

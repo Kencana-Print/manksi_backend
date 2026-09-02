@@ -46,6 +46,13 @@ router.post(
 );
 
 router.post(
+  "/load-accesories",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.loadAccesories,
+);
+
+router.post(
   "/save",
   verifyToken,
   checkPermission(MENU_ID, "insert"),

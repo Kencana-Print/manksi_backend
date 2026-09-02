@@ -375,6 +375,66 @@ const loadBahan = async ({
 };
 
 // ─────────────────────────────────────────────────────────
+// LOAD ACCESORIES (tambah baris detail — khusus bagian GUDANG) —
+// Beda sumber dari loadBahan(): Accesories hidup di tgarmen_brg
+// (brg_jenis='ACCESORIES'), BUKAN di tbahan. Tidak terikat ke Jasa
+// sama sekali (Jasa itu konsep khusus alur Bahan produksi), dan
+// TIDAK ada breakdown per size — 1 kode selalu 1 baris polos.
+// getSudahPo() dipakai apa adanya karena generik, tidak spesifik
+// ke tabel Bahan.
+// ─────────────────────────────────────────────────────────
+const loadAccesories = async ({
+  kode,
+  nomorSpk,
+  jasa,
+  gdgAsal,
+  poiNomor,
+  existingRows = [],
+}) => {
+  if (!nomorSpk) throw new Error("SPK di isi dulu ya!");
+  if (!jasa) throw new Error("Jasa di isi dulu ya!");
+  if (!gdgAsal) throw new Error("Gudang Asal di isi dulu ya!");
+  if (!kode) throw new Error("Kode Accesories wajib diisi.");
+
+  const [rows] = await db.query(
+    `SELECT brg_kode, IF(brg_note="", brg_nama, CONCAT(brg_nama, " - ", brg_note)) AS brg_nama, brg_satuan
+     FROM tgarmen_brg
+     WHERE brg_aktif = 'Y' AND brg_jenis = 'ACCESORIES' AND brg_kode = ?
+     LIMIT 1`,
+    [kode],
+  );
+  if (rows.length === 0) {
+    throw new Error("Kode Accesories tersebut tidak ditemukan.");
+  }
+  const barang = rows[0];
+
+  const isDup = existingRows.some(
+    (r) => r.kode === barang.brg_kode && (r.size || "") === "",
+  );
+  if (isDup) {
+    throw new Error("Kode tsb sudah di input.");
+  }
+
+  const row = {
+    kode: barang.brg_kode,
+    nama: barang.brg_nama,
+    satuan: barang.brg_satuan,
+    size: "",
+    jumlah: 0,
+    sudahpo: await getSudahPo(
+      poiNomor,
+      gdgAsal,
+      nomorSpk,
+      jasa,
+      barang.brg_kode,
+      "",
+    ),
+  };
+
+  return { rows: [row], skipped: [] };
+};
+
+// ─────────────────────────────────────────────────────────
 // GET DETAIL FORM (mode edit) — replikasi loaddataall().
 // ─────────────────────────────────────────────────────────
 const getDetailForm = async (nomor) => {
@@ -691,6 +751,7 @@ module.exports = {
   checkSpk,
   checkJasa,
   loadBahan,
+  loadAccesories,
   getDetailForm,
   saveData,
   getPrintData,
