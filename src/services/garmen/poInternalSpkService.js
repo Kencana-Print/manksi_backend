@@ -116,8 +116,8 @@ const getDetailByNomor = async (nomor) => {
       SELECT
         d.poid_nomor AS Nomor,
         d.poid_bhn_kode AS Kode,
-        b.Bhn_Name AS Komponen,
-        b.Bhn_satuan AS Satuan,
+        COALESCE(b.Bhn_Name, g.brg_nama) AS Komponen,
+        COALESCE(b.Bhn_satuan, g.brg_satuan) AS Satuan,
         d.poid_size AS Size,
         d.poid_jumlah AS Jumlah,
         IFNULL((
@@ -139,6 +139,7 @@ const getDetailByNomor = async (nomor) => {
       FROM tpointernal_dtl d
       LEFT JOIN tpointernal_hdr h ON h.poi_nomor = d.poid_nomor
       LEFT JOIN tbahan b ON b.Bhn_kode = d.poid_bhn_kode
+      LEFT JOIN tgarmen_brg g ON g.brg_kode = d.poid_bhn_kode AND g.brg_jenis = 'ACCESORIES'
       WHERE d.poid_nomor = ?
     ) x
     ORDER BY x.Kode
