@@ -89,17 +89,24 @@ const searchInvoice = async (q = "", page = 1, limit = 50) => {
 const round = (v) => Math.round(Number(v) || 0);
 
 const computeTotal = (detail, disc, stsPpn, ppn, pph) => {
-  const totalBarang = detail.reduce(
-    (s, r) => s + round(Number(r.invd_harga) * Number(r.invd_jumlah)),
+  // Dasar PPN harus dari RAW sum (belum dibulatkan per baris) — konsisten
+  // dengan pola yang sudah diperbaiki di Invoice Tak Normal, supaya tidak
+  // ada selisih Rp1 akibat pembulatan ganda.
+  const totalBarangRaw = detail.reduce(
+    (s, r) => s + Number(r.invd_harga) * Number(r.invd_jumlah),
     0,
   );
+  const totalBarang = round(totalBarangRaw);
   const discVal = round(disc);
+
   if (!stsPpn) return totalBarang - discVal;
+
   if (pph === "PPh") {
-    return totalBarang - discVal + round((totalBarang * Number(ppn)) / 100);
+    return totalBarang - discVal + round((totalBarangRaw * Number(ppn)) / 100);
   }
-  const baseAfterDisc = totalBarang - discVal;
-  return baseAfterDisc + round((baseAfterDisc * Number(ppn)) / 100);
+
+  const baseAfterDiscRaw = totalBarangRaw - discVal;
+  return totalBarang - discVal + round((baseAfterDiscRaw * Number(ppn)) / 100);
 };
 
 // ─────────────────────────────────────────────────────────

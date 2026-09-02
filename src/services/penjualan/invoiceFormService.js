@@ -847,26 +847,28 @@ const getDataCetak = async (nomor) => {
 
   const round = (v) => Math.round(Number(v) || 0);
 
-  const totalBarang = dtl.reduce(
-    (s, r) => s + round(Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0)),
+  const totalBarangRaw = dtl.reduce(
+    (s, r) => s + Number(r.invd_jumlah || 0) * Number(r.invd_harga || 0),
     0,
   );
+  const totalBarang = round(totalBarangRaw); // display only
   const disc = round(hdr.inv_disc || 0);
 
-  let totalPpn = 0;
-  let grandTotal;
+  let grandTotalRaw;
   if (hdr.inv_sts_ppn === 1) {
     if (hdr.inv_pph === "PPh") {
-      totalPpn = round(totalBarang * (Number(hdr.inv_ppn) / 100));
-      grandTotal = totalBarang - disc + totalPpn;
+      grandTotalRaw =
+        totalBarangRaw - disc + (totalBarangRaw * Number(hdr.inv_ppn)) / 100;
     } else {
-      const baseAfterDisc = totalBarang - disc;
-      totalPpn = round(baseAfterDisc * (Number(hdr.inv_ppn) / 100));
-      grandTotal = baseAfterDisc + totalPpn;
+      const baseAfterDiscRaw = totalBarangRaw - disc;
+      grandTotalRaw =
+        baseAfterDiscRaw + (baseAfterDiscRaw * Number(hdr.inv_ppn)) / 100;
     }
   } else {
-    grandTotal = totalBarang - disc;
+    grandTotalRaw = totalBarangRaw - disc;
   }
+  const grandTotal = round(grandTotalRaw); // ⬅ satu-satunya pembulatan, samakan dgn Browse
+  const totalPpn = grandTotal - totalBarang + disc;
 
   const uangMuka = round(await getDebet(nomor));
   const nilaiPiutang = grandTotal - uangMuka;
