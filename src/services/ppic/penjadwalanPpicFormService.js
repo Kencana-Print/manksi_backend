@@ -500,6 +500,8 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
 };
 
 // ── UPDATE DETAIL FIELD — satu kolom di satu baris ──
+const DATE_FIELDS = ["pjwd_tgl_permintaan_kirim", "pjwd_tgl_kesepakatan"];
+
 const updateDetailField = async (
   pjwdId,
   field,
@@ -511,6 +513,15 @@ const updateDetailField = async (
     throw new Error("Field detail tidak dikenal.");
   }
   assertFieldOwnership(field, FIELD_OWNERSHIP, userKode, userBagian);
+
+  // ── Kolom bertipe DATE tidak boleh menerima string kosong — MySQL
+  // strict mode menolaknya. Native <input type="date"> browser bisa
+  // mengirim "" sesaat saat user masih mengedit salah satu segmen
+  // tanggal (hari/bulan/tahun) sebelum valuenya lengkap kembali.
+  let sanitizedValue = value;
+  if (DATE_FIELDS.includes(field) && (value === "" || value === undefined)) {
+    sanitizedValue = null;
+  }
 
   if (field === "pjwd_rencana") {
     const [[row]] = await db.query(
@@ -531,9 +542,9 @@ const updateDetailField = async (
 
   await db.query(
     `UPDATE tpenjadwalan_ppic_dtl SET ${field} = ? WHERE pjwd_id = ?`,
-    [value, pjwdId],
+    [sanitizedValue, pjwdId],
   );
-  return { pjwd_id: Number(pjwdId), field, value };
+  return { pjwd_id: Number(pjwdId), field, value: sanitizedValue };
 };
 
 // ── DELETE DETAIL ROW ──
