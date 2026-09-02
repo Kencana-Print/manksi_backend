@@ -1151,6 +1151,17 @@ const getRealisasiPenawaranDashboard = async (user) => {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
 
+  // BARU: subquery per pen_nomor — apakah SEMUA detailnya berstatus
+  // BATAL. Kalau iya, penawaran ini "dibatalkan penuh" dan harus
+  // dikeluarkan dari hitungan BelumKonversi (bukan berarti tertunda,
+  // tapi memang sudah tidak akan lanjut).
+  const BATAL_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
   const sqlMetric = `
     SELECT
       COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
@@ -1162,11 +1173,14 @@ const getRealisasiPenawaranDashboard = async (user) => {
             THEN h.pen_nomor END) AS KonversiLambat,
       COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL AND spk.HariKonversi > 90
             THEN h.pen_nomor END) AS KonversiSangatLambat,
-      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NULL
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NULL AND bt.pen_nomor IS NULL
             THEN h.pen_nomor END) AS BelumKonversi,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NULL AND bt.pen_nomor IS NOT NULL
+            THEN h.pen_nomor END) AS Batal,
       ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
     FROM tpenawaran_hdr h
     LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
@@ -1177,9 +1191,12 @@ const getRealisasiPenawaranDashboard = async (user) => {
       DATE_FORMAT(h.pen_tanggal, '%Y-%m') AS Bulan,
       COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
       COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NOT NULL THEN h.pen_nomor END) AS Konversi,
+      COUNT(DISTINCT CASE WHEN spk.HariKonversi IS NULL AND bt.pen_nomor IS NOT NULL
+            THEN h.pen_nomor END) AS Batal,
       ROUND(AVG(spk.HariKonversi), 1) AS RataRataHari
     FROM tpenawaran_hdr h
     LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
@@ -1194,6 +1211,7 @@ const getRealisasiPenawaranDashboard = async (user) => {
         WHEN spk.HariKonversi BETWEEN 8 AND 30  THEN 'Normal'
         WHEN spk.HariKonversi BETWEEN 31 AND 90 THEN 'Lambat'
         WHEN spk.HariKonversi > 90              THEN 'Sangat Lambat'
+        WHEN bt.pen_nomor IS NOT NULL           THEN 'Batal'
         ELSE 'Belum SPK'
       END AS Bucket,
       COUNT(DISTINCT h.pen_nomor) AS Jumlah
@@ -1209,11 +1227,12 @@ const getRealisasiPenawaranDashboard = async (user) => {
         AND s.spk_pen_nomor <> ''
       GROUP BY s.spk_pen_nomor
     ) spk ON spk.spk_pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
     GROUP BY Bucket
-    ORDER BY FIELD(Bucket, 'Cepat', 'Normal', 'Lambat', 'Sangat Lambat', 'Belum SPK')
+    ORDER BY FIELD(Bucket, 'Cepat', 'Normal', 'Lambat', 'Sangat Lambat', 'Batal', 'Belum SPK')
   `;
 
   const [[metric], [tren], [distribusi]] = await Promise.all([
@@ -1243,6 +1262,13 @@ const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
 
+  const BATAL_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
   const sql = `
     SELECT
       h.pen_nomor                                AS NomorPenawaran,
@@ -1251,10 +1277,12 @@ const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
       IFNULL(spk.TotalSPK, 0)                    AS TotalSPK,
       spk.SpkPertama,
       DATE_FORMAT(spk.TglSpkPertama, '%d-%m-%Y') AS TglSpkPertama,
-      spk.HariKonversi
+      spk.HariKonversi,
+      IF(bt.pen_nomor IS NOT NULL, 1, 0)          AS IsBatal
     FROM tpenawaran_hdr h
     INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
     LEFT JOIN (${REALISASI_SUBQUERY_DEF}) spk ON spk.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}

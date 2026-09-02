@@ -85,8 +85,40 @@ const requireAdmin = (req, res, next) => {
     .json({ message: "Akses ditolak. Modul ini hanya untuk Administrator." });
 };
 
+/**
+ * Middleware untuk membatasi endpoint hanya bisa diakses oleh user
+ * dari bagian/departemen tertentu (mis. PPIC untuk konfirmasi
+ * kesanggupan Pra Order). Beda dari checkPermission (menu access) —
+ * ini validasi departemen, dipakai saat aksi tertentu di suatu menu
+ * memang cuma boleh dilakukan role tertentu meski menu-nya sama
+ * dan sudah lolos checkPermission.
+ */
+const checkBagian = (...allowedBagian) => {
+  const allowedUpper = allowedBagian.map((b) => b.toUpperCase());
+
+  return (req, res, next) => {
+    if (!req.user || !req.user.kode) {
+      return res
+        .status(401)
+        .json({ message: "Akses ditolak. Token tidak valid." });
+    }
+
+    const bagian = (req.user.bagian || "").toUpperCase();
+    const kode = req.user.kode.toUpperCase();
+
+    if (kode === "ADMIN" || allowedUpper.includes(bagian)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      message: `Aksi ini hanya bisa dilakukan oleh bagian ${allowedBagian.join("/")}.`,
+    });
+  };
+};
+
 module.exports = {
   verifyToken,
   checkPermission,
   requireAdmin,
+  checkBagian,
 };

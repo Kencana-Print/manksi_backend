@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.6",
+    date: "2026-09-02",
+    changes: [
+      {
+        type: "added",
+        text: "Modul Baru Komitmen Kirim, digunakan untuk membantu tim Marketing dan PPIC dalam menyusun jadwal pada meeting tiap hari Senin. Dilengkapi dengan fitur Kolaborasi Real-time — beberapa user (Marketing & PPIC) bisa mengedit dokumen yang sama secara bersamaan tanpa saling menimpa data, lengkap dengan indikator siapa saja yang sedang membuka dan sedang mengetik di field yang sama.",
+      },
+    ],
+  },
+  {
     version: "1.0.5",
     date: "2026-08-27",
     changes: [

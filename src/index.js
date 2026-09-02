@@ -5,6 +5,8 @@ const path = require("path");
 const axios = require("axios");
 const https = require("https");
 const fs = require("fs");
+const http = require("http");
+const { initSocket } = require("./socket");
 
 const authRoutes = require("./routes/authRoute");
 const lookupRoutes = require("./routes/lookupRoutes");
@@ -51,6 +53,8 @@ const spkPpicRoutes = require("./routes/ppic/spkRoutes");
 const spkPpicFormRoutes = require("./routes/ppic/spkFormRoutes");
 const planningSpkRoutes = require("./routes/ppic/planningSpkRoutes");
 const planningSpkFormRoutes = require("./routes/ppic/planningSpkFormRoutes");
+const penjadwalanPpicRoutes = require("./routes/ppic/penjadwalanPpicRoutes");
+const penjadwalanPpicFormRoutes = require("./routes/ppic/penjadwalanPpicFormRoutes");
 
 // Garmen Routes
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
@@ -150,6 +154,8 @@ const poExternalGarmenFormRoutes = require("./routes/pembelian/poExternalGarmenF
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
 const mppbFormRoutes = require("./routes/penjualan/mppbFormRoutes");
+const praOrderRoutes = require("./routes/penjualan/praOrderRoutes");
+const praOrderFormRoutes = require("./routes/penjualan/praOrderFormRoutes");
 const mintaHargaRoutes = require("./routes/penjualan/mintaHargaRoutes");
 const mintaHargaFormRoutes = require("./routes/penjualan/mintaHargaFormRoutes");
 const penawaranRoutes = require("./routes/penjualan/penawaranRoutes");
@@ -410,6 +416,8 @@ app.use("/api/ppic/spk", spkPpicRoutes);
 app.use("/api/ppic/spk/form", spkPpicFormRoutes);
 app.use("/api/ppic/planning-spk", planningSpkRoutes);
 app.use("/api/ppic/planning-spk-form", planningSpkFormRoutes);
+app.use("/api/ppic/penjadwalan", penjadwalanPpicRoutes);
+app.use("/api/ppic/penjadwalan-form", penjadwalanPpicFormRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
@@ -544,6 +552,8 @@ app.use("/api/garmen/lhk-pola-form", lhkPolaFormRoutes);
 
 app.use("/api/penjualan/mppb", mppbRoutes);
 app.use("/api/penjualan/mppb/form", mppbFormRoutes);
+app.use("/api/penjualan/pra-order", praOrderRoutes);
+app.use("/api/penjualan/pra-order-form", praOrderFormRoutes);
 app.use("/api/penjualan/minta-harga", mintaHargaRoutes);
 app.use("/api/penjualan/minta-harga-form", mintaHargaFormRoutes);
 app.use("/api/penjualan/penawaran", penawaranRoutes);
@@ -756,7 +766,14 @@ app.use("/api/tools/agenda-pic", agendaPicRoutes);
 
 app.use("/api/system/version", versionRoutes);
 
+const httpServer = http.createServer(app);
+const io = initSocket(httpServer);
+
+// Supaya controller/service lain bisa akses instance io kalau perlu
+// broadcast dari REST endpoint (dipakai di Fase 2/3 nanti)
+app.set("io", io);
+
 const PORT = process.env.PORT || 3088;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Server Manksi running on port ${PORT}`);
 });
