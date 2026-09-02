@@ -699,7 +699,10 @@ const getPrintData = async (nomor) => {
             -- fallback SO -> SPK -> MAP seperti kolom lain di query ini.
             IFNULL(so.so_divisi, IFNULL(s.spk_divisi, m.mspk_divisi)) AS divisi,
             IFNULL(so.so_invdc, s.spk_invdc) AS invdc,
-            d.poid_bhn_kode, b.bhn_name, b.bhn_satuan, d.poid_size, d.poid_jumlah
+            d.poid_bhn_kode,
+            COALESCE(b.bhn_name, g.brg_nama) AS bhn_name,
+            COALESCE(b.bhn_satuan, g.brg_satuan) AS bhn_satuan,
+            d.poid_size, d.poid_jumlah
      FROM tpointernal_hdr h
      LEFT JOIN tpointernal_dtl d ON d.poid_nomor = h.poi_nomor
      LEFT JOIN tsalesorder so ON so.so_nomor = h.poi_spk_nomor
