@@ -22,6 +22,10 @@ const ExcelJS = require("exceljs");
 //      dihitung in-memory dari index array.
 //   5. Export CSV & XLSX SAMA-SAMA menandai inv_hdr.isexportppn=1,
 //      dibungkus transaksi (Delphi tidak transaksional per-baris).
+//   6. Nama barang/jasa pada export (CSV baris "OF" & sheet
+//      DetailFaktur) memprioritaskan nama eksternal: so_nama2
+//      (tsalesorder) lalu spk_nama2 (tspk), baru fallback ke
+//      brg_name (tbarang) jika keduanya kosong.
 // ═══════════════════════════════════════════════════════════
 
 // ─────────────────────────────────────────────────────────
@@ -112,11 +116,14 @@ const getExportInvoices = async (
 
   const nomorList = invoices.map((i) => i.inv_nomor);
   const placeholders = nomorList.map(() => "?").join(",");
+  // Prioritas nama barang/jasa: nama eksternal dulu — so_nama2 (SO)
+  // lalu spk_nama2 (SPK) — baru fallback ke nama internal brg_name.
   const [details] = await db.query(
     `SELECT
        d.invd_inv_nomor, d.invd_spk_nomor, d.invd_harga, d.invd_jumlah,
-       IFNULL(s.spk_nama2, b.brg_name) AS nama_barang
+       COALESCE(so.so_nama2, s.spk_nama2, b.brg_name) AS nama_barang
      FROM tinv_dtl d
+     LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
      LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
      LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
      WHERE d.invd_inv_nomor IN (${placeholders})`,
