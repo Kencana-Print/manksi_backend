@@ -301,6 +301,13 @@ const save = async (data, userKode, isNewMode) => {
       if (!nomorMap || nomorMap === "Baru= Nomor Otomatis") {
         nomorMap = await generateNomor(data.PerushKode, data.JoKode);
       }
+      // ⬅ BARU: kalau ini MAP revisi (ada Referensi), salin lampiran
+      // fisik dari nomor lama ke nomor baru sebelum lanjut insert header.
+      // Best-effort — kegagalan copy TIDAK membatalkan simpan MAP.
+      if (data.Referensi && String(data.Referensi).trim()) {
+        copyLampiranFromReferensi(data.Cab || "HO-", data.Referensi, nomorMap);
+      }
+
       // ← tambahan: sync approval NOPO, tentukan status aktif
       const noPoPendingCreate = await syncNoPoApproval(
         conn,
@@ -524,6 +531,57 @@ const save = async (data, userKode, isNewMode) => {
   } finally {
     conn.release();
   }
+};
+
+// ─────────────────────────────────────────────────────────
+// COPY LAMPIRAN DARI MAP REFERENSI — dipanggil saat MAP baru dibuat
+// dari mode Revisi (data.Referensi terisi, isNewMode=true). Menyalin
+// file fisik MAIN/PO/ACC dari nomor lama ke nomor baru, supaya MAP
+// revisi otomatis punya lampiran yang sama tanpa user upload ulang.
+// Best-effort per file — satu file gagal/tidak ada tidak menggagalkan
+// yang lain atau proses simpan secara keseluruhan.
+// ─────────────────────────────────────────────────────────
+const copyLampiranFromReferensi = (cabang, nomorLama, nomorBaru) => {
+  const folderPath = path.join(
+    process.cwd(),
+    "public",
+    "images",
+    cabang,
+    "map",
+  );
+
+  const tryCopy = (suffix, ext) => {
+    const srcName = `${nomorLama}${suffix}.${ext}`;
+    const destName = `${nomorBaru}${suffix}.${ext}`;
+    const srcPath = path.join(folderPath, srcName);
+    const destPath = path.join(folderPath, destName);
+    try {
+      if (fs.existsSync(srcPath)) {
+        fs.copyFileSync(srcPath, destPath);
+        return true;
+      }
+    } catch (e) {
+      console.error(
+        `Gagal copy lampiran ${srcName} -> ${destName}:`,
+        e.message,
+      );
+    }
+    return false;
+  };
+
+  // MAIN (gambar desain utama) — selalu .jpg
+  tryCopy("", "jpg");
+
+  // PO — coba jpg dulu, kalau tidak ada coba pdf, kalau tidak ada
+  // coba format lama -email.jpg (fallback sesuai pola frontend)
+  if (!tryCopy("-po", "jpg")) {
+    if (!tryCopy("-po", "pdf")) {
+      tryCopy("-email", "jpg");
+    }
+  }
+
+  // ACC (bukti persetujuan customer) — selalu .jpg
+  tryCopy("-acc", "jpg");
 };
 
 // --- UPLOAD IMAGE/PDF (MAIN, PO, ACC) ---
