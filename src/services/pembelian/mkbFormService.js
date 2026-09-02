@@ -325,9 +325,11 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
       LEFT JOIN tjenisorder ON so_jo_kode = jo_kode
       WHERE so_aktif = "Y"
       UNION ALL
-      SELECT spk_nomor AS Nomor, brg_name AS Nama, jo_nama AS JenisOrder, spk_jumlah AS Jumlah, spk_memo AS Memo
+      SELECT spk_nomor AS Nomor, 
+       COALESCE(brg_name, spk_nama) AS Nama,   -- ⬅ fallback ke spk_nama kalau tbarang tidak ada
+       jo_nama AS JenisOrder, spk_jumlah AS Jumlah, spk_memo AS Memo
       FROM tspk 
-      INNER JOIN tbarang ON spk_nomor = brg_kode
+      LEFT JOIN tbarang ON spk_nomor = brg_kode      -- ⬅ dari INNER jadi LEFT
       LEFT JOIN tjenisorder ON spk_jo_kode = jo_kode
       WHERE spk_aktif = "Y"
       UNION ALL
