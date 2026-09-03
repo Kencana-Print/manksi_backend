@@ -471,15 +471,11 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     throw new Error("Baris harus punya SO, Pra Order, atau MAP.");
   }
 
-  // ── Lock total Qty per periode ──
+  // ── Info Qty per periode — TIDAK lagi memblokir, hanya info warning ──
   const rencanaVal = Number(Rencana) || 0;
   const totalSekarang = await getTotalRencana(pjwNomor);
-  if (totalSekarang + rencanaVal > MAX_QTY_PER_PERIODE) {
-    const sisa = MAX_QTY_PER_PERIODE - totalSekarang;
-    throw new Error(
-      `Total Qty periode ini akan melebihi batas ${MAX_QTY_PER_PERIODE.toLocaleString("id-ID")}. Sisa kuota: ${sisa.toLocaleString("id-ID")}.`,
-    );
-  }
+  const totalSetelah = totalSekarang + rencanaVal;
+  const melebihiBatas = totalSetelah > MAX_QTY_PER_PERIODE;
 
   const permintaanKirimSafe = PermintaanKirim
     ? String(PermintaanKirim).substring(0, 10)
@@ -500,7 +496,12 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       userKode,
     ],
   );
-  return { pjwd_id: result.insertId };
+  return {
+    pjwd_id: result.insertId,
+    warning: melebihiBatas
+      ? { totalSetelah, batas: MAX_QTY_PER_PERIODE }
+      : null,
+  };
 };
 
 // ── UPDATE DETAIL FIELD — satu kolom di satu baris ──
@@ -518,14 +519,13 @@ const updateDetailField = async (
   }
   assertFieldOwnership(field, FIELD_OWNERSHIP, userKode, userBagian);
 
-  // ── Kolom bertipe DATE tidak boleh menerima string kosong — MySQL
-  // strict mode menolaknya. Native <input type="date"> browser bisa
-  // mengirim "" sesaat saat user masih mengedit salah satu segmen
-  // tanggal (hari/bulan/tahun) sebelum valuenya lengkap kembali.
   let sanitizedValue = value;
   if (DATE_FIELDS.includes(field) && (value === "" || value === undefined)) {
     sanitizedValue = null;
   }
+
+  let melebihiBatas = false;
+  let totalSetelah = null;
 
   if (field === "pjwd_rencana") {
     const [[row]] = await db.query(
@@ -536,19 +536,22 @@ const updateDetailField = async (
 
     const rencanaBaru = Number(value) || 0;
     const totalLain = await getTotalRencana(row.pjwd_pjw_nomor, pjwdId);
-    if (totalLain + rencanaBaru > MAX_QTY_PER_PERIODE) {
-      const sisa = MAX_QTY_PER_PERIODE - totalLain;
-      throw new Error(
-        `Total Qty periode ini akan melebihi batas ${MAX_QTY_PER_PERIODE.toLocaleString("id-ID")}. Sisa kuota untuk baris ini: ${sisa.toLocaleString("id-ID")}.`,
-      );
-    }
+    totalSetelah = totalLain + rencanaBaru;
+    melebihiBatas = totalSetelah > MAX_QTY_PER_PERIODE;
   }
 
   await db.query(
     `UPDATE tpenjadwalan_ppic_dtl SET ${field} = ? WHERE pjwd_id = ?`,
     [sanitizedValue, pjwdId],
   );
-  return { pjwd_id: Number(pjwdId), field, value: sanitizedValue };
+  return {
+    pjwd_id: Number(pjwdId),
+    field,
+    value: sanitizedValue,
+    warning: melebihiBatas
+      ? { totalSetelah, batas: MAX_QTY_PER_PERIODE }
+      : null,
+  };
 };
 
 // ── DELETE DETAIL ROW ──
