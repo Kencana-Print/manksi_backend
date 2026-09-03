@@ -357,12 +357,15 @@ const saveData = async (payload, userKode, userBagian) => {
 // ═══════════════════════════════════════════════════════════
 
 const FIELD_OWNERSHIP = {
-  // field -> siapa yang boleh ubah (selain ADMIN, yang selalu boleh)
   pjwd_rencana: "MARKETING",
   pjwd_tgl_permintaan_kirim: "MARKETING",
   pjwd_status_permintaan: "MARKETING",
   pjwd_tgl_kesepakatan: "PPIC",
   pjwd_ket_kesepakatan: "PPIC",
+  pjwd_nama_manual: "MARKETING",
+  pjwd_pesan_manual: "MARKETING",
+  pjwd_kirim_manual: "MARKETING",
+  pjwd_realisasi_manual: "MARKETING",
 };
 
 const HEADER_FIELD_OWNERSHIP = {
@@ -464,36 +467,46 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       "Menambah baris hanya bisa dilakukan oleh bagian MARKETING.",
     );
   }
-
-  const { SoNomor, NomorPraOrder, MapNomor, Rencana, PermintaanKirim } =
-    rowData;
-  if (!SoNomor && !NomorPraOrder && !MapNomor) {
-    throw new Error("Baris harus punya SO, Pra Order, atau MAP.");
+  const {
+    SoNomor,
+    NomorPraOrder,
+    MapNomor,
+    Rencana,
+    PermintaanKirim,
+    NamaManual,
+    PesanManual,
+    KirimManual,
+    RealisasiManual,
+  } = rowData;
+  const isManual = !SoNomor && !NomorPraOrder && !MapNomor;
+  if (isManual && !NamaManual) {
+    throw new Error("Baris manual harus punya Nama.");
   }
-
-  // ── Info Qty per periode — TIDAK lagi memblokir, hanya info warning ──
   const rencanaVal = Number(Rencana) || 0;
   const totalSekarang = await getTotalRencana(pjwNomor);
   const totalSetelah = totalSekarang + rencanaVal;
   const melebihiBatas = totalSetelah > MAX_QTY_PER_PERIODE;
-
   const permintaanKirimSafe = PermintaanKirim
     ? String(PermintaanKirim).substring(0, 10)
     : null;
-
   const [result] = await db.query(
     `INSERT INTO tpenjadwalan_ppic_dtl
        (pjwd_pjw_nomor, pjwd_so_nomor, pjwd_pro_nomor, pjwd_map_nomor, pjwd_rencana,
-        pjwd_tgl_permintaan_kirim, pjwd_status_permintaan, pjwd_user_create)
-     VALUES (?, ?, ?, ?, ?, ?, 'CLOSE', ?)`,
+        pjwd_tgl_permintaan_kirim, pjwd_status_permintaan, pjwd_user_create,
+        pjwd_nama_manual, pjwd_pesan_manual, pjwd_kirim_manual, pjwd_realisasi_manual)
+     VALUES (?, ?, ?, ?, ?, ?, 'CLOSE', ?, ?, ?, ?, ?)`,
     [
       pjwNomor,
       SoNomor || null,
       NomorPraOrder || null,
       MapNomor || null,
-      Number(Rencana) || 0,
+      rencanaVal,
       permintaanKirimSafe,
       userKode,
+      isManual ? NamaManual : null,
+      isManual ? Number(PesanManual) || 0 : null,
+      isManual ? Number(KirimManual) || 0 : null,
+      isManual ? Number(RealisasiManual) || 0 : null,
     ],
   );
   return {
