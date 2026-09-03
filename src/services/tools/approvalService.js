@@ -1496,6 +1496,21 @@ const submitRealisasiBedaBahanOtorisasi = async (
         [nomor],
       );
       await realisasiBahanFormService.applyStokKeluar(nomor, conn);
+
+      // ⬅ BARU: approval beda bahan = keputusan bisnis "substitusi
+      // diterima" — Permintaan Bahan terkait langsung di-close,
+      // supaya tidak nyangkut PARTIAL selamanya (baris kode asli
+      // permanen netto=0 karena barangnya discan sebagai kode lain).
+      const [[realisasiHdr]] = await conn.query(
+        `SELECT promin_minta FROM tproduksiminta_hdr WHERE promin_nomor = ?`,
+        [nomor],
+      );
+      if (realisasiHdr?.promin_minta) {
+        await conn.query(
+          `UPDATE tmintabahan_hdr SET min_close = 1 WHERE min_nomor = ?`,
+          [realisasiHdr.promin_minta],
+        );
+      }
     }
 
     await conn.commit();

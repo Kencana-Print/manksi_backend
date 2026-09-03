@@ -177,4 +177,43 @@ router.get(
   controller.getPipelineMenggantung,
 );
 
+router.get(
+  "/map-spk-belum-permintaan-summary",
+  verifyToken,
+  controller.getMapSpkBelumPermintaanSummary,
+);
+router.get(
+  "/map-spk-belum-permintaan-list",
+  verifyToken,
+  controller.getMapSpkBelumPermintaanList,
+);
+router.get(
+  "/permintaan-belum-realisasi-summary",
+  verifyToken,
+  controller.getPermintaanBelumRealisasiSummary,
+);
+router.get(
+  "/permintaan-belum-realisasi-list",
+  verifyToken,
+  controller.getPermintaanBelumRealisasiList,
+);
+router.get(
+  "/po-bahan-belum-datang-summary",
+  verifyToken,
+  controller.getPoBahanBelumDatangSummary,
+);
+router.get(
+  "/po-bahan-belum-datang-list",
+  verifyToken,
+  controller.getPoBahanBelumDatangList,
+);
+router.get("/stok-bebas-summary", verifyToken, controller.getStokBebasSummary);
+router.get("/stok-bebas-list", verifyToken, controller.getStokBebasList);
+router.get(
+  "/buffer-kaosan-summary",
+  verifyToken,
+  controller.getBufferKaosanSummary,
+);
+router.get("/buffer-kaosan-list", verifyToken, controller.getBufferKaosanList);
+
 module.exports = router;

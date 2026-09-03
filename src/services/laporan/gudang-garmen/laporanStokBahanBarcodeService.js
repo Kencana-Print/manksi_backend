@@ -100,6 +100,7 @@ const getBrowseDetail = async (kode, query) => {
       
       x.keluar AS 'OUT',
       x.stk AS Stok,
+      IF(x.stk < 3, 'REGULER', 'ECER') AS Kategori,
       
       IFNULL((
         SELECT IF(p.bpb_po_Nomor <> "", p.bpb_po_Nomor, DATE_FORMAT(p.bpb_tanggal, "%d-%m-%Y")) 
@@ -108,6 +109,15 @@ const getBrowseDetail = async (kode, query) => {
         LEFT JOIN tbpb_hdr p ON p.bpb_Nomor = h.bar_bpb
         WHERE d.bard_barcode = x.Barcode LIMIT 1
       ), "") AS NomorPO,
+
+      IFNULL((
+        SELECT pm.promin_spk_nomor
+        FROM tproduksiminta_dtl2 pd2
+        INNER JOIN tproduksiminta_hdr pm ON pm.promin_nomor = pd2.promind2_promin_nomor
+        WHERE pd2.promind2_barcode = x.Barcode AND pm.promin_spk_nomor <> ""
+        ORDER BY pm.promin_tanggal DESC
+        LIMIT 1
+      ), "") AS NomorSpk,
       
       (SELECT d.bard_ket FROM tbahan_barcode_dtl d WHERE d.bard_barcode = x.Barcode LIMIT 1) AS Keterangan
       

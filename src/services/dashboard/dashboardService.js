@@ -2101,6 +2101,7 @@ const getStokAccVsMkaList = async (user, limit = 20, offset = 0) => {
         Mka: r.Mka,
         Free: r.Free,
         spkList: dtl.map((d) => ({
+          NomorMka: d.NomorMKA,
           Spk: d.Spk,
           NamaSpk: d.Nama,
           Mka: d.Mka,
@@ -2608,6 +2609,299 @@ const getCompanyPulseSummary = async (user) => {
   };
 };
 
+// ── a. MAP/SPK belum ada Permintaan Bahan maupun Realisasi ──
+const getMapSpkBelumPermintaanSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT COUNT(*) AS Total FROM (
+      SELECT s.spk_nomor AS Nomor
+      FROM tspk s
+      WHERE s.spk_aktif = 'Y' AND s.spk_close = 0
+        AND s.spk_divisi IN (3, 4, 6)
+        AND NOT EXISTS (SELECT 1 FROM tmintabahan_hdr h WHERE h.min_spk_nomor = s.spk_nomor)
+        AND NOT EXISTS (SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = s.spk_nomor)
+      UNION ALL
+      SELECT m.mspk_nomor AS Nomor
+      FROM tmemospk m
+      WHERE m.mspk_aktif = 'Y' AND m.mspk_close = 0
+        AND m.mspk_divisi IN (3, 4, 6)
+        AND NOT EXISTS (SELECT 1 FROM tspk s WHERE s.spk_memo = m.mspk_nomor AND s.spk_aktif = 'Y')
+        AND NOT EXISTS (SELECT 1 FROM tsalesorder so WHERE so.so_memo = m.mspk_nomor AND so.so_aktif = 'Y')
+        AND NOT EXISTS (SELECT 1 FROM tmintabahan_hdr h WHERE h.min_spk_nomor = m.mspk_nomor)
+        AND NOT EXISTS (SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = m.mspk_nomor)
+    ) x
+  `;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.Total || 0 };
+};
+
+const getMapSpkBelumPermintaanList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT Nomor, Nama, Sumber,
+      DATE_FORMAT(Tanggal, '%d-%m-%Y') AS Tanggal,
+      DATE_FORMAT(Dateline, '%d-%m-%Y') AS Dateline,
+      DATEDIFF(Dateline, CURDATE()) AS SisaHari
+    FROM (
+      SELECT s.spk_nomor AS Nomor, s.spk_nama AS Nama, 'SPK' AS Sumber,
+             s.spk_tanggal AS Tanggal, s.spk_dateline AS Dateline
+      FROM tspk s
+      WHERE s.spk_aktif = 'Y' AND s.spk_close = 0
+        AND s.spk_divisi IN (3, 4, 6)
+        AND NOT EXISTS (SELECT 1 FROM tmintabahan_hdr h WHERE h.min_spk_nomor = s.spk_nomor)
+        AND NOT EXISTS (SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = s.spk_nomor)
+      UNION ALL
+      SELECT m.mspk_nomor, m.mspk_nama, 'MAP', m.mspk_tanggal, m.mspk_dateline
+      FROM tmemospk m
+      WHERE m.mspk_aktif = 'Y' AND m.mspk_close = 0
+        AND m.mspk_divisi IN (3, 4, 6)
+        AND NOT EXISTS (SELECT 1 FROM tspk s WHERE s.spk_memo = m.mspk_nomor AND s.spk_aktif = 'Y')
+        AND NOT EXISTS (SELECT 1 FROM tsalesorder so WHERE so.so_memo = m.mspk_nomor AND so.so_aktif = 'Y')
+        AND NOT EXISTS (SELECT 1 FROM tmintabahan_hdr h WHERE h.min_spk_nomor = m.mspk_nomor)
+        AND NOT EXISTS (SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = m.mspk_nomor)
+    ) x
+    ORDER BY Dateline ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── b. Permintaan Bahan belum direalisasi ──
+const getPermintaanBelumRealisasiSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT
+      COUNT(*) AS Total,
+      SUM(CASE WHEN min_close = 0 THEN 1 ELSE 0 END) AS BelumSamaSekali,
+      SUM(CASE WHEN min_close = 2 THEN 1 ELSE 0 END) AS Sebagian
+    FROM tmintabahan_hdr
+    WHERE min_close IN (0, 2)
+  `;
+  const [rows] = await db.query(sql);
+  return rows[0] || {};
+};
+
+const getPermintaanBelumRealisasiList = async (
+  user,
+  limit = 20,
+  offset = 0,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT
+      h.min_nomor AS Nomor,
+      DATE_FORMAT(h.min_tanggal, '%d-%m-%Y') AS Tanggal,
+      h.min_spk_nomor AS Spk,
+      IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
+      h.min_cab AS Cab,
+      IF(h.min_close = 0, 'Belum', 'Sebagian') AS Status,
+      DATEDIFF(CURDATE(), h.min_tanggal) AS UmurHari
+    FROM tmintabahan_hdr h
+    LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
+    WHERE h.min_close IN (0, 2)
+    ORDER BY h.min_tanggal ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── c. PO Bahan belum datang (belum ada BPB / masih sisa) ──
+const getPoBahanBelumDatangSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `
+    SELECT COUNT(*) AS TotalPO
+    FROM tpo_hdr h
+    WHERE h.po_jenis <> 1 AND h.po_close IN (0, 2)
+  `;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.TotalPO || 0 };
+};
+
+const getPoBahanBelumDatangList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT
+      h.po_nomor AS Nomor,
+      DATE_FORMAT(h.po_tanggal, '%d-%m-%Y') AS Tanggal,
+      s.sup_nama AS Supplier,
+      IF(h.po_close = 0, 'OPEN', 'ON PROSES') AS Status,
+      DATEDIFF(CURDATE(), h.po_tanggal) AS UmurHari
+    FROM tpo_hdr h
+    LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    WHERE h.po_jenis <> 1 AND h.po_close IN (0, 2)
+    ORDER BY h.po_tanggal ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── f. Stok Bebas (Free Stock) — Stok saat ini dikurangi total
+// kebutuhan MKB yang belum terealisasi, per kode bahan. Free < 0
+// berarti stok fisik sudah "terpakai" oleh kebutuhan MKB lain yang
+// belum diambil — meski Stok masih terlihat positif di kartu stok.
+const STOK_BEBAS_BASE_QUERY = `
+  SELECT X.Kode, X.Nama, X.Satuan, X.Stok, IFNULL(mk.MkbBelumRealisasi, 0) AS MkbBelumRealisasi,
+    (X.Stok - IFNULL(mk.MkbBelumRealisasi, 0)) AS Free
+  FROM (
+    SELECT
+      LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) AS Kode,
+      b.Bhn_Name AS Nama,
+      b.Bhn_satuan AS Satuan,
+      SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
+    FROM tmasterstok_barcode c
+    LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
+    WHERE c.mst_aktif = 'Y' AND c.mst_tanggal <= CURDATE()
+    GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
+  ) X
+  LEFT JOIN (
+    SELECT d.mkbd_bhn_kode AS KodeBahan,
+      SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs - (
+        IFNULL((
+          SELECT SUM(i.pod_jumlah) FROM tpo_dtl i
+          WHERE i.pod_mkb_nomor = h.mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode
+        ), 0)
+        + IFNULL((
+          SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tpo_dtl p
+          LEFT JOIN tbpb_dtl2 i ON i.bpbd2_po_nomor = p.pod_po_nomor AND i.bpbd2_nourut = p.pod_nourut
+          WHERE p.pod_mkb_nomor = d.mkbd_mkb_nomor AND p.pod_bhn_kode = d.mkbd_bhn_kode
+          GROUP BY p.pod_bhn_kode, p.pod_mkb_nomor
+        ), 0)
+        + IFNULL((
+          SELECT IF(k.mkbd2_qty <= SUM(p.bpbd2_jumlah), k.mkbd2_qty, SUM(p.bpbd2_jumlah))
+          FROM tbpb_dtl2 p
+          INNER JOIN tmkb_dtl2 k ON k.mkbd2_po_nomor = p.bpbd2_po_nomor AND k.mkbd2_pourut = p.bpbd2_nourut
+          WHERE k.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND k.mkbd2_nourut = d.mkbd_nourut
+        ), 0)
+        + IFNULL((
+          SELECT SUM(i.bpbd_jumlah) FROM tbpb_dtl i
+          WHERE i.bpbd_mkb = h.mkb_nomor AND i.bpbd_bhn_kode = d.mkbd_bhn_kode AND i.bpbd_nourut = d.mkbd_nourut
+        ), 0)
+      ), 0)) AS MkbBelumRealisasi
+    FROM tmkb_dtl d
+    LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+    GROUP BY d.mkbd_bhn_kode
+  ) mk ON mk.KodeBahan = X.Kode
+  WHERE X.Stok > 0 OR X.Stok < -0.1
+`;
+
+const getStokBebasSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `SELECT COUNT(*) AS Total FROM (${STOK_BEBAS_BASE_QUERY}) y WHERE y.Free < 0`;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.Total || 0 };
+};
+
+const getStokBebasList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT Kode, Nama, Satuan, Stok, MkbBelumRealisasi, Free
+    FROM (${STOK_BEBAS_BASE_QUERY}) y
+    WHERE y.Free < 0
+    ORDER BY y.Free ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── g. Monitoring Buffer Bahan & Aksesoris KAOSAN ──
+// Bahan: project KAOSAN (MID(Bhn_kode,10,1) -> tbahan_project).
+// Aksesoris: tgarmen_brg tidak punya kolom project, jadi dideteksi
+// dari brg_nama mengandung kata "KAOSAN" (sesuai penamaan barang).
+const BUFFER_KAOSAN_BASE_QUERY = `
+  SELECT Kode, Nama, Satuan, Buffer, StokAkhir, Tipe FROM (
+    SELECT
+      b.Bhn_kode AS Kode,
+      b.Bhn_Name AS Nama,
+      b.Bhn_satuan AS Satuan,
+      b.bhn_buffer AS Buffer,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok_barcode m
+        WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= CURDATE()
+          AND LEFT(m.mst_brg_kode, LENGTH(m.mst_brg_kode)-7) = b.Bhn_kode
+      ), 0) AS StokAkhir,
+      'BAHAN' AS Tipe
+    FROM tbahan b
+    LEFT JOIN tbahan_project p ON p.kode = MID(b.Bhn_kode, 10, 1)
+    WHERE b.bhn_aktif = 0
+      AND b.bhn_buffer > 0
+      AND IFNULL(p.project, '') = 'KAOSAN'
+
+    UNION ALL
+
+    SELECT
+      g.brg_kode AS Kode,
+      g.brg_nama AS Nama,
+      g.brg_satuan AS Satuan,
+      g.brg_buffer AS Buffer,
+      IFNULL((
+        SELECT SUM(m.mst_stok_in - m.mst_stok_out)
+        FROM tmasterstok_acc m
+        WHERE m.mst_aktif = 'Y' AND m.mst_brg_kode = g.brg_kode
+      ), 0) AS StokAkhir,
+      'AKSESORIS' AS Tipe
+    FROM tgarmen_brg g
+    WHERE g.brg_aktif = 'Y'
+      AND g.brg_buffer > 0
+      AND g.brg_nama LIKE '%KAOSAN%'
+  ) x
+  WHERE x.StokAkhir < x.Buffer
+`;
+
+const getBufferKaosanSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const sql = `SELECT COUNT(*) AS Total FROM (${BUFFER_KAOSAN_BASE_QUERY}) y`;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.Total || 0 };
+};
+
+const getBufferKaosanList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT Kode, Nama, Satuan, Buffer, StokAkhir, Tipe
+    FROM (${BUFFER_KAOSAN_BASE_QUERY}) y
+    ORDER BY (y.StokAkhir / y.Buffer) ASC
+    LIMIT ? OFFSET ?
+  `;
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -2666,4 +2960,14 @@ module.exports = {
   getPipelineMenggantung,
   getApprovalPendingCount,
   getCompanyPulseSummary,
+  getMapSpkBelumPermintaanSummary,
+  getMapSpkBelumPermintaanList,
+  getPermintaanBelumRealisasiSummary,
+  getPermintaanBelumRealisasiList,
+  getPoBahanBelumDatangSummary,
+  getPoBahanBelumDatangList,
+  getStokBebasSummary,
+  getStokBebasList,
+  getBufferKaosanSummary,
+  getBufferKaosanList,
 };

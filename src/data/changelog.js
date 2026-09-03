@@ -5,6 +5,92 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.7",
+    date: "2026-09-03",
+    changes: [
+      {
+        type: "added",
+        text: "Penambahan Nomor SPK pada Laporan Stok Bahan Barcode (bagian detail), di samping Nomor PO Bahan.",
+      },
+      {
+        type: "added",
+        text: 'Kategori Stok Bahan Barcode: barcode dengan berat < 3 kg masuk Stok Reguler, ≥ 3 kg masuk Stok Ecer (nama bahan barcode otomatis mendapat tambahan karakter "-R").',
+      },
+      {
+        type: "added",
+        text: "Klasifikasi umur stok pada Laporan Umur Stok Bahan: Perhatian (6–12 bulan), Slow Moving (12–24 bulan), Dead Stock (>24 bulan), dengan pewarnaan teks sesuai kategori.",
+      },
+      {
+        type: "added",
+        text: "Penambahan Bottom Stock pada Laporan Kartu Stok Bahan, khusus bahan project Kaosan, Reszo, dan Kiddify — baris dengan stok di bawah bottom stock ditandai warna merah.",
+      },
+      {
+        type: "added",
+        text: "Penambahan kolom SO yang belum dibuatkan MKB pada halaman Browse Memo Kebutuhan Bahan (MKB).",
+      },
+      {
+        type: "added",
+        text: "Sales Order bersifat Repeat kini bisa diinput lewat kolom Repeat SO atau dengan memanggil nomor MAP terkait, sehingga referensi MAP dan kebutuhan Accessories/Bahan dari BAST MAP tetap terjaga — khusus jenis order Baju Uniform (BU), Wearpack (WP), Jas Almamater (JS), dan Jaket (JK).",
+      },
+      {
+        type: "added",
+        text: "Pada halaman SPK tab Keterangan bagian Kebutuhan Accessories, ditambahkan opsi pencarian kode Accessories dari database untuk SO yang tidak mereferensikan MAP.",
+      },
+      {
+        type: "added",
+        text: "Laporan SPK vs Realisasi vs LHK Cutting kini bisa memfilter jenis kain dan menampilkan total pemakaian (kg) per bahan.",
+      },
+      {
+        type: "added",
+        text: "Browse MAP (MAP Terbit) kini bisa difilter berdasarkan periode tanggal.",
+      },
+      {
+        type: "added",
+        text: "Realisasi Permintaan Bahan kini menampilkan warning jika bahan yang dikeluarkan berbeda dengan Permintaan Bahan/MKB; setelah pengajuan beda bahan disetujui melalui Approval, Permintaan Bahan terkait otomatis ter-close.",
+      },
+      {
+        type: "added",
+        text: "Penambahan Dashboard Gudang, meliputi: MAP/SPK yang belum ada permintaan maupun realisasi bahan, Permintaan Bahan yang belum direalisasi, PO Bahan yang belum datang, SO yang belum dibuatkan MKB, MKA yang belum terealisasi, Stok Bebas (Free Stock), dan Monitoring Buffer bahan & aksesoris Kaosan.",
+      },
+      {
+        type: "added",
+        text: "Browse Realisasi Permintaan Bahan kini menampilkan nomor Permintaan Bahan yang masih OPEN/belum direalisasi, sama seperti daftar SPK belum dibuatkan MKB pada halaman Browse MKB — mempercepat proses input.",
+      },
+      {
+        type: "added",
+        text: "Form MKA: tombol Enter kini berpindah ke kolom berikutnya, mempercepat proses input data.",
+      },
+      {
+        type: "fixed",
+        text: "Perbaikan Export Detail pada Laporan SPK vs Realisasi vs LHK Cutting, termasuk penyesuaian total summary agar sesuai dengan kolomnya masing-masing.",
+      },
+      {
+        type: "fixed",
+        text: "Revisi Laporan Realisasi Keluar Bahan: penambahan kolom Berat Potong (Kg), Std Actual, dan Selisih Berat (Kg); status kini ditampilkan sebagai chip, bukan pewarnaan baris.",
+      },
+      {
+        type: "fixed",
+        text: "Permintaan Bahan tidak lagi otomatis CLOSE jika masih ada bahan yang belum terpenuhi — status CLOSE hanya berlaku untuk Permintaan yang sudah direalisasi penuh oleh Gudang.",
+      },
+      {
+        type: "fixed",
+        text: "Approve Retur: status merah diperbaiki; bahan yang sudah masuk stok barcode kini nama bahannya tampil dengan benar di Laporan Stok Bahan Barcode.",
+      },
+      {
+        type: "fixed",
+        text: "Permintaan Bahan kini dicegah menambah detail baru pada nomor yang statusnya sudah CLOSE.",
+      },
+      {
+        type: "fixed",
+        text: "Permintaan Bahan tidak bisa diubah lagi setelah direalisasi oleh Gudang (berlaku untuk realisasi penuh maupun sebagian).",
+      },
+      {
+        type: "fixed",
+        text: "Perbaikan Export Detail pada halaman Permintaan Bahan, agar memperhitungkan filter yang sedang aktif dari user.",
+      },
+    ],
+  },
+  {
     version: "1.0.6",
     date: "2026-09-02",
     changes: [

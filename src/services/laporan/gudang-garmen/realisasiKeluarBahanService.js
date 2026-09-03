@@ -24,6 +24,21 @@ const getRowColor = (status, qtyPotong, qtyOrder) => {
   return "";
 };
 
+const getStatusChip = (status, qtyPotong, qtyOrder) => {
+  const potongCukup = Number(qtyPotong) >= Number(qtyOrder);
+  if (status === STATUS_LABEL.CLOSED) {
+    return potongCukup
+      ? { label: "Closed", color: "black" }
+      : { label: "Closed · Potong Kurang", color: "yellow" };
+  }
+  if (status === STATUS_LABEL.OPEN) {
+    return potongCukup
+      ? { label: "Open · Potong Cukup", color: "green" }
+      : { label: "Open · Potong Kurang", color: "red" };
+  }
+  return { label: "Process", color: "blue" };
+};
+
 const getBrowse = async (filters) => {
   const { startDate, endDate, spkNomor } = filters;
 
@@ -57,82 +72,139 @@ const getBrowse = async (filters) => {
 
   if (rows.length === 0) return [];
 
-  // ── Batch Qty Potong SEKALI di luar loop — keyed by spk+komponen,
-  // karena tahap Potong sering dicatat pakai kode bahan generik yang
-  // beda dari kode bahan spesifik hasil realisasi (skenario "beda bahan").
   const spkList = [...new Set(rows.map((r) => r.spk_nomor))];
   const komponenList = [...new Set(rows.map((r) => r.komponen))];
+  const kodeBahanList = [...new Set(rows.map((r) => r.kode_bahan))];
+  const memoList = [...new Set(rows.map((r) => r.spk_memo).filter(Boolean))];
 
+  // ── Batch 1: Qty Potong + Berat Potong (sudah ada) ──
   const [potongRows] = await db.query(
     `SELECT mph_spk_nomor AS spk_nomor, mph_komponen AS komponen,
-            SUM(mph_jumlah) AS jml
+          SUM(mph_jumlah) AS jml,
+          SUM(CASE WHEN mph_sat_berat = 'KG' THEN mph_qty_berat ELSE 0 END) AS berat_kg
+    FROM tmutasiproduksi_hdr
+    WHERE mph_spk_nomor IN (?) AND mph_komponen IN (?)
+      AND mph_gdgasal IN ('GP001', 'GP015')
+    GROUP BY mph_spk_nomor, mph_komponen`,
+    [spkList, komponenList],
+  );
+  const potongLookup = new Map();
+  const beratPotongLookup = new Map();
+  potongRows.forEach((p) => {
+    const key = `${p.spk_nomor}|${p.komponen}`;
+    potongLookup.set(key, Number(p.jml) || 0);
+    beratPotongLookup.set(key, Number(p.berat_kg) || 0);
+  });
+
+  // ── Batch 2: Std MAP (by memo + komponen) ──
+  const stdMapLookup = new Map();
+  if (memoList.length > 0) {
+    const [mapRows] = await db.query(
+      `SELECT nomor, komponen, babaran
+       FROM tkesesuaianmap_komponen
+       WHERE nomor IN (?) AND komponen IN (?)`,
+      [memoList, komponenList],
+    );
+    mapRows.forEach((m) => {
+      stdMapLookup.set(`${m.nomor}|${m.komponen}`, Number(m.babaran) || 0);
+    });
+  }
+
+  // ── Batch 3: Realisasi Keluar (by spk + kode_bahan) ──
+  const [realRows] = await db.query(
+    `SELECT h2.promin_spk_nomor AS spk_nomor, d2.promind_bhn_kode AS kode_bahan,
+            SUM(d2.promind_jumlah) AS jml,
+            GROUP_CONCAT(DISTINCT h2.promin_nomor SEPARATOR ',') AS nomor
+     FROM tproduksiminta_hdr h2
+     INNER JOIN tproduksiminta_dtl d2 ON d2.promind_promin_nomor = h2.promin_nomor
+     WHERE h2.promin_spk_nomor IN (?) AND d2.promind_bhn_kode IN (?)
+       AND h2.promin_aktif = 'Y'
+     GROUP BY h2.promin_spk_nomor, d2.promind_bhn_kode`,
+    [spkList, kodeBahanList],
+  );
+  const realisasiLookup = new Map();
+  realRows.forEach((r) => {
+    realisasiLookup.set(`${r.spk_nomor}|${r.kode_bahan}`, {
+      jml: Number(r.jml) || 0,
+      nomor: r.nomor || "",
+    });
+  });
+
+  // ── Batch 4: Minta Bahan detail (by spk + kode_bahan) — dikelompokkan di JS ──
+  const [mintaRows] = await db.query(
+    `SELECT h3.min_spk_nomor AS spk_nomor, d3.mind_bhn_kode AS kode_bahan,
+            d3.mind_jumlah AS jml, h3.min_nomor, h3.min_ket
+     FROM tmintabahan_hdr h3
+     INNER JOIN tmintabahan_dtl d3 ON d3.mind_nomor = h3.min_nomor
+     WHERE h3.min_spk_nomor IN (?) AND d3.mind_bhn_kode IN (?)`,
+    [spkList, kodeBahanList],
+  );
+  const mintaLookup = new Map();
+  mintaRows.forEach((m) => {
+    const key = `${m.spk_nomor}|${m.kode_bahan}`;
+    if (!mintaLookup.has(key)) mintaLookup.set(key, []);
+    mintaLookup.get(key).push(m);
+  });
+
+  // ── Batch 5: Mutasi detail (untuk Selisih Babaran) — by spk + komponen ──
+  const [mutasiRows] = await db.query(
+    `SELECT mph_spk_nomor AS spk_nomor, mph_komponen AS komponen,
+            mph_jumlah, mph_qty_berat, mph_sat_berat
      FROM tmutasiproduksi_hdr
      WHERE mph_spk_nomor IN (?) AND mph_komponen IN (?)
        AND mph_gdgasal IN ('GP001', 'GP015')
-     GROUP BY mph_spk_nomor, mph_komponen`,
+       AND mph_qty_berat <> 0 AND mph_jumlah <> 0`,
     [spkList, komponenList],
   );
-  const potongLookup = new Map(
-    potongRows.map((p) => [`${p.spk_nomor}|${p.komponen}`, Number(p.jml) || 0]),
-  );
+  const mutasiLookup = new Map();
+  mutasiRows.forEach((m) => {
+    const key = `${m.spk_nomor}|${m.komponen}`;
+    if (!mutasiLookup.has(key)) mutasiLookup.set(key, []);
+    mutasiLookup.get(key).push(m);
+  });
 
-  const result = [];
+  // ── Assemble hasil — murni in-memory, tanpa query tambahan ──
+  const result = rows.map((r) => {
+    const stdMap = r.spk_memo
+      ? stdMapLookup.get(`${r.spk_memo}|${r.komponen}`) || 0
+      : 0;
 
-  for (const r of rows) {
-    let stdMap = 0;
-    if (r.spk_memo) {
-      const [[mapRow]] = await db.query(
-        `SELECT babaran FROM tkesesuaianmap_komponen
-         WHERE nomor = ? AND komponen = ? LIMIT 1`,
-        [r.spk_memo, r.komponen],
-      );
-      stdMap = Number(mapRow?.babaran) || 0;
-    }
+    const realisasi = realisasiLookup.get(`${r.spk_nomor}|${r.kode_bahan}`);
+    const realisasiKeluar = realisasi?.jml || 0;
+    const noRealisasi = realisasi?.nomor || "";
 
-    const [[realRow]] = await db.query(
-      `SELECT IFNULL(SUM(d2.promind_jumlah), 0) AS jml,
-              GROUP_CONCAT(DISTINCT h2.promin_nomor SEPARATOR ',') AS nomor
-       FROM tproduksiminta_hdr h2
-       INNER JOIN tproduksiminta_dtl d2 ON d2.promind_promin_nomor = h2.promin_nomor
-       WHERE h2.promin_spk_nomor = ? AND d2.promind_bhn_kode = ?
-         AND h2.promin_aktif = 'Y'`,
-      [r.spk_nomor, r.kode_bahan],
+    const mintaDtlRows =
+      mintaLookup.get(`${r.spk_nomor}|${r.kode_bahan}`) || [];
+    const qtyPermintaan = mintaDtlRows.reduce(
+      (s, m) => s + (Number(m.jml) || 0),
+      0,
     );
-    const realisasiKeluar = Number(realRow?.jml) || 0;
-    const noRealisasi = realRow?.nomor || "";
-
-    const [[mintaRow]] = await db.query(
-      `SELECT IFNULL(SUM(d3.mind_jumlah), 0) AS jml,
-              GROUP_CONCAT(DISTINCT h3.min_nomor SEPARATOR ',') AS nomor,
-              GROUP_CONCAT(DISTINCT h3.min_ket SEPARATOR ', ') AS ket,
-              MIN(h3.min_close) AS min_close_worst
-       FROM tmintabahan_hdr h3
-       INNER JOIN tmintabahan_dtl d3 ON d3.mind_nomor = h3.min_nomor
-       WHERE h3.min_spk_nomor = ? AND d3.mind_bhn_kode = ?`,
-      [r.spk_nomor, r.kode_bahan],
+    const noPermintaan = [
+      ...new Set(mintaDtlRows.map((m) => m.min_nomor)),
+    ].join(", ");
+    const kategoriSet = new Set(
+      mintaDtlRows.map((m) =>
+        m.min_ket && m.min_ket.trim() !== ""
+          ? m.min_ket.trim().toUpperCase()
+          : "BARU",
+      ),
     );
-    const qtyPermintaan = Number(mintaRow?.jml) || 0;
-    const noPermintaan = mintaRow?.nomor || "";
-    const keterangan = mintaRow?.ket || "";
-    const mintaClosed = Number(mintaRow?.min_close_worst) === 1;
+    const keteranganKategori = [...kategoriSet].join(", ");
 
-    // ── Qty Potong dari lookup yang sudah dihitung sekali di atas ────────
     const qtyPotong = potongLookup.get(`${r.spk_nomor}|${r.komponen}`) || 0;
+    const beratPotongKg =
+      beratPotongLookup.get(`${r.spk_nomor}|${r.komponen}`) || 0;
+    const stdActual =
+      realisasiKeluar > 0
+        ? Number((qtyPotong / realisasiKeluar).toFixed(2))
+        : 0;
+    const selisihBeratKg = Number((beratPotongKg - realisasiKeluar).toFixed(2));
 
-    // ── Selisih by KG — GANTI: join by KOMPONEN saja (bukan +kode_bahan),
-    // alasan sama seperti Qty Potong di atas ────────────────────────────
-    const [mutasiRows] = await db.query(
-      `SELECT mph_jumlah, mph_qty_berat, mph_sat_berat
-       FROM tmutasiproduksi_hdr
-       WHERE mph_spk_nomor = ? AND mph_komponen = ?
-         AND mph_gdgasal IN ('GP001', 'GP015')
-         AND mph_qty_berat <> 0 AND mph_jumlah <> 0`,
-      [r.spk_nomor, r.komponen],
-    );
+    const mutasiForRow = mutasiLookup.get(`${r.spk_nomor}|${r.komponen}`) || [];
     let selisihKg = 0;
-    if (mutasiRows.length > 0) {
+    if (mutasiForRow.length > 0) {
       const std = Number(r.std_mkb) || 0;
-      for (const m of mutasiRows) {
+      for (const m of mutasiForRow) {
         const j = Number(m.mph_jumlah) || 0;
         const b = Number(m.mph_qty_berat) || 0;
         const actual = m.mph_sat_berat === "KG" ? j / b : b / j;
@@ -154,10 +226,9 @@ const getBrowse = async (filters) => {
     } else {
       status = STATUS_LABEL.PROCESS;
     }
-    const realisasiClosed = status === STATUS_LABEL.CLOSED;
-    const rowColor = getRowColor(status, qtyPotong, r.qty_order);
+    const statusChip = getStatusChip(status, qtyPotong, r.qty_order);
 
-    result.push({
+    return {
       Spk: r.spk_nomor,
       TanggalSpk: r.spk_tanggal,
       NamaSpk: r.spk_nama,
@@ -167,18 +238,21 @@ const getBrowse = async (filters) => {
       Satuan: r.satuan || "",
       StdMap: stdMap,
       StdMkb: Number(r.std_mkb) || 0,
+      StdActual: stdActual,
       NoRealisasi: noRealisasi,
       RealisasiKeluar: realisasiKeluar,
       Status: status,
+      StatusChip: statusChip,
       NoPermintaan: noPermintaan,
       QtyPermintaan: qtyPermintaan,
-      Keterangan: keterangan,
+      Keterangan: keteranganKategori,
       QtyPotong: qtyPotong,
+      BeratPotongKg: Number(beratPotongKg.toFixed(2)),
+      SelisihBeratKg: selisihBeratKg,
       Workshop: r.spk_workshop || "",
-      SelisihKg: Number(selisihKg.toFixed(2)),
-      RowColor: rowColor,
-    });
-  }
+      SelisihBabaran: Number(selisihKg.toFixed(2)),
+    };
+  });
 
   return result;
 };

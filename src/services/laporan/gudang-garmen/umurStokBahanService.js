@@ -40,8 +40,9 @@ const getBrowse = async (tanggal, kodeBahan = "") => {
       IF(h.bar_tanggal IS NULL, NULL, DATEDIFF(?, h.bar_tanggal)) AS Umur,
       CASE
         WHEN h.bar_tanggal IS NULL THEN ''
-        WHEN DATEDIFF(?, h.bar_tanggal) BETWEEN 60 AND 90 THEN 'Perhatian'
-        WHEN DATEDIFF(?, h.bar_tanggal) > 90 THEN 'Slowmoving'
+        WHEN DATEDIFF(?, h.bar_tanggal) > 720 THEN 'Dead Stock'
+        WHEN DATEDIFF(?, h.bar_tanggal) > 360 THEN 'Slowmoving'
+        WHEN DATEDIFF(?, h.bar_tanggal) >= 180 THEN 'Perhatian'
         ELSE ''
       END AS Status
     FROM (
@@ -62,7 +63,13 @@ const getBrowse = async (tanggal, kodeBahan = "") => {
     WHERE x.Stok <> 0
     ORDER BY b.Bhn_Name, x.Barcode
   `;
-  const [rows] = await db.query(sql, [...params, tanggal, tanggal, tanggal]);
+  const [rows] = await db.query(sql, [
+    ...params,
+    tanggal,
+    tanggal,
+    tanggal,
+    tanggal,
+  ]);
   return rows;
 };
 

@@ -68,8 +68,7 @@ const getBrowseList = async (filters) => {
     startDate,
     endDate, // UNION tspk + tsalesorder (tidak berubah)
     startDate, // sjChk: tsj_hdr.sj_tanggal >= ?
-    startDate, // mp: tmutasiproduksi_hdr.mph_tanggal >= ?
-    startDate, // bpj: tbpj_hdr.bpj_tanggal >= ?
+    startDate,
   ];
 
   let whereClause = `WHERE 1=1`;
@@ -116,22 +115,7 @@ const getBrowseList = async (filters) => {
   const hargaCol = canLihatHarga ? "y.spk_harga AS Harga," : "NULL AS Harga,";
 
   const query = `
-    SELECT x.*,
-      (x.Potong0 + x.Potong1) AS Potong,
-      (x.QcPotong0 + x.QcPotong1) AS QcPotong,
-      (IF(x.titik=0, 0, ROUND(x.Bordir0/x.titik) + ROUND(x.Bordir1/x.titik))) AS Bordir,
-      (x.Cetak0 + x.Cetak1 + x.ctk1 + x.ctkm) AS Cetak,
-      (x.QcCetak0 + x.QcCetak1) AS QcCetak,
-      (x.dc0 + x.dc1) AS DC,
-      (x.Jahit0 + x.Jahit1 + x.jht1) AS Jahit,
-      (x.lipat0 + x.lipat1 + x.lpt1) AS Lipat,
-      (x.Pesan - x.Jadi) AS Kurang_Jadi,
-      (x.Pesan - (x.Potong0 + x.Potong1)) AS Kurang_Potong,
-      (x.Pesan - (IF(x.titik=0, 0, ROUND(x.Bordir0/x.titik) + ROUND(x.Bordir1/x.titik)))) AS Kurang_Bordir,
-      (x.Pesan - (x.Cetak0 + x.Cetak1 + x.ctk1 + x.ctkm)) AS Kurang_Cetak,
-      (x.Pesan - (x.QcCetak0 + x.QcCetak1)) AS Kurang_QcCetak,
-      (x.Pesan - (x.Jahit0 + x.Jahit1 + x.jht1)) AS Kurang_Jahit,
-      (x.Pesan - (x.Lipat0 + x.Lipat1 + x.lpt1)) AS Kurang_Lipat
+    SELECT x.*
     FROM (
       SELECT
         y.spk_nomor AS Nomor, y.user_create AS MO, y.spk_cmo AS CMO,
@@ -174,34 +158,7 @@ const getBrowseList = async (filters) => {
 
         IFNULL(ppic.spk_jumlah_jadi, 0) AS Jadi,
         IFNULL(ppic.spk_cetak_count, 0) AS CetakCount,
-        IFNULL(pinCetak.status, "") AS CetakApprovalStatus,
-
-        -- ── Produksi: semua di-JOIN dari subquery pre-agregat (bukan
-        -- correlated subquery per baris) — jauh lebih cepat karena
-        -- tabel produksi cuma di-scan SEKALI lalu di-GROUP BY, baru
-        -- di-JOIN. Key gabungan: SPK PPIC turunan kalau ada, kalau
-        -- belum pakai nomor SO sendiri.
-        IFNULL(proof.titik, 0) AS titik,
-        IFNULL(mp.Potong0, 0) AS Potong0,
-        IFNULL(mp.QcPotong0, 0) AS QcPotong0,
-        IFNULL(mp.Bordir0, 0) AS Bordir0,
-        IFNULL(mp.Cetak0, 0) AS Cetak0,
-        IFNULL(mp.QcCetak0, 0) AS QcCetak0,
-        IFNULL(mp.dc0, 0) AS dc0,
-        IFNULL(mp.Jahit0, 0) AS Jahit0,
-        IFNULL(mp.Lipat0, 0) AS Lipat0,
-        IFNULL(bpj.Potong1, 0) AS Potong1,
-        IFNULL(bpj.QcPotong1, 0) AS QcPotong1,
-        IFNULL(bpj.Bordir1, 0) AS Bordir1,
-        IFNULL(bpj.Cetak1, 0) AS Cetak1,
-        IFNULL(bpj.QcCetak1, 0) AS QcCetak1,
-        IFNULL(bpj.dc1, 0) AS dc1,
-        IFNULL(bpj.Jahit1, 0) AS Jahit1,
-        IFNULL(bpj.Lipat1, 0) AS Lipat1,
-        IFNULL(lhkCetak.ctk1, 0) AS ctk1,
-        IFNULL(lhkJahit.jht1, 0) AS jht1,
-        IFNULL(lhkLipat.lpt1, 0) AS lpt1,
-        IFNULL(l.lcd_qty_Cetak, 0) AS ctkm
+        IFNULL(pinCetak.status, "") AS CetakApprovalStatus
 
       FROM (
         SELECT
@@ -254,9 +211,7 @@ const getBrowseList = async (filters) => {
       LEFT JOIN (SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk) k ON k.lds_spk = y.spk_nomor
       LEFT JOIN (SELECT lcd_spk_nomor, SUM(IFNULL(lcd_qty_Cetak,0)) AS lcd_qty_Cetak, MIN(lch_tanggal) AS lch_tanggal FROM tlhk_cetakmmt_dtl INNER JOIN tlhk_cetakmmt_hdr ON (lch_nomor=lcd_lch_nomor) GROUP BY 1) l ON l.lcd_spk_nomor = y.spk_nomor
       
-      
-      LEFT JOIN tspk ppic ON ppic.spk_so_ref<>'' and  ppic.spk_is_so = 0  and ppic.spk_so_ref = y.spk_nomor
-      
+      LEFT JOIN tspk ppic ON ppic.spk_is_so = 0 AND ppic.spk_so_ref = y.spk_nomor
       
       -- pin_acc/Ngedit — sebelumnya 2 correlated subquery per baris, sekarang 1 JOIN
       LEFT JOIN (
@@ -291,67 +246,11 @@ const getBrowseList = async (filters) => {
       ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
 
       LEFT JOIN (
-        SELECT DISTINCT stbjd_spk_nomor
-        FROM tstbj_dtl
+        SELECT DISTINCT d.STBJD_SPK_Nomor AS stbjd_spk_nomor
+        FROM tstbj_dtl d
+        INNER JOIN tstbj_hdr h ON h.stbj_nomor = d.STBJD_STBJ_Nomor
+        WHERE h.stbj_tanggal >= ?
       ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
-
-      -- titik proof bordir
-      LEFT JOIN (
-        SELECT h.pf_spk_nomor, COUNT(*) AS titik
-        FROM tproofgarmen_hdr h
-        LEFT JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
-        WHERE h.pf_lini = "BORDIR"
-        GROUP BY h.pf_spk_nomor
-      ) proof ON proof.pf_spk_nomor = IF(y.spk_memo<>"", y.spk_memo, IFNULL(ppic.spk_nomor, y.spk_nomor))
-
-      -- mutasi produksi (Potong0..Lipat0)
-      LEFT JOIN (
-        SELECT mpd_spk,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP015","GP001"), mpd_jumlah, 0)) AS Potong0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP012","GP021"), mpd_jumlah, 0)) AS QcPotong0,
-          SUM(IF(mpd_bhn_kode IN ("LL-000237","LL-000407","LL-000412","LL-000413","LL-000447","LL-000448","LL-000450","LL-000451","LL-000452") AND mpd_gdgp_asal IN ("GP014","GP016"), mpd_jumlah, 0)) AS Bordir0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP017","GP002"), mpd_jumlah, 0)) AS Cetak0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP010","GP022"), mpd_jumlah, 0)) AS QcCetak0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP032"), mpd_jumlah, 0)) AS dc0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP018","GP003"), mpd_jumlah, 0)) AS Jahit0,
-          SUM(IF(mpd_bhn_kode="LL-000400" AND mpd_gdgp_asal IN ("GP019","GP004"), mpd_jumlah, 0)) AS Lipat0
-        FROM tmutasiproduksi_dtl
-        INNER JOIN tmutasiproduksi_hdr ON mph_nomor = mpd_mph_nomor
-        WHERE mph_tanggal >= ?
-        GROUP BY mpd_spk
-      ) mp ON mp.mpd_spk = IFNULL(ppic.spk_nomor, y.spk_nomor)
-
-      -- BPJ (mitra luar) — Potong1..Lipat1
-      LEFT JOIN (
-        SELECT bpjd_spk,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP015","GP001"), bpjd_Jumlah, 0)) AS Potong1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP012","GP021"), bpjd_Jumlah, 0)) AS QcPotong1,
-          SUM(IF(bpjd_bhn_kode IN ("LL-000237","LL-000407","LL-000412","LL-000413","LL-000447","LL-000448","LL-000450","LL-000451","LL-000452") AND bpjd_gdgp_asal IN ("GP016","GP014"), bpjd_Jumlah, 0)) AS Bordir1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP017","GP002"), bpjd_Jumlah, 0)) AS Cetak1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP010","GP022"), bpjd_Jumlah, 0)) AS QcCetak1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP032"), bpjd_Jumlah, 0)) AS dc1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP018","GP003"), bpjd_Jumlah, 0)) AS Jahit1,
-          SUM(IF(bpjd_bhn_kode="LL-000400" AND bpjd_gdgp_asal IN ("GP019","GP004"), bpjd_Jumlah, 0)) AS Lipat1
-        FROM tbpj_dtl
-        INNER JOIN tbpj_hdr ON bpj_nomor = bpjd_bpj_nomor
-        WHERE bpj_tanggal >= ?
-        GROUP BY bpjd_spk
-      ) bpj ON bpj.bpjd_spk = IFNULL(ppic.spk_nomor, y.spk_nomor)
-
-      -- LHK Cetak/Jahit/Lipat manual
-      LEFT JOIN (
-        SELECT lcd_spk_nomor, SUM(lcd_qty_Cetak) AS ctk1
-        FROM tlhk_cetak_dtl GROUP BY lcd_spk_nomor
-      ) lhkCetak ON lhkCetak.lcd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
-      LEFT JOIN (
-        SELECT ljd_spk_nomor, SUM(ljd_qty_jahit) AS jht1
-        FROM tlhk_jahit_dtl GROUP BY ljd_spk_nomor
-      ) lhkJahit ON lhkJahit.ljd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
-      LEFT JOIN (
-        SELECT lld_spk_nomor, SUM(lld_qty_lipat) AS lpt1
-        FROM tlhk_lipat_dtl GROUP BY lld_spk_nomor
-      ) lhkLipat ON lhkLipat.lld_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
-
       ${whereClause}
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC

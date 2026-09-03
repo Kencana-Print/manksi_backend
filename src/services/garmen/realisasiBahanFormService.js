@@ -47,7 +47,7 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
 
   const query = `
     SELECT 
-      h.min_nomor, h.min_tanggal, h.min_cab, h.min_spk_nomor, h.min_apv,
+      h.min_nomor, h.min_tanggal, h.min_cab, h.min_spk_nomor, h.min_apv, h.min_close,
       -- 1. Gudang Bahan Baku (Sesuai parameter dari session user)
       ? AS kode_gdg_bahan, 
       (SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?) AS nama_gdg_bahan,
@@ -85,6 +85,14 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
     throw new Error("No. Permintaan tsb belum di Approve oleh Divisi Gudang.");
   if (header.min_apv === "TOLAK")
     throw new Error("No. Permintaan tsb ditolak oleh Divisi Gudang.");
+  // ⬅ BARU: cegah realisasi baru kalau permintaan sudah CLOSE (realisasi
+  // penuh). min_close=2 (ONPROSES/sebagian) TETAP diizinkan lanjut —
+  // itu justru alur normal realisasi bertahap.
+  if (Number(header.min_close) === 1 && !currentRealisasi) {
+    throw new Error(
+      "No. Permintaan tsb sudah CLOSE (realisasi sudah penuh). Tidak bisa direalisasikan lagi.",
+    );
+  }
 
   const resultDetails = [];
   for (const row of rows) {
@@ -354,6 +362,19 @@ const saveData = async (payload, user, isEdit = false) => {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
       );
+    }
+
+    // ⬅ BARU: cegah insert realisasi baru kalau min_close sudah 1 (penuh)
+    if (!isEdit) {
+      const [[mintaRow]] = await conn.query(
+        `SELECT min_close FROM tmintabahan_hdr WHERE min_nomor = ?`,
+        [payload.noMinta],
+      );
+      if (mintaRow && Number(mintaRow.min_close) === 1) {
+        throw new Error(
+          "No. Permintaan tsb sudah CLOSE (realisasi sudah penuh). Tidak bisa direalisasikan lagi.",
+        );
+      }
     }
 
     // [BARU] Deteksi mismatch: kode bahan yang keluar (d.kode) vs kode yg diminta (d.kodem)

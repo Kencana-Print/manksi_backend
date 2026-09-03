@@ -729,6 +729,121 @@ const getPipelineMenggantung = async (req, res) => {
   }
 };
 
+const getMapSpkBelumPermintaanSummary = async (req, res) => {
+  try {
+    const data = await service.getMapSpkBelumPermintaanSummary(req.user);
+    res.json({ success: true, data: data ?? { total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getMapSpkBelumPermintaanList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getMapSpkBelumPermintaanList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPermintaanBelumRealisasiSummary = async (req, res) => {
+  try {
+    const data = await service.getPermintaanBelumRealisasiSummary(req.user);
+    res.json({ success: true, data: data ?? {} });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPermintaanBelumRealisasiList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getPermintaanBelumRealisasiList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPoBahanBelumDatangSummary = async (req, res) => {
+  try {
+    const data = await service.getPoBahanBelumDatangSummary(req.user);
+    res.json({ success: true, data: data ?? { total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPoBahanBelumDatangList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getPoBahanBelumDatangList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getStokBebasSummary = async (req, res) => {
+  try {
+    const data = await service.getStokBebasSummary(req.user);
+    res.json({ success: true, data: data ?? { total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getStokBebasList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getStokBebasList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getBufferKaosanSummary = async (req, res) => {
+  try {
+    const data = await service.getBufferKaosanSummary(req.user);
+    res.json({ success: true, data: data ?? { total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getBufferKaosanList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getBufferKaosanList(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -785,4 +900,14 @@ module.exports = {
   getMapFunnel,
   getProyeksiVsRealisasiSummary,
   getPipelineMenggantung,
+  getMapSpkBelumPermintaanSummary,
+  getMapSpkBelumPermintaanList,
+  getPermintaanBelumRealisasiSummary,
+  getPermintaanBelumRealisasiList,
+  getPoBahanBelumDatangSummary,
+  getPoBahanBelumDatangList,
+  getStokBebasSummary,
+  getStokBebasList,
+  getBufferKaosanSummary,
+  getBufferKaosanList,
 };

@@ -13,7 +13,25 @@ const getBrowse = async (req, res) => {
     }
 
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
-    const data = await mkbService.getBrowseMkb(startDate, endDate, canLihatCus);
+
+    const [soPending, mkbRows] = await Promise.all([
+      mkbService.getSoBelumMkb(),
+      mkbService.getBrowseMkb(startDate, endDate, canLihatCus),
+    ]);
+
+    const soPendingRows = soPending.map((r) => ({
+      ...r,
+      RowType: "SO_PENDING",
+      PO: 0,
+      Keterangan: "",
+      Plan: 0,
+      Ngedit: "",
+      usr: "",
+      Created: null,
+    }));
+
+    const data = [...soPendingRows, ...mkbRows];
+
     res.json({ success: true, data, canLihatCus });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
