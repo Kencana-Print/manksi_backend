@@ -1227,7 +1227,7 @@ const searchPermintaanBarangGarmen = async (
 
   // Sesuai Delphi (edtMintaExit & F1 lookup):
   // Filter status Buka(0) atau Proses(2), sesuai jenisnya
-  let whereClause = `WHERE min_close = 0 AND min_jenis = ?`;
+  let whereClause = `WHERE min_close IN (0, 2) AND min_jenis = ?`;
   params.push(jenis);
 
   // Jika jenis SPAREPART, batasi sesuai bagian user (TEKNISI / IT)
