@@ -157,7 +157,7 @@ const searchMapKandidat = async (
            mspk_rencana_order AS Pesan,
            0 AS Kirim,
            mspk_rencana_order AS Kurang,
-           mspk_dateline AS DatelineAsli, mspk_divisi AS Divisi
+           DATE_FORMAT(mspk_dateline, '%Y-%m-%d') AS DatelineAsli, mspk_divisi AS Divisi
     FROM tmemospk
     WHERE mspk_aktif = 'Y' AND mspk_close = 0
       AND mspk_dateline BETWEEN ? AND ?
@@ -186,7 +186,7 @@ const getMapInfo = async (mapNomor, divisi = "") => {
             mspk_rencana_order AS Pesan,
             0 AS Kirim,
             mspk_rencana_order AS Kurang,
-            mspk_dateline AS DatelineAsli,
+            DATE_FORMAT(mspk_dateline, '%Y-%m-%d') AS DatelineAsli,
             mspk_divisi AS Divisi
      FROM tmemospk WHERE mspk_nomor = ?`,
     [mapNomor],
@@ -481,6 +481,10 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     );
   }
 
+  const permintaanKirimSafe = PermintaanKirim
+    ? String(PermintaanKirim).substring(0, 10)
+    : null;
+
   const [result] = await db.query(
     `INSERT INTO tpenjadwalan_ppic_dtl
        (pjwd_pjw_nomor, pjwd_so_nomor, pjwd_pro_nomor, pjwd_map_nomor, pjwd_rencana,
@@ -491,8 +495,8 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       SoNomor || null,
       NomorPraOrder || null,
       MapNomor || null,
-      rencanaVal,
-      PermintaanKirim || null,
+      Number(Rencana) || 0,
+      permintaanKirimSafe,
       userKode,
     ],
   );
