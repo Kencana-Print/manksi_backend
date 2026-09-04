@@ -199,6 +199,7 @@ const potonganRoutes = require("./routes/piutang/penerimaan/potonganRoutes");
 const potonganFormRoutes = require("./routes/piutang/penerimaan/potonganFormRoutes");
 const pelunasanPiutangRoutes = require("./routes/piutang/pelunasanRoutes");
 const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
+const pengajuanDanaRoutes = require("./routes/piutang/pengajuanDanaRoutes");
 
 //Laporan Routes
 //Laporan Gudang Garmen
@@ -596,6 +597,7 @@ app.use("/api/piutang/penerimaan/potongan", potonganRoutes);
 app.use("/api/piutang/penerimaan/potongan-form", potonganFormRoutes);
 app.use("/api/piutang/pelunasan", pelunasanPiutangRoutes);
 app.use("/api/piutang/pelunasan-form", pelunasanFormRoutes);
+app.use("/api/piutang/pengajuan-dana", pengajuanDanaRoutes);
 
 app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
