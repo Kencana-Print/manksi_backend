@@ -294,6 +294,7 @@ const agendaKerjaRoutes = require("./routes/tools/agendaKerjaRoutes");
 const agendaPicRoutes = require("./routes/tools/agendaPicRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
+const settingHargaBahanRoutes = require("./routes/pembelian/settingHargaBahanRoutes");
 
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
@@ -408,6 +409,7 @@ app.use("/api/pembelian/po-bahan", poBahanRoutes);
 app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
 app.use("/api/pembelian/po-external-garmen", poExternalGarmenRoutes);
 app.use("/api/pembelian/po-external-garmen/form", poExternalGarmenFormRoutes);
+app.use("/api/pembelian/setting-harga-bahan", settingHargaBahanRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
