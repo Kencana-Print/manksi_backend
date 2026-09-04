@@ -30,8 +30,8 @@ const getBrowseList = async (
     SELECT 
       x.mspk_nomor AS Nomor, x.user_create AS MO, x.mspk_cmo AS CMO, 
       x.mspk_tanggal AS Tanggal, x.mspk_dateline AS Dateline,
-      IFNULL(IFNULL(k.date_modify, k.date_create), "") AS TglBast, 
-      IFNULL(DATEDIFF(IFNULL(k.date_modify, k.date_create), x.mspk_tanggal), 0) AS SelisihBastMap,
+      IFNULL(k.tgl_bast, "") AS TglBast, 
+      IFNULL(DATEDIFF(k.tgl_bast, x.mspk_tanggal), 0) AS SelisihBastMap,
       IF(k.date_create IS NULL, "BELUM", "SUDAH") AS Berita_Acara,
       d.divisi AS Divisi, x.mspk_cab AS Cab, x.mspk_workshop AS Workshop, 
       CONCAT(x.mspk_cab2, " ", x.mspk_workshop2) AS WorkshopSPK, 
@@ -60,7 +60,14 @@ const getBrowseList = async (
     FROM tmemospk x
     LEFT JOIN tcustomer c ON x.mspk_cus_kode = c.cus_kode
     LEFT JOIN tsales s ON x.mspk_sal_kode = s.sal_kode
-    LEFT JOIN tkesesuaianmap k ON k.mspk_nomor = x.mspk_nomor AND k.kode_sesuai = 1
+    LEFT JOIN (
+      SELECT mspk_nomor,
+            MAX(IFNULL(date_modify, date_create)) AS tgl_bast,
+            MIN(date_create) AS date_create
+      FROM tkesesuaianmap
+      WHERE kode_sesuai = 1
+      GROUP BY mspk_nomor
+    ) k ON k.mspk_nomor = x.mspk_nomor
     LEFT JOIN (
       SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk
     ) z ON z.lds_spk = x.mspk_nomor
