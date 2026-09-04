@@ -133,6 +133,7 @@ const getSoBelumMkb = async () => {
     FROM tsalesorder so
     WHERE so.so_aktif = 'Y' AND so.so_close = 0
       AND so.so_divisi IN ('3', '4')
+      AND so.so_cmo IS NOT NULL AND so.so_cmo <> ''
       AND so.so_nomor NOT IN (
         SELECT mkb_spk_nomor FROM tmkb_hdr WHERE mkb_spk_nomor <> ''
       )
