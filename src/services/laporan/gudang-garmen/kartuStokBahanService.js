@@ -33,6 +33,8 @@ const getBrowse = async (startDate, endDate, kodeBahan = "") => {
         b.bhn_satuan    AS Satuan,
         b.bhn_gramasi   AS Gramasi,
         b.bhn_hargabeli AS HargaBeli,
+        b.bhn_buffer    AS Buffer,
+        IFNULL(p.project, "REGULER") AS Project,
         IFNULL((
           SELECT SUM(m.mst_stok_in - m.mst_stok_out)
           FROM tmasterstok_bahan m
@@ -75,13 +77,12 @@ const getBrowse = async (startDate, endDate, kodeBahan = "") => {
             AND LEFT(m.mst_noreferensi, 3) = 'RBB' AND m.mst_brg_kode = b.bhn_kode
         ), 0) AS ReturBeli
       FROM tbahan b
+      LEFT JOIN tbahan_project p ON p.kode = MID(b.bhn_kode, 10, 1)
       ${where}
     ) x
     ORDER BY x.Kode
   `;
 
-  // Urutan param: 1 (StokAwal) + 2x5 (kelima subquery periode) = 11,
-  // baru diikuti param WHERE tbahan (kodeBahan jika ada)
   const dateParams = [
     startDate,
     startDate,

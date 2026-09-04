@@ -1,9 +1,8 @@
 const db = require("../../config/database");
 
 // ── Browse header (list periode) ──
-const getBrowse = async (startDate, endDate) => {
-  const [rows] = await db.query(
-    `SELECT
+const getBrowse = async (startDate, endDate, cabang = "") => {
+  let query = `SELECT
        h.pjw_nomor AS Nomor,
        DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS TglAwal,
        DATE_FORMAT(h.pjw_tgl2, '%Y-%m-%d') AS TglAkhir,
@@ -13,11 +12,18 @@ const getBrowse = async (startDate, endDate) => {
        COUNT(d.pjwd_id) AS JumlahSO
      FROM tpenjadwalan_ppic_hdr h
      LEFT JOIN tpenjadwalan_ppic_dtl d ON d.pjwd_pjw_nomor = h.pjw_nomor
-     WHERE h.pjw_tgl1 BETWEEN ? AND ?
-     GROUP BY h.pjw_nomor, h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab, h.pjw_close, h.pjw_keterangan
-     ORDER BY h.pjw_nomor ASC`,
-    [startDate, endDate],
-  );
+     WHERE h.pjw_tgl1 BETWEEN ? AND ?`;
+  const params = [startDate, endDate];
+
+  if (cabang) {
+    query += ` AND h.pjw_cab = ?`;
+    params.push(cabang);
+  }
+
+  query += ` GROUP BY h.pjw_nomor, h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab, h.pjw_close, h.pjw_keterangan
+     ORDER BY h.pjw_nomor ASC`;
+
+  const [rows] = await db.query(query, params);
   return rows;
 };
 
@@ -32,20 +38,26 @@ const getDetail = async (nomor) => {
        CASE
          WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
          WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
-         ELSE 'PRA ORDER'
+         WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
+         ELSE 'MANUAL'
        END AS Sumber,
-       COALESCE(src.Nama, mp.mspk_nama, pro.pro_nama_pekerjaan) AS Nama,
-       COALESCE(src.Tanggal, DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'), DATE_FORMAT(pro.pro_tanggal, '%Y-%m-%d')) AS Tanggal,
-       COALESCE(src.Pesan, mp.mspk_rencana_order, pro.pro_qty_rencana) AS Pesan,
-       COALESCE(src.Kirim, 0, 0) AS Kirim,
-       COALESCE(src.Kurang, mp.mspk_rencana_order, pro.pro_qty_rencana) AS Kurang,
+       COALESCE(src.Nama, mp.mspk_nama, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
+       COALESCE(src.Tanggal, DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'), DATE_FORMAT(pro.pro_tanggal, '%Y-%m-%d'), NULL) AS Tanggal,
+       COALESCE(src.Pesan, mp.mspk_rencana_order, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0) AS Pesan,
+       COALESCE(src.Kirim, 0, 0, d.pjwd_kirim_manual, 0) AS Kirim,
+       COALESCE(src.Kurang, mp.mspk_rencana_order, pro.pro_qty_rencana,
+         (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0))) AS Kurang,
        d.pjwd_rencana AS Rencana,
-       IFNULL((
-         SELECT SUM(jk.realisasi)
-         FROM tjadwalkirim jk
-         WHERE jk.spk_nomor = d.pjwd_so_nomor
-           AND jk.tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-       ), 0) AS Realisasi,
+       IF(
+         d.pjwd_so_nomor IS NULL AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
+         IFNULL(d.pjwd_realisasi_manual, 0),
+         IFNULL((
+           SELECT SUM(jk.realisasi)
+           FROM tjadwalkirim jk
+           WHERE jk.spk_nomor = d.pjwd_so_nomor
+             AND jk.tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
+         ), 0)
+       ) AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
        DATE_FORMAT(d.pjwd_tgl_kesepakatan, '%Y-%m-%d') AS Kesepakatan,

@@ -116,6 +116,33 @@ const getBrowseMkb = async (startDate, endDate, canLihatCus = false) => {
   return rows;
 };
 
+// --- SO Divisi 3/4 yang belum dibuatkan MKB (prioritas tampil di atas, lepas dari filter tanggal) ---
+const getSoBelumMkb = async () => {
+  const query = `
+    SELECT
+      so.so_nomor AS Nomor,
+      so.so_tanggal AS Tanggal,
+      so.so_nomor AS SPK,
+      so.so_tanggal AS TglSPK,
+      so.so_dateline AS Dateline,
+      so.so_nama AS NamaSpk,
+      so.so_jumlah AS JumlahSPK,
+      so.so_kain AS Kain,
+      so.so_finishing AS Finishing,
+      so.so_divisi AS Divisi
+    FROM tsalesorder so
+    WHERE so.so_aktif = 'Y' AND so.so_close = 0
+      AND so.so_divisi IN ('3', '4')
+      AND so.so_cmo IS NOT NULL AND so.so_cmo <> ''
+      AND so.so_nomor NOT IN (
+        SELECT mkb_spk_nomor FROM tmkb_hdr WHERE mkb_spk_nomor <> ''
+      )
+    ORDER BY so.so_dateline ASC
+  `;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
 // --- DATA DETAIL MKB (Rincian Barang) ---
 const getDetailData = async (nomor) => {
   const query = `
@@ -314,6 +341,7 @@ const getAllDetailData = async (startDate, endDate, canLihatCus = false) => {
 
 module.exports = {
   getBrowseMkb,
+  getSoBelumMkb,
   getDetailData,
   getLinkedPo,
   deleteMkb,

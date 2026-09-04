@@ -37,5 +37,11 @@ router.patch("/:nomor/header", verifyToken, controller.updateHeaderField);
 router.post("/row", verifyToken, controller.addDetailRow);
 router.patch("/row/:pjwdId", verifyToken, controller.updateDetailField);
 router.delete("/row/:pjwdId", verifyToken, controller.deleteDetailRow);
+router.get(
+  "/row/:pjwdId/check-target",
+  verifyToken,
+  controller.checkTargetPeriod,
+);
+router.post("/row/:pjwdId/move", verifyToken, controller.moveDetailRow);
 
 module.exports = router;

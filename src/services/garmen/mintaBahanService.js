@@ -64,6 +64,7 @@ const getBrowse = async (startDate, endDate, cabang) => {
       -- ⬅ BARU: flag terpisah, murni penanda periode akuntansi sudah
       -- dikunci — TIDAK mencerminkan apakah realisasi sudah selesai.
       IF(x.Tanggal < '${zdtCloseStr}' AND x.sts = 'OPEN', 1, 0) AS IsPeriodLocked,
+      IF(x.totr > 0, 1, 0) AS SudahRealisasi,   
       
       x.AlasanClose,
       IF(x.totr=0, "", IF(x.totr>x.tota, "N", "Y")) AS Approve,
@@ -115,6 +116,7 @@ const getBrowse = async (startDate, endDate, cabang) => {
   return rows.map((r) => ({
     ...r,
     IsPeriodLocked: Number(r.IsPeriodLocked) === 1,
+    SudahRealisasi: Number(r.SudahRealisasi) === 1,
   }));
 };
 

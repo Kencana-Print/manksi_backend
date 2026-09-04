@@ -168,11 +168,8 @@ const getDetail = async (nomor) => {
     `
       SELECT d.*, b.bhn_name, 
             IFNULL(j.bj_nama,"") as jenis, 
-            IF(h.po_jenis = 3 AND IFNULL(d.pod_gramasia, '') <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
-            IF(h.po_jenis = 3, 
-                IF(IFNULL(d.pod_gramasia_awal, '') <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")), 
-                NULL
-            ) as gramasiAwal,
+            IF(IFNULL(d.pod_gramasia, '') <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
+            IF(IFNULL(d.pod_gramasia_awal, '') <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")) as gramasiAwal,
             IF(IFNULL(d.pod_setting, '') <> '', d.pod_setting, IFNULL(s.bs_nama,"")) as setting
       FROM tpo_dtl d
       INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
@@ -371,11 +368,8 @@ const saveData = async (payload, userKode) => {
         const namaExt = item.namaext ? item.namaext : item.nama;
 
         // Gramasi Akhir — tetap seperti sebelumnya
-        const gramasiaToSave =
-          jpo === 3 ? item.gramasi || "" : item.gramasia || "";
-
-        // ⬅ BARU — Gramasi Awal, HANYA disimpan untuk PO Bahan (jenis 3)
-        const gramasiAwalToSave = jpo === 3 ? item.gramasiAwal || "" : "";
+        const gramasiaToSave = item.gramasi || "";
+        const gramasiAwalToSave = item.gramasiAwal || "";
 
         await conn.query(
           `

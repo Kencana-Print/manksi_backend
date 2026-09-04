@@ -335,11 +335,13 @@ const LINI_PATTERNS = [
   "CETAK",
   "JAHIT",
   "LIPAT",
+  "BORDIR",
+  "PRES DTF",
 ];
 
-const getKelompokOptions = async (jasaNama, cabang) => {
+const getKelompokOptions = async (namaLiniAsal, cabang) => {
   if (!cabang) return [];
-  const nama = (jasaNama || "").toUpperCase();
+  const nama = (namaLiniAsal || "").toUpperCase();
   const lini = LINI_PATTERNS.find((p) => nama.includes(p)) || null;
 
   const [rows] = lini
