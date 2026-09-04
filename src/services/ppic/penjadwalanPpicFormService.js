@@ -582,6 +582,173 @@ const deleteDetailRow = async (pjwdId, userKode, userBagian) => {
   return { pjwd_id: Number(pjwdId) }; // ⬅ cast ke Number
 };
 
+// ═══════════════════════════════════════════════════════════
+// PINDAH PERIODE OTOMATIS — saat Kesepakatan mundur/maju ke
+// minggu lain. Dua tahap: cek target (utk dialog konfirmasi),
+// lalu eksekusi (transaksional).
+// ═══════════════════════════════════════════════════════════
+
+const getMondayOfWeek = (dateStr) => {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const mon = new Date(d);
+  mon.setDate(d.getDate() + diff);
+  return mon;
+};
+const toLocalDate = (d) => {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+const getWeekRange = (tanggal) => {
+  const monday = getMondayOfWeek(tanggal);
+  const saturday = new Date(monday);
+  saturday.setDate(monday.getDate() + 5);
+  return { tgl1: toLocalDate(monday), tgl2: toLocalDate(saturday) };
+};
+
+// ── CEK TARGET (dipanggil saat blur, SEBELUM pindah beneran) ──
+const checkTargetPeriod = async (pjwdId, tanggalBaru) => {
+  const [[row]] = await db.query(
+    `SELECT d.pjwd_so_nomor, d.pjwd_pro_nomor, d.pjwd_map_nomor,
+            h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab
+     FROM tpenjadwalan_ppic_dtl d
+     INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+     WHERE d.pjwd_id = ?`,
+    [pjwdId],
+  );
+  if (!row) throw new Error("Baris tidak ditemukan.");
+
+  if (tanggalBaru >= row.pjw_tgl1 && tanggalBaru <= row.pjw_tgl2) {
+    return { needMove: false };
+  }
+
+  const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
+  const [[target]] = await db.query(
+    `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
+     WHERE pjw_cab = ? AND pjw_close = 'N' AND ? BETWEEN pjw_tgl1 AND pjw_tgl2
+     LIMIT 1`,
+    [row.pjw_cab, tanggalBaru],
+  );
+
+  const key = row.pjwd_so_nomor || row.pjwd_pro_nomor || row.pjwd_map_nomor;
+  if (target && key) {
+    const [[dup]] = await db.query(
+      `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
+       WHERE pjwd_pjw_nomor = ? AND (pjwd_so_nomor = ? OR pjwd_pro_nomor = ? OR pjwd_map_nomor = ?)`,
+      [target.pjw_nomor, key, key, key],
+    );
+    if (dup)
+      throw new Error(
+        `${key} sudah ada di periode ${target.pjw_nomor}. Tidak bisa dipindah otomatis.`,
+      );
+  }
+
+  return {
+    needMove: true,
+    willCreateNew: !target,
+    targetNomor: target ? target.pjw_nomor : null,
+    targetTgl1: tgl1,
+    targetTgl2: tgl2,
+  };
+};
+
+// ── EKSEKUSI PINDAH (dipanggil setelah PPIC konfirmasi dialog) ──
+const moveDetailRowToPeriod = async (
+  pjwdId,
+  tanggalBaru,
+  userKode,
+  userBagian,
+) => {
+  assertFieldOwnership(
+    "pjwd_tgl_kesepakatan",
+    FIELD_OWNERSHIP,
+    userKode,
+    userBagian,
+  );
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[row]] = await conn.query(
+      `SELECT d.pjwd_pjw_nomor, d.pjwd_so_nomor, d.pjwd_pro_nomor, d.pjwd_map_nomor,
+              h.pjw_cab, h.pjw_divisi, h.pjw_tgl1, h.pjw_tgl2
+       FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       WHERE d.pjwd_id = ? FOR UPDATE`,
+      [pjwdId],
+    );
+    if (!row) throw new Error("Baris tidak ditemukan.");
+
+    // Race condition: sudah pindah/tanggal sudah pas — cukup update kolomnya
+    if (tanggalBaru >= row.pjw_tgl1 && tanggalBaru <= row.pjw_tgl2) {
+      await conn.query(
+        `UPDATE tpenjadwalan_ppic_dtl SET pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
+        [tanggalBaru, pjwdId],
+      );
+      await conn.commit();
+      return {
+        moved: false,
+        nomor: row.pjwd_pjw_nomor,
+        pjwd_id: Number(pjwdId),
+      };
+    }
+
+    const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
+    const [[target]] = await conn.query(
+      `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
+       WHERE pjw_cab = ? AND pjw_close = 'N' AND ? BETWEEN pjw_tgl1 AND pjw_tgl2
+       LIMIT 1 FOR UPDATE`,
+      [row.pjw_cab, tanggalBaru],
+    );
+
+    const key = row.pjwd_so_nomor || row.pjwd_pro_nomor || row.pjwd_map_nomor;
+    let targetNomor;
+
+    if (target) {
+      targetNomor = target.pjw_nomor;
+      if (key) {
+        const [[dup]] = await conn.query(
+          `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
+           WHERE pjwd_pjw_nomor = ? AND (pjwd_so_nomor = ? OR pjwd_pro_nomor = ? OR pjwd_map_nomor = ?)`,
+          [targetNomor, key, key, key],
+        );
+        if (dup)
+          throw new Error(
+            `${key} sudah ada di periode ${targetNomor}. Tidak bisa dipindah otomatis.`,
+          );
+      }
+    } else {
+      targetNomor = await generateNomor(new Date(tgl1).getFullYear());
+      await conn.query(
+        `INSERT INTO tpenjadwalan_ppic_hdr
+           (pjw_nomor, pjw_tgl1, pjw_tgl2, pjw_cab, pjw_divisi, pjw_keterangan, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, '', ?, NOW())`,
+        [targetNomor, tgl1, tgl2, row.pjw_cab, row.pjw_divisi, userKode],
+      );
+    }
+
+    await conn.query(
+      `UPDATE tpenjadwalan_ppic_dtl SET pjwd_pjw_nomor = ?, pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
+      [targetNomor, tanggalBaru, pjwdId],
+    );
+
+    await conn.commit();
+    return {
+      moved: true,
+      fromNomor: row.pjwd_pjw_nomor,
+      nomor: targetNomor,
+      pjwd_id: Number(pjwdId),
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   generateNomor,
   getCabangOptions,
@@ -598,4 +765,6 @@ module.exports = {
   addDetailRow,
   updateDetailField,
   deleteDetailRow,
+  checkTargetPeriod,
+  moveDetailRowToPeriod,
 };

@@ -1,9 +1,8 @@
 const db = require("../../config/database");
 
 // ── Browse header (list periode) ──
-const getBrowse = async (startDate, endDate) => {
-  const [rows] = await db.query(
-    `SELECT
+const getBrowse = async (startDate, endDate, cabang = "") => {
+  let query = `SELECT
        h.pjw_nomor AS Nomor,
        DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS TglAwal,
        DATE_FORMAT(h.pjw_tgl2, '%Y-%m-%d') AS TglAkhir,
@@ -13,11 +12,18 @@ const getBrowse = async (startDate, endDate) => {
        COUNT(d.pjwd_id) AS JumlahSO
      FROM tpenjadwalan_ppic_hdr h
      LEFT JOIN tpenjadwalan_ppic_dtl d ON d.pjwd_pjw_nomor = h.pjw_nomor
-     WHERE h.pjw_tgl1 BETWEEN ? AND ?
-     GROUP BY h.pjw_nomor, h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab, h.pjw_close, h.pjw_keterangan
-     ORDER BY h.pjw_nomor ASC`,
-    [startDate, endDate],
-  );
+     WHERE h.pjw_tgl1 BETWEEN ? AND ?`;
+  const params = [startDate, endDate];
+
+  if (cabang) {
+    query += ` AND h.pjw_cab = ?`;
+    params.push(cabang);
+  }
+
+  query += ` GROUP BY h.pjw_nomor, h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab, h.pjw_close, h.pjw_keterangan
+     ORDER BY h.pjw_nomor ASC`;
+
+  const [rows] = await db.query(query, params);
   return rows;
 };
 

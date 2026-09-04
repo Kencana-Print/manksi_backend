@@ -219,6 +219,60 @@ const deleteDetailRow = async (req, res) => {
   }
 };
 
+const checkTargetPeriod = async (req, res) => {
+  try {
+    const { tanggalBaru } = req.query;
+    const data = await penjadwalanPpicFormService.checkTargetPeriod(
+      req.params.pjwdId,
+      tanggalBaru,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const moveDetailRow = async (req, res) => {
+  try {
+    const { pjwNomor, tanggalBaru } = req.body;
+    const result = await penjadwalanPpicFormService.moveDetailRowToPeriod(
+      req.params.pjwdId,
+      tanggalBaru,
+      req.user.kode,
+      req.user.bagian,
+    );
+    const io = req.app.get("io");
+
+    if (result.moved) {
+      // Room asal: baris hilang dari situ
+      io.to(result.fromNomor).emit("pjw:row-deleted", {
+        pjwd_id: result.pjwd_id,
+      });
+
+      // Room tujuan: ambil detail lengkap baris (kalau ada user yg lagi
+      // buka periode tujuan, dia langsung lihat baris masuk dgn data utuh)
+      const penjadwalanPpicService = require("../../services/ppic/penjadwalanPpicService");
+      const targetRows = await penjadwalanPpicService.getDetail(result.nomor);
+      const movedRow = targetRows.find((r) => r.PjwdId === result.pjwd_id);
+      if (movedRow) {
+        io.to(result.nomor).emit("pjw:row-moved-in", movedRow);
+      }
+    } else {
+      // Tidak pindah (tanggal ternyata masih dalam rentang) — broadcast biasa
+      io.to(pjwNomor || result.nomor).emit("pjw:field-updated", {
+        pjwd_id: result.pjwd_id,
+        field: "pjwd_tgl_kesepakatan",
+        value: tanggalBaru,
+        userKode: req.user.kode,
+      });
+    }
+
+    res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getCabang,
   getDivisi,
@@ -234,4 +288,6 @@ module.exports = {
   addDetailRow,
   updateDetailField,
   deleteDetailRow,
+  checkTargetPeriod,
+  moveDetailRow,
 };

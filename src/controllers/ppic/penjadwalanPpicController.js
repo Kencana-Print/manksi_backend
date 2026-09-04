@@ -3,8 +3,12 @@ const penjadwalanPpicService = require("../../services/ppic/penjadwalanPpicServi
 
 const getBrowse = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
-    const data = await penjadwalanPpicService.getBrowse(startDate, endDate);
+    const { startDate, endDate, cabang } = req.query;
+    const data = await penjadwalanPpicService.getBrowse(
+      startDate,
+      endDate,
+      cabang || "",
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
