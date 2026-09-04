@@ -80,12 +80,22 @@ const getDetailSj = async (mapNomor) => {
 const getAllDetailSj = async (query, canLihatCus = false) => {
   const { startDate, endDate, divisi } = query;
 
+  const toLocalDateStr = (date) => {
+    // Asumsi server perlu dipaksa ke WIB (UTC+7) karena proses Node
+    // bisa berjalan di timezone server (sering UTC), beda dari
+    // timezone browser user.
+    const wibOffsetMs = 7 * 60 * 60 * 1000;
+    const wibDate = new Date(date.getTime() + wibOffsetMs);
+    const year = wibDate.getUTCFullYear();
+    const month = String(wibDate.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(wibDate.getUTCDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const now = new Date();
   const dStart =
-    startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    startDate || toLocalDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+  const dEnd = endDate || toLocalDateStr(now);
 
   let filterDivisi = "";
   const params = [dStart, dEnd];
