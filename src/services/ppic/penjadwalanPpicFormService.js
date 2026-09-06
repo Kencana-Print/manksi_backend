@@ -358,6 +358,7 @@ const saveData = async (payload, userKode, userBagian) => {
 
 const FIELD_OWNERSHIP = {
   pjwd_rencana: "MARKETING",
+  pjwd_ket_rencana: "MARKETING",
   pjwd_tgl_permintaan_kirim: "MARKETING",
   pjwd_status_permintaan: "MARKETING",
   pjwd_tgl_kesepakatan: "PPIC",
@@ -456,7 +457,15 @@ const getTotalRencana = async (pjwNomor, excludePjwdId = null) => {
   return Number(row.total) || 0;
 };
 
-const MAX_QTY_PER_PERIODE = 15000;
+// Kapasitas kirim mingguan per cabang. Cabang yang tidak terdaftar
+// pakai DEFAULT_CAPACITY.
+const CABANG_CAPACITY = {
+  P01: 75000,
+  P04: 15000,
+};
+const DEFAULT_CAPACITY = 15000;
+
+const getCapacity = (cabang) => CABANG_CAPACITY[cabang] || DEFAULT_CAPACITY;
 
 // ── ADD DETAIL ROW — satu baris SO/Pra Order/MAP ──
 const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
@@ -483,9 +492,17 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     throw new Error("Baris manual harus punya Nama.");
   }
   const rencanaVal = Number(Rencana) || 0;
+
+  // Ambil cabang periode untuk menentukan batas kapasitas mingguan
+  const [[hdrRow]] = await db.query(
+    `SELECT pjw_cab FROM tpenjadwalan_ppic_hdr WHERE pjw_nomor = ?`,
+    [pjwNomor],
+  );
+  const batasKapasitas = getCapacity(hdrRow?.pjw_cab);
+
   const totalSekarang = await getTotalRencana(pjwNomor);
   const totalSetelah = totalSekarang + rencanaVal;
-  const melebihiBatas = totalSetelah > MAX_QTY_PER_PERIODE;
+  const melebihiBatas = totalSetelah > batasKapasitas;
   const permintaanKirimSafe = PermintaanKirim
     ? String(PermintaanKirim).substring(0, 10)
     : null;
@@ -511,9 +528,7 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
   );
   return {
     pjwd_id: result.insertId,
-    warning: melebihiBatas
-      ? { totalSetelah, batas: MAX_QTY_PER_PERIODE }
-      : null,
+    warning: melebihiBatas ? { totalSetelah, batas: batasKapasitas } : null,
   };
 };
 
@@ -539,18 +554,23 @@ const updateDetailField = async (
 
   let melebihiBatas = false;
   let totalSetelah = null;
+  let batasKapasitas = null;
 
   if (field === "pjwd_rencana") {
     const [[row]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl WHERE pjwd_id = ?`,
+      `SELECT d.pjwd_pjw_nomor, h.pjw_cab
+       FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       WHERE d.pjwd_id = ?`,
       [pjwdId],
     );
     if (!row) throw new Error("Baris tidak ditemukan.");
 
+    batasKapasitas = getCapacity(row.pjw_cab);
     const rencanaBaru = Number(value) || 0;
     const totalLain = await getTotalRencana(row.pjwd_pjw_nomor, pjwdId);
     totalSetelah = totalLain + rencanaBaru;
-    melebihiBatas = totalSetelah > MAX_QTY_PER_PERIODE;
+    melebihiBatas = totalSetelah > batasKapasitas;
   }
 
   await db.query(
@@ -561,9 +581,7 @@ const updateDetailField = async (
     pjwd_id: Number(pjwdId),
     field,
     value: sanitizedValue,
-    warning: melebihiBatas
-      ? { totalSetelah, batas: MAX_QTY_PER_PERIODE }
-      : null,
+    warning: melebihiBatas ? { totalSetelah, batas: batasKapasitas } : null,
   };
 };
 

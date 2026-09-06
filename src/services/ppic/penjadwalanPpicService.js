@@ -48,6 +48,7 @@ const getDetail = async (nomor) => {
        COALESCE(src.Kurang, mp.mspk_rencana_order, pro.pro_qty_rencana,
          (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0))) AS Kurang,
        d.pjwd_rencana AS Rencana,
+       d.pjwd_ket_rencana AS KetRencana,
        IF(
          d.pjwd_so_nomor IS NULL AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
          IFNULL(d.pjwd_realisasi_manual, 0),
