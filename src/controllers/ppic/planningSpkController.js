@@ -102,37 +102,8 @@ const exportMaster = async (req, res) => {
 const exportDetail = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    const rows = await svc.getExportDetail(startDate, endDate);
-
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Detail Planning SPK");
-    ws.columns = [
-      { header: "Nomor Plan", key: "NomorPlan", width: 22 },
-      { header: "Tgl Awal", key: "TglAwal", width: 12 },
-      { header: "Tgl Akhir", key: "TglAkhir", width: 12 },
-      { header: "Nomor SPK", key: "NomorSPK", width: 20 },
-      { header: "Nama Order", key: "NamaOrder", width: 40 },
-      { header: "Qty SPK", key: "QtySPK", width: 10 },
-      { header: "Divisi", key: "Divisi", width: 10 },
-      { header: "Tgl Jadwal", key: "TglJadwal", width: 12 },
-      { header: "WIP", key: "Wip", width: 10 },
-      { header: "Qty PO", key: "QtyPO", width: 10 },
-      { header: "Qty Jadwal", key: "QtyJadwal", width: 12 },
-      { header: "Line/Kelompok", key: "LineKelompok", width: 20 },
-    ];
-    ws.getRow(1).font = { bold: true };
-    rows.forEach((r) => ws.addRow(r));
-
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=DetailPlanningSpk_${startDate}_${endDate}.xlsx`,
-    );
-    await wb.xlsx.write(res);
-    res.end();
+    const data = await svc.getExportDetail(startDate, endDate);
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

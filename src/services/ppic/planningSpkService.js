@@ -284,7 +284,8 @@ const getExportDetail = async (startDate, endDate) => {
        h.pl_nomor        AS NomorPlan,
        DATE_FORMAT(h.pl_tgl1, '%Y-%m-%d') AS TglAwal,
        DATE_FORMAT(h.pl_tgl2, '%Y-%m-%d') AS TglAkhir,
-       h.pl_spk_nomor    AS NomorSPK,
+       h.pl_cab          AS Cabang,
+       d.plan_spk        AS NomorSPK,
        s.spk_nama        AS NamaOrder,
        s.spk_jumlah      AS QtySPK,
        d.plan_divisi     AS Divisi,
@@ -295,7 +296,7 @@ const getExportDetail = async (startDate, endDate) => {
        d.plan_line_kelompok AS LineKelompok
      FROM tplan_ppic_dtl2 d
      INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
-     LEFT JOIN tspk s ON s.spk_nomor = h.pl_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
      WHERE h.pl_tgl1 BETWEEN ? AND ?
      ORDER BY h.pl_nomor ASC, d.plan_divisi ASC, d.plan_tgl_jadwal ASC`,
     [startDate, endDate],
