@@ -1651,19 +1651,7 @@ const getMapBelumKirim = async (
 };
 
 const getSpkBelumMkbCount = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  // Hanya relevan untuk PEMBELIAN dan super viewer
-  const allowed = [
-    "PEMBELIAN",
-    "PPIC",
-    "GUDANG",
-    "EDP",
-    "IT",
-    "DIREKSI",
-    "OWNER",
-    "AUDIT",
-  ];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return 0;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT COUNT(*) AS Total
@@ -2016,18 +2004,7 @@ const getBahanKurangList = async (user, limit = 20, offset = 0) => {
 // ── SPK Belum MKB — list ber-paginasi (count reuse getSpkBelumMkbCount
 // yang sudah ada) ──
 const getSpkBelumMkbListPaged = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = [
-    "PEMBELIAN",
-    "PPIC",
-    "GUDANG",
-    "EDP",
-    "IT",
-    "DIREKSI",
-    "OWNER",
-    "AUDIT",
-  ];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT
@@ -2923,9 +2900,7 @@ const getStokBebasSummary = async (user) => {
 };
 
 const getStokBebasList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT Kode, Nama, Satuan, Stok, MkbBelumRealisasi, Free
