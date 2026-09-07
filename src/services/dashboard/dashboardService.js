@@ -25,6 +25,21 @@ const isSuperViewer = (user) => {
   );
 };
 
+// Akses dashboard Gudang Bahan: default PEMBELIAN/GUDANG/PPIC + super
+// viewer. NANDA (FINANCE) dapat pengecualian khusus atas permintaan —
+// bukan bagian, jadi tidak membuka akses untuk FINANCE lain.
+const GUDANG_BAHAN_USER_EXCEPTION = ["NANDA"];
+const isGudangBahanViewer = (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const kode = (user.kode || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  return (
+    allowed.includes(bagian) ||
+    isSuperViewer(user) ||
+    GUDANG_BAHAN_USER_EXCEPTION.includes(kode)
+  );
+};
+
 // ──────────────────────────────────────────────
 // 1. SPK Urgent (sudah ada di login, tapi bisa di-refresh)
 // ──────────────────────────────────────────────
@@ -76,25 +91,39 @@ const getPenawaranSummary = async (user) => {
   if (!super_ && user.divisi) {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
-
+  // Penawaran yang TIDAK PUNYA baris Open sama sekali (semua baris
+  // Batal, semua Close, atau campuran Batal+Close) → dianggap sudah
+  // selesai/tuntas, dikecualikan dari hitungan.
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
   const sql = `
     SELECT
       COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
-      COUNT(DISTINCT CASE WHEN s.spk_pen_nomor IS NOT NULL 
+      COUNT(DISTINCT CASE WHEN so.pen_nomor IS NOT NULL 
                           THEN h.pen_nomor END) AS SudahSpk,
-      COUNT(DISTINCT CASE WHEN s.spk_pen_nomor IS NULL 
+      COUNT(DISTINCT CASE WHEN so.pen_nomor IS NULL 
                           THEN h.pen_nomor END) AS BelumSpk
     FROM tpenawaran_hdr h
-    LEFT JOIN tspk s ON s.spk_pen_nomor = h.pen_nomor 
-                     AND s.spk_aktif = 'Y'
-    WHERE 1=1
+    LEFT JOIN (
+      SELECT spk_pen_nomor AS pen_nomor FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION
+      SELECT so_pen_nomor AS pen_nomor FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) so ON so.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    WHERE sel.pen_nomor IS NULL
+      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+      AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
   `;
-
   const [rows] = await db.query(sql);
   return rows[0];
 };
-
 // ──────────────────────────────────────────────
 // 3. List Penawaran belum ada SPK
 // ──────────────────────────────────────────────
@@ -103,7 +132,12 @@ const getPenawaranBelumSpk = async (user, limit = 20, offset = 0) => {
   let whereExtra = "";
   if (!super_ && user.divisi)
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
-
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
   const sql = `
     SELECT
         h.pen_nomor         AS Nomor,
@@ -115,14 +149,22 @@ const getPenawaranBelumSpk = async (user, limit = 20, offset = 0) => {
     FROM tpenawaran_hdr h
     INNER JOIN tcustomer c ON h.pen_cus_kode = c.cus_kode
     LEFT  JOIN tdivisi v   ON v.kode = h.pen_divisi
-    LEFT  JOIN tspk s      ON s.spk_pen_nomor = h.pen_nomor 
-                            AND s.spk_aktif = 'Y'
-    WHERE s.spk_nomor IS NULL
+    LEFT  JOIN (
+      SELECT spk_pen_nomor AS pen_nomor FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION
+      SELECT so_pen_nomor AS pen_nomor FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) so ON so.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    WHERE so.pen_nomor IS NULL
+      AND sel.pen_nomor IS NULL
+      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 365 DAY)
+      AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
     ORDER BY h.pen_tanggal ASC
     LIMIT ? OFFSET ?
   `;
-
   const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
@@ -299,12 +341,10 @@ const MARKETING_BAGIAN = [
 const getPenawaranBelumMap = async (user, limit = 20, offset = 0) => {
   const bagian = (user.bagian || "").toUpperCase();
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
-
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
-
   const sql = `
     SELECT
       h.pen_nomor       AS Nomor,
@@ -312,7 +352,7 @@ const getPenawaranBelumMap = async (user, limit = 20, offset = 0) => {
       c.cus_nama        AS NamaCustomer,
       h.pen_keterangan  AS Keterangan,
       COUNT(d.pend_id)  AS JmlItem,
-      SUM(CASE WHEN d.pend_status = 'CLOSE' THEN 1 ELSE 0 END) AS ItemClose,
+      SUM(CASE WHEN d.pend_status NOT IN ('BATAL', 'CLOSE') THEN 0 ELSE 1 END) AS ItemSelesai,
       DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
     FROM tpenawaran_hdr h
     INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
@@ -325,11 +365,10 @@ const getPenawaranBelumMap = async (user, limit = 20, offset = 0) => {
       )
       ${whereExtra}
     GROUP BY h.pen_nomor, h.pen_tanggal, c.cus_nama, h.pen_keterangan
-    HAVING ItemClose = 0
+    HAVING ItemSelesai < COUNT(d.pend_id)
     ORDER BY h.pen_tanggal ASC
     LIMIT ? OFFSET ?
   `;
-
   const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
@@ -346,38 +385,43 @@ const getPenawaranMapSummary = async (user) => {
       Batal: 0,
     };
   }
-
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
-
-  // Penawaran yang SEMUA barisnya BATAL → dianggap batal penuh.
-  const BATAL_SUBQUERY = `
+  // Penawaran yang TIDAK PUNYA baris Open sama sekali (murni Batal,
+  // murni Close, atau campuran keduanya) → sudah selesai, dikecualikan
+  // dari Total/SudahMAP/BelumMAP.
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
+  // Untuk badge Close/Batal terpisah di header — tetap dihitung dari
+  // yang murni salah satunya (bukan campuran), supaya angkanya jelas
+  // maknanya masing-masing.
+  const BATAL_MURNI_SUBQUERY = `
     SELECT pend_pen_nomor AS pen_nomor
     FROM tpenawaran_dtl
     GROUP BY pend_pen_nomor
     HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
   `;
-
-  // Penawaran yang SEMUA barisnya CLOSE (sudah terealisasi penuh) →
-  // dikeluarkan dari hitungan utama, tidak perlu MAP lagi.
-  const CLOSE_SUBQUERY = `
+  const CLOSE_MURNI_SUBQUERY = `
     SELECT pend_pen_nomor AS pen_nomor
     FROM tpenawaran_dtl
     GROUP BY pend_pen_nomor
     HAVING SUM(CASE WHEN pend_status = 'CLOSE' THEN 0 ELSE 1 END) = 0
   `;
-
   const sql = `
     SELECT
-      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+      COUNT(DISTINCT CASE WHEN sel.pen_nomor IS NULL
             THEN h.pen_nomor END) AS TotalPenawaran,
-      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+      COUNT(DISTINCT CASE WHEN sel.pen_nomor IS NULL
             AND m.mspk_nomor IS NOT NULL THEN h.pen_nomor END) AS SudahMAP,
-      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+      COUNT(DISTINCT CASE WHEN sel.pen_nomor IS NULL
             AND m.mspk_nomor IS NULL THEN h.pen_nomor END) AS BelumMAP,
-      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+      COUNT(DISTINCT CASE WHEN sel.pen_nomor IS NULL
             AND m.mspk_nomor IS NULL
             AND EXISTS (
               SELECT 1 FROM tpenawaran_dtl d2
@@ -387,13 +431,13 @@ const getPenawaranMapSummary = async (user) => {
       COUNT(DISTINCT bt.pen_nomor) AS Batal
     FROM tpenawaran_hdr h
     LEFT JOIN tmemospk m ON m.mspk_pen_nomor = h.pen_nomor AND m.mspk_aktif = 'Y'
-    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
-    LEFT JOIN (${CLOSE_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${CLOSE_MURNI_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
   `;
-
   const [rows] = await db.query(sql);
   return rows[0];
 };
@@ -969,19 +1013,7 @@ const getPenerimaanSummary = async (user) => {
 
 // ── Dashboard Gudang Bahan ──
 const getGudangBahanDashboard = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = [
-    "PEMBELIAN",
-    "GUDANG",
-    "PPIC",
-    "FINANCE",
-    "EDP",
-    "IT",
-    "DIREKSI",
-    "OWNER",
-    "AUDIT",
-  ];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const cabang = user.cabangGarmen || "P04"; // default cabang garmen
 
@@ -1136,19 +1168,7 @@ const getGudangBahanDashboard = async (user) => {
 };
 
 const getGudangBahanBuffer = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = [
-    "PEMBELIAN",
-    "GUDANG",
-    "PPIC",
-    "FINANCE",
-    "EDP",
-    "IT",
-    "DIREKSI",
-    "OWNER",
-    "AUDIT",
-  ];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const cabang = user.cabangGarmen || "P04";
 
@@ -1180,19 +1200,7 @@ const getGudangBahanBuffer = async (user, limit = 20, offset = 0) => {
 };
 
 const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = [
-    "PEMBELIAN",
-    "GUDANG",
-    "PPIC",
-    "FINANCE",
-    "EDP",
-    "IT",
-    "DIREKSI",
-    "OWNER",
-    "AUDIT",
-  ];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT Kode, Nama, Satuan, Buffer, Masuk, Keluar, Stok
@@ -2171,9 +2179,7 @@ const getEfisiensiBabaranList = async (user, limit = 20, offset = 0) => {
 // reuse getBrowse 569, filter+sort di JS (dataset per bulan relatif
 // kecil, aman tanpa query SQL terpisah) ──
 const getStokAccVsMkaCount = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return { total: 0 };
+  if (!isGudangBahanViewer(user)) return null;
 
   const startDate = new Date().toISOString().slice(0, 8) + "01";
   const endDate = new Date().toISOString().substring(0, 10);
@@ -2186,9 +2192,7 @@ const getStokAccVsMkaCount = async (user) => {
 };
 
 const getStokAccVsMkaList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const startDate = new Date().toISOString().slice(0, 8) + "01";
   const endDate = new Date().toISOString().substring(0, 10);
@@ -2727,9 +2731,7 @@ const getCompanyPulseSummary = async (user) => {
 
 // ── a. MAP/SPK belum ada Permintaan Bahan maupun Realisasi ──
 const getMapSpkBelumPermintaanSummary = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT COUNT(*) AS Total FROM (
@@ -2755,9 +2757,7 @@ const getMapSpkBelumPermintaanSummary = async (user) => {
 };
 
 const getMapSpkBelumPermintaanList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT Nomor, Nama, Sumber,
@@ -2791,9 +2791,7 @@ const getMapSpkBelumPermintaanList = async (user, limit = 20, offset = 0) => {
 
 // ── b. Permintaan Bahan belum direalisasi ──
 const getPermintaanBelumRealisasiSummary = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT
@@ -2812,9 +2810,7 @@ const getPermintaanBelumRealisasiList = async (
   limit = 20,
   offset = 0,
 ) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT
@@ -2838,9 +2834,7 @@ const getPermintaanBelumRealisasiList = async (
 
 // ── c. PO Bahan belum datang (belum ada BPB / masih sisa) ──
 const getPoBahanBelumDatangSummary = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT COUNT(*) AS TotalPO
@@ -2852,9 +2846,7 @@ const getPoBahanBelumDatangSummary = async (user) => {
 };
 
 const getPoBahanBelumDatangList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT
@@ -2923,9 +2915,7 @@ const STOK_BEBAS_BASE_QUERY = `
 `;
 
 const getStokBebasSummary = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `SELECT COUNT(*) AS Total FROM (${STOK_BEBAS_BASE_QUERY}) y WHERE y.Free < 0`;
   const [rows] = await db.query(sql);
@@ -2994,9 +2984,7 @@ const BUFFER_KAOSAN_BASE_QUERY = `
 `;
 
 const getBufferKaosanSummary = async (user) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `SELECT COUNT(*) AS Total FROM (${BUFFER_KAOSAN_BASE_QUERY}) y`;
   const [rows] = await db.query(sql);
@@ -3004,9 +2992,7 @@ const getBufferKaosanSummary = async (user) => {
 };
 
 const getBufferKaosanList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!isGudangBahanViewer(user)) return null;
 
   const sql = `
     SELECT Kode, Nama, Satuan, Buffer, StokAkhir, Tipe
