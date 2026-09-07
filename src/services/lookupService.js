@@ -2090,24 +2090,27 @@ const searchKaryawan = async (keyword, page = 1, limit = 20) => {
 };
 
 // --- GET ALL ACCOUNTS (T-REKENING) ---
-const searchAccount = async (keyword, page = 1, limit = 50) => {
+const searchAccount = async (keyword, page = 1, limit = 50, filterMode) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   let params = [];
-
   // Mengikuti kondisi Delphi: rek_rekening <> ""
   let whereClause = `WHERE rek_rekening <> ""`;
+
+  // Khusus form Potongan (Manksi Desktop: ufrmBayarPotongan) —
+  // filter rek_jp = 1, bukan whitelist kode manual.
+  if (filterMode === "potongan") {
+    whereClause += ` AND rek_jp = 1`;
+  }
 
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (rek_kode LIKE ? OR rek_nama LIKE ? OR rek_rekening LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
-
   const [countResult] = await db.query(
     `SELECT COUNT(*) AS total FROM finance.trekening ${whereClause}`,
     params,
   );
-
   let query = `
     SELECT 
       rek_nama AS Nama, 
@@ -2115,11 +2118,10 @@ const searchAccount = async (keyword, page = 1, limit = 50) => {
       rek_rekening AS Rekening 
     FROM finance.trekening 
     ${whereClause} 
-    ORDER BY rek_nama ASC 
+    ORDER BY rek_rekening ASC 
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
-
   const [rows] = await db.query(query, params);
   return {
     items: rows,
