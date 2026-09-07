@@ -2,17 +2,15 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../../controllers/ppic/planningSpkController");
-const { verifyToken, checkPermission } = require("../../middleware/authMiddleware");
+const {
+  verifyToken,
+  checkPermission,
+} = require("../../middleware/authMiddleware");
 
 const MENU_ID = 56;
 
 // GET /api/ppic/planning-spk?startDate=2026-06-22&endDate=2026-06-27
-router.get(
-  "/",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  ctrl.getBrowse,
-);
+router.get("/", verifyToken, checkPermission(MENU_ID, "view"), ctrl.getBrowse);
 
 // GET /api/ppic/planning-spk/:nomor/detail
 router.get(
@@ -51,7 +49,7 @@ router.delete(
 router.get(
   "/export-master",
   verifyToken,
-  checkPermission(MENU_ID, "export"),
+  checkPermission(MENU_ID, "view"),
   ctrl.exportMaster,
 );
 
@@ -59,7 +57,7 @@ router.get(
 router.get(
   "/export-detail",
   verifyToken,
-  checkPermission(MENU_ID, "export"),
+  checkPermission(MENU_ID, "view"),
   ctrl.exportDetail,
 );
 
