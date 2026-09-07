@@ -32,6 +32,16 @@ router.get(
   controller.getPenawaranMapSummary,
 );
 router.get(
+  "/penawaran-batal-summary",
+  verifyToken,
+  controller.getPenawaranBatalSummary,
+);
+router.get(
+  "/penawaran-batal-list",
+  verifyToken,
+  controller.getPenawaranBatalList,
+);
+router.get(
   "/kunjungan-sales-summary",
   verifyToken,
   controller.getKunjunganSalesSummary,
@@ -164,6 +174,11 @@ router.get(
   controller.getAchievementSummary,
 );
 router.get("/growth-yoy", verifyToken, controller.getGrowthYoy);
+router.get(
+  "/achievement-monthly",
+  verifyToken,
+  controller.getAchievementMonthly,
+);
 router.get("/penawaran-funnel", verifyToken, controller.getPenawaranFunnel);
 router.get("/map-funnel", verifyToken, controller.getMapFunnel);
 router.get(

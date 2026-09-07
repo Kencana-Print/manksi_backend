@@ -4,8 +4,7 @@ const fs = require("fs");
 const path = require("path");
 
 // ============================================================
-// HELPER: sanitize nomor buat nama file (nomor LHK/SPK/MAP
-// sering mengandung "/", gak boleh langsung jadi nama file)
+// HELPER: sanitize nomor buat nama file
 // ============================================================
 const sanitizeForFilename = (str) =>
   String(str || "").replace(/[\/\\:*?"<>|]/g, "_");
@@ -19,16 +18,19 @@ const generateNomor = async (tanggal) => {
   const [rows] = await db.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(lhkp_nomor, 6, 4) AS UNSIGNED)), 0) AS jumlah
      FROM tlhkpola_hdr
-     WHERE RIGHT(lhkp_nomor, 4) = ?`,
+     WHERE lhkp_nomor LIKE 'LHKP/%' AND RIGHT(lhkp_nomor, 4) = ?`,
     [String(tahun)],
   );
-  // FIX sekalian: bug pattern #1 — hasil agregat SQL harus di-Number() dulu
   const nextVal = Number(rows[0].jumlah) + 1;
   return `LHKP/${String(nextVal).padStart(4, "0")}/${tahun}`;
 };
 
 // ============================================================
 // GET DETAIL — untuk mode Ubah
+// Hanya sisi Grading/Pola — Marker sudah dipindah ke menu terpisah
+// (services/ppic/lhkMarkerFormService.js), sehingga tidak lagi
+// dimuat/diedit lewat form ini meski datanya masih ada di DB
+// (untuk record lama hasil form gabungan sebelum pemisahan).
 // ============================================================
 const getDetail = async (nomor) => {
   const [headerRows] = await db.query(
@@ -38,65 +40,47 @@ const getDetail = async (nomor) => {
   if (headerRows.length === 0)
     throw new Error("Data LHK Pola tidak ditemukan.");
 
-  const [marker, grading] = await Promise.all([
-    db.query(
-      `SELECT d.ldm_id AS id, d.ldm_urut AS urut, d.ldm_spk_nomor AS spkNomor,
-              IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
-              d.ldm_lebar_kain AS lebarKain, d.ldm_size AS size,
-              d.ldm_tujuan_proses AS tujuanProses,
-              d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar
-       FROM tlhkpola_marker_dtl d
-       LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
-       LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
-       WHERE d.ldm_nomor = ?
-       ORDER BY d.ldm_urut`,
-      [nomor],
-    ),
-    db.query(
-      `SELECT d.ldg_id AS id, d.ldg_urut AS urut, d.ldg_spk_nomor AS spkNomor,
-              IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
-              d.ldg_divisi AS divisi, d.ldg_grading_size AS gradingSize,
-              d.ldg_keterangan AS keterangan, d.ldg_gambar AS gambar
-       FROM tlhkpola_grading_dtl d
-       LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
-       LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldg_spk_nomor
-       WHERE d.ldg_nomor = ?
-       ORDER BY d.ldg_urut`,
-      [nomor],
-    ),
-  ]);
+  const [grading] = await db.query(
+    `SELECT d.ldg_id AS id, d.ldg_urut AS urut, d.ldg_spk_nomor AS spkNomor,
+            IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
+            d.ldg_divisi AS divisi, d.ldg_grading_size AS gradingSize,
+            d.ldg_keterangan AS keterangan, d.ldg_gambar AS gambar
+     FROM tlhkpola_grading_dtl d
+     LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
+     LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldg_spk_nomor
+     WHERE d.ldg_nomor = ?
+     ORDER BY d.ldg_urut`,
+    [nomor],
+  );
 
   return {
-    header: headerRows[0],
-    marker: marker[0],
-    grading: grading[0],
+    header: {
+      ...headerRows[0],
+      pembuatPola: headerRows[0].lhkp_pembuat_pola || "",
+    },
+    grading,
   };
 };
 
 // ============================================================
-// SAVE DATA — create & edit
+// SAVE DATA — create & edit (Grading/Pola saja)
 // ============================================================
 const saveData = async (payload, user, isEdit) => {
   const {
     nomor: existingNomor,
     tanggal,
     keterangan,
-    marker,
+    pembuatPola,
     grading,
   } = payload;
 
   if (!tanggal) throw new Error("Tanggal wajib diisi.");
 
-  const markerFilled = (marker || []).filter(
-    (r) => r.spkNomor && r.spkNomor.trim(),
-  );
   const gradingFilled = (grading || []).filter(
     (r) => r.spkNomor && r.spkNomor.trim(),
   );
-  if (markerFilled.length === 0 && gradingFilled.length === 0) {
-    throw new Error(
-      "Minimal harus ada 1 baris SPK terisi (di tab Marker/Mika/Duplek atau Pola/Grading).",
-    );
+  if (gradingFilled.length === 0) {
+    throw new Error("Minimal harus ada 1 baris SPK terisi di Pola/Grading.");
   }
 
   const conn = await db.getConnection();
@@ -114,32 +98,23 @@ const saveData = async (payload, user, isEdit) => {
       nomor = existingNomor;
       await conn.query(
         `UPDATE tlhkpola_hdr
-         SET lhkp_tanggal = ?, lhkp_keterangan = ?,
+         SET lhkp_tanggal = ?, lhkp_keterangan = ?, lhkp_pembuat_pola = ?,
              user_modified = ?, date_modified = NOW()
          WHERE lhkp_nomor = ?`,
-        [tanggal, keterangan || "", user.kode, nomor],
+        [tanggal, keterangan || "", pembuatPola || "", user.kode, nomor],
       );
     } else {
       nomor = await generateNomor(tanggal);
       await conn.query(
         `INSERT INTO tlhkpola_hdr
-           (lhkp_nomor, lhkp_tanggal, lhkp_keterangan, user_create, date_create)
-         VALUES (?, ?, ?, ?, NOW())`,
-        [nomor, tanggal, keterangan || "", user.kode],
+           (lhkp_nomor, lhkp_tanggal, lhkp_keterangan, lhkp_pembuat_pola, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [nomor, tanggal, keterangan || "", pembuatPola || "", user.kode],
       );
     }
 
-    // ── Tarik dulu mapping gambar lama (per spkNomor) SEBELUM di-delete,
-    // supaya gambar "nempel" ke SPK meski urut baris berubah ──
-    const [oldMarkerGambar] = await conn.query(
-      `SELECT ldm_spk_nomor AS spkNomor, ldm_gambar AS gambar
-       FROM tlhkpola_marker_dtl WHERE ldm_nomor = ? AND ldm_gambar IS NOT NULL`,
-      [nomor],
-    );
-    const markerGambarMap = new Map(
-      oldMarkerGambar.map((r) => [r.spkNomor, r.gambar]),
-    );
-
+    // Tarik mapping gambar lama (per spkNomor) SEBELUM di-delete, supaya
+    // gambar "nempel" ke SPK meski urut baris berubah.
     const [oldGradingGambar] = await conn.query(
       `SELECT ldg_spk_nomor AS spkNomor, ldg_gambar AS gambar
        FROM tlhkpola_grading_dtl WHERE ldg_nomor = ? AND ldg_gambar IS NOT NULL`,
@@ -149,51 +124,25 @@ const saveData = async (payload, user, isEdit) => {
       oldGradingGambar.map((r) => [r.spkNomor, r.gambar]),
     );
 
-    // --- Replace total detail Marker/Mika/Duplek ---
-    await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
-      nomor,
-    ]);
-    if (markerFilled.length > 0) {
-      const vals = markerFilled.map((r, i) => [
-        nomor,
-        i + 1,
-        r.spkNomor,
-        r.lebarKain || "",
-        r.size || "",
-        r.tujuanProses || "",
-        r.keterangan || "",
-        markerGambarMap.get(r.spkNomor) || null, // ← carry-forward
-      ]);
-      await conn.query(
-        `INSERT INTO tlhkpola_marker_dtl
-           (ldm_nomor, ldm_urut, ldm_spk_nomor, ldm_lebar_kain, ldm_size,
-            ldm_tujuan_proses, ldm_keterangan, ldm_gambar)
-         VALUES ?`,
-        [vals],
-      );
-    }
-
     // --- Replace total detail Pola/Grading ---
     await conn.query(`DELETE FROM tlhkpola_grading_dtl WHERE ldg_nomor = ?`, [
       nomor,
     ]);
-    if (gradingFilled.length > 0) {
-      const vals = gradingFilled.map((r, i) => [
-        nomor,
-        i + 1,
-        r.spkNomor,
-        r.divisi || "",
-        r.gradingSize || "",
-        r.keterangan || "",
-        gradingGambarMap.get(r.spkNomor) || null, // ← carry-forward
-      ]);
-      await conn.query(
-        `INSERT INTO tlhkpola_grading_dtl
-           (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size, ldg_keterangan, ldg_gambar)
-         VALUES ?`,
-        [vals],
-      );
-    }
+    const vals = gradingFilled.map((r, i) => [
+      nomor,
+      i + 1,
+      r.spkNomor,
+      r.divisi || "",
+      r.gradingSize || "",
+      r.keterangan || "",
+      gradingGambarMap.get(r.spkNomor) || null,
+    ]);
+    await conn.query(
+      `INSERT INTO tlhkpola_grading_dtl
+         (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size, ldg_keterangan, ldg_gambar)
+       VALUES ?`,
+      [vals],
+    );
 
     await conn.commit();
     return { nomor };
@@ -206,14 +155,12 @@ const saveData = async (payload, user, isEdit) => {
 };
 
 // ============================================================
-// UPLOAD GAMBAR PER BARIS — dipanggil SETELAH save berhasil
-// (nomor LHK sudah pasti ada). Key = spkNomor, bukan urut.
+// UPLOAD GAMBAR PER BARIS (khusus tab grading)
 // ============================================================
 const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
   if (!fs.existsSync(tempFilePath))
     throw new Error("File sumber sementara tidak ditemukan.");
-  if (tab !== "marker" && tab !== "grading")
-    throw new Error("Tab tidak valid.");
+  if (tab !== "grading") throw new Error("Tab tidak valid.");
 
   const finalFileName = buildGambarFileName(lhkNomor, tab, spkNomor);
   const folderPath = path.join(process.cwd(), "public", "images", "lhkpola");
@@ -234,20 +181,14 @@ const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
     throw new Error("Gagal memproses gambar ke format JPG.");
   }
 
-  // Update kolom gambar di baris yang match spkNomor
-  const col = tab === "marker" ? "ldm_gambar" : "ldg_gambar";
-  const table =
-    tab === "marker" ? "tlhkpola_marker_dtl" : "tlhkpola_grading_dtl";
-  const nomorCol = tab === "marker" ? "ldm_nomor" : "ldg_nomor";
-  const spkCol = tab === "marker" ? "ldm_spk_nomor" : "ldg_spk_nomor";
-
   const [result] = await db.query(
-    `UPDATE ${table} SET ${col} = ? WHERE ${nomorCol} = ? AND ${spkCol} = ?`,
+    `UPDATE tlhkpola_grading_dtl SET ldg_gambar = ?
+     WHERE ldg_nomor = ? AND ldg_spk_nomor = ?`,
     [finalFileName, lhkNomor, spkNomor],
   );
   if (result.affectedRows === 0) {
     throw new Error(
-      `Baris SPK ${spkNomor} tidak ditemukan di ${tab} untuk LHK Pola ${lhkNomor}.`,
+      `Baris SPK ${spkNomor} tidak ditemukan di grading untuk LHK Pola ${lhkNomor}.`,
     );
   }
 
@@ -255,15 +196,14 @@ const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
 };
 
 // ============================================================
-// DELETE
+// DELETE — hanya hapus grading + header. Marker (kalau ada, dari
+// record lama gabungan) SENGAJA TIDAK disentuh — jadi data marker
+// lama tidak hilang meski header LHK Pola-nya dihapus dari sisi ini.
 // ============================================================
 const deleteData = async (nomor) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
-      nomor,
-    ]);
     await conn.query(`DELETE FROM tlhkpola_grading_dtl WHERE ldg_nomor = ?`, [
       nomor,
     ]);
@@ -283,7 +223,7 @@ const deleteData = async (nomor) => {
 };
 
 // ============================================================
-// LOOKUP SPK/MAP
+// LOOKUP SPK/MAP — dipakai bareng oleh LHK Pola & LHK Marker
 // ============================================================
 const searchSpk = async (q = "") => {
   const like = `%${q}%`;

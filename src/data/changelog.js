@@ -5,6 +5,20 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.8",
+    date: "2026-09-07",
+    changes: [
+      {
+        type: "added",
+        text: "Menu Pengajuan Dana, dipindahkan dari aplikasi GA2 ke MANKSI.",
+      },
+      {
+        type: "added",
+        text: "LHK Pola dipisah menjadi 2 menu yaitu LHK Pola dan LHK Marker.",
+      },
+    ],
+  },
+  {
     version: "1.0.7",
     date: "2026-09-03",
     changes: [

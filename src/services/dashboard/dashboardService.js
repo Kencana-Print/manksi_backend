@@ -337,8 +337,94 @@ const getPenawaranBelumMap = async (user, limit = 20, offset = 0) => {
 const getPenawaranMapSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) {
-    return { TotalPenawaran: 0, SudahMAP: 0, BelumMAP: 0, BelumMAPAdaClose: 0 };
+    return {
+      TotalPenawaran: 0,
+      SudahMAP: 0,
+      BelumMAP: 0,
+      BelumMAPAdaClose: 0,
+      Close: 0,
+      Batal: 0,
+    };
   }
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  // Penawaran yang SEMUA barisnya BATAL → dianggap batal penuh.
+  const BATAL_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
+  // Penawaran yang SEMUA barisnya CLOSE (sudah terealisasi penuh) →
+  // dikeluarkan dari hitungan utama, tidak perlu MAP lagi.
+  const CLOSE_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'CLOSE' THEN 0 ELSE 1 END) = 0
+  `;
+
+  const sql = `
+    SELECT
+      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+            THEN h.pen_nomor END) AS TotalPenawaran,
+      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+            AND m.mspk_nomor IS NOT NULL THEN h.pen_nomor END) AS SudahMAP,
+      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+            AND m.mspk_nomor IS NULL THEN h.pen_nomor END) AS BelumMAP,
+      COUNT(DISTINCT CASE WHEN bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL
+            AND m.mspk_nomor IS NULL
+            AND EXISTS (
+              SELECT 1 FROM tpenawaran_dtl d2
+              WHERE d2.pend_pen_nomor = h.pen_nomor AND d2.pend_status = 'CLOSE'
+            ) THEN h.pen_nomor END) AS BelumMAPAdaClose,
+      COUNT(DISTINCT cl.pen_nomor) AS Close,
+      COUNT(DISTINCT bt.pen_nomor) AS Batal
+    FROM tpenawaran_hdr h
+    LEFT JOIN tmemospk m ON m.mspk_pen_nomor = h.pen_nomor AND m.mspk_aktif = 'Y'
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${CLOSE_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0];
+};
+
+// ── Penawaran Batal (90 hari terakhir) — summary + list beserta alasan ──
+const getPenawaranBatalSummary = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user))
+    return { total: 0 };
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const sql = `
+    SELECT COUNT(DISTINCT h.pen_nomor) AS Total
+    FROM tpenawaran_hdr h
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+    WHERE d.pend_status = 'BATAL'
+      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+  const [rows] = await db.query(sql);
+  return { total: rows[0]?.Total || 0 };
+};
+
+const getPenawaranBatalList = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
 
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
@@ -347,23 +433,27 @@ const getPenawaranMapSummary = async (user) => {
 
   const sql = `
     SELECT
-      COUNT(DISTINCT h.pen_nomor) AS TotalPenawaran,
-      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NOT NULL THEN h.pen_nomor END) AS SudahMAP,
-      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NULL THEN h.pen_nomor END) AS BelumMAP,
-      COUNT(DISTINCT CASE WHEN m.mspk_nomor IS NULL
-        AND EXISTS (
-          SELECT 1 FROM tpenawaran_dtl d2
-          WHERE d2.pend_pen_nomor = h.pen_nomor AND d2.pend_status = 'CLOSE'
-        ) THEN h.pen_nomor END) AS BelumMAPAdaClose
+      h.pen_nomor         AS Nomor,
+      DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y') AS Tanggal,
+      c.cus_nama          AS NamaCustomer,
+      v.Divisi            AS Divisi,
+      d.pend_nama_barang  AS NamaBarang,
+      d.pend_qty * d.pend_harga AS Nilai,
+      d.pend_batal        AS AlasanBatal,
+      DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
     FROM tpenawaran_hdr h
-    LEFT JOIN tmemospk m ON m.mspk_pen_nomor = h.pen_nomor AND m.mspk_aktif = 'Y'
-    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    LEFT JOIN tdivisi v ON v.kode = h.pen_divisi
+    WHERE d.pend_status = 'BATAL'
+      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
+    ORDER BY h.pen_tanggal DESC
+    LIMIT ? OFFSET ?
   `;
-
-  const [rows] = await db.query(sql);
-  return rows[0];
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
 };
 
 const getKunjunganSalesSummary = async (user) => {
@@ -447,7 +537,7 @@ const getAchievementSummary = async (user, tahun, bulanAwal, bulanAkhir) => {
     targetVsAchievementService.getBySales(thn, bAwal, bAkhir),
   ]);
 
-  const bySalesOnly = bySalesRaw.filter((r) => r.Urut === 1);
+  const bySalesOnly = bySalesRaw.filter((r) => Number(r.Urut) === 1);
   const sortedByAch = [...bySalesOnly].sort(
     (a, b) => Number(b.Ach || 0) - Number(a.Ach || 0),
   );
@@ -658,6 +748,32 @@ const getPipelineMenggantung = async (
     items: paged,
     hasMore: start + limit < sorted.length,
   };
+};
+
+// 7. Achievement per bulan (12 bulan) — untuk kolom "Growth vs Achievement"
+// di panel Growth YoY. Reuse getByDivisi per bulan, agregasi Target/Realisasi.
+const getAchievementMonthly = async (user, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const thn = tahun || new Date().getFullYear();
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+
+  const results = await Promise.all(
+    months.map((m) => targetVsAchievementService.getByDivisi(thn, m, m)),
+  );
+
+  return months.map((m, idx) => {
+    const rows = results[idx] || [];
+    const target = rows.reduce((s, r) => s + Number(r.Target || 0), 0);
+    const realisasi = rows.reduce((s, r) => s + Number(r.Realisasi || 0), 0);
+    return {
+      bulan: m,
+      target,
+      realisasi,
+      ach: target > 0 ? (realisasi / target) * 100 : 0,
+    };
+  });
 };
 
 // ── Dashboard Piutang (AR) ──
@@ -2913,6 +3029,8 @@ module.exports = {
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
   getPenawaranMapSummary,
+  getPenawaranBatalSummary, // ⬅ baru
+  getPenawaranBatalList,
   getKunjunganSalesSummary,
   getPiutangDashboard,
   getPiutangOverdue,
@@ -2953,6 +3071,7 @@ module.exports = {
   getSpkTerkirimBelumTagihSummary,
   getSpkTerkirimBelumTagihList,
   getAchievementSummary,
+  getAchievementMonthly,
   getGrowthYoy,
   getPenawaranFunnel,
   getMapFunnel,

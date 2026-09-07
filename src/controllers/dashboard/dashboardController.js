@@ -103,6 +103,26 @@ const getPenawaranMapSummary = async (req, res) => {
   }
 };
 
+const getPenawaranBatalSummary = async (req, res) => {
+  try {
+    const data = await service.getPenawaranBatalSummary(req.user);
+    res.status(200).json({ success: true, data: data ?? { total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPenawaranBatalList = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = parseInt(req.query.offset) || 0;
+    const data = await service.getPenawaranBatalList(req.user, limit, offset);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getKunjunganSalesSummary = async (req, res) => {
   try {
     const data = await service.getKunjunganSalesSummary(req.user);
@@ -640,6 +660,19 @@ const getAchievementSummary = async (req, res) => {
   }
 };
 
+const getAchievementMonthly = async (req, res) => {
+  try {
+    const { tahun } = req.query;
+    const data = await service.getAchievementMonthly(
+      req.user,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getGrowthYoy = async (req, res) => {
   try {
     const { tahun } = req.query;
@@ -855,6 +888,8 @@ module.exports = {
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
   getPenawaranMapSummary,
+  getPenawaranBatalSummary, // ⬅ baru
+  getPenawaranBatalList,
   getKunjunganSalesSummary,
   getPiutangDashboard,
   getPiutangOverdue,
@@ -896,6 +931,7 @@ module.exports = {
   getSpkTerkirimBelumTagihList,
   getAchievementSummary,
   getGrowthYoy,
+  getAchievementMonthly,
   getPenawaranFunnel,
   getMapFunnel,
   getProyeksiVsRealisasiSummary,

@@ -55,6 +55,8 @@ const planningSpkRoutes = require("./routes/ppic/planningSpkRoutes");
 const planningSpkFormRoutes = require("./routes/ppic/planningSpkFormRoutes");
 const penjadwalanPpicRoutes = require("./routes/ppic/penjadwalanPpicRoutes");
 const penjadwalanPpicFormRoutes = require("./routes/ppic/penjadwalanPpicFormRoutes");
+const lhkMarkerRoutes = require("./routes/ppic/lhkMarkerRoutes");
+const lhkMarkerFormRoutes = require("./routes/ppic/lhkMarkerFormRoutes");
 
 // Garmen Routes
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
@@ -200,6 +202,8 @@ const potonganFormRoutes = require("./routes/piutang/penerimaan/potonganFormRout
 const pelunasanPiutangRoutes = require("./routes/piutang/pelunasanRoutes");
 const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 const pengajuanDanaRoutes = require("./routes/piutang/pengajuanDanaRoutes");
+const pengajuanDanaFormRoutes = require("./routes/piutang/pengajuanDanaFormRoutes");
+const costCenterRoutes = require("./routes/piutang/costCenterRoutes");
 
 //Laporan Routes
 //Laporan Gudang Garmen
@@ -421,6 +425,8 @@ app.use("/api/ppic/planning-spk", planningSpkRoutes);
 app.use("/api/ppic/planning-spk-form", planningSpkFormRoutes);
 app.use("/api/ppic/penjadwalan", penjadwalanPpicRoutes);
 app.use("/api/ppic/penjadwalan-form", penjadwalanPpicFormRoutes);
+app.use("/api/ppic/lhk-marker", lhkMarkerRoutes);
+app.use("/api/ppic/lhk-marker-form", lhkMarkerFormRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
@@ -600,6 +606,8 @@ app.use("/api/piutang/penerimaan/potongan-form", potonganFormRoutes);
 app.use("/api/piutang/pelunasan", pelunasanPiutangRoutes);
 app.use("/api/piutang/pelunasan-form", pelunasanFormRoutes);
 app.use("/api/piutang/pengajuan-dana", pengajuanDanaRoutes);
+app.use("/api/piutang/pengajuan-dana-form", pengajuanDanaFormRoutes);
+app.use("/api/piutang/cost-center", costCenterRoutes);
 
 app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
