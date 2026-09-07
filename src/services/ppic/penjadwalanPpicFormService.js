@@ -361,8 +361,8 @@ const FIELD_OWNERSHIP = {
   pjwd_ket_rencana: "MARKETING",
   pjwd_tgl_permintaan_kirim: "MARKETING",
   pjwd_status_permintaan: "MARKETING",
-  pjwd_tgl_kesepakatan: "PPIC",
-  pjwd_ket_kesepakatan: "PPIC",
+  pjwd_tgl_kesepakatan: "NOT_MARKETING", // ⬅ diubah dari "PPIC"
+  pjwd_ket_kesepakatan: "NOT_MARKETING", // ⬅ diubah dari "PPIC"
   pjwd_nama_manual: "MARKETING",
   pjwd_pesan_manual: "MARKETING",
   pjwd_kirim_manual: "MARKETING",
@@ -385,6 +385,14 @@ const assertFieldOwnership = (field, ownershipMap, userKode, userBagian) => {
   if (!owner) return; // field tidak diatur kepemilikannya — bebas siapa saja
 
   const bagianUpper = (userBagian || "").toUpperCase();
+
+  if (owner === "NOT_MARKETING") {
+    if (bagianUpper === "MARKETING") {
+      throw new Error("Field ini tidak bisa diubah oleh bagian Marketing.");
+    }
+    return; // bagian apa pun selain Marketing boleh
+  }
+
   if (bagianUpper !== owner) {
     throw new Error(`Field ini hanya bisa diubah oleh bagian ${owner}.`);
   }
