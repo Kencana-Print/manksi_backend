@@ -261,13 +261,26 @@ const saveData = async (payload, user) => {
 
     // 6. Insert Planning SPK (tplanningspk)
     if (!isMap && nomorSpk) {
+      // ⚠️ FIX: resolve ke spk_so_ref dulu (sama persis logika
+      // inputPlanningSpkFormService) — supaya kedua form SELALU
+      // sepakat plan_spk mana yang dipakai untuk SPK yang sama,
+      // dan tidak saling bikin baris duplikat dengan key berbeda.
+      let effectivePlanSpk = nomorSpk;
+      const [spkRefRows] = await conn.query(
+        `SELECT spk_so_ref AS soRef FROM tspk WHERE spk_nomor = ?`,
+        [nomorSpk],
+      );
+      if (spkRefRows.length > 0 && spkRefRows[0].soRef) {
+        effectivePlanSpk = spkRefRows[0].soRef;
+      }
+
       await conn.query(
         `DELETE FROM tplanningspk WHERE (plan_cutting+plan_cetak+plan_sublim+plan_bordir+plan_jahit+plan_finishing+plan_kirim)=0 AND plan_spk=?`,
-        [nomorSpk],
+        [effectivePlanSpk],
       );
       await conn.query(
         `UPDATE tplanningspk SET plan_datang=0 WHERE plan_spk=?`,
-        [nomorSpk],
+        [effectivePlanSpk],
       );
 
       for (const d of dtlPlan) {
@@ -275,7 +288,7 @@ const saveData = async (payload, user) => {
           await conn.query(
             `INSERT INTO tplanningspk (plan_spk, plan_tanggal, plan_datang, plan_ppic) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE plan_datang=?, plan_ppic=?`,
             [
-              nomorSpk,
+              effectivePlanSpk,
               d.tanggal,
               parseFloat(d.jumlah || 0),
               user.kode,

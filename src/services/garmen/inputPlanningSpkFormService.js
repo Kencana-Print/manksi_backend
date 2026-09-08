@@ -5,6 +5,16 @@ const isLLDivision = (nomor) =>
     .substring(3, 5)
     .toUpperCase() === "LL";
 
+const formatDateSafe = (v) => {
+  if (!v) return "";
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return "";
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 // ⚠️ Resolve tipe sumber header: MAP -> tmemospk, format "SO-..." ->
 // tsalesorder, selain itu -> tspk (SPK PPIC / SO legacy pre-migrasi).
 // Ditambahkan setelah ditemukan bahwa mkb_spk_nomor sekarang bisa
@@ -83,9 +93,7 @@ const getDetail = async (nomor) => {
   );
 
   const detail = rows.map((r) => ({
-    tanggal: r.plan_tanggal
-      ? new Date(r.plan_tanggal).toISOString().substring(0, 10)
-      : "",
+    tanggal: formatDateSafe(r.plan_tanggal),
     datang: Number(r.plan_datang) || 0,
     cutting: Number(r.plan_cutting) || 0,
     cetak: Number(r.plan_cetak) || 0,
