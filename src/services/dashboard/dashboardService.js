@@ -453,12 +453,20 @@ const getPenawaranBatalSummary = async (user) => {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
 
+  // Murni batal: SEMUA baris detail statusnya BATAL (tidak campur
+  // Open/Close) — konsisten dengan badge "Batal" di getPenawaranMapSummary.
+  const BATAL_MURNI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
   const sql = `
     SELECT COUNT(DISTINCT h.pen_nomor) AS Total
     FROM tpenawaran_hdr h
-    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
-    WHERE d.pend_status = 'BATAL'
-      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+    INNER JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
   `;
@@ -475,6 +483,13 @@ const getPenawaranBatalList = async (user, limit = 20, offset = 0) => {
     whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
   }
 
+  const BATAL_MURNI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
   const sql = `
     SELECT
       h.pen_nomor         AS Nomor,
@@ -486,11 +501,11 @@ const getPenawaranBatalList = async (user, limit = 20, offset = 0) => {
       d.pend_batal        AS AlasanBatal,
       DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
     FROM tpenawaran_hdr h
+    INNER JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
     INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
     INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
     LEFT JOIN tdivisi v ON v.kode = h.pen_divisi
-    WHERE d.pend_status = 'BATAL'
-      AND h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL ${RANGE_DAYS} DAY)
       AND h.pen_tanggal <= CURDATE()
       ${whereExtra}
     ORDER BY h.pen_tanggal DESC
@@ -680,15 +695,13 @@ const getRealisasiPenawaranBulanan = async (user) => {
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
 
   const sql = `
+    -- OPEN & BATAL: per baris seperti sebelumnya
     SELECT
       DATE_FORMAT(r.tanggal, '%Y-%m') AS Bulan,
       CASE
-        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM'
-          THEN 'GARMEN PREMIUM'
-        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM'
-          THEN 'GARMEN MEDIUM'
-        WHEN r.divisi = 'GARMEN'
-          THEN 'GARMEN LAINNYA'
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+        WHEN r.divisi = 'GARMEN' THEN 'GARMEN LAINNYA'
         ELSE r.divisi
       END AS DivisiGroup,
       IF(d.pend_status = '', 'OPEN', d.pend_status) AS Status,
@@ -700,15 +713,61 @@ const getRealisasiPenawaranBulanan = async (user) => {
     WHERE r.tanggal >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
       AND r.tanggal <= CURDATE()
       AND d.pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+      AND d.pend_status <> 'CLOSE'
     GROUP BY Bulan, DivisiGroup, Status
-    ORDER BY Bulan ASC
+
+    UNION ALL
+
+    -- CLOSE: dedup per (nomor, nama_barang, ukuran) — alternatif harga
+    -- untuk item yang sama dihitung SATU KALI saja (yang closed).
+    -- Hanya dihitung kalau nomor penawaran itu punya MAP/SO real
+    -- (bukan close manual tanpa realisasi).
+    SELECT
+      DATE_FORMAT(r.tanggal, '%Y-%m') AS Bulan,
+      CASE
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+        WHEN r.divisi = 'GARMEN' THEN 'GARMEN LAINNYA'
+        ELSE r.divisi
+      END AS DivisiGroup,
+      'CLOSE' AS Status,
+      COUNT(*) AS JmlItem,
+      SUM(dc.NilaiClose) AS Nilai
+    FROM rekappenawaran r
+    INNER JOIN tpenawaran_hdr h ON h.pen_nomor = r.Nomor
+    INNER JOIN (
+      SELECT pend_pen_nomor, pend_nama_barang, pend_ukuran,
+        MAX(CASE WHEN pend_status = 'CLOSE' THEN pend_harga * pend_qty END) AS NilaiClose,
+        MAX(CASE WHEN pend_status = 'CLOSE' THEN 1 ELSE 0 END) AS IsClose
+      FROM tpenawaran_dtl
+      WHERE pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+      GROUP BY pend_pen_nomor, pend_nama_barang, pend_ukuran
+    ) dc ON dc.pend_pen_nomor = r.Nomor AND dc.IsClose = 1
+    INNER JOIN (
+      SELECT mspk_pen_nomor AS pen_nomor FROM tmemospk
+        WHERE mspk_aktif = 'Y' AND mspk_pen_nomor IS NOT NULL AND mspk_pen_nomor <> ''
+      UNION
+      SELECT spk_pen_nomor AS pen_nomor FROM tspk
+        WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION
+      SELECT so_pen_nomor AS pen_nomor FROM tsalesorder
+        WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) mapso ON mapso.pen_nomor = r.Nomor
+    WHERE r.tanggal >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
+      AND r.tanggal <= CURDATE()
+    GROUP BY Bulan, DivisiGroup
   `;
   const [rows] = await db.query(sql);
 
   // Susun ke bentuk: [{ divisi, bulanan: [{Bulan, statuses:{OPEN,CLOSE,BATAL}, totalItem, totalNilai}] }]
   const byDivisi = {};
+  const byTotal = {}; // ⬅ agregat semua divisi, per bulan+status
+
   for (const row of rows) {
     const { DivisiGroup, Bulan, Status, JmlItem, Nilai } = row;
+    const jml = Number(JmlItem) || 0;
+    const nilai = Number(Nilai) || 0;
+
     if (!byDivisi[DivisiGroup]) byDivisi[DivisiGroup] = {};
     if (!byDivisi[DivisiGroup][Bulan]) {
       byDivisi[DivisiGroup][Bulan] = {
@@ -719,12 +778,19 @@ const getRealisasiPenawaranBulanan = async (user) => {
       };
     }
     const bucket = byDivisi[DivisiGroup][Bulan];
-    bucket.statuses[Status] = {
-      JmlItem: Number(JmlItem) || 0,
-      Nilai: Number(Nilai) || 0,
-    };
-    bucket.totalItem += Number(JmlItem) || 0;
-    bucket.totalNilai += Number(Nilai) || 0;
+    bucket.statuses[Status] = { JmlItem: jml, Nilai: nilai };
+    bucket.totalItem += jml;
+    bucket.totalNilai += nilai;
+
+    // Akumulasi ke Total
+    if (!byTotal[Bulan])
+      byTotal[Bulan] = { Bulan, statuses: {}, totalItem: 0, totalNilai: 0 };
+    if (!byTotal[Bulan].statuses[Status])
+      byTotal[Bulan].statuses[Status] = { JmlItem: 0, Nilai: 0 };
+    byTotal[Bulan].statuses[Status].JmlItem += jml;
+    byTotal[Bulan].statuses[Status].Nilai += nilai;
+    byTotal[Bulan].totalItem += jml;
+    byTotal[Bulan].totalNilai += nilai;
   }
 
   const months = [];
@@ -736,7 +802,7 @@ const getRealisasiPenawaranBulanan = async (user) => {
     );
   }
 
-  return Object.keys(byDivisi)
+  const result = Object.keys(byDivisi)
     .sort()
     .map((divisi) => ({
       divisi,
@@ -750,6 +816,17 @@ const getRealisasiPenawaranBulanan = async (user) => {
           },
       ),
     }));
+
+  // Sisipkan card Total di paling depan
+  result.unshift({
+    divisi: "TOTAL SEMUA DIVISI",
+    bulanan: months.map(
+      (m) =>
+        byTotal[m] || { Bulan: m, statuses: {}, totalItem: 0, totalNilai: 0 },
+    ),
+  });
+
+  return result;
 };
 
 // 4. Funnel MAP → Realisasi, summarize per divisi
@@ -1448,16 +1525,20 @@ const getRealisasiPenawaranDashboard = async (user) => {
   return { metric: metric[0] || {}, tren, distribusi };
 };
 
-// ── Helper: susun rows kategori jadi objek {totalItem, totalNilai, kategori[]} ──
 // ── Helper: susun rows kategori + terima totalQty tambahan ──
 const buildKategoriKonversiResult = (
   rows,
-  includeBatal = true,
+  extraKategori = [],
   totalQty = 0,
 ) => {
-  const order = includeBatal
-    ? ["CEPAT", "NORMAL", "LAMBAT", "SANGAT_LAMBAT", "BELUM", "BATAL"]
-    : ["CEPAT", "NORMAL", "LAMBAT", "SANGAT_LAMBAT", "BELUM"];
+  const order = [
+    "CEPAT",
+    "NORMAL",
+    "LAMBAT",
+    "SANGAT_LAMBAT",
+    "BELUM",
+    ...extraKategori,
+  ];
   const map = {};
   let totalItem = 0;
   let totalNilai = 0;
@@ -1509,11 +1590,36 @@ const getRealisasiPenawaranToMapDetail = async (
     WHERE mspk_aktif = 'Y' AND mspk_pen_nomor IS NOT NULL AND mspk_pen_nomor <> ''
     GROUP BY mspk_pen_nomor
   `;
-  const BATAL_SUBQUERY = `
+  const DIRECT_SUBQUERY = `
+    SELECT pen_nomor, MIN(nomor_realisasi) AS DirectPertama, MIN(tgl) AS TglDirect
+    FROM (
+      SELECT spk_pen_nomor AS pen_nomor, spk_nomor AS nomor_realisasi, spk_tanggal AS tgl
+      FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION ALL
+      SELECT so_pen_nomor AS pen_nomor, so_nomor AS nomor_realisasi, so_tanggal AS tgl
+      FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) u
+    GROUP BY pen_nomor
+  `;
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
+  const BATAL_MURNI_SUBQUERY = `
     SELECT pend_pen_nomor AS pen_nomor
     FROM tpenawaran_dtl
     GROUP BY pend_pen_nomor
     HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+  const CLOSE_MURNI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'CLOSE' THEN 0 ELSE 1 END) = 0
   `;
 
   const sql = `
@@ -1530,26 +1636,34 @@ const getRealisasiPenawaranToMapDetail = async (
       IFNULL(n.Nilai, 0) AS Nilai,
       IFNULL(n.JmlItem, 0) AS JmlItem,
       IFNULL(map.TotalMap, 0) AS TotalMap,
-      map.MapPertama,
-      DATE_FORMAT(map.TglMapPertama, '%d-%m-%Y') AS TglMapPertama,
-      CASE WHEN map.TglMapPertama IS NOT NULL
-        THEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) END AS HariKonversi,
+      COALESCE(map.MapPertama, direct.DirectPertama) AS MapPertama,
+      DATE_FORMAT(COALESCE(map.TglMapPertama, direct.TglDirect), '%d-%m-%Y') AS TglMapPertama,
+      CASE WHEN COALESCE(map.TglMapPertama, direct.TglDirect) IS NOT NULL
+        THEN DATEDIFF(COALESCE(map.TglMapPertama, direct.TglDirect), h.pen_tanggal) END AS HariKonversi,
       CASE
+        WHEN COALESCE(map.TglMapPertama, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMapPertama, direct.TglDirect), h.pen_tanggal) <= 7 THEN 'CEPAT'
+        WHEN COALESCE(map.TglMapPertama, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMapPertama, direct.TglDirect), h.pen_tanggal) <= 14 THEN 'NORMAL'
+        WHEN COALESCE(map.TglMapPertama, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMapPertama, direct.TglDirect), h.pen_tanggal) <= 30 THEN 'LAMBAT'
+        WHEN COALESCE(map.TglMapPertama, direct.TglDirect) IS NOT NULL THEN 'SANGAT_LAMBAT'
         WHEN bt.pen_nomor IS NOT NULL THEN 'BATAL'
-        WHEN map.TglMapPertama IS NULL THEN 'BELUM'
-        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 7 THEN 'CEPAT'
-        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 14 THEN 'NORMAL'
-        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 30 THEN 'LAMBAT'
-        ELSE 'SANGAT_LAMBAT'
+        WHEN cl.pen_nomor IS NOT NULL THEN 'CLOSE'
+        ELSE 'BELUM'
       END AS Status
     FROM rekappenawaran r
     INNER JOIN tpenawaran_hdr h ON h.pen_nomor = r.Nomor
     INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
     LEFT JOIN (${NILAI_SUBQUERY}) n ON n.pen_nomor = h.pen_nomor
     LEFT JOIN (${MAP_SUBQUERY}) map ON map.pen_nomor = h.pen_nomor
-    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${DIRECT_SUBQUERY}) direct ON direct.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${CLOSE_MURNI_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
+      AND NOT (sel.pen_nomor IS NOT NULL AND bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL)
       ${whereExtra}
     ORDER BY h.pen_tanggal DESC
     LIMIT ? OFFSET ?
@@ -1653,31 +1767,66 @@ const getRealisasiPenawaranToMap = async (user) => {
     WHERE mspk_aktif = 'Y' AND mspk_pen_nomor IS NOT NULL AND mspk_pen_nomor <> ''
     GROUP BY mspk_pen_nomor
   `;
-  const BATAL_SUBQUERY = `
+  // Konversi langsung Penawaran → SPK/SO (skip MAP, format lama) —
+  // dipakai sebagai fallback tanggal kalau tidak ada MAP sama sekali.
+  const DIRECT_SUBQUERY = `
+    SELECT pen_nomor, MIN(tgl) AS TglDirect
+    FROM (
+      SELECT spk_pen_nomor AS pen_nomor, spk_tanggal AS tgl
+      FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION ALL
+      SELECT so_pen_nomor AS pen_nomor, so_tanggal AS tgl
+      FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) u
+    GROUP BY pen_nomor
+  `;
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
+  const BATAL_MURNI_SUBQUERY = `
     SELECT pend_pen_nomor AS pen_nomor
     FROM tpenawaran_dtl
     GROUP BY pend_pen_nomor
     HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
   `;
+  const CLOSE_MURNI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'CLOSE' THEN 0 ELSE 1 END) = 0
+  `;
 
   const sql = `
     SELECT
       CASE
+        WHEN COALESCE(map.TglMap, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMap, direct.TglDirect), h.pen_tanggal) <= 7 THEN 'CEPAT'
+        WHEN COALESCE(map.TglMap, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMap, direct.TglDirect), h.pen_tanggal) <= 14 THEN 'NORMAL'
+        WHEN COALESCE(map.TglMap, direct.TglDirect) IS NOT NULL
+             AND DATEDIFF(COALESCE(map.TglMap, direct.TglDirect), h.pen_tanggal) <= 30 THEN 'LAMBAT'
+        WHEN COALESCE(map.TglMap, direct.TglDirect) IS NOT NULL THEN 'SANGAT_LAMBAT'
         WHEN bt.pen_nomor IS NOT NULL THEN 'BATAL'
-        WHEN map.TglMap IS NULL THEN 'BELUM'
-        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 7 THEN 'CEPAT'
-        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 14 THEN 'NORMAL'
-        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 30 THEN 'LAMBAT'
-        ELSE 'SANGAT_LAMBAT'
+        WHEN cl.pen_nomor IS NOT NULL THEN 'CLOSE'
+        ELSE 'BELUM'
       END AS Kategori,
       COUNT(DISTINCT h.pen_nomor) AS JmlItem,
       IFNULL(SUM(n.Nilai), 0) AS Nilai
     FROM tpenawaran_hdr h
     LEFT JOIN (${MAP_SUBQUERY}) map ON map.pen_nomor = h.pen_nomor
-    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${DIRECT_SUBQUERY}) direct ON direct.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${CLOSE_MURNI_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
     LEFT JOIN (${NILAI_SUBQUERY}) n ON n.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
+      AND NOT (sel.pen_nomor IS NOT NULL AND bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL)
       ${whereExtra}
     GROUP BY Kategori
   `;
@@ -1691,8 +1840,12 @@ const getRealisasiPenawaranToMap = async (user) => {
       WHERE pend_batal NOT LIKE 'HANYA ALTERNATIF%'
       GROUP BY pend_pen_nomor
     ) n ON n.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${CLOSE_MURNI_SUBQUERY}) cl ON cl.pen_nomor = h.pen_nomor
     WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
       AND h.pen_tanggal <= CURDATE()
+      AND NOT (sel.pen_nomor IS NOT NULL AND bt.pen_nomor IS NULL AND cl.pen_nomor IS NULL)
       ${whereExtra}
   `;
 
@@ -1700,7 +1853,7 @@ const getRealisasiPenawaranToMap = async (user) => {
   const [qtyRows] = await db.query(sqlQty);
   return buildKategoriKonversiResult(
     rows,
-    true,
+    ["BATAL", "CLOSE"],
     Number(qtyRows[0]?.TotalQty) || 0,
   );
 };
@@ -1763,7 +1916,7 @@ const getRealisasiMapToSo = async (user) => {
   const [qtyRows] = await db.query(sqlQty);
   return buildKategoriKonversiResult(
     rows,
-    false,
+    [],
     Number(qtyRows[0]?.TotalQty) || 0,
   );
 };
