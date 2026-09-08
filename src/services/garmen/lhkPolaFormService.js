@@ -44,12 +44,13 @@ const getDetail = async (nomor) => {
     `SELECT d.ldg_id AS id, d.ldg_urut AS urut, d.ldg_spk_nomor AS spkNomor,
             IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
             d.ldg_divisi AS divisi, d.ldg_grading_size AS gradingSize,
+            d.ldg_panjang AS panjang, d.ldg_lebar AS lebar,
             d.ldg_keterangan AS keterangan, d.ldg_gambar AS gambar
-     FROM tlhkpola_grading_dtl d
-     LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
-     LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldg_spk_nomor
-     WHERE d.ldg_nomor = ?
-     ORDER BY d.ldg_urut`,
+    FROM tlhkpola_grading_dtl d
+    LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
+    LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldg_spk_nomor
+    WHERE d.ldg_nomor = ?
+    ORDER BY d.ldg_urut`,
     [nomor],
   );
 
@@ -81,6 +82,22 @@ const saveData = async (payload, user, isEdit) => {
   );
   if (gradingFilled.length === 0) {
     throw new Error("Minimal harus ada 1 baris SPK terisi di Pola/Grading.");
+  }
+
+  // Panjang & Lebar wajib diisi untuk setiap baris yang sudah ada SPK-nya
+  const invalidRow = gradingFilled.find(
+    (r) =>
+      r.panjang === "" ||
+      r.panjang === null ||
+      r.panjang === undefined ||
+      r.lebar === "" ||
+      r.lebar === null ||
+      r.lebar === undefined,
+  );
+  if (invalidRow) {
+    throw new Error(
+      `Panjang dan Lebar wajib diisi untuk SPK ${invalidRow.spkNomor}.`,
+    );
   }
 
   const conn = await db.getConnection();
@@ -134,13 +151,16 @@ const saveData = async (payload, user, isEdit) => {
       r.spkNomor,
       r.divisi || "",
       r.gradingSize || "",
+      r.panjang,
+      r.lebar,
       r.keterangan || "",
       gradingGambarMap.get(r.spkNomor) || null,
     ]);
     await conn.query(
       `INSERT INTO tlhkpola_grading_dtl
-         (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size, ldg_keterangan, ldg_gambar)
-       VALUES ?`,
+        (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size,
+          ldg_panjang, ldg_lebar, ldg_keterangan, ldg_gambar)
+      VALUES ?`,
       [vals],
     );
 

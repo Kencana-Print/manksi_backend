@@ -70,6 +70,22 @@ router.get(
   controller.getRealisasiPenawaranDashboard,
 );
 router.get(
+  "/realisasi-penawaran-to-map",
+  verifyToken,
+  controller.getRealisasiPenawaranToMap,
+);
+router.get(
+  "/realisasi-penawaran-to-map-detail",
+  verifyToken,
+  controller.getRealisasiPenawaranToMapDetail,
+);
+router.get(
+  "/realisasi-map-to-so-detail",
+  verifyToken,
+  controller.getRealisasiMapToSoDetail,
+);
+router.get("/realisasi-map-to-so", verifyToken, controller.getRealisasiMapToSo);
+router.get(
   "/realisasi-penawaran-detail",
   verifyToken,
   controller.getRealisasiPenawaranDetail,
@@ -180,6 +196,11 @@ router.get(
   controller.getAchievementMonthly,
 );
 router.get("/penawaran-funnel", verifyToken, controller.getPenawaranFunnel);
+router.get(
+  "/realisasi-penawaran-bulanan",
+  verifyToken,
+  controller.getRealisasiPenawaranBulanan,
+);
 router.get("/map-funnel", verifyToken, controller.getMapFunnel);
 router.get(
   "/proyeksi-vs-realisasi-summary",

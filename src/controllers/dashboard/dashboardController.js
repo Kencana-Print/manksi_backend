@@ -228,6 +228,58 @@ const getRealisasiPenawaranDashboard = async (req, res) => {
   }
 };
 
+const getRealisasiPenawaranToMap = async (req, res) => {
+  try {
+    const data = await service.getRealisasiPenawaranToMap(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || { totalItem: 0, totalNilai: 0, kategori: [] },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiMapToSo = async (req, res) => {
+  try {
+    const data = await service.getRealisasiMapToSo(req.user);
+    res.status(200).json({
+      success: true,
+      data: data || { totalItem: 0, totalNilai: 0, kategori: [] },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiPenawaranToMapDetail = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getRealisasiPenawaranToMapDetail(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getRealisasiMapToSoDetail = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getRealisasiMapToSoDetail(
+      req.user,
+      Number(limit),
+      Number(offset),
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getRealisasiPenawaranDetail = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
@@ -703,6 +755,15 @@ const getPenawaranFunnel = async (req, res) => {
   }
 };
 
+const getRealisasiPenawaranBulanan = async (req, res) => {
+  try {
+    const data = await service.getRealisasiPenawaranBulanan(req.user);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getMapFunnel = async (req, res) => {
   try {
     const { bulan, tahun } = req.query;
@@ -888,7 +949,7 @@ module.exports = {
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
   getPenawaranMapSummary,
-  getPenawaranBatalSummary, // ⬅ baru
+  getPenawaranBatalSummary,
   getPenawaranBatalList,
   getKunjunganSalesSummary,
   getPiutangDashboard,
@@ -898,6 +959,10 @@ module.exports = {
   getGudangBahanBuffer,
   getGudangBahanBarcode,
   getRealisasiPenawaranDashboard,
+  getRealisasiPenawaranToMap,
+  getRealisasiMapToSo,
+  getRealisasiPenawaranToMapDetail,
+  getRealisasiMapToSoDetail,
   getRealisasiPenawaranDetail,
   getMapVsSpkDashboard,
   getMapBelumSpk,
@@ -933,6 +998,7 @@ module.exports = {
   getGrowthYoy,
   getAchievementMonthly,
   getPenawaranFunnel,
+  getRealisasiPenawaranBulanan,
   getMapFunnel,
   getProyeksiVsRealisasiSummary,
   getPipelineMenggantung,

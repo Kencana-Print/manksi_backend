@@ -672,6 +672,86 @@ const getPenawaranFunnel = async (user, bulan, tahun) => {
   return { byDivisi: result, grandTotal };
 };
 
+// ── Realisasi Penawaran — histori bulanan per divisi (12 bulan). GARMEN
+// dipisah PREMIUM/MEDIUM berdasarkan tpenawaran_hdr.pen_tipe. Per bulan
+// dihitung jumlah item & nilai (pend_harga * pend_qty) per status.
+const getRealisasiPenawaranBulanan = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT
+      DATE_FORMAT(r.tanggal, '%Y-%m') AS Bulan,
+      CASE
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM'
+          THEN 'GARMEN PREMIUM'
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM'
+          THEN 'GARMEN MEDIUM'
+        WHEN r.divisi = 'GARMEN'
+          THEN 'GARMEN LAINNYA'
+        ELSE r.divisi
+      END AS DivisiGroup,
+      IF(d.pend_status = '', 'OPEN', d.pend_status) AS Status,
+      COUNT(*) AS JmlItem,
+      SUM(d.pend_harga * d.pend_qty) AS Nilai
+    FROM rekappenawaran r
+    INNER JOIN tpenawaran_hdr h ON h.pen_nomor = r.Nomor
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = r.Nomor
+    WHERE r.tanggal >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
+      AND r.tanggal <= CURDATE()
+      AND d.pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+    GROUP BY Bulan, DivisiGroup, Status
+    ORDER BY Bulan ASC
+  `;
+  const [rows] = await db.query(sql);
+
+  // Susun ke bentuk: [{ divisi, bulanan: [{Bulan, statuses:{OPEN,CLOSE,BATAL}, totalItem, totalNilai}] }]
+  const byDivisi = {};
+  for (const row of rows) {
+    const { DivisiGroup, Bulan, Status, JmlItem, Nilai } = row;
+    if (!byDivisi[DivisiGroup]) byDivisi[DivisiGroup] = {};
+    if (!byDivisi[DivisiGroup][Bulan]) {
+      byDivisi[DivisiGroup][Bulan] = {
+        Bulan,
+        statuses: {},
+        totalItem: 0,
+        totalNilai: 0,
+      };
+    }
+    const bucket = byDivisi[DivisiGroup][Bulan];
+    bucket.statuses[Status] = {
+      JmlItem: Number(JmlItem) || 0,
+      Nilai: Number(Nilai) || 0,
+    };
+    bucket.totalItem += Number(JmlItem) || 0;
+    bucket.totalNilai += Number(Nilai) || 0;
+  }
+
+  const months = [];
+  const now = new Date();
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+    );
+  }
+
+  return Object.keys(byDivisi)
+    .sort()
+    .map((divisi) => ({
+      divisi,
+      bulanan: months.map(
+        (m) =>
+          byDivisi[divisi][m] || {
+            Bulan: m,
+            statuses: {},
+            totalItem: 0,
+            totalNilai: 0,
+          },
+      ),
+    }));
+};
+
 // 4. Funnel MAP → Realisasi, summarize per divisi
 const getMapFunnel = async (user, bulan, tahun) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -1366,6 +1446,326 @@ const getRealisasiPenawaranDashboard = async (user) => {
   ]);
 
   return { metric: metric[0] || {}, tren, distribusi };
+};
+
+// ── Helper: susun rows kategori jadi objek {totalItem, totalNilai, kategori[]} ──
+// ── Helper: susun rows kategori + terima totalQty tambahan ──
+const buildKategoriKonversiResult = (
+  rows,
+  includeBatal = true,
+  totalQty = 0,
+) => {
+  const order = includeBatal
+    ? ["CEPAT", "NORMAL", "LAMBAT", "SANGAT_LAMBAT", "BELUM", "BATAL"]
+    : ["CEPAT", "NORMAL", "LAMBAT", "SANGAT_LAMBAT", "BELUM"];
+  const map = {};
+  let totalItem = 0;
+  let totalNilai = 0;
+  for (const r of rows) {
+    map[r.Kategori] = {
+      JmlItem: Number(r.JmlItem) || 0,
+      Nilai: Number(r.Nilai) || 0,
+    };
+    totalItem += Number(r.JmlItem) || 0;
+    totalNilai += Number(r.Nilai) || 0;
+  }
+  const kategori = order.map((k) => ({
+    kode: k,
+    JmlItem: map[k]?.JmlItem || 0,
+    Nilai: map[k]?.Nilai || 0,
+    Pct: totalItem ? Math.round(((map[k]?.JmlItem || 0) / totalItem) * 100) : 0,
+  }));
+  return { totalItem, totalNilai, totalQty, kategori };
+};
+
+// ── Widget A Detail: Penawaran → MAP (90 hari), per-penawaran ──
+const getRealisasiPenawaranToMapDetail = async (
+  user,
+  limit = 20,
+  offset = 0,
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const NILAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor,
+      COUNT(*) AS JmlItem,
+      SUM(pend_harga * pend_qty) AS Nilai
+    FROM tpenawaran_dtl
+    WHERE pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+    GROUP BY pend_pen_nomor
+  `;
+  const MAP_SUBQUERY = `
+    SELECT mspk_pen_nomor AS pen_nomor,
+      COUNT(*) AS TotalMap,
+      MIN(mspk_nomor) AS MapPertama,
+      MIN(mspk_tanggal) AS TglMapPertama
+    FROM tmemospk
+    WHERE mspk_aktif = 'Y' AND mspk_pen_nomor IS NOT NULL AND mspk_pen_nomor <> ''
+    GROUP BY mspk_pen_nomor
+  `;
+  const BATAL_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
+  const sql = `
+    SELECT
+      h.pen_nomor AS Nomor,
+      DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y') AS Tanggal,
+      c.cus_nama AS Customer,
+      CASE
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+        WHEN r.divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+        WHEN r.divisi = 'GARMEN' THEN 'GARMEN LAINNYA'
+        ELSE r.divisi
+      END AS Divisi,
+      IFNULL(n.Nilai, 0) AS Nilai,
+      IFNULL(n.JmlItem, 0) AS JmlItem,
+      IFNULL(map.TotalMap, 0) AS TotalMap,
+      map.MapPertama,
+      DATE_FORMAT(map.TglMapPertama, '%d-%m-%Y') AS TglMapPertama,
+      CASE WHEN map.TglMapPertama IS NOT NULL
+        THEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) END AS HariKonversi,
+      CASE
+        WHEN bt.pen_nomor IS NOT NULL THEN 'BATAL'
+        WHEN map.TglMapPertama IS NULL THEN 'BELUM'
+        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 7 THEN 'CEPAT'
+        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 14 THEN 'NORMAL'
+        WHEN DATEDIFF(map.TglMapPertama, h.pen_tanggal) <= 30 THEN 'LAMBAT'
+        ELSE 'SANGAT_LAMBAT'
+      END AS Status
+    FROM rekappenawaran r
+    INNER JOIN tpenawaran_hdr h ON h.pen_nomor = r.Nomor
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    LEFT JOIN (${NILAI_SUBQUERY}) n ON n.pen_nomor = h.pen_nomor
+    LEFT JOIN (${MAP_SUBQUERY}) map ON map.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+    ORDER BY h.pen_tanggal DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── Widget B Detail: MAP → SO (90 hari), per-MAP ──
+const getRealisasiMapToSoDetail = async (user, limit = 20, offset = 0) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND m.mspk_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const SO_SUBQUERY = `
+    SELECT memo,
+      COUNT(*) AS TotalSo,
+      MIN(nomor_realisasi) AS SoPertama,
+      MIN(tgl_realisasi) AS TglSoPertama,
+      SUM(nilai) AS Nilai
+    FROM (
+      SELECT spk_memo AS memo, spk_nomor AS nomor_realisasi,
+        spk_tanggal AS tgl_realisasi, spk_harga * spk_jumlah AS nilai
+      FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_memo IS NOT NULL AND spk_memo <> ''
+      UNION ALL
+      SELECT so_memo AS memo, so_nomor AS nomor_realisasi,
+        so_tanggal AS tgl_realisasi, so_harga * so_jumlah AS nilai
+      FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_memo IS NOT NULL AND so_memo <> ''
+    ) u
+    GROUP BY memo
+  `;
+
+  const sql = `
+    SELECT
+      m.mspk_nomor AS Nomor,
+      DATE_FORMAT(m.mspk_tanggal, '%d-%m-%Y') AS Tanggal,
+      c.cus_nama AS Customer,
+      CASE
+        WHEN dv.Divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+        WHEN dv.Divisi = 'GARMEN' AND UPPER(IFNULL(h.pen_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+        WHEN dv.Divisi = 'GARMEN' THEN 'GARMEN LAINNYA'
+        ELSE dv.Divisi
+      END AS Divisi,
+      IFNULL(so.Nilai, m.mspk_harga * m.mspk_rencana_order) AS Nilai,
+      m.mspk_jumlah AS Qty,
+      IFNULL(so.TotalSo, 0) AS TotalSo,
+      so.SoPertama,
+      DATE_FORMAT(so.TglSoPertama, '%d-%m-%Y') AS TglSoPertama,
+      CASE WHEN so.TglSoPertama IS NOT NULL
+        THEN DATEDIFF(so.TglSoPertama, m.mspk_tanggal) END AS HariKonversi,
+      CASE
+        WHEN so.TglSoPertama IS NULL THEN 'BELUM'
+        WHEN DATEDIFF(so.TglSoPertama, m.mspk_tanggal) <= 7 THEN 'CEPAT'
+        WHEN DATEDIFF(so.TglSoPertama, m.mspk_tanggal) <= 14 THEN 'NORMAL'
+        WHEN DATEDIFF(so.TglSoPertama, m.mspk_tanggal) <= 30 THEN 'LAMBAT'
+        ELSE 'SANGAT_LAMBAT'
+      END AS Status
+    FROM tmemospk m
+    INNER JOIN tcustomer c ON c.cus_kode = m.mspk_cus_kode
+    LEFT JOIN tdivisi dv ON dv.kode = m.mspk_divisi
+    LEFT JOIN tpenawaran_hdr h ON h.pen_nomor = m.mspk_pen_nomor
+    LEFT JOIN (${SO_SUBQUERY}) so ON so.memo = m.mspk_nomor
+    WHERE m.mspk_aktif = 'Y'
+      AND m.mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND m.mspk_tanggal <= CURDATE()
+      ${whereExtra}
+    ORDER BY m.mspk_tanggal DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [rows] = await db.query(sql, [limit, offset]);
+  return rows;
+};
+
+// ── Widget A: Penawaran → MAP (90 hari) ──
+const getRealisasiPenawaranToMap = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND h.pen_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const NILAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor, SUM(pend_harga * pend_qty) AS Nilai
+    FROM tpenawaran_dtl
+    WHERE pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+    GROUP BY pend_pen_nomor
+  `;
+  const MAP_SUBQUERY = `
+    SELECT mspk_pen_nomor AS pen_nomor, MIN(mspk_tanggal) AS TglMap
+    FROM tmemospk
+    WHERE mspk_aktif = 'Y' AND mspk_pen_nomor IS NOT NULL AND mspk_pen_nomor <> ''
+    GROUP BY mspk_pen_nomor
+  `;
+  const BATAL_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
+  const sql = `
+    SELECT
+      CASE
+        WHEN bt.pen_nomor IS NOT NULL THEN 'BATAL'
+        WHEN map.TglMap IS NULL THEN 'BELUM'
+        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 7 THEN 'CEPAT'
+        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 14 THEN 'NORMAL'
+        WHEN DATEDIFF(map.TglMap, h.pen_tanggal) <= 30 THEN 'LAMBAT'
+        ELSE 'SANGAT_LAMBAT'
+      END AS Kategori,
+      COUNT(DISTINCT h.pen_nomor) AS JmlItem,
+      IFNULL(SUM(n.Nilai), 0) AS Nilai
+    FROM tpenawaran_hdr h
+    LEFT JOIN (${MAP_SUBQUERY}) map ON map.pen_nomor = h.pen_nomor
+    LEFT JOIN (${BATAL_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    LEFT JOIN (${NILAI_SUBQUERY}) n ON n.pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+    GROUP BY Kategori
+  `;
+
+  const sqlQty = `
+    SELECT IFNULL(SUM(n.JmlItem), 0) AS TotalQty
+    FROM tpenawaran_hdr h
+    LEFT JOIN (
+      SELECT pend_pen_nomor AS pen_nomor, COUNT(*) AS JmlItem
+      FROM tpenawaran_dtl
+      WHERE pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+      GROUP BY pend_pen_nomor
+    ) n ON n.pen_nomor = h.pen_nomor
+    WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND h.pen_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql);
+  const [qtyRows] = await db.query(sqlQty);
+  return buildKategoriKonversiResult(
+    rows,
+    true,
+    Number(qtyRows[0]?.TotalQty) || 0,
+  );
+};
+
+// ── Widget B: MAP → SO (90 hari) ──
+const getRealisasiMapToSo = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
+
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = `AND m.mspk_divisi = ${db.escape(String(user.divisi))}`;
+  }
+
+  const SO_SUBQUERY = `
+    SELECT memo, MIN(tgl_realisasi) AS TglRealisasi, SUM(nilai) AS Nilai
+    FROM (
+      SELECT spk_memo AS memo, spk_tanggal AS tgl_realisasi, spk_harga * spk_jumlah AS nilai
+      FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_memo IS NOT NULL AND spk_memo <> ''
+      UNION ALL
+      SELECT so_memo AS memo, so_tanggal AS tgl_realisasi, so_harga * so_jumlah AS nilai
+      FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_memo IS NOT NULL AND so_memo <> ''
+    ) u
+    GROUP BY memo
+  `;
+
+  const sql = `
+    SELECT
+      CASE
+        WHEN so.TglRealisasi IS NULL THEN 'BELUM'
+        WHEN DATEDIFF(so.TglRealisasi, m.mspk_tanggal) <= 7 THEN 'CEPAT'
+        WHEN DATEDIFF(so.TglRealisasi, m.mspk_tanggal) <= 14 THEN 'NORMAL'
+        WHEN DATEDIFF(so.TglRealisasi, m.mspk_tanggal) <= 30 THEN 'LAMBAT'
+        ELSE 'SANGAT_LAMBAT'
+      END AS Kategori,
+      COUNT(DISTINCT m.mspk_nomor) AS JmlItem,
+      IFNULL(SUM(CASE WHEN so.TglRealisasi IS NOT NULL THEN so.Nilai
+            ELSE m.mspk_harga * m.mspk_rencana_order END), 0) AS Nilai
+    FROM tmemospk m
+    LEFT JOIN (${SO_SUBQUERY}) so ON so.memo = m.mspk_nomor
+    WHERE m.mspk_aktif = 'Y'
+      AND m.mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND m.mspk_tanggal <= CURDATE()
+      ${whereExtra}
+    GROUP BY Kategori
+  `;
+
+  const sqlQty = `
+    SELECT IFNULL(SUM(m.mspk_jumlah), 0) AS TotalQty
+    FROM tmemospk m
+    WHERE m.mspk_aktif = 'Y'
+      AND m.mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+      AND m.mspk_tanggal <= CURDATE()
+      ${whereExtra}
+  `;
+
+  const [rows] = await db.query(sql);
+  const [qtyRows] = await db.query(sqlQty);
+  return buildKategoriKonversiResult(
+    rows,
+    false,
+    Number(qtyRows[0]?.TotalQty) || 0,
+  );
 };
 
 const getRealisasiPenawaranDetail = async (user, limit = 20, offset = 0) => {
@@ -3000,6 +3400,10 @@ module.exports = {
   getGudangBahanBuffer,
   getGudangBahanBarcode,
   getRealisasiPenawaranDashboard,
+  getRealisasiPenawaranToMap,
+  getRealisasiMapToSo,
+  getRealisasiPenawaranToMapDetail,
+  getRealisasiMapToSoDetail,
   getRealisasiPenawaranDetail,
   getMapVsSpkDashboard,
   getMapBelumSo,
@@ -3035,6 +3439,7 @@ module.exports = {
   getAchievementMonthly,
   getGrowthYoy,
   getPenawaranFunnel,
+  getRealisasiPenawaranBulanan,
   getMapFunnel,
   getProyeksiVsRealisasiSummary,
   getPipelineMenggantung,
