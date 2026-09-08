@@ -12,7 +12,9 @@ const getBrowse = async ({ startDate, endDate }) => {
        IFNULL((SELECT COUNT(*) FROM tlhkpola_marker_dtl WHERE ldm_nomor = h.lhkp_nomor), 0) AS JmlMarker,
        IFNULL((SELECT COUNT(*) FROM tlhkpola_grading_dtl WHERE ldg_nomor = h.lhkp_nomor), 0) AS JmlGrading,
        (SELECT GROUP_CONCAT(d.ldg_spk_nomor ORDER BY d.ldg_urut SEPARATOR ', ')
-        FROM tlhkpola_grading_dtl d WHERE d.ldg_nomor = h.lhkp_nomor) AS SpkNomor
+        FROM tlhkpola_grading_dtl d WHERE d.ldg_nomor = h.lhkp_nomor) AS SpkNomor,
+       (SELECT GROUP_CONCAT(DISTINCT NULLIF(d.ldg_divisi, '') SEPARATOR ', ')
+        FROM tlhkpola_grading_dtl d WHERE d.ldg_nomor = h.lhkp_nomor) AS Divisi
      FROM tlhkpola_hdr h
      WHERE h.lhkp_tanggal BETWEEN ? AND ?
      ORDER BY h.lhkp_tanggal DESC, h.lhkp_nomor DESC`,
