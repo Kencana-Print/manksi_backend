@@ -17,6 +17,9 @@ const getBrowse = async ({ startDate, endDate }) => {
         FROM tlhkpola_grading_dtl d WHERE d.ldg_nomor = h.lhkp_nomor) AS Divisi
      FROM tlhkpola_hdr h
      WHERE h.lhkp_tanggal BETWEEN ? AND ?
+       AND EXISTS (
+         SELECT 1 FROM tlhkpola_grading_dtl d WHERE d.ldg_nomor = h.lhkp_nomor
+       )
      ORDER BY h.lhkp_tanggal DESC, h.lhkp_nomor DESC`,
     [startDate, endDate],
   );
