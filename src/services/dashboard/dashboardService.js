@@ -553,7 +553,7 @@ const getKunjunganSalesSummary = async (user) => {
         WHERE ph.pen_sal_kode = (
           SELECT sal_kode FROM tsales WHERE sal_nama = a.USER LIMIT 1
         )
-        AND ph.pen_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+        AND ph.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
         AND ph.pen_tanggal <= CURDATE()
       ), 0) AS NominalPenawaran,
 
@@ -563,18 +563,101 @@ const getKunjunganSalesSummary = async (user) => {
         WHERE mh.mh_sal_kode = (
           SELECT sal_kode FROM tsales WHERE sal_nama = a.USER LIMIT 1
         )
-        AND mh.mh_tanggal >= DATE_FORMAT(NOW(), '%Y-%m-01')
+        AND mh.mh_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
         AND mh.mh_tanggal <= CURDATE()
       ), 0) AS NominalMintaHarga
 
     FROM marketing.tkunjungan a
-    WHERE DATE(a.Tanggal_Plan) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()
-       OR DATE(a.tanggal) BETWEEN DATE_FORMAT(NOW(), '%Y-%m-01') AND CURDATE()
+    WHERE DATE(a.Tanggal_Plan) BETWEEN DATE_SUB(CURDATE(), INTERVAL 89 DAY) AND CURDATE()
+       OR DATE(a.tanggal) BETWEEN DATE_SUB(CURDATE(), INTERVAL 89 DAY) AND CURDATE()
     GROUP BY a.USER
     ORDER BY Done DESC, a.USER ASC
   `;
 
   const [rows] = await db.query(sql);
+  return rows;
+};
+
+// ── Laporan Effective Calling — per sales, 90 hari terakhir ──
+// Matching MAP/SO ke Penawaran BUKAN via pen_nomor, tapi via
+// kecocokan Sales + Customer yang sama (mspk_sal_kode/spk_sal_kode/
+// so_sal_kode dengan pen_sal_kode). Kalau 1 penawaran match ke
+// beberapa MAP/SO, tiap kombinasi jadi baris terpisah.
+const getEffectiveCallingDetail = async (user, namaSales) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "MARKETING",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "FINANCE",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const sql = `
+    SELECT
+      c.cus_nama AS NamaCustomer,
+      pen.pen_nomor AS NomorPenawaran,
+      pen.Qty AS QtyPenawaran,
+      pen.Nilai AS NilaiPenawaran,
+      IFNULL(map.JmlMap, 0) AS JmlMap,
+      IFNULL(map.NilaiMap, 0) AS NilaiMap,
+      map.MapNomorList,
+      IFNULL(so.JmlSo, 0) AS JmlSo,
+      IFNULL(so.NilaiSo, 0) AS NilaiSo,
+      so.SoNomorList
+    FROM tsales s
+    INNER JOIN (
+      SELECT
+        h.pen_nomor, h.pen_sal_kode, h.pen_cus_kode,
+        SUM(d.pend_qty) AS Qty,
+        SUM(d.pend_harga * d.pend_qty) AS Nilai
+      FROM tpenawaran_hdr h
+      INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+      WHERE h.pen_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
+        AND h.pen_tanggal <= CURDATE()
+        AND d.pend_batal NOT LIKE 'HANYA ALTERNATIF%'
+      GROUP BY h.pen_nomor, h.pen_sal_kode, h.pen_cus_kode
+    ) pen ON pen.pen_sal_kode = s.sal_kode
+    INNER JOIN tcustomer c ON c.cus_kode = pen.pen_cus_kode
+    LEFT JOIN (
+      SELECT
+        mspk_sal_kode AS sal_kode, mspk_cus_kode AS cus_kode,
+        COUNT(*) AS JmlMap,
+        SUM(mspk_harga * mspk_rencana_order) AS NilaiMap,
+        GROUP_CONCAT(mspk_nomor ORDER BY mspk_tanggal DESC SEPARATOR ', ') AS MapNomorList
+      FROM tmemospk
+      WHERE mspk_aktif = 'Y'
+        AND mspk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
+        AND mspk_tanggal <= CURDATE()
+      GROUP BY mspk_sal_kode, mspk_cus_kode
+    ) map ON map.sal_kode = pen.pen_sal_kode AND map.cus_kode = pen.pen_cus_kode
+    LEFT JOIN (
+      SELECT sal_kode, cus_kode, COUNT(*) AS JmlSo, SUM(nilai) AS NilaiSo,
+        GROUP_CONCAT(nomor ORDER BY nomor SEPARATOR ', ') AS SoNomorList
+      FROM (
+        SELECT spk_sal_kode AS sal_kode, spk_cus_kode AS cus_kode,
+          spk_nomor AS nomor, spk_harga * spk_jumlah AS nilai
+        FROM tspk
+        WHERE spk_aktif = 'Y'
+          AND spk_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
+          AND spk_tanggal <= CURDATE()
+        UNION ALL
+        SELECT so_sal_kode AS sal_kode, so_cus_kode AS cus_kode,
+          so_nomor AS nomor, so_harga * so_jumlah AS nilai
+        FROM tsalesorder
+        WHERE so_aktif = 'Y'
+          AND so_tanggal >= DATE_SUB(CURDATE(), INTERVAL 89 DAY)
+          AND so_tanggal <= CURDATE()
+      ) u
+      GROUP BY sal_kode, cus_kode
+    ) so ON so.sal_kode = pen.pen_sal_kode AND so.cus_kode = pen.pen_cus_kode
+    WHERE s.sal_nama LIKE CONCAT(?, '%')
+    ORDER BY pen.pen_nomor ASC
+  `;
+  const [rows] = await db.query(sql, [namaSales]);
   return rows;
 };
 
@@ -3546,6 +3629,7 @@ module.exports = {
   getPenawaranBatalSummary, // ⬅ baru
   getPenawaranBatalList,
   getKunjunganSalesSummary,
+  getEffectiveCallingDetail,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,

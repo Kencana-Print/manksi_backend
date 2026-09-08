@@ -40,6 +40,10 @@ const getBrowseList = async (query) => {
         UNION ALL
         SELECT mspk_nomor, mspk_tanggal, mspk_cus_kode, mspk_divisi, mspk_nama, mspk_tipe, 'MEMO' AS jenis
         FROM tmemospk
+        UNION ALL
+        SELECT so_nomor, so_tanggal, so_cus_kode, so_divisi, so_nama, so_tipe, 'SO' AS jenis
+        FROM tsalesorder
+        WHERE so_aktif = 'Y'
       ) aa
       LEFT JOIN tdivisi bb ON bb.kode = aa.spk_divisi
     ) xx ON xx.spk_nomor = a.tc_spk_nomor

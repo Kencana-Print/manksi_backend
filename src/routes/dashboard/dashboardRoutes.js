@@ -46,6 +46,11 @@ router.get(
   verifyToken,
   controller.getKunjunganSalesSummary,
 );
+router.get(
+  "/effective-calling-detail",
+  verifyToken,
+  controller.getEffectiveCallingDetail,
+);
 router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
 router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
 router.get("/penerimaan-summary", verifyToken, controller.getPenerimaanSummary);

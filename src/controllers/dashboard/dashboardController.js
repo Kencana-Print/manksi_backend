@@ -132,6 +132,21 @@ const getKunjunganSalesSummary = async (req, res) => {
   }
 };
 
+const getEffectiveCallingDetail = async (req, res) => {
+  try {
+    const { namaSales } = req.query;
+    if (!namaSales) {
+      return res
+        .status(400)
+        .json({ success: false, message: "namaSales wajib diisi." });
+    }
+    const data = await service.getEffectiveCallingDetail(req.user, namaSales);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPiutangDashboard = async (req, res) => {
   try {
     const data = await service.getPiutangDashboard(req.user);
@@ -952,6 +967,7 @@ module.exports = {
   getPenawaranBatalSummary,
   getPenawaranBatalList,
   getKunjunganSalesSummary,
+  getEffectiveCallingDetail,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,
