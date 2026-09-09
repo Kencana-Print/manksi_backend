@@ -1049,16 +1049,36 @@ const saveData = async (payload, user) => {
       );
       if (turunanRows.length > 0) {
         const turunanNomor = turunanRows[0].spk_nomor;
+        // ── Sync-back LENGKAP: semua field header deskriptif/
+        // administratif yang bisa diubah lewat form SO — bukan cuma
+        // 15 field produksi seperti sebelumnya. Field computed/
+        // tracking production (prasj, jumlah_kirim, status_stbj,
+        // pending, dtf, design workflow, dll) SENGAJA tidak disentuh
+        // karena itu independen dari SO, dikelola sendiri di sisi
+        // turunan.
         await conn.query(
           `UPDATE tspk SET
+             spk_perush_kode = ?, spk_cus_kode = ?, spk_cus_kaosan = ?,
+             spk_sal_kode = ?, spk_jo_kode = ?,
              spk_nama = ?, spk_nama2 = ?, spk_ukuran = ?, spk_jumlah = ?,
              spk_dateline = ?, spk_kain = ?, spk_finishing = ?, spk_gramasi = ?,
              spk_panjang = ?, spk_lebar = ?, spk_tipe = ?, spk_statuskerja = ?,
              spk_sablon = ?, spk_bordir = ?, spk_sublim = ?,
+             spk_cab = ?, spk_workshop = ?,
+             spk_nomor_po = ?, spk_tgl_po = ?, spk_datelinepo = ?, spk_ketpo = ?,
+             spk_harga = ?, spk_lama = ?, spk_pinjo = ?, spk_cabkaos = ?,
+             spk_keterangan = ?, spk_ket_gudang = ?, spk_ket_produksi = ?,
+             spk_mppb = ?, spk_invdc = ?, spk_pen_nomor = ?, spk_pen_id = ?,
+             spk_memo = ?,
              spk_close = 0, spk_close_alasan = '',
              user_modified = ?, date_modified = NOW()
            WHERE spk_nomor = ?`,
           [
+            header.spk_perush_kode,
+            header.spk_cus_kode,
+            header.spk_cus_kaosan || "",
+            header.spk_sal_kode,
+            header.spk_jo_kode,
             header.spk_nama,
             header.spk_nama2,
             header.spk_ukuran,
@@ -1074,14 +1094,30 @@ const saveData = async (payload, user) => {
             header.spk_sablon,
             header.spk_bordir,
             header.spk_sublim,
+            header.spk_cab,
+            header.spk_workshop,
+            header.spk_nomor_po || "",
+            header.spk_tgl_po || null,
+            header.spk_datelinepo || null,
+            header.spk_ketpo || "",
+            header.spk_harga,
+            header.spk_lama || "",
+            header.spk_pinjo || "",
+            header.spk_cabkaos || "",
+            header.spk_keterangan || "",
+            header.spk_ket_gudang || "",
+            header.spk_ket_produksi || "",
+            header.spk_mppb || "",
+            header.spk_invdc || "",
+            header.spk_pen_nomor || "",
+            header.spk_pen_id || "",
+            header.spk_memo || "",
             user.kode,
             turunanNomor,
           ],
         );
 
-        // Sync ulang tspk_size dari dtlSize SO — replace penuh, sama
-        // pola dengan saveSizeList di spkFormService.js (hanya baris
-        // qty > 0 yang disimpan).
+        // Sync ulang tspk_size dari dtlSize SO — TIDAK BERUBAH
         await conn.query(`DELETE FROM tspk_size WHERE spks_nomor = ?`, [
           turunanNomor,
         ]);
