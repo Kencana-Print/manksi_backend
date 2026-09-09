@@ -52,12 +52,22 @@ const getDetail = async (nomor) => {
        IF(
          d.pjwd_so_nomor IS NULL AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
          IFNULL(d.pjwd_realisasi_manual, 0),
+         -- ⬅ FIX: ambil dari SJ beneran (Approved) yang terhubung ke
+         -- Jadwal Kirim SPK ini dalam rentang periode komitmen —
+         -- bukan lagi dari tjadwalkirim.Realisasi yang tidak pernah
+         -- ke-update otomatis.
          IFNULL((
-           SELECT SUM(jk.realisasi)
+           SELECT SUM(sd.sjd_jumlah)
            FROM tjadwalkirim jk
+           INNER JOIN tjadwalkirim_dtl jkd ON jkd.nomor_kirim = jk.Nomor_Kirim
+           INNER JOIN tsj_dtl sd
+             ON sd.sjd_nokirim = jkd.nomor_kirim
+             AND sd.sjd_idkirim = jkd.No_urut
+           INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
            WHERE jk.spk_nomor = d.pjwd_so_nomor
              AND jk.tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-         ), 0)
+             AND sh.sj_approve = 1
+        ), 0)
        ) AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
