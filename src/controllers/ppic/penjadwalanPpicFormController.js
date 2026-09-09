@@ -66,10 +66,11 @@ const searchMapKandidat = async (req, res) => {
 
 const getMapInfo = async (req, res) => {
   try {
-    const { divisi } = req.query;
+    const { divisi, excludeNomor } = req.query;
     const data = await penjadwalanPpicFormService.getMapInfo(
       req.params.mapNomor,
       divisi || "",
+      excludeNomor || "",
     );
     if (!data)
       return res
@@ -83,10 +84,11 @@ const getMapInfo = async (req, res) => {
 
 const getSoInfo = async (req, res) => {
   try {
-    const { divisi } = req.query;
+    const { divisi, excludeNomor } = req.query;
     const data = await penjadwalanPpicFormService.getSoInfo(
       req.params.soNomor,
       divisi || "",
+      excludeNomor || "",
     );
     if (!data)
       return res
@@ -94,7 +96,59 @@ const getSoInfo = async (req, res) => {
         .json({ success: false, message: "SO tidak ditemukan." });
     res.status(200).json({ success: true, data });
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message }); // ⬅ 400, bukan 500 — ini validation error, bukan server error
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getMhInfo = async (req, res) => {
+  try {
+    const { divisi, excludeNomor } = req.query;
+    const data = await penjadwalanPpicFormService.getMhInfo(
+      req.params.mhNomor,
+      divisi || "",
+      excludeNomor || "",
+    );
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "MH tidak ditemukan." });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getPenawaranDetailList = async (req, res) => {
+  try {
+    const data = await penjadwalanPpicFormService.getPenawaranDetailList(
+      req.params.penNomor,
+    );
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Penawaran tidak ditemukan." });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getPenawaranItemInfo = async (req, res) => {
+  try {
+    const { divisi, excludeNomor } = req.query;
+    const data = await penjadwalanPpicFormService.getPenawaranItemInfo(
+      req.params.penNomor,
+      req.params.pendId,
+      divisi || "",
+      excludeNomor || "",
+    );
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Baris Penawaran tidak ditemukan." });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -281,6 +335,9 @@ module.exports = {
   searchMapKandidat,
   getSoInfo,
   getMapInfo,
+  getMhInfo,
+  getPenawaranDetailList,
+  getPenawaranItemInfo,
   getFormDetail,
   save,
   updateHeaderField,

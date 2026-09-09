@@ -35,14 +35,19 @@ const getDetail = async (nomor) => {
        COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) AS Nomor,
        d.pjwd_pro_nomor AS NomorPraOrder,
        IF(so_from_map.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_mh_nomor) AS NomorMh,     
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_nomor) AS NomorPen,    
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_id) AS PenId,          
        CASE
-         WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
-         WHEN so_from_map.so_nomor IS NOT NULL THEN 'SO'
-         WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
-         WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
-         ELSE 'MANUAL'
-       END AS Sumber,
-       COALESCE(src.Nama, mp.mspk_nama, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
+          WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
+          WHEN so_from_map.so_nomor IS NOT NULL THEN 'SO'
+          WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
+          WHEN d.pjwd_mh_nomor IS NOT NULL THEN 'PERMINTAAN HARGA'   
+          WHEN d.pjwd_pen_nomor IS NOT NULL THEN 'PENAWARAN'          
+          WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
+          ELSE 'MANUAL'
+        END AS Sumber,
+       COALESCE(src.Nama, mp.mspk_nama, mh.mh_nama, pend.pend_nama_barang, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
        COALESCE(src.Tanggal, DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'), DATE_FORMAT(pro.pro_tanggal, '%Y-%m-%d'), NULL) AS Tanggal,
        COALESCE(src.Pesan, mp.mspk_rencana_order, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0) AS Pesan,
        COALESCE(src.Kirim, 0, 0, d.pjwd_kirim_manual, 0) AS Kirim,
@@ -95,6 +100,9 @@ const getDetail = async (nomor) => {
        ON mp.mspk_nomor = d.pjwd_map_nomor
        AND so_from_map.so_nomor IS NULL
      LEFT JOIN tpraorder_hdr pro ON pro.pro_nomor = d.pjwd_pro_nomor
+     LEFT JOIN tmintaharga mh ON mh.mh_nomor = d.pjwd_mh_nomor
+     LEFT JOIN tpenawaran_dtl pend
+      ON pend.pend_pen_nomor = d.pjwd_pen_nomor AND pend.pend_id = d.pjwd_pen_id
      WHERE d.pjwd_pjw_nomor = ?
      ORDER BY Tanggal ASC`,
     [nomor],

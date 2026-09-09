@@ -267,6 +267,7 @@ const mapVsSjRoutes = require("./routes/laporan/penjualan/mapVsSjRoutes");
 const mapVsSpkRoutes = require("./routes/laporan/penjualan/mapVsSpkRoutes");
 
 // Laporan Marketing
+const soBelumKomitmenRoutes = require("./routes/laporan/marketing/soBelumKomitmenRoutes");
 const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
 const targetSpkRoutes = require("./routes/laporan/marketing/targetSpkRoutes");
 const targetVsRealisasiRoutes = require("./routes/laporan/marketing/targetVsRealisasiRoutes");
@@ -736,6 +737,7 @@ app.use("/api/laporan/penjualan/spk-vs-sj-vs-inv", spkVsSjVsInvRoutes);
 app.use("/api/laporan/penjualan/map-vs-sj", mapVsSjRoutes);
 app.use("/api/laporan/penjualan/map-vs-spk", mapVsSpkRoutes);
 
+app.use("/api/laporan/marketing/so-belum-komitmen", soBelumKomitmenRoutes);
 app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
 app.use("/api/laporan/marketing/target-spk", targetSpkRoutes);
 app.use("/api/laporan/marketing/target-vs-realisasi", targetVsRealisasiRoutes);
