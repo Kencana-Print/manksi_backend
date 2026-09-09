@@ -59,6 +59,17 @@ const getSudahDijadwalkan = async (nomorSpk, excludeNomor = "") => {
     FROM tjadwalkirim h
     LEFT JOIN tjadwalkirim_dtl d ON d.nomor_kirim = h.Nomor_Kirim
     WHERE h.spk_nomor = ?
+      -- Skip baris yang SJ terkaitnya Pending/Batal — qty-nya "lepas"
+      -- lagi supaya bisa dipakai jadwal/SJ baru. Kalau tidak ada SJ
+      -- terkait sama sekali (masih murni rencana, belum dibuatkan SJ),
+      -- tetap kehitung normal.
+      AND NOT EXISTS (
+        SELECT 1 FROM tsj_dtl sd
+        INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
+        WHERE sd.sjd_nokirim = d.nomor_kirim
+          AND sd.sjd_idkirim = d.No_urut
+          AND sh.sj_approve IN (0, 2)
+      )
   `;
   const params = [nomorSpk];
   if (excludeNomor) {
