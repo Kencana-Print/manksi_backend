@@ -150,7 +150,8 @@ const getDetailForm = async (nomor) => {
       spkDetail = null;
     }
   }
-  return { header, spkDetail };
+  const images = getImageStatus(nomor); // ⬅ baru
+  return { header, spkDetail, images };
 };
 
 // ─────────────────────────────────────────────
@@ -288,6 +289,41 @@ const resetImages = async (nomor) => {
   return { success: true };
 };
 
+// ── Cek ketersediaan gambar per slot — cek FISIK FILE, bukan kolom
+// DB (tc_image1/2/3 tidak pernah ditulis balik oleh uploadImage,
+// jadi kolom itu tidak bisa dipakai sebagai sumber kebenaran).
+// Sama persis pola resolveImagePath di export, tapi kembalikan URL
+// relatif siap pakai + sumbernya (baru/legacy).
+const getImageStatus = (nomor) => {
+  const result = {};
+  for (const slot of [1, 2, 3]) {
+    const newAbsolute = path.join(
+      process.cwd(),
+      "public",
+      "images",
+      "complain",
+      `${nomor}-0${slot}.jpg`,
+    );
+    if (fs.existsSync(newAbsolute)) {
+      result[slot] = {
+        exists: true,
+        url: `/images/complain/${nomor}-0${slot}.jpg`,
+      };
+      continue;
+    }
+    const legacyAbsolute = path.join("/mnt", "image", `${nomor}-0${slot}.jpg`);
+    if (fs.existsSync(legacyAbsolute)) {
+      result[slot] = {
+        exists: true,
+        url: `/file-gambar/${nomor}-0${slot}.jpg`,
+      };
+      continue;
+    }
+    result[slot] = { exists: false, url: null };
+  }
+  return result;
+};
+
 module.exports = {
   generateNomor,
   getJenisComplainOptions,
@@ -296,4 +332,5 @@ module.exports = {
   saveData,
   processImage,
   resetImages,
+  getImageStatus,
 };
