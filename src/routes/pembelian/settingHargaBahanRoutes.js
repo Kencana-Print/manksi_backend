@@ -19,6 +19,10 @@ router.post("/garmen-tambahan", controller.createTambahanGarmen);
 router.put("/garmen-tambahan/:ket", controller.updateTambahanGarmen);
 router.delete("/garmen-tambahan/:ket", controller.deleteTambahanGarmen);
 
+// --- GARMEN MARGIN TIER ---
+router.get("/garmen-margin", controller.getMarginGarmen);
+router.put("/garmen-margin", controller.updateMarginGarmen);
+
 // --- SPANDUK ---
 router.get("/spanduk", controller.getSpanduk);
 router.post("/spanduk", controller.createSpanduk);
