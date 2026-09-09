@@ -1,4 +1,6 @@
 const db = require("../../config/database");
+const fs = require("fs");
+const path = require("path");
 
 // --- 1. GET BROWSE ---
 const getBrowseList = async (query) => {
@@ -70,7 +72,40 @@ const deleteComplain = async (nomor) => {
   return result;
 };
 
+// ── Cari file gambar untuk 1 nomor complain, slot 1-3. Cek lokasi
+// upload baru dulu (public/images/complain/), fallback ke lokasi
+// legacy Delphi (/mnt/image/, tanpa subfolder, sesuai konvensi
+// file-gambar route). Return absolute path atau null kalau nggak ada.
+const resolveImagePath = (nomor, slot) => {
+  const newPath = path.join(
+    process.cwd(),
+    "public",
+    "images",
+    "complain",
+    `${nomor}-0${slot}.jpg`,
+  );
+  if (fs.existsSync(newPath)) return newPath;
+
+  const legacyPath = path.join("/mnt", "image", `${nomor}-0${slot}.jpg`);
+  if (fs.existsSync(legacyPath)) return legacyPath;
+
+  return null;
+};
+
+// ── Data lengkap untuk export (browse + path gambar per baris) ──
+const getExportRows = async (query) => {
+  const rows = await getBrowseList(query); // reuse fungsi getBrowseList yang sudah ada
+
+  return rows.map((r) => ({
+    ...r,
+    Images: [1, 2, 3]
+      .map((slot) => resolveImagePath(r.Nomor, slot))
+      .filter(Boolean),
+  }));
+};
+
 module.exports = {
   getBrowseList,
   deleteComplain,
+  getExportRows, // ⬅ tambahkan ke exports yang sudah ada
 };

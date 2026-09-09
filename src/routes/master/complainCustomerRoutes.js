@@ -14,6 +14,12 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getBrowse,
 );
+router.get(
+  "/export",
+  verifyToken,
+  checkPermission(menuId, "export"),
+  controller.exportExcel,
+);
 router.delete(
   "/:nomor",
   verifyToken,
