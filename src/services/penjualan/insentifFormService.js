@@ -73,15 +73,20 @@ const searchInvoiceForCustomer = async (custKode, keyword = "") => {
 // ─────────────────────────────────────────────────────────
 const getSpkDetailForInvoice = async (nomorInvoice) => {
   const [rows] = await db.query(
-    `SELECT d.INVD_Spk_Nomor AS Kode,
-            IFNULL(s.spk_nama, b.brg_name) AS Nama,
-            d.INVD_Jumlah AS Jumlah, d.INVD_Harga AS Harga,
-            IFNULL(s.spk_harga - s.spk_hargariil, 0) AS Xfee,
-            IFNULL(s.spk_hargariil, 0) AS Riil,
-            IFNULL(s.spk_hargafee, 0) AS Fee,
-            (d.INVD_Jumlah * IFNULL(s.spk_hargafee, 0)) AS Total
+    `SELECT
+       d.INVD_Spk_Nomor AS Kode,
+       COALESCE(s.spk_nama, so.so_nama, b.brg_name) AS Nama,
+       d.INVD_Jumlah AS Jumlah, d.INVD_Harga AS Harga,
+       IFNULL(
+         COALESCE(s.spk_harga, so.so_harga) - COALESCE(s.spk_hargariil, so.so_hargariil),
+         0
+       ) AS Xfee,
+       IFNULL(COALESCE(s.spk_hargariil, so.so_hargariil), 0) AS Riil,
+       IFNULL(COALESCE(s.spk_hargafee, so.so_hargafee), 0) AS Fee,
+       (d.INVD_Jumlah * IFNULL(COALESCE(s.spk_hargafee, so.so_hargafee), 0)) AS Total
      FROM tinv_dtl d
      LEFT JOIN tspk s ON s.spk_nomor = d.INVD_Spk_Nomor
+     LEFT JOIN tsalesorder so ON so.so_nomor = d.INVD_Spk_Nomor
      LEFT JOIN tbarang b ON b.brg_kode = d.INVD_Spk_Nomor
      WHERE d.INVD_inv_nomor = ?`,
     [nomorInvoice],
@@ -434,10 +439,12 @@ const getPrintData = async (nomor) => {
         INNER JOIN piutang_kredit_detail b ON b.no_bukti = a.nomor
         WHERE b.nota = IF(d.feed_invt_nomor <> '', d.feed_invt_nomor, d.feed_inv_nomor)
         ORDER BY a.tanggal DESC LIMIT 1) AS TglBayar,
-       i.INVD_Spk_Nomor AS KodeSpk, s.spk_nama AS NamaSpk,
+       i.INVD_Spk_Nomor AS KodeSpk,
+       COALESCE(s.spk_nama, so.so_nama) AS NamaSpk,
        i.INVD_Jumlah AS Jumlah, i.INVD_Harga AS Harga,
-       s.spk_hargariil AS HargaRiil, s.spk_hargafee AS Fee,
-       (i.INVD_Jumlah * s.spk_hargafee) AS TotalFee
+       COALESCE(s.spk_hargariil, so.so_hargariil) AS HargaRiil,
+       COALESCE(s.spk_hargafee, so.so_hargafee) AS Fee,
+       (i.INVD_Jumlah * COALESCE(s.spk_hargafee, so.so_hargafee)) AS TotalFee
      FROM tpengajuan_fee h
      LEFT JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
      LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
@@ -446,8 +453,9 @@ const getPrintData = async (nomor) => {
      LEFT JOIN tinv_hdr j ON j.INV_nomor = d.feed_inv_nomor
      LEFT JOIN tinv_dtl i ON i.INVD_inv_nomor = j.INV_nomor
      LEFT JOIN tcustomer c ON c.Cus_kode = h.fee_cus_kode
-     INNER JOIN tspk s ON s.spk_nomor = i.INVD_Spk_Nomor
-     WHERE s.spk_hargafee <> 0 AND h.fee_nomor = ?`,
+     LEFT JOIN tspk s ON s.spk_nomor = i.INVD_Spk_Nomor
+     LEFT JOIN tsalesorder so ON so.so_nomor = i.INVD_Spk_Nomor
+     WHERE COALESCE(s.spk_hargafee, so.so_hargafee, 0) <> 0 AND h.fee_nomor = ?`,
     [nomor],
   );
   if (rows.length === 0) throw new Error("Data cetak tidak ditemukan.");
