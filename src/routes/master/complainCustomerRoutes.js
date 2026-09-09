@@ -17,7 +17,7 @@ router.get(
 router.get(
   "/export",
   verifyToken,
-  checkPermission(menuId, "export"),
+  checkPermission(menuId, "view"),
   controller.exportExcel,
 );
 router.delete(
