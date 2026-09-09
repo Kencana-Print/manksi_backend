@@ -2072,9 +2072,6 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
     paramsMetric.push(String(user.divisi));
     paramsDivisi.push(String(user.divisi));
   }
-  // Konversi MAP dicek ke DUA sumber: tspk (SPK format lama) DAN
-  // tsalesorder (SO baru) — MAP yg sudah jadi SO tetap dihitung
-  // "sudah" (bukan lagi "belum"), sesuai migrasi SO.
   const sqlMetric = `
     SELECT
       COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
@@ -2101,10 +2098,15 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
     ${whereExtra}
   `;
   const sqlDivisi = `
-    SELECT Divisi, TotalMAP, SudahSO, NilaiSO, NilaiPotensi
+    SELECT DivisiGroup AS Divisi, TotalMAP, SudahSO, NilaiSO, NilaiPotensi
     FROM (
       SELECT
-        IFNULL(d.Divisi, 'LAINNYA') AS Divisi,
+        CASE
+          WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+          WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+          WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' THEN 'GARMEN LAINNYA'
+          ELSE IFNULL(d.Divisi, 'LAINNYA')
+        END AS DivisiGroup,
         COUNT(DISTINCT m.mspk_nomor) AS TotalMAP,
         COUNT(DISTINCT CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL THEN m.mspk_nomor END) AS SudahSO,
         IFNULL(SUM(CASE WHEN COALESCE(spk.nomor, so.nomor) IS NOT NULL
@@ -2123,7 +2125,7 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
       ) so ON so.so_memo = m.mspk_nomor
       WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
       ${whereExtra}
-      GROUP BY m.mspk_divisi, d.Divisi
+      GROUP BY DivisiGroup
     ) x
     ORDER BY (x.NilaiSO + x.NilaiPotensi) DESC
   `;
@@ -2160,7 +2162,12 @@ const getMapBelumSo = async (
     SELECT
       m.mspk_nomor                             AS Nomor,
       DATE_FORMAT(m.mspk_tanggal, '%d-%m-%Y') AS Tanggal,
-      IFNULL(dv.Divisi, '-')                   AS Divisi,
+      CASE
+        WHEN IFNULL(dv.Divisi, '-') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+        WHEN IFNULL(dv.Divisi, '-') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+        WHEN IFNULL(dv.Divisi, '-') = 'GARMEN' THEN 'GARMEN LAINNYA'
+        ELSE IFNULL(dv.Divisi, '-')
+      END                                       AS Divisi,
       c.cus_nama                               AS NamaCustomer,
       m.mspk_nama                              AS NamaMAP,
       m.mspk_jumlah                            AS Jumlah,
@@ -2284,6 +2291,296 @@ const getMapBelumKirim = async (
 
   const [rows] = await db.query(sql, params);
   return rows;
+};
+
+// ── Status Pengiriman MAP — bulanan per divisi (tahun berjalan) ──
+// Realisasi = MAP sudah LUNAS kirim (TotalKirim >= mspk_jumlah).
+// ⚠️ ASUMSI: hari realisasi dihitung dari mspk_tanggal ke tanggal SJ
+// TERAKHIR untuk MAP itu (proxy tanggal lunas) — bukan tanggal pasti qty
+// tercapai penuh. Kalau perlu presisi, butuh running-total per SJ (window
+// function), belum diimplementasikan di sini.
+// Belum Realisasi = umur dari mspk_tanggal sampai hari ini.
+const getStatusPengirimanMapBulanan = async (user, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const thn = tahun || new Date().getFullYear();
+  let whereExtra = "";
+  const params = [thn];
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND m.mspk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT DivisiGroup AS Divisi, Bulan, JumlahMAP,
+      Real_0_7, Real_8_14, Real_15_30, Real_30plus,
+      Belum_0_7, Belum_8_14, Belum_15_30, Belum_30plus
+    FROM (
+      SELECT
+        DivisiGroup, Bulan,
+        COUNT(*) AS JumlahMAP,
+        SUM(CASE WHEN IsLunas = 1 AND HariRealisasi BETWEEN 0 AND 7 THEN 1 ELSE 0 END) AS Real_0_7,
+        SUM(CASE WHEN IsLunas = 1 AND HariRealisasi BETWEEN 8 AND 14 THEN 1 ELSE 0 END) AS Real_8_14,
+        SUM(CASE WHEN IsLunas = 1 AND HariRealisasi BETWEEN 15 AND 30 THEN 1 ELSE 0 END) AS Real_15_30,
+        SUM(CASE WHEN IsLunas = 1 AND HariRealisasi > 30 THEN 1 ELSE 0 END) AS Real_30plus,
+        SUM(CASE WHEN IsLunas = 0 AND UmurHari BETWEEN 0 AND 7 THEN 1 ELSE 0 END) AS Belum_0_7,
+        SUM(CASE WHEN IsLunas = 0 AND UmurHari BETWEEN 8 AND 14 THEN 1 ELSE 0 END) AS Belum_8_14,
+        SUM(CASE WHEN IsLunas = 0 AND UmurHari BETWEEN 15 AND 30 THEN 1 ELSE 0 END) AS Belum_15_30,
+        SUM(CASE WHEN IsLunas = 0 AND UmurHari > 30 THEN 1 ELSE 0 END) AS Belum_30plus
+      FROM (
+        SELECT
+          y.*,
+          CASE WHEN y.TotalKirim >= y.Jumlah THEN 1 ELSE 0 END AS IsLunas,
+          DATEDIFF(IFNULL(y.TglTerakhirKirim, CURDATE()), y.mspk_tanggal) AS HariRealisasi,
+          DATEDIFF(CURDATE(), y.mspk_tanggal) AS UmurHari
+        FROM (
+          SELECT
+            m.mspk_nomor,
+            m.mspk_tanggal,
+            m.mspk_jumlah AS Jumlah,
+            CASE
+              WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'PREMIUM' THEN 'GARMEN PREMIUM'
+              WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' AND UPPER(IFNULL(m.mspk_tipe, '')) = 'MEDIUM' THEN 'GARMEN MEDIUM'
+              WHEN IFNULL(d.Divisi, 'LAINNYA') = 'GARMEN' THEN 'GARMEN LAINNYA'
+              ELSE IFNULL(d.Divisi, 'LAINNYA')
+            END AS DivisiGroup,
+            DATE_FORMAT(m.mspk_tanggal, '%Y-%m') AS Bulan,
+            IFNULL(kirim.TotalKirim, 0) AS TotalKirim,
+            kirim.TglTerakhirKirim
+          FROM tmemospk m
+          LEFT JOIN tdivisi d ON d.kode = m.mspk_divisi
+          LEFT JOIN (
+            SELECT dd.sjd_mspk_nomor, SUM(dd.sjd_jumlah) AS TotalKirim, MAX(hh.sj_tanggal) AS TglTerakhirKirim
+            FROM tsj_dtl_memo dd
+            INNER JOIN tsj_hdr_memo hh ON hh.sj_nomor = dd.sjd_sj_nomor
+            GROUP BY dd.sjd_mspk_nomor
+          ) kirim ON kirim.sjd_mspk_nomor = m.mspk_nomor
+          WHERE m.mspk_aktif = 'Y'
+            AND YEAR(m.mspk_tanggal) = ?
+            ${whereExtra}
+        ) y
+      ) z
+      GROUP BY DivisiGroup, Bulan
+    ) result
+    ORDER BY Divisi, Bulan
+  `;
+
+  const [rows] = await db.query(sql, params);
+
+  const byDivisi = {};
+  for (const r of rows) {
+    if (!byDivisi[r.Divisi]) byDivisi[r.Divisi] = {};
+    byDivisi[r.Divisi][r.Bulan] = {
+      Bulan: r.Bulan,
+      JumlahMAP: Number(r.JumlahMAP) || 0,
+      real: [
+        Number(r.Real_0_7) || 0,
+        Number(r.Real_8_14) || 0,
+        Number(r.Real_15_30) || 0,
+        Number(r.Real_30plus) || 0,
+      ],
+      belum: [
+        Number(r.Belum_0_7) || 0,
+        Number(r.Belum_8_14) || 0,
+        Number(r.Belum_15_30) || 0,
+        Number(r.Belum_30plus) || 0,
+      ],
+    };
+  }
+
+  const months = [];
+  for (let m = 1; m <= 12; m++) {
+    months.push(`${thn}-${String(m).padStart(2, "0")}`);
+  }
+
+  return Object.keys(byDivisi)
+    .sort()
+    .map((divisi) => ({
+      divisi,
+      bulanan: months.map(
+        (m) =>
+          byDivisi[divisi][m] || {
+            Bulan: m,
+            JumlahMAP: 0,
+            real: [0, 0, 0, 0],
+            belum: [0, 0, 0, 0],
+          },
+      ),
+    }));
+};
+
+// ── Stok Bahan Slow Moving & Dead Stock — per header bahan (bukan
+// per barcode), dikelompokkan per Jenis Bahan. Status header = status
+// TERPARAH dari barcode-barcode di bawahnya (Dead Stock > Slowmoving).
+// Header yang semua barcode-nya "Perhatian"/normal/tanpa histori cetak
+// TIDAK ditampilkan (di luar cakupan laporan ini).
+// Threshold umur sama seperti laporan Umur Stok Bahan:
+//   Slowmoving > 360 hari, Dead Stock > 720 hari (dari bar_tanggal).
+const getStokSlowDeadStockBahan = async (user) => {
+  if (
+    !MARKETING_BAGIAN.includes((user.bagian || "").toUpperCase()) &&
+    !isGudangBahanViewer(user)
+  )
+    return null;
+
+  const sql = `
+    SELECT
+      IFNULL(bj.bj_kode, '-') AS JenisKode,
+      IFNULL(bj.bj_nama, 'Lainnya') AS JenisNama,
+      y.Kode,
+      y.Nama,
+      y.Satuan,
+      y.TotalStok,
+      y.UmurTerlama,
+      y.Status
+    FROM (
+      SELECT
+        z.Kode,
+        b.Bhn_Name AS Nama,
+        b.Bhn_satuan AS Satuan,
+        SUM(z.Stok) AS TotalStok,
+        MAX(z.Umur) AS UmurTerlama,
+        CASE
+          WHEN MAX(CASE WHEN z.Umur > 720 THEN 1 ELSE 0 END) = 1 THEN 'Dead Stock'
+          WHEN MAX(CASE WHEN z.Umur > 360 THEN 1 ELSE 0 END) = 1 THEN 'Slowmoving'
+          ELSE ''
+        END AS Status
+      FROM (
+        SELECT
+          x.Kode,
+          x.Barcode,
+          x.Stok,
+          DATEDIFF(CURDATE(), h.bar_tanggal) AS Umur
+        FROM (
+          SELECT
+            c.mst_brg_kode AS Barcode,
+            COALESCE(b9.Bhn_kode, b10.Bhn_kode, b8.Bhn_kode) AS Kode,
+            SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
+          FROM tmasterstok_barcode c
+          LEFT JOIN tbahan b9 ON b9.Bhn_kode = LEFT(c.mst_brg_kode, 9)
+          LEFT JOIN tbahan b10 ON b10.Bhn_kode = LEFT(c.mst_brg_kode, 10)
+          LEFT JOIN tbahan b8 ON b8.Bhn_kode = LEFT(c.mst_brg_kode, 8)
+          WHERE c.mst_aktif = 'Y' AND c.mst_tanggal <= CURDATE()
+          GROUP BY c.mst_brg_kode
+        ) x
+        LEFT JOIN tbahan_barcode_dtl d ON d.bard_barcode = x.Barcode
+        LEFT JOIN tbahan_barcode_hdr h ON h.bar_nomor = d.bard_nomor
+        WHERE x.Stok <> 0
+      ) z
+      LEFT JOIN tbahan b ON b.Bhn_kode = z.Kode
+      GROUP BY z.Kode, b.Bhn_Name, b.Bhn_satuan
+    ) y
+    LEFT JOIN tbahan_jenis bj ON bj.bj_kode = LEFT(y.Kode, 2)
+    WHERE y.Status IN ('Dead Stock', 'Slowmoving')
+    ORDER BY JenisNama, y.UmurTerlama DESC
+  `;
+
+  const [rows] = await db.query(sql);
+
+  const byJenis = {};
+  for (const r of rows) {
+    const key = r.JenisNama;
+    if (!byJenis[key]) {
+      byJenis[key] = {
+        jenisKode: r.JenisKode,
+        jenisNama: r.JenisNama,
+        totalStokPerSatuan: {},
+        jmlSlowmoving: 0,
+        jmlDeadStock: 0,
+        items: [],
+      };
+    }
+    const satuan = r.Satuan || "-";
+    byJenis[key].totalStokPerSatuan[satuan] =
+      (byJenis[key].totalStokPerSatuan[satuan] || 0) +
+      (Number(r.TotalStok) || 0);
+    if (r.Status === "Slowmoving") byJenis[key].jmlSlowmoving += 1;
+    if (r.Status === "Dead Stock") byJenis[key].jmlDeadStock += 1;
+    byJenis[key].items.push({
+      Kode: r.Kode,
+      Nama: r.Nama,
+      Satuan: r.Satuan,
+      Stok: Number(r.TotalStok) || 0,
+      UmurHari: Number(r.UmurTerlama) || 0,
+      Status: r.Status,
+    });
+  }
+
+  return Object.values(byJenis)
+    .map((g) => ({
+      ...g,
+      totalStokList: Object.entries(g.totalStokPerSatuan).map(
+        ([satuan, stok]) => ({ satuan, stok }),
+      ),
+    }))
+    .sort((a, b) => a.jenisNama.localeCompare(b.jenisNama));
+};
+
+// ── Konversi 1 KG Kain → Berapa Pcs, per jenis order (divisi 4 —
+// Garmen). Dihitung dari REALISASI aktual produksi
+// (tmutasiproduksi_hdr), seluruh histori, rata-rata tertimbang
+// (total pcs ÷ total kg — bukan rata-rata dari rata-rata per SPK).
+// Kategori = jo_nama untuk semua jo_kode divisi 4, KECUALI
+// KK/KO/KS (Kaos) yang dipecah lagi jadi Pendek/Panjang berdasarkan
+// spk_varian_ukuran (LENGAN_PENDEK/LENGAN_PANJANG). Kaos dengan
+// varian lain (STANDAR, POLO, dst) tidak masuk kategori manapun
+// di sini — di luar cakupan Pendek/Panjang eksplisit.
+// Hanya baris dengan mph_sat_berat = 'KG' yang dihitung.
+const getKonversiBabaranAktual = async (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isGudangBahanViewer(user))
+    return [];
+
+  const KAOS_KODE = ["KK", "KO", "KS"];
+
+  const sql = `
+    SELECT
+      CASE
+        WHEN s.spk_jo_kode IN (${KAOS_KODE.map(() => "?").join(",")})
+          AND s.spk_varian_ukuran = 'LENGAN_PENDEK' THEN 'KAOS_PENDEK'
+        WHEN s.spk_jo_kode IN (${KAOS_KODE.map(() => "?").join(",")})
+          AND s.spk_varian_ukuran = 'LENGAN_PANJANG' THEN 'KAOS_PANJANG'
+        WHEN s.spk_jo_kode IN (${KAOS_KODE.map(() => "?").join(",")}) THEN NULL
+        ELSE s.spk_jo_kode
+      END AS KategoriKode,
+      MAX(CASE
+        WHEN s.spk_jo_kode IN (${KAOS_KODE.map(() => "?").join(",")})
+          AND s.spk_varian_ukuran = 'LENGAN_PENDEK' THEN 'Kaos Lengan Pendek'
+        WHEN s.spk_jo_kode IN (${KAOS_KODE.map(() => "?").join(",")})
+          AND s.spk_varian_ukuran = 'LENGAN_PANJANG' THEN 'Kaos Lengan Panjang'
+        ELSE jo.jo_nama
+      END) AS Label,
+      SUM(h.mph_jumlah) AS TotalPcs,
+      SUM(h.mph_qty_berat) AS TotalKg,
+      SUM(h.mph_jumlah) / NULLIF(SUM(h.mph_qty_berat), 0) AS PcsPerKg
+    FROM tmutasiproduksi_hdr h
+    INNER JOIN tspk s ON s.spk_nomor = h.mph_spk_nomor
+    INNER JOIN tjenisorder jo ON jo.jo_kode = s.spk_jo_kode
+    WHERE h.mph_sat_berat = 'KG'
+      AND jo.jo_divisi = 4
+    GROUP BY KategoriKode
+    HAVING KategoriKode IS NOT NULL
+    ORDER BY Label
+  `;
+
+  const params = [
+    ...KAOS_KODE,
+    ...KAOS_KODE,
+    ...KAOS_KODE,
+    ...KAOS_KODE,
+    ...KAOS_KODE,
+  ];
+
+  const [rows] = await db.query(sql, params);
+
+  return rows.map((r) => ({
+    kategori: r.KategoriKode,
+    label: r.Label,
+    totalPcs: Number(r.TotalPcs) || 0,
+    totalKg: Number(r.TotalKg) || 0,
+    pcsPerKg: Number(r.PcsPerKg) || 0,
+  }));
 };
 
 const getSpkBelumMkbCount = async (user) => {
@@ -3702,6 +3999,9 @@ module.exports = {
   getMapBelumSo,
   getMapVsSjDashboard,
   getMapBelumKirim,
+  getStatusPengirimanMapBulanan,
+  getStokSlowDeadStockBahan,
+  getKonversiBabaranAktual,
   getSpkBelumMkbCount,
   getAktivitasHariIni,
   getAktivitasHariIniCount,

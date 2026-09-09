@@ -376,6 +376,37 @@ const getMapBelumKirim = async (req, res) => {
   }
 };
 
+const getStatusPengirimanMapBulanan = async (req, res) => {
+  try {
+    const { tahun } = req.query;
+    const data = await service.getStatusPengirimanMapBulanan(
+      req.user,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getStokSlowDeadStockBahan = async (req, res) => {
+  try {
+    const data = await service.getStokSlowDeadStockBahan(req.user);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getKonversiBabaranAktual = async (req, res) => {
+  try {
+    const data = await service.getKonversiBabaranAktual(req.user);
+    res.status(200).json({ success: true, data: data ?? [] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getSpkBelumMkbCount = async (req, res) => {
   try {
     const data = await service.getSpkBelumMkbCount(req.user);
@@ -984,6 +1015,9 @@ module.exports = {
   getMapBelumSpk,
   getMapVsSjDashboard,
   getMapBelumKirim,
+  getStatusPengirimanMapBulanan,
+  getStokSlowDeadStockBahan,
+  getKonversiBabaranAktual,
   getSpkBelumMkbCount,
   getAktivitasHariIni,
   getTrendSpk7Hari,
