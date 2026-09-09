@@ -377,10 +377,17 @@ const saveData = async (payload, user, isEdit = false) => {
       }
     }
 
-    // [BARU] Deteksi mismatch: kode bahan yang keluar (d.kode) vs kode yg diminta (d.kodem)
-    const adaBedaBahan = (payload.details || []).some(
-      (d) => d.kode && d.kodem && String(d.kode) !== String(d.kodem),
-    );
+    // Beda bahan terjadi di 2 kasus:
+    // 1. Baris "_extra" (frontend) — bahan hasil scan yang KODE-nya tidak
+    //    match kode manapun yang diminta. Frontend sengaja kirim kodem=""
+    //    untuk baris ini sebagai sinyal "di luar permintaan".
+    // 2. Baris biasa yang kode & kodem-nya beda (jaga-jaga kalau ada jalur
+    //    lain yang isi kodem eksplisit beda dari kode).
+    const adaBedaBahan = (payload.details || []).some((d) => {
+      if (!d.kode) return false;
+      if (d._extra) return true;
+      return !!d.kodem && String(d.kode) !== String(d.kodem);
+    });
     const isNomorAktif = adaBedaBahan ? "N" : "Y";
 
     if (isEdit) {

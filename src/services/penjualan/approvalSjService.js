@@ -149,18 +149,18 @@ const getAllNotApproved = async (canLihatCus = false) => {
 // Sesuai Delphi Approval1Click
 // ═══════════════════════════════════════════════════════════
 const approveSingle = async (nomor) => {
-  const [[hdr]] = await db.query(
-    `SELECT sj_nomor, sj_approve, sj_gdg_kode FROM tsj_hdr WHERE sj_nomor = ?`,
-    [nomor],
-  );
-  if (!hdr) throw new Error("Data tidak ditemukan.");
-  if (hdr.sj_approve === 1) throw new Error("Sudah di approve.");
-  if (hdr.sj_approve === 2)
-    throw new Error("Masukkan ke Pending dulu baru di Approve.");
-
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [[hdr]] = await conn.query(
+      `SELECT sj_nomor, sj_approve, sj_gdg_kode FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!hdr) throw new Error("Data tidak ditemukan.");
+    if (hdr.sj_approve === 1) throw new Error("Sudah di approve.");
+    if (hdr.sj_approve === 2)
+      throw new Error("Masukkan ke Pending dulu baru di Approve.");
 
     await conn.query(`UPDATE tsj_hdr SET sj_approve = 1 WHERE sj_nomor = ?`, [
       nomor,
@@ -171,7 +171,6 @@ const approveSingle = async (nomor) => {
        FROM tsj_dtl WHERE sjd_sj_nomor = ?`,
       [nomor],
     );
-
     for (const d of dtl) {
       await conn.query(
         `INSERT INTO tsj_approve (sja_nomor, sja_spk_nomor, sja_size, sja_jumlah, sja_gdg_kode)
@@ -214,12 +213,28 @@ const setPending = async (nomor) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [dtl] = await conn.query(
+      `SELECT COUNT(*) AS n FROM tsj_dtl WHERE sjd_sj_nomor = ?`,
+      [nomor],
+    );
+    const [delResult] = await conn.query(
+      `DELETE FROM tsj_approve WHERE sja_nomor = ?`,
+      [nomor],
+    );
+
+    if (delResult.affectedRows === 0 && dtl[0].n > 0) {
+      throw new Error(
+        `Data tsj_approve untuk SJ ${nomor} tidak ditemukan (data tidak konsisten). ` +
+          `Stok TIDAK dikembalikan otomatis. Hubungi admin untuk cek manual.`,
+      );
+    }
+
     await conn.query(`UPDATE tsj_hdr SET sj_approve = 0 WHERE sj_nomor = ?`, [
       nomor,
     ]);
-    await conn.query(`DELETE FROM tsj_approve WHERE sja_nomor = ?`, [nomor]);
     await conn.commit();
-    return { nomor };
+    return { nomor, restoredRows: delResult.affectedRows };
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -335,12 +350,23 @@ const approveBulk = async (nomorList) => {
 
     for (const nomor of nomorList) {
       try {
+        // Lock baris + validasi status, sama seperti approveSingle,
+        // supaya konsisten dan aman dari race condition antar approve
         const [[hdr]] = await conn.query(
-          `SELECT sj_nomor, sj_gdg_kode FROM tsj_hdr WHERE sj_nomor = ?`,
+          `SELECT sj_nomor, sj_gdg_kode, sj_approve
+           FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
           [nomor],
         );
         if (!hdr) {
           results.failed.push({ nomor, reason: "Tidak ditemukan" });
+          continue;
+        }
+        if (hdr.sj_approve === 1) {
+          results.failed.push({ nomor, reason: "Sudah di approve" });
+          continue;
+        }
+        if (hdr.sj_approve === 2) {
+          results.failed.push({ nomor, reason: "SJ ini sudah batal" });
           continue;
         }
 
