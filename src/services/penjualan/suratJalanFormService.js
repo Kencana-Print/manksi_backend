@@ -333,15 +333,15 @@ const getSpkDetail = async (
     }
 
     const [[spkInfo]] = await db.query(
-      `SELECT spk_nomor, spk_nama2, spk_ukuran, spk_jo_kode, spk_harga,
-              spk_jumlah,
-              (spk_prasj + spk_jumlah_kirim) AS sudah,
-              (spk_jumlah - spk_prasj - spk_jumlah_kirim) AS kurang
-       FROM tspk
-       WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
+      `SELECT spk_nomor, spk_nama2, spk_ukuran, spk_jo_kode, spk_harga, spk_jumlah, spk_nomor_po
+     FROM tspk
+     WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
       [spkNomor],
     );
     if (!spkInfo) throw new Error("SPK tidak ditemukan.");
+
+    const sudah = await getSudah(spkNomor, "", excludeNomor);
+    const kurang = spkInfo.spk_jumlah - sudah;
 
     const ukuran =
       divisiStr === "3" || divisiStr === "4" ? "" : spkInfo.spk_ukuran;
@@ -357,8 +357,8 @@ const getSpkDetail = async (
       QtyOrder: spkInfo.spk_jumlah,
       Jumlah: 0,
       Koli: 0,
-      Sudah: spkInfo.sudah,
-      Kurang: spkInfo.kurang,
+      Sudah: sudah,
+      Kurang: kurang,
       Keterangan: "",
       Uraian: "",
       NoKirim: "",
@@ -442,14 +442,16 @@ const getSpkDetailFromJadwal = async (
   } else {
     const [[spkInfo]] = await db.query(
       `SELECT spk_nomor, spk_nama2, spk_ukuran, spk_jo_kode, spk_harga,
-      spk_jumlah, spk_nomor_po,
-      (spk_prasj + spk_jumlah_kirim) AS sudah,
-      (spk_jumlah - spk_prasj - spk_jumlah_kirim) AS kurang
+      spk_jumlah, spk_nomor_po
       FROM tspk
       WHERE spk_aktif = 'Y' AND spk_nomor = ?`,
       [spkNomor],
     );
     if (!spkInfo) throw new Error("SPK tidak ditemukan.");
+
+    const sudah = await getSudah(spkNomor, "", excludeNomor);
+    const kurang = spkInfo.spk_jumlah - sudah;
+
     const ukuran =
       divisiStr === "3" || divisiStr === "4" ? "" : spkInfo.spk_ukuran;
     rows.push({
@@ -464,8 +466,8 @@ const getSpkDetailFromJadwal = async (
       QtyOrder: spkInfo.spk_jumlah,
       Jumlah: 0,
       Koli: 0,
-      Sudah: spkInfo.sudah,
-      Kurang: spkInfo.kurang,
+      Sudah: sudah,
+      Kurang: kurang,
       Keterangan: "",
       Uraian: "",
       NoKirim: noKirim,
