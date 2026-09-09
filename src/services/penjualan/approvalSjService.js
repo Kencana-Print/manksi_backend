@@ -154,7 +154,7 @@ const approveSingle = async (nomor) => {
     await conn.beginTransaction();
 
     const [[hdr]] = await conn.query(
-      `SELECT sj_nomor, sj_approve, sj_gdg_kode FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
+      `SELECT sj_nomor, sj_approve, sj_gdg_kode, sj_prasj_released FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
       [nomor],
     );
     if (!hdr) throw new Error("Data tidak ditemukan.");
@@ -162,9 +162,28 @@ const approveSingle = async (nomor) => {
     if (hdr.sj_approve === 2)
       throw new Error("Masukkan ke Pending dulu baru di Approve.");
 
-    await conn.query(`UPDATE tsj_hdr SET sj_approve = 1 WHERE sj_nomor = ?`, [
-      nomor,
-    ]);
+    // ── Kompensasi: kalau qty SJ ini pernah di-release manual lewat
+    // Pending, kembalikan dulu ke spk_prasj SEBELUM insert ke
+    // tsj_approve — supaya trigger tsj_approve_before_insert (yang
+    // otomatis ngurangin spk_prasj) tidak bikin prasj minus.
+    if (hdr.sj_prasj_released === 1) {
+      await conn.query(
+        `UPDATE tspk s
+         SET s.spk_prasj = s.spk_prasj + IFNULL((
+           SELECT SUM(d.sjd_jumlah) FROM tsj_dtl d
+           WHERE d.sjd_sj_nomor = ? AND d.sjd_spk_nomor = s.spk_nomor
+         ), 0)
+         WHERE s.spk_nomor IN (
+           SELECT sjd_spk_nomor FROM tsj_dtl WHERE sjd_sj_nomor = ?
+         )`,
+        [nomor, nomor],
+      );
+    }
+
+    await conn.query(
+      `UPDATE tsj_hdr SET sj_approve = 1, sj_prasj_released = 0 WHERE sj_nomor = ?`,
+      [nomor],
+    );
 
     const [dtl] = await conn.query(
       `SELECT sjd_sj_nomor, sjd_spk_nomor, sjd_ukuran, sjd_jumlah
@@ -222,6 +241,9 @@ const setPending = async (nomor) => {
       `DELETE FROM tsj_approve WHERE sja_nomor = ?`,
       [nomor],
     );
+    // ⬆ Trigger tsj_approve_before_delete otomatis jalan:
+    // spk_jumlah_kirim -= X, spk_prasj += X (qty "pindah" balik ke
+    // prasj — di titik ini total Sudah belum berkurang).
 
     if (delResult.affectedRows === 0 && dtl[0].n > 0) {
       throw new Error(
@@ -230,9 +252,28 @@ const setPending = async (nomor) => {
       );
     }
 
-    await conn.query(`UPDATE tsj_hdr SET sj_approve = 0 WHERE sj_nomor = ?`, [
-      nomor,
-    ]);
+    // ── FULL RELEASE: kurangi manual spk_prasj (sama pola seperti
+    // batalSj) — supaya qty ini beneran lepas & bisa dipakai SJ lain.
+    // Cuma berlaku untuk SPK PPIC legacy (tspk); SO baru (tsalesorder)
+    // tidak punya kolom setara "prasj", jadi tidak ada koreksi di
+    // sana (konsisten dengan batalSj yang juga cuma menyentuh tspk).
+    await conn.query(
+      `UPDATE tspk s
+       SET s.spk_prasj = s.spk_prasj - IFNULL((
+         SELECT SUM(d.sjd_jumlah) FROM tsj_dtl d
+         WHERE d.sjd_sj_nomor = ? AND d.sjd_spk_nomor = s.spk_nomor
+       ), 0)
+       WHERE s.spk_nomor IN (
+         SELECT sjd_spk_nomor FROM tsj_dtl WHERE sjd_sj_nomor = ?
+       )`,
+      [nomor, nomor],
+    );
+
+    await conn.query(
+      `UPDATE tsj_hdr SET sj_approve = 0, sj_prasj_released = 1 WHERE sj_nomor = ?`,
+      [nomor],
+    );
+
     await conn.commit();
     return { nomor, restoredRows: delResult.affectedRows };
   } catch (err) {
@@ -249,7 +290,7 @@ const setPending = async (nomor) => {
 // ═══════════════════════════════════════════════════════════
 const batalSj = async (nomor) => {
   const [[hdr]] = await db.query(
-    `SELECT sj_nomor, sj_approve FROM tsj_hdr WHERE sj_nomor = ?`,
+    `SELECT sj_nomor, sj_approve, sj_prasj_released FROM tsj_hdr WHERE sj_nomor = ?`,
     [nomor],
   );
   if (!hdr) throw new Error("Data tidak ditemukan.");
@@ -268,18 +309,24 @@ const batalSj = async (nomor) => {
       nomor,
     ]);
 
-    // Kurangi spk_prasj sesuai jumlah yang sudah dialokasikan di SJ ini
-    await conn.query(
-      `UPDATE tspk s
-       SET s.spk_prasj = s.spk_prasj - IFNULL((
-         SELECT SUM(d.sjd_jumlah) FROM tsj_dtl d
-         WHERE d.sjd_sj_nomor = ? AND d.sjd_spk_nomor = s.spk_nomor
-       ), 0)
-       WHERE s.spk_nomor IN (
-         SELECT sjd_spk_nomor FROM tsj_dtl WHERE sjd_sj_nomor = ?
-       )`,
-      [nomor, nomor],
-    );
+    // ── Kalau qty-nya SUDAH pernah di-release lewat Pending
+    // (sj_prasj_released=1), spk_prasj sudah bersih — jangan
+    // dikurangi lagi (bisa minus/double-subtract). Cuma kurangi
+    // manual kalau ini Batal langsung dari status pending yang
+    // BELUM pernah di-approve sama sekali (jalur normal lama). ──
+    if (hdr.sj_prasj_released !== 1) {
+      await conn.query(
+        `UPDATE tspk s
+         SET s.spk_prasj = s.spk_prasj - IFNULL((
+           SELECT SUM(d.sjd_jumlah) FROM tsj_dtl d
+           WHERE d.sjd_sj_nomor = ? AND d.sjd_spk_nomor = s.spk_nomor
+         ), 0)
+         WHERE s.spk_nomor IN (
+           SELECT sjd_spk_nomor FROM tsj_dtl WHERE sjd_sj_nomor = ?
+         )`,
+        [nomor, nomor],
+      );
+    }
 
     await conn.commit();
     return { nomor };
@@ -350,10 +397,8 @@ const approveBulk = async (nomorList) => {
 
     for (const nomor of nomorList) {
       try {
-        // Lock baris + validasi status, sama seperti approveSingle,
-        // supaya konsisten dan aman dari race condition antar approve
         const [[hdr]] = await conn.query(
-          `SELECT sj_nomor, sj_gdg_kode, sj_approve
+          `SELECT sj_nomor, sj_gdg_kode, sj_approve, sj_prasj_released
            FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
           [nomor],
         );
@@ -370,8 +415,23 @@ const approveBulk = async (nomorList) => {
           continue;
         }
 
+        // ── Kompensasi sama seperti approveSingle ──
+        if (hdr.sj_prasj_released === 1) {
+          await conn.query(
+            `UPDATE tspk s
+             SET s.spk_prasj = s.spk_prasj + IFNULL((
+               SELECT SUM(d.sjd_jumlah) FROM tsj_dtl d
+               WHERE d.sjd_sj_nomor = ? AND d.sjd_spk_nomor = s.spk_nomor
+             ), 0)
+             WHERE s.spk_nomor IN (
+               SELECT sjd_spk_nomor FROM tsj_dtl WHERE sjd_sj_nomor = ?
+             )`,
+            [nomor, nomor],
+          );
+        }
+
         await conn.query(
-          `UPDATE tsj_hdr SET sj_approve = 1 WHERE sj_nomor = ?`,
+          `UPDATE tsj_hdr SET sj_approve = 1, sj_prasj_released = 0 WHERE sj_nomor = ?`,
           [nomor],
         );
 
