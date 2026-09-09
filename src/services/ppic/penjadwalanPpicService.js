@@ -32,11 +32,12 @@ const getDetail = async (nomor) => {
   const [rows] = await db.query(
     `SELECT
        d.pjwd_id AS PjwdId,
-       d.pjwd_so_nomor AS Nomor,
+       COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) AS Nomor,
        d.pjwd_pro_nomor AS NomorPraOrder,
-       d.pjwd_map_nomor AS NomorMap,
+       IF(so_from_map.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
        CASE
          WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
+         WHEN so_from_map.so_nomor IS NOT NULL THEN 'SO'
          WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
          WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
          ELSE 'MANUAL'
@@ -50,12 +51,9 @@ const getDetail = async (nomor) => {
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
        IF(
-         d.pjwd_so_nomor IS NULL AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
+         COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
+           AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
          IFNULL(d.pjwd_realisasi_manual, 0),
-         -- ⬅ FIX: ambil dari SJ beneran (Approved) yang terhubung ke
-         -- Jadwal Kirim SPK ini dalam rentang periode komitmen —
-         -- bukan lagi dari tjadwalkirim.Realisasi yang tidak pernah
-         -- ke-update otomatis.
          IFNULL((
            SELECT SUM(sd.sjd_jumlah)
            FROM tjadwalkirim jk
@@ -64,7 +62,7 @@ const getDetail = async (nomor) => {
              ON sd.sjd_nokirim = jkd.nomor_kirim
              AND sd.sjd_idkirim = jkd.No_urut
            INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
-           WHERE jk.spk_nomor = d.pjwd_so_nomor
+           WHERE jk.spk_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
              AND jk.tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
              AND sh.sj_approve = 1
         ), 0)
@@ -76,6 +74,13 @@ const getDetail = async (nomor) => {
        pro.pro_status_ppic AS StatusPpicPraOrder
      FROM tpenjadwalan_ppic_dtl d
      INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+     -- ⬅ BARU: cari SO yang "berasal dari" MAP ini (so_memo = nomor MAP).
+     -- Kalau ketemu, baris ini otomatis dianggap sumbernya SO, bukan
+     -- MAP lagi — tanpa perlu update apa pun ke tpenjadwalan_ppic_dtl.
+     LEFT JOIN tsalesorder so_from_map
+       ON so_from_map.so_memo = d.pjwd_map_nomor
+       AND so_from_map.so_aktif = 'Y'
+       AND d.pjwd_so_nomor IS NULL
      LEFT JOIN (
        SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
               so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
@@ -85,8 +90,10 @@ const getDetail = async (nomor) => {
        SELECT spk_nomor, spk_nama, DATE_FORMAT(spk_tanggal,'%Y-%m-%d'),
               spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0))
        FROM tspk WHERE spk_is_so = 0
-     ) src ON src.Nomor = d.pjwd_so_nomor
-     LEFT JOIN tmemospk mp ON mp.mspk_nomor = d.pjwd_map_nomor
+     ) src ON src.Nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+     LEFT JOIN tmemospk mp
+       ON mp.mspk_nomor = d.pjwd_map_nomor
+       AND so_from_map.so_nomor IS NULL
      LEFT JOIN tpraorder_hdr pro ON pro.pro_nomor = d.pjwd_pro_nomor
      WHERE d.pjwd_pjw_nomor = ?
      ORDER BY Tanggal ASC`,
