@@ -1,7 +1,7 @@
 const db = require("../../../config/database");
 
 const getBrowse = async (query) => {
-  const { startDate, endDate, sortByNominal } = query;
+  const { startDate, endDate, sortByNominal, namaSales, namaCustomer } = query;
 
   const today = new Date().toISOString().substring(0, 10);
   const dStart = startDate || today;
@@ -12,15 +12,33 @@ const getBrowse = async (query) => {
       ? "ORDER BY Nominal_Order DESC, Nomor ASC"
       : "ORDER BY Tanggal_Raw ASC, Nomor ASC";
 
+  // ── Filter opsional Sales/Customer — dipakai bareng antara laporan
+  // browse biasa (tidak diisi = behavior lama, semua data) dan
+  // chatbot AI (diisi = scoping biar query tidak narik seluruh
+  // transaksi perusahaan). ──
+  let whereSpkExtra = "";
+  let whereSoExtra = "";
+  const paramsSpk = [dStart, dEnd];
+  const paramsSo = [dStart, dEnd];
+
+  if (namaSales) {
+    whereSpkExtra += " AND a.sal_nama LIKE ?";
+    paramsSpk.push(`%${namaSales}%`);
+    whereSoExtra += " AND a2.sal_nama LIKE ?";
+    paramsSo.push(`%${namaSales}%`);
+  }
+  if (namaCustomer) {
+    whereSpkExtra += " AND c.Cus_nama LIKE ?";
+    paramsSpk.push(`%${namaCustomer}%`);
+    whereSoExtra += " AND c2.Cus_nama LIKE ?";
+    paramsSo.push(`%${namaCustomer}%`);
+  }
+
   const sql = `
     SELECT
       Nomor, Nama, Tanggal, Bulan, Tahun, Divisi, Sales, Kdcus, Customer,
       Nominal_Order, QtyOrder, QtyGarmen, QtySpanduk, QtyMMT, Jumlah_SPK
     FROM (
-      -- ── Cabang SPK (legacy) — exclude yang sudah punya SO (spk_so_ref
-      -- terisi), supaya tidak double count dengan baris SO-nya di
-      -- cabang bawah. Untuk SPK jenis itu, cukup nomor SO-nya saja
-      -- yang muncul di laporan.
       SELECT
         s.spk_nomor                                       AS Nomor,
         s.spk_nama                                        AS Nama,
@@ -51,10 +69,10 @@ const getBrowse = async (query) => {
         AND s.spk_Tanggal >= ?
         AND s.spk_Tanggal <= ?
         AND (s.spk_so_ref IS NULL OR s.spk_so_ref = '')
+        ${whereSpkExtra}
 
       UNION ALL
 
-      -- ── Cabang SO (sumber utama, data baru) ──
       SELECT
         so.so_nomor                                       AS Nomor,
         so.so_nama                                        AS Nama,
@@ -84,11 +102,12 @@ const getBrowse = async (query) => {
       WHERE so.so_aktif = 'Y'
         AND so.so_tanggal >= ?
         AND so.so_tanggal <= ?
+        ${whereSoExtra}
     ) x
     ${orderBy}
   `;
 
-  const [rows] = await db.query(sql, [dStart, dEnd, dStart, dEnd]);
+  const [rows] = await db.query(sql, [...paramsSpk, ...paramsSo]);
   return rows;
 };
 

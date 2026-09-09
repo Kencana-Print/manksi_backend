@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.9",
+    date: "2026-09-09",
+    changes: [
+      {
+        type: "added",
+        text: "Release MANKSI AI untuk membantu mendapatkan data terkait Penjualan, Piutang, dan Status Produksi. Sementara hanya tersedia untuk user Head Office.",
+      },
+    ],
+  },
+  {
     version: "1.0.8",
     date: "2026-09-07",
     changes: [

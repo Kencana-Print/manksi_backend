@@ -13,6 +13,7 @@ const lookupRoutes = require("./routes/lookupRoutes");
 
 // ── Dashboard ──
 const dashboardRoutes = require("./routes/dashboard/dashboardRoutes");
+const aiChatRoutes = require("./routes/aiChat/aiChatRoutes");
 
 // Master Routes
 const bahanRoutes = require("./routes/master/bahanRoutes");
@@ -377,6 +378,7 @@ app.get("/api/proxy-image", async (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/ai-chat", aiChatRoutes);
 
 app.use("/api/master/bahan", bahanRoutes);
 app.use("/api/master/jenis-bahan", jenisBahanRoutes);

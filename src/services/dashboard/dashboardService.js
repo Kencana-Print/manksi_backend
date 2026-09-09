@@ -3615,6 +3615,62 @@ const getBufferKaosanList = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+// ── Piutang per Customer (untuk chatbot AI) — reuse formula yang
+// sama dengan getPiutangDashboard/getPiutangOverdue (piutang_debet -
+// piutang_kredit_detail), difilter berdasarkan nama customer. ──
+const getPiutangByCustomer = async (namaCustomer, limit = 20, offset = 0) => {
+  const like = `%${namaCustomer}%`;
+
+  const sqlSummary = `
+    SELECT
+      COUNT(DISTINCT p.nota) AS JmlInvoiceOutstanding,
+      IFNULL(SUM(p.debet) - SUM(
+        IFNULL((
+          SELECT SUM(kredit) FROM piutang_kredit_detail d
+          INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+          WHERE d.nota = p.nota
+        ), 0)
+      ), 0) AS TotalOutstanding
+    FROM piutang_debet p
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag = 0 AND c.cus_nama LIKE ?
+  `;
+
+  const sqlDetail = `
+    SELECT
+      p.nota AS Invoice,
+      c.cus_nama AS Customer,
+      DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+      DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+      DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+      (p.debet - IFNULL((
+        SELECT SUM(kredit) FROM piutang_kredit_detail d
+        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+        WHERE d.nota = p.nota
+      ), 0)) AS SisaTagihan
+    FROM piutang_debet p
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag = 0 AND c.cus_nama LIKE ?
+    HAVING SisaTagihan > 0
+    ORDER BY TerlambatHari DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [[summaryRows], [detailRows]] = await Promise.all([
+    db.query(sqlSummary, [like]),
+    db.query(sqlDetail, [like, limit, offset]),
+  ]);
+
+  return {
+    customerDicari: namaCustomer,
+    ringkasan: summaryRows[0] || {
+      JmlInvoiceOutstanding: 0,
+      TotalOutstanding: 0,
+    },
+    invoiceOutstanding: detailRows,
+  };
+};
+
 module.exports = {
   getSpkUrgent,
   getPenawaranSummary,
@@ -3692,4 +3748,5 @@ module.exports = {
   getStokBebasList,
   getBufferKaosanSummary,
   getBufferKaosanList,
+  getPiutangByCustomer,
 };

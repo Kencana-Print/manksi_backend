@@ -164,7 +164,7 @@ const getBpjSource = async (startDate, endDate, cab, nomorSpk, namaSpk) => {
 // SUMBER 3: DTF (khusus Kaosan, tdtf) — ekspansi komponen di JS,
 // menggantikan pola CREATE TEMPORARY TABLE + INSERT loop Delphi.
 // ─────────────────────────────────────────────
-const getDtfSource = async (startDate, endDate, cab, nomorSpk) => {
+const getDtfSource = async (startDate, endDate, cab, nomorSpk, namaSpk) => {
   let where = `WHERE f.tanggal >= ? AND f.tanggal <= ?`;
   const params = [startDate, endDate];
   if (cab && cab !== "ALL") {
@@ -174,6 +174,9 @@ const getDtfSource = async (startDate, endDate, cab, nomorSpk) => {
   if (nomorSpk) {
     where += ` AND f.spk_nomor = ?`;
     params.push(nomorSpk);
+  } else if (namaSpk) {
+    where += ` AND ${buildSpkNameExpr()} LIKE ?`;
+    params.push(`%${namaSpk}%`);
   }
 
   const sql = `
@@ -338,7 +341,7 @@ const getBrowse = async (filters) => {
   const [mutasi, bpj, dtf, stbj] = await Promise.all([
     getMutasiSource(startDate, endDate, cab, nomorSpk, namaSpk),
     getBpjSource(startDate, endDate, cab, nomorSpk, namaSpk),
-    getDtfSource(startDate, endDate, cab, nomorSpk),
+    getDtfSource(startDate, endDate, cab, nomorSpk, namaSpk),
     getStbjSource(startDate, endDate, cab, nomorSpk, namaSpk),
   ]);
 
