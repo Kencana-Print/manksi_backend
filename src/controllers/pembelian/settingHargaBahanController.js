@@ -187,6 +187,25 @@ const deleteMmtTambahan = async (req, res) => {
   }
 };
 
+// --- GARMEN MARGIN TIER ---
+const getMarginGarmen = async (req, res) => {
+  try {
+    const rows = await service.getMarginGarmen(req.query.model);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const updateMarginGarmen = async (req, res) => {
+  try {
+    const result = await service.updateMarginGarmen(req.body);
+    res.json({ success: true, message: "Margin garmen berhasil diperbarui", data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getKainGarmen,
   createKainGarmen,
@@ -208,4 +227,7 @@ module.exports = {
   createMmtTambahan,
   updateMmtTambahan,
   deleteMmtTambahan,
+  getMarginGarmen,
+  updateMarginGarmen,
 };
+

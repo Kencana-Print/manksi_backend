@@ -412,6 +412,35 @@ const deleteMmtTambahan = async (id) => {
   return { success: true };
 };
 
+// ========================================================
+// 5. GARMEN MARGIN TIER (tmintaharga_margin)
+// ========================================================
+const getMarginGarmen = async (model) => {
+  let query = "SELECT * FROM tmintaharga_margin";
+  const params = [];
+  if (model) {
+    query += " WHERE model = ?";
+    params.push(model);
+  }
+  query += " ORDER BY model ASC, qmin ASC";
+  const [rows] = await db.query(query, params);
+  return rows;
+};
+
+const updateMarginGarmen = async (data) => {
+  const items = Array.isArray(data) ? data : [data];
+  for (const item of items) {
+    const { model, qmin, margin } = item;
+    if (model && qmin !== undefined) {
+      await db.query(
+        "UPDATE tmintaharga_margin SET margin = ? WHERE model = ? AND qmin = ?",
+        [Number(margin) || 0, model, Number(qmin)]
+      );
+    }
+  }
+  return { success: true };
+};
+
 module.exports = {
   getKainGarmen,
   createKainGarmen,
@@ -433,4 +462,7 @@ module.exports = {
   createMmtTambahan,
   updateMmtTambahan,
   deleteMmtTambahan,
+  getMarginGarmen,
+  updateMarginGarmen,
 };
+
