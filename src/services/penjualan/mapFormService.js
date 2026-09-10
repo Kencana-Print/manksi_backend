@@ -266,6 +266,15 @@ const save = async (data, userKode, isNewMode) => {
     if (!data.PerushKode || !String(data.PerushKode).trim()) {
       throw new Error("Perusahaan harus diisi.");
     }
+    const divisiCharTipe = String(data.Divisi).charAt(0);
+    if (
+      ["3", "4"].includes(divisiCharTipe) &&
+      (!data.TipeSpk || !String(data.TipeSpk).trim())
+    ) {
+      throw new Error(
+        "Tipe Memo (Premium/Medium) wajib diisi untuk divisi ini.",
+      );
+    }
 
     const isDivisi3 = String(data.Divisi).charAt(0) === "3";
 

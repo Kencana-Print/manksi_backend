@@ -607,6 +607,24 @@ const saveData = async (payload, user) => {
         `Untuk Ket.Po '${header.spk_ketpo}', SO Lama wajib diisi.`,
       );
     }
+    // ⚠️ BARU: gate keras — MAP divisi Garmen (4) wajib sudah punya
+    // Cetak BAST sebelum SO bisa disimpan. Ini penjaga terakhir kalau
+    // ada jalur lain yang manggil endpoint save ini langsung, bukan
+    // cuma lewat validasi frontend (loadDataMemo).
+    if (divisiStr === "4" && header.spk_memo) {
+      const [mapBastRows] = await conn.query(
+        `SELECT mspk_bastnew FROM tmemospk WHERE mspk_nomor = ?`,
+        [header.spk_memo],
+      );
+      if (
+        mapBastRows.length === 0 ||
+        Number(mapBastRows[0].mspk_bastnew) !== 1
+      ) {
+        throw new Error(
+          "MAP yang digunakan belum dibuatkan Cetak BAST. Silakan buat BAST MAP terlebih dahulu sebelum SO ini bisa disimpan.",
+        );
+      }
+    }
     const qtyPesan = Number(header.spk_jumlah);
     if (alokasi && alokasi.length > 0) {
       const sumAlokasi = alokasi.reduce(
