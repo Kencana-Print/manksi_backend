@@ -49,6 +49,9 @@ const getById = async (nomor) => {
       h.bap_solusi AS Solusi, 
       h.bap_jawab AS Pertanggungjawaban, 
       h.bap_apv AS Approve,
+      IFNULL(h.bap_review_audit, 'N') AS ReviewAudit,
+      h.bap_review_audit_by AS ReviewAuditBy,
+      DATE_FORMAT(h.bap_review_audit_tgl, "%Y-%m-%d %H:%i") AS ReviewAuditTgl,
       h.bap_spk_nomor AS LegacySpk,
       h.bap_jumlah AS LegacyJumlah,
       h.bap_harga AS LegacyHarga
@@ -135,6 +138,10 @@ const getById = async (nomor) => {
 
 // --- SIMPAN DATA (CREATE / UPDATE) ---
 const save = async (data, userKode, isNewMode) => {
+  if (!data.Kategori || data.Kategori.length === 0) {
+    throw new Error("Kategori wajib dipilih minimal 1.");
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -312,4 +319,40 @@ const getPrintData = async (nomor) => {
   return data;
 };
 
-module.exports = { getById, getSpkDetail, save, getPrintData };
+// --- BAP BARU UNTUK AUDIT (belum direview) ---
+const getBapBaruUntukAudit = async () => {
+  const query = `
+    SELECT
+      h.bap_nomor AS Nomor,
+      DATE_FORMAT(h.bap_tanggal, "%Y-%m-%d") AS Tanggal,
+      h.bap_tipe AS Tipe,
+      h.bap_bagnama AS BagNama,
+      h.bap_masalah AS Masalah,
+      h.bap_cab AS Cab
+    FROM tkpi_bapproduksi h
+    WHERE IFNULL(h.bap_review_audit, 'N') <> 'Y'
+    ORDER BY h.bap_tanggal DESC, h.bap_nomor DESC
+    LIMIT 50
+  `;
+  const [rows] = await db.query(query);
+  return rows;
+};
+
+// --- TANDAI SUDAH DIREVIEW AUDIT ---
+const markReviewAudit = async (nomor, userKode) => {
+  await db.query(
+    `UPDATE tkpi_bapproduksi
+     SET bap_review_audit = 'Y', bap_review_audit_by = ?, bap_review_audit_tgl = NOW()
+     WHERE bap_nomor = ?`,
+    [userKode, nomor],
+  );
+};
+
+module.exports = {
+  getById,
+  getSpkDetail,
+  save,
+  getPrintData,
+  getBapBaruUntukAudit,
+  markReviewAudit,
+};

@@ -77,4 +77,35 @@ const getPrintData = async (req, res) => {
   }
 };
 
-module.exports = { getById, getSpkDetail, save, getPrintData };
+const getBapBaruUntukAudit = async (req, res) => {
+  try {
+    const data = await bapProduksiFormService.getBapBaruUntukAudit();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const reviewAudit = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    await bapProduksiFormService.markReviewAudit(
+      nomor,
+      req.user?.kode || "ADMIN",
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "BAP ditandai sudah direview." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getById,
+  getSpkDetail,
+  save,
+  getPrintData,
+  getBapBaruUntukAudit,
+  reviewAudit,
+};

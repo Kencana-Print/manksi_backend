@@ -15,6 +15,8 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getById,
 );
+router.get("/audit/baru", verifyToken, controller.getBapBaruUntukAudit);
+router.post("/:nomor/review-audit", verifyToken, controller.reviewAudit);
 router.get("/print/:nomor", verifyToken, controller.getPrintData);
 router.get("/spk/:spkNomor", verifyToken, controller.getSpkDetail);
 

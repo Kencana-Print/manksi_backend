@@ -58,14 +58,29 @@ const getBastFormData = async (nomorMap, userCabang) => {
     if (mkbRows.length > 0) {
       komponen = mkbRows;
     } else {
-      [komponen] = await db.query(
-        `SELECT DISTINCT d.mind_bhn_kode AS kode, b.bhn_name, b.bhn_satuan, d.mind_komponen AS komponen, 0 AS babaran, 0 AS babarank
-          FROM tmintabahan_hdr h
-         LEFT JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
-         LEFT JOIN tbahan b ON b.bhn_kode = d.mind_bhn_kode
-         WHERE h.min_spk_nomor = ?`,
+      // ⚠️ Fallback terakhir: dari REALISASI Permintaan Bahan (bukan
+      // permintaannya) untuk MAP ini langsung (min_spk_nomor = nomorMap,
+      // bukan via SO). babaran/babarank sengaja tetap 0 — cuma daftar
+      // bahan yang direalisasi, bukan hitungan babaran aktual.
+      // Kolom "komponen" tidak ada di tproduksiminta_dtl, jadi di-join
+      // balik ke tmintabahan_dtl (baris permintaan asalnya) via
+      // kombinasi min_nomor + kode bahan untuk dapat label komponennya.
+      const [realisasiRows] = await db.query(
+        `SELECT DISTINCT
+            pd.promind_kodem AS kode,
+            b.bhn_name, b.bhn_satuan,
+            md.mind_komponen AS komponen,
+            0 AS babaran,
+            0 AS babarank
+          FROM tproduksiminta_dtl pd
+          INNER JOIN tproduksiminta_hdr ph ON ph.promin_nomor = pd.promind_promin_Nomor
+          INNER JOIN tmintabahan_hdr mh ON mh.min_nomor = ph.promin_minta
+          LEFT JOIN tmintabahan_dtl md ON md.mind_nomor = mh.min_nomor AND md.mind_bhn_kode = pd.promind_kodem
+          LEFT JOIN tbahan b ON b.bhn_kode = pd.promind_kodem
+          WHERE mh.min_spk_nomor = ? AND ph.promin_aktif = 'Y'`,
         [nomorMap],
       );
+      komponen = realisasiRows;
     }
   }
 

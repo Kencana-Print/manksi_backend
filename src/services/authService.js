@@ -106,6 +106,25 @@ const loginUser = async (username, password) => {
   `;
   const [spkUrgent] = await pool.query(spkQuery);
 
+  // 7b. Data BAP baru untuk AUDIT (belum direview)
+  let bapBaruAudit = [];
+  if (user.user_bagian.toUpperCase() === "AUDIT") {
+    const [bapRows] = await pool.query(
+      `SELECT
+         h.bap_nomor AS Nomor,
+         DATE_FORMAT(h.bap_tanggal, "%d-%m-%Y") AS Tanggal,
+         h.bap_tipe AS Tipe,
+         h.bap_bagnama AS BagNama,
+         h.bap_masalah AS Masalah,
+         h.bap_cab AS Cab
+       FROM tkpi_bapproduksi h
+       WHERE IFNULL(h.bap_review_audit, 'N') <> 'Y'
+       ORDER BY h.bap_tanggal DESC, h.bap_nomor DESC
+       LIMIT 50`,
+    );
+    bapBaruAudit = bapRows;
+  }
+
   // 8. Update tuser_lastupdate
   await pool.query(
     `INSERT INTO pengaturan.tuser_lastupdate (computer, app, versi, usr, date_update) 
@@ -130,8 +149,8 @@ const loginUser = async (username, password) => {
       lihatHarga: user.user_lihat_harga,
       lihatSup: user.user_lihat_sup,
       lihatCus: user.user_lihat_cus,
-      cmo: user.user_cmo, 
-      cmo3: user.user_cmo3, 
+      cmo: user.user_cmo,
+      cmo3: user.user_cmo3,
       isManager: user.user_manager,
       accKor: user.user_acckor,
     },
@@ -147,6 +166,7 @@ const loginUser = async (username, password) => {
       password === "123" || username.toUpperCase() === password.toUpperCase(),
     specialMessage,
     spkUrgent,
+    bapBaruAudit,
     message: "Login Berhasil",
   };
 };
