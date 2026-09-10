@@ -515,6 +515,70 @@ const getPenawaranBatalList = async (user, limit = 20, offset = 0) => {
   return rows;
 };
 
+// ── Penawaran Batal — versi fleksibel untuk AI Chat: filter opsional
+// per sales & per customer, rentang tanggal bebas (bukan tetap 90
+// hari seperti getPenawaranBatalList). Definisi "batal" sama persis
+// (murni — SEMUA baris detail statusnya BATAL, bukan campuran).
+const getPenawaranBatalBySales = async (
+  user,
+  { namaSales, namaCustomer, startDate, endDate, limit = 30 } = {},
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const today = new Date();
+  const oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(today.getFullYear() - 1);
+  const toISO = (d) => d.toISOString().substring(0, 10);
+
+  const dStart = startDate || toISO(oneYearAgo);
+  const dEnd = endDate || toISO(today);
+
+  const BATAL_MURNI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status = 'BATAL' THEN 0 ELSE 1 END) = 0
+  `;
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (namaSales) {
+    whereExtra += " AND sal.sal_nama LIKE ?";
+    params.push(`%${namaSales}%`);
+  }
+  if (namaCustomer) {
+    whereExtra += " AND c.cus_nama LIKE ?";
+    params.push(`%${namaCustomer}%`);
+  }
+  params.push(limit);
+
+  const sql = `
+    SELECT
+      h.pen_nomor         AS Nomor,
+      DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y') AS Tanggal,
+      sal.sal_nama        AS Sales,
+      c.cus_nama          AS NamaCustomer,
+      v.Divisi            AS Divisi,
+      d.pend_nama_barang  AS NamaBarang,
+      d.pend_qty * d.pend_harga AS Nilai,
+      d.pend_batal        AS AlasanBatal,
+      DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
+    FROM tpenawaran_hdr h
+    INNER JOIN (${BATAL_MURNI_SUBQUERY}) bt ON bt.pen_nomor = h.pen_nomor
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    LEFT JOIN tsales sal ON sal.sal_kode = h.pen_sal_kode
+    LEFT JOIN tdivisi v ON v.kode = h.pen_divisi
+    WHERE h.pen_tanggal >= ? AND h.pen_tanggal <= ?
+      ${whereExtra}
+    ORDER BY h.pen_tanggal DESC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 const getKunjunganSalesSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = [
@@ -3981,6 +4045,7 @@ module.exports = {
   getPenawaranMapSummary,
   getPenawaranBatalSummary, // ⬅ baru
   getPenawaranBatalList,
+  getPenawaranBatalBySales,
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
   getPiutangDashboard,

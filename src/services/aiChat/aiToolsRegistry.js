@@ -360,6 +360,171 @@ const tools = [
       };
     },
   },
+  {
+    definition: {
+      name: "get_penjualan_by_sales",
+      description:
+        "Total nilai penjualan (SPK/SO) per sales. Ada 2 mode: (1) kalau namaSales diisi, tampilkan total penjualan sales itu, dipecah per divisi; (2) kalau namaSales KOSONG, tampilkan ranking SEMUA sales dari nilai penjualan terbesar ke terkecil (opsional filter per divisi). Pakai tool ini untuk pertanyaan seperti 'penjualan sales X berapa', 'ranking sales bulan ini', atau 'sales mana paling laku per divisi'.",
+      input_schema: {
+        type: "object",
+        properties: {
+          namaSales: {
+            type: "string",
+            description:
+              "Opsional. Nama sales (partial match). Kalau diisi, jawaban fokus ke sales ini saja (breakdown per divisi). Kalau kosong, jawaban jadi ranking semua sales.",
+          },
+          divisi: {
+            type: "string",
+            description:
+              "Opsional. Filter ke divisi tertentu saja (nama divisi, partial match, misal 'GARMEN', 'MMT', 'SPANDUK', 'KAOSAN').",
+          },
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). HANYA isi kalau user sebutkan rentang/tahun/bulan eksplisit (misal 'tahun 2026' → startDate 2026-01-01). Kalau tidak disebutkan, JANGAN isi — biarkan kosong (default 1 tahun terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau user sebutkan rentang/tahun/bulan eksplisit (misal 'tahun 2026' → endDate 2026-12-31). Kalau tidak disebutkan, JANGAN isi.",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Jumlah sales maksimal ditampilkan di mode ranking, default 15. Tidak berlaku di mode 1-sales.",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const today = new Date();
+      const oneYearAgo = new Date(today);
+      oneYearAgo.setFullYear(today.getFullYear() - 1);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+
+      const startDate = input.startDate || toISO(oneYearAgo);
+      const endDate = input.endDate || toISO(today);
+      const limit = input.limit || 15;
+
+      const rows = await realisasiPenjualanService.getBrowse({
+        startDate,
+        endDate,
+        namaSales: input.namaSales || "",
+      });
+
+      const filtered = input.divisi
+        ? rows.filter((r) =>
+            (r.Divisi || "")
+              .toUpperCase()
+              .includes(String(input.divisi).toUpperCase()),
+          )
+        : rows;
+
+      if (filtered.length === 0) {
+        return {
+          periodeDicek: `${startDate} s/d ${endDate}`,
+          namaSalesDicari: input.namaSales || null,
+          divisiDicari: input.divisi || null,
+          totalDataDitemukan: 0,
+        };
+      }
+
+      // ── Mode 1: sales spesifik diisi → breakdown per divisi ──
+      if (input.namaSales) {
+        const byDivisi = {};
+        let totalNominal = 0;
+        let totalOrder = 0;
+        for (const r of filtered) {
+          const key = r.Divisi || "LAINNYA";
+          if (!byDivisi[key]) {
+            byDivisi[key] = { divisi: key, nominal: 0, jumlahOrder: 0 };
+          }
+          byDivisi[key].nominal += Number(r.Nominal_Order) || 0;
+          byDivisi[key].jumlahOrder += 1;
+          totalNominal += Number(r.Nominal_Order) || 0;
+          totalOrder += 1;
+        }
+        return {
+          periodeDicek: `${startDate} s/d ${endDate}`,
+          namaSalesDicari: input.namaSales,
+          totalNominalPenjualan: totalNominal,
+          totalJumlahOrder: totalOrder,
+          breakdownPerDivisi: Object.values(byDivisi).sort(
+            (a, b) => b.nominal - a.nominal,
+          ),
+        };
+      }
+
+      // ── Mode 2: tidak ada namaSales → ranking semua sales ──
+      const bySales = {};
+      for (const r of filtered) {
+        const key = r.Sales || "TANPA SALES";
+        if (!bySales[key]) {
+          bySales[key] = { sales: key, nominal: 0, jumlahOrder: 0 };
+        }
+        bySales[key].nominal += Number(r.Nominal_Order) || 0;
+        bySales[key].jumlahOrder += 1;
+      }
+      const ranking = Object.values(bySales).sort(
+        (a, b) => b.nominal - a.nominal,
+      );
+
+      return {
+        periodeDicek: `${startDate} s/d ${endDate}`,
+        divisiDicari: input.divisi || null,
+        jumlahSalesDitemukan: ranking.length,
+        catatan:
+          ranking.length > limit
+            ? `Hanya menampilkan ${limit} sales teratas dari total ${ranking.length}.`
+            : undefined,
+        rankingSales: ranking.slice(0, limit),
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_penawaran_batal",
+      description:
+        "Cari penawaran yang DIBATALKAN (seluruh item di penawaran itu batal, bukan sebagian), lengkap dengan ALASAN batal per item. Bisa difilter per sales dan/atau per customer, dengan rentang tanggal bebas. Berguna untuk: (1) tindak lanjut customer yang sudah lama tidak order — cek apakah ada penawaran yang dibuat lalu batal SETELAH tanggal order terakhirnya (pakai startDate = tanggal order terakhir dari get_customer_tanpa_order), (2) analisis pola pembatalan per sales.",
+      input_schema: {
+        type: "object",
+        properties: {
+          namaSales: {
+            type: "string",
+            description:
+              "Opsional. Nama sales (partial match). Kosongkan untuk semua sales.",
+          },
+          namaCustomer: {
+            type: "string",
+            description:
+              "Opsional. Nama customer (partial match). Berguna untuk cek riwayat pembatalan 1 customer tertentu.",
+          },
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). Isi kalau user sebutkan rentang eksplisit, ATAU kalau melanjutkan dari pertanyaan sebelumnya (misal 'apakah ada penawaran batal SETELAH itu' — pakai tanggal order terakhir yang sudah diketahui dari jawaban sebelumnya). Kalau tidak ada acuan apa pun, biarkan kosong (default 1 tahun terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau user sebutkan eksplisit. Kalau tidak, biarkan kosong (default hari ini).",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah baris maksimal, default 30",
+          },
+        },
+      },
+    },
+    handler: async (input, user) =>
+      dashboardService.getPenawaranBatalBySales(user, {
+        namaSales: input.namaSales,
+        namaCustomer: input.namaCustomer,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        limit: input.limit || 30,
+      }),
+  },
 
   // ── PIUTANG ──
   {
