@@ -603,6 +603,73 @@ const tools = [
       );
     },
   },
+  {
+    definition: {
+      name: "get_customer_info",
+      description:
+        "Cari informasi detail 1 customer: alamat, kota, kontak (telepon, contact person), dan sales yang menangani. Berguna untuk persiapan kunjungan (butuh tahu lokasi/wilayah customer, nomor yang bisa dihubungi) atau sekadar cek data customer. Pakai ini kalau user tanya alamat/lokasi/kontak customer, atau butuh info customer untuk rencana kunjungan.",
+      input_schema: {
+        type: "object",
+        properties: {
+          namaCustomer: {
+            type: "string",
+            description:
+              "Nama customer atau sebagian nama (partial match), WAJIB diisi",
+          },
+        },
+        required: ["namaCustomer"],
+      },
+    },
+    handler: async (input) => {
+      if (!input.namaCustomer) {
+        return { error: "Nama customer wajib diisi." };
+      }
+      const db = require("../../config/database");
+      const [rows] = await db.query(
+        `SELECT
+           c.Cus_kode AS kode,
+           c.Cus_nama AS nama,
+           c.Cus_alamat AS alamat,
+           c.Cus_kota AS kota,
+           c.Cus_telp AS telp,
+           c.cus_telp2 AS telp2,
+           c.Cus_CP AS contactPerson,
+           c.cus_email AS email,
+           s.sal_nama AS salesPenanggungJawab,
+           c.cus_keramat AS prioritas
+         FROM tcustomer c
+         LEFT JOIN tsales s ON s.sal_kode = c.cus_sales
+         WHERE c.Cus_nama LIKE ?
+         LIMIT 10`,
+        [`%${input.namaCustomer}%`],
+      );
+
+      if (rows.length === 0) {
+        return { ditemukan: false, pesan: "Customer tidak ditemukan." };
+      }
+
+      return {
+        ditemukan: true,
+        jumlahDitemukan: rows.length,
+        catatan:
+          rows.length > 1
+            ? "Ada beberapa customer dengan nama serupa, tampilkan semuanya ke user."
+            : undefined,
+        customerList: rows.map((r) => ({
+          kode: r.kode,
+          nama: r.nama,
+          alamat: r.alamat || "(alamat belum diisi)",
+          kota: r.kota || "(kota belum diisi)",
+          telepon: r.telp || r.telp2 || "(nomor belum diisi)",
+          contactPerson: r.contactPerson || undefined,
+          email: r.email || undefined,
+          salesPenanggungJawab:
+            r.salesPenanggungJawab || "(belum ada sales tetap)",
+          prioritas: r.prioritas === "Y" ? "Customer prioritas" : undefined,
+        })),
+      };
+    },
+  },
 
   // ── PRODUKSI ──
   {
