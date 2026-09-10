@@ -150,12 +150,12 @@ const getCetakData = async (nomor) => {
         WHERE b.nota = IF(d.feed_invt_nomor <> '', d.feed_invt_nomor, d.feed_inv_nomor)
         ORDER BY a.tanggal DESC LIMIT 1) AS TanggalBayar,
        i.INVD_Spk_Nomor AS Kode,
-       s.spk_nama AS Nama,
+       s.nama AS Nama,
        i.INVD_Jumlah AS Jumlah,
        i.INVD_Harga AS Harga,
-       s.spk_hargariil AS HargaRiil,
-       s.spk_hargafee AS Fee,
-       (i.INVD_Jumlah * s.spk_hargafee) AS TotalFee
+       s.hargariil AS HargaRiil,
+       s.hargafee AS Fee,
+       (i.INVD_Jumlah * s.hargafee) AS TotalFee
      FROM tpengajuan_fee h
      LEFT JOIN tpengajuan_fee2 d ON d.feed_nomor = h.fee_nomor
      LEFT JOIN piutang_debet p ON p.nota = d.feed_inv_nomor
@@ -164,8 +164,18 @@ const getCetakData = async (nomor) => {
      LEFT JOIN tinv_hdr j ON j.INV_nomor = d.feed_inv_nomor
      LEFT JOIN tinv_dtl i ON i.INVD_inv_nomor = j.INV_nomor
      LEFT JOIN tcustomer c ON c.Cus_kode = h.fee_cus_kode
-     INNER JOIN tspk s ON s.spk_nomor = i.INVD_Spk_Nomor
-     WHERE s.spk_hargafee <> 0 AND h.fee_nomor = ?
+     INNER JOIN (
+       SELECT spk_nomor AS nomor, spk_nama AS nama,
+              spk_hargariil AS hargariil, spk_hargafee AS hargafee
+       FROM tspk
+       WHERE spk_aktif = 'Y'
+       UNION ALL
+       SELECT so_nomor AS nomor, so_nama AS nama,
+              so_hargariil AS hargariil, so_hargafee AS hargafee
+       FROM tsalesorder
+       WHERE so_aktif = 'Y'
+     ) s ON s.nomor = i.INVD_Spk_Nomor
+     WHERE s.hargafee <> 0 AND h.fee_nomor = ?
      ORDER BY d.feed_inv_nomor`,
     [nomor],
   );
