@@ -516,12 +516,6 @@ const saveData = async (payload, user, isEdit = false) => {
           );
         }
 
-        // b. Close Permintaan Bahan
-        await conn.query(
-          `UPDATE tmintabahan_hdr SET min_close = 1 WHERE min_nomor = ?`,
-          [payload.noMinta],
-        );
-
         // c. Tambah baris ke tmkb_dtl (MKB existing), kalau MKB-nya ada
         if (payload.mkb) {
           const [[existingMkbDtl]] = await conn.query(
@@ -607,22 +601,23 @@ const saveData = async (payload, user, isEdit = false) => {
       }
     }
 
-    // 4. UPDATE STATUS tmintabahan_hdr.min_close (jalur normal, non-beda-bahan)
-    // — kalau ada beda bahan, sudah di-close paksa di langkah atas;
-    // untuk kasus normal (tidak ada beda bahan), hitung seperti biasa.
-    if (!adaBedaBahan) {
-      const tq = tjumlah + tsudah;
-      let minCloseStatus = 0;
-      if (tq >= tpo && tpo > 0) {
-        minCloseStatus = 1;
-      } else if (tq > 0 && tq < tpo) {
-        minCloseStatus = 2;
-      }
-      await conn.query(
-        `UPDATE tmintabahan_hdr SET min_close=? WHERE min_nomor=?`,
-        [minCloseStatus, payload.noMinta],
-      );
+    // 4. UPDATE STATUS tmintabahan_hdr.min_close — SELALU dihitung dari
+    // qty aktual (tpo/tjumlah/tsudah dari loop di atas, yang sudah ikut
+    // menghitung baris substitusi karena baris itu tetap bagian dari
+    // payload.details). TIDAK di-force CLOSE lagi kalau ada beda bahan
+    // — status close murni tergantung apakah total realisasi sudah
+    // menutupi total permintaan, sama seperti kasus normal.
+    const tq = tjumlah + tsudah;
+    let minCloseStatus = 0;
+    if (tq >= tpo && tpo > 0) {
+      minCloseStatus = 1;
+    } else if (tq > 0 && tq < tpo) {
+      minCloseStatus = 2;
     }
+    await conn.query(
+      `UPDATE tmintabahan_hdr SET min_close=? WHERE min_nomor=?`,
+      [minCloseStatus, payload.noMinta],
+    );
 
     // ── Approval "REALISASI BEDA BAHAN" (tspk_pin5) TIDAK DIPAKAI LAGI
     // untuk alur baru ini — dihapus dari saveData. Kode approval-nya

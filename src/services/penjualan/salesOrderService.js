@@ -64,11 +64,14 @@ const getBrowseList = async (filters) => {
   // query pembanding di komentar service ini / dokumentasi terkait.
   let params = [
     startDate,
-    endDate,
+    endDate, // sumber tspk (legacy)
     startDate,
-    endDate, // UNION tspk + tsalesorder (tidak berubah)
+    endDate, // sumber tsalesorder
+    startDate, // k: tlhkdesign_status.lds_tgl >= ?
+    startDate, // l: tlhk_cetakmmt_hdr.lch_tanggal >= ?
+    startDate, // ppic: SPK PPIC turunan tidak mungkin dibuat sebelum tanggal SO sumbernya
     startDate, // sjChk: tsj_hdr.sj_tanggal >= ?
-    startDate,
+    startDate, // stbjChk: tstbj_hdr.stbj_tanggal >= ?
   ];
 
   let whereClause = `WHERE 1=1`;
@@ -208,10 +211,13 @@ const getBrowseList = async (filters) => {
       LEFT JOIN tcustomer c1 ON c.cus_kodei = c1.cus_kode
       LEFT JOIN tsales sl ON y.spk_sal_kode = sl.sal_kode
       LEFT JOIN tdivisi v ON y.spk_divisi = v.kode
-      LEFT JOIN (SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk) k ON k.lds_spk = y.spk_nomor
-      LEFT JOIN (SELECT lcd_spk_nomor, SUM(IFNULL(lcd_qty_Cetak,0)) AS lcd_qty_Cetak, MIN(lch_tanggal) AS lch_tanggal FROM tlhk_cetakmmt_dtl INNER JOIN tlhk_cetakmmt_hdr ON (lch_nomor=lcd_lch_nomor) GROUP BY 1) l ON l.lcd_spk_nomor = y.spk_nomor
+      LEFT JOIN (SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" AND lds_tgl >= ? GROUP BY lds_spk) k ON k.lds_spk = y.spk_nomor
+      LEFT JOIN (SELECT lcd_spk_nomor, SUM(IFNULL(lcd_qty_Cetak,0)) AS lcd_qty_Cetak, MIN(lch_tanggal) AS lch_tanggal FROM tlhk_cetakmmt_dtl INNER JOIN tlhk_cetakmmt_hdr ON (lch_nomor=lcd_lch_nomor) WHERE lch_tanggal >= ? GROUP BY 1) l ON l.lcd_spk_nomor = CONVERT(y.spk_nomor USING latin1)
       
-      LEFT JOIN tspk ppic ON ppic.spk_is_so = 0 AND ppic.spk_so_ref = y.spk_nomor
+      LEFT JOIN tspk ppic 
+        ON ppic.spk_is_so = 0 
+        AND ppic.spk_so_ref = CONVERT(y.spk_nomor USING latin1)
+        AND ppic.spk_tanggal >= ?
       
       -- pin_acc/Ngedit — sebelumnya 2 correlated subquery per baris, sekarang 1 JOIN
       LEFT JOIN (
@@ -222,7 +228,7 @@ const getBrowseList = async (filters) => {
           FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
         ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
         WHERE p1.pin_trs = "SO"
-      ) pin5 ON pin5.pin_nomor = y.spk_nomor
+      ) pin5 ON pin5.pin_nomor = CONVERT(y.spk_nomor USING latin1)
 
       -- status approval cetak ulang — dipakai untuk SPK PPIC turunan
       LEFT JOIN (
@@ -243,14 +249,14 @@ const getBrowseList = async (filters) => {
         FROM tsj_dtl
         INNER JOIN tsj_hdr ON sj_nomor = sjd_sj_nomor
         WHERE sj_tanggal >= ?
-      ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
+      ) sjChk ON sjChk.sjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
 
       LEFT JOIN (
         SELECT DISTINCT d.STBJD_SPK_Nomor AS stbjd_spk_nomor
         FROM tstbj_dtl d
         INNER JOIN tstbj_hdr h ON h.stbj_nomor = d.STBJD_STBJ_Nomor
         WHERE h.stbj_tanggal >= ?
-      ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)
+      ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
       ${whereClause}
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC
