@@ -12,6 +12,7 @@ router.post("/garmen", controller.createKainGarmen);
 router.put("/garmen", controller.updateKainGarmen);
 router.put("/garmen/:id", controller.updateKainGarmen);
 router.delete("/garmen", controller.deleteKainGarmen);
+router.get("/garmen-biaya-jahit", controller.getBiayaJahitGarmen);
 
 // --- GARMEN TAMBAHAN / CUSTOM ---
 router.get("/garmen-tambahan", controller.getTambahanGarmen);
