@@ -1576,6 +1576,17 @@ const getDataCetak = async (nomor) => {
 // ─────────────────────────────────────────────────────────
 const JENIS_TANPA_VALIDASI_PLANNING = ["2", "3", "4"];
 
+// Gudang TUJUAN yang secara struktural tidak pernah punya planning PPIC,
+// terlepas dari gudang ASAL-nya atau lewat tombol preset Jenis Mutasi
+// mana pun transaksi itu dibuat (termasuk pilihan manual via F1 search
+// Lini Asal/Tujuan). GP010/GP022 = QC Cetak (P04/P01) — sudah exempt
+// sebelumnya lewat jenis 3 "Cetak ke QC Cetak", tapi cuma berlaku kalau
+// asalnya persis GP002/GP017 (preset). Transaksi manual dari gudang lain
+// yang tujuannya tetap QC Cetak (mis. GP009 "Pres DTF" → GP010) seharusnya
+// exempt juga karena tahap ini memang tidak pernah dijadwalkan di
+// Planning PPIC. GP032 = DC, exempt sama seperti sebelumnya.
+const GUDANG_TUJUAN_TANPA_VALIDASI_PLANNING = ["GP010", "GP022", "GP032"];
+
 const cekPlanningKosong = async (
   nomorSpk,
   jenisMutasi,
@@ -1586,12 +1597,7 @@ const cekPlanningKosong = async (
   if (JENIS_TANPA_VALIDASI_PLANNING.includes(String(jenisMutasi))) {
     return false;
   }
-  // FIX: mutasi APAPUN yang tujuannya DC (GP032) memang tidak pernah
-  // dijadwalkan di Planning PPIC — dikecualikan juga dari validasi ini,
-  // terlepas dari jenisMutasi-nya. Ini menangkap kasus user pilih Lini
-  // Tujuan = DC secara manual (F1 search), bukan cuma lewat preset
-  // tombol Jenis Mutasi yang sudah dikecualikan di atas.
-  if (gdgTujuan === "GP032") {
+  if (GUDANG_TUJUAN_TANPA_VALIDASI_PLANNING.includes(gdgTujuan)) {
     return false;
   }
   const rows = await getPlanningPpic(

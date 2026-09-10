@@ -44,7 +44,14 @@ const buildDivisiJoin = () =>
 // SUMBER 1: Mutasi Produksi (tmutasiproduksi_hdr/_dtl)
 // ─────────────────────────────────────────────
 const getMutasiSource = async (startDate, endDate, cab, nomorSpk, namaSpk) => {
-  let where = `WHERE h.mph_tanggal >= ? AND h.mph_tanggal <= ?`;
+  let where = `WHERE h.mph_tanggal >= ? AND h.mph_tanggal <= ?
+    AND NOT EXISTS (
+      SELECT 1 FROM tspk_pin5 pp
+      WHERE pp.pin_trs = 'MUTASI PRODUKSI NOPLAN'
+        AND pp.pin_nomor = h.mph_nomor
+        AND pp.pin_urut = 1
+        AND IFNULL(pp.pin_acc, '') <> 'Y'
+    )`;
   const params = [startDate, endDate];
   if (cab && cab !== "ALL") {
     where += ` AND h.mph_cab = ?`;
