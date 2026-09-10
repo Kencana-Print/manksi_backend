@@ -569,6 +569,74 @@ const tools = [
         limit: input.limit || 30,
       }),
   },
+  {
+    definition: {
+      name: "get_info_kain_order",
+      description:
+        "Cari jenis kain dan harga jual per item untuk 1 order (SPK/SO) TERTENTU. WAJIB isi salah satu: nomorOrder (nomor persis) ATAU namaOrder (nama produk, partial match).",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorOrder: {
+            type: "string",
+            description: "Nomor SPK/SO persis",
+          },
+          namaOrder: {
+            type: "string",
+            description:
+              "Nama produk/desain (partial match), dipakai kalau nomor tidak diketahui",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Jumlah hasil maksimal kalau pakai namaOrder, default 10",
+          },
+        },
+      },
+    },
+    handler: async (input, user) => {
+      if (!input.nomorOrder && !input.namaOrder) {
+        return { error: "Nomor order atau nama order wajib diisi." };
+      }
+      return dashboardService.getInfoKainOrder(user, {
+        nomorOrder: input.nomorOrder,
+        namaOrder: input.namaOrder,
+        limit: input.limit || 10,
+      });
+    },
+  },
+  {
+    definition: {
+      name: "get_ringkasan_kain",
+      description:
+        "Ringkasan/analisis jenis kain yang dipakai di banyak order sekaligus: jenis kain apa yang paling sering dipakai, jumlah order, dan rata-rata harga jual per item-nya. Pakai ini untuk pertanyaan umum seperti 'kain apa yang paling sering dipakai' atau 'berapa rata-rata harga per jenis kain', BUKAN untuk 1 order spesifik (pakai get_info_kain_order untuk itu).",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). HANYA isi kalau user sebutkan rentang eksplisit. Kalau tidak, biarkan kosong (default 1 tahun terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau eksplisit.",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah jenis kain maksimal ditampilkan, default 15",
+          },
+        },
+      },
+    },
+    handler: async (input, user) =>
+      dashboardService.getRingkasanKain(user, {
+        startDate: input.startDate,
+        endDate: input.endDate,
+        limit: input.limit || 15,
+      }),
+  },
 
   // ── PIUTANG ──
   {

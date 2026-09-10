@@ -717,6 +717,107 @@ const getKunjunganSalesSummary = async (user) => {
   return rows;
 };
 
+// ── Info Kain per Order — cari 1 order spesifik (SPK/SO), tampilkan
+// jenis kain (teks bebas dari spk_kain/so_kain) dan harga jual per
+// item (spk_harga/so_harga). UNION tspk+tsalesorder sesuai pola
+// migrasi SPK→SO yang sudah ada di tempat lain.
+const getInfoKainOrder = async (
+  user,
+  { nomorOrder, namaOrder, limit = 10 } = {},
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+  if (!nomorOrder && !namaOrder) return [];
+
+  const params = [];
+  let whereSpk = "s.spk_aktif = 'Y'";
+  let whereSo = "so.so_aktif = 'Y'";
+  if (nomorOrder) {
+    whereSpk += " AND s.spk_nomor = ?";
+    whereSo += " AND so.so_nomor = ?";
+    params.push(nomorOrder, nomorOrder);
+  } else {
+    whereSpk += " AND s.spk_nama LIKE ?";
+    whereSo += " AND so.so_nama LIKE ?";
+    params.push(`%${namaOrder}%`, `%${namaOrder}%`);
+  }
+  params.push(limit);
+
+  const sql = `
+    SELECT Nomor, Nama, Customer, Divisi, Kain, Gramasi, HargaPerItem, Qty, Tanggal
+    FROM (
+      SELECT
+        s.spk_nomor AS Nomor, s.spk_nama AS Nama, c.cus_nama AS Customer,
+        v.Divisi AS Divisi, s.spk_kain AS Kain, s.spk_gramasi AS Gramasi,
+        s.spk_harga AS HargaPerItem, s.spk_jumlah AS Qty,
+        DATE_FORMAT(s.spk_tanggal, '%d-%m-%Y') AS Tanggal
+      FROM tspk s
+      LEFT JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+      LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
+      WHERE ${whereSpk}
+      UNION ALL
+      SELECT
+        so.so_nomor, so.so_nama, c2.cus_nama,
+        v2.Divisi, so.so_kain, so.so_gramasi,
+        so.so_harga, so.so_jumlah,
+        DATE_FORMAT(so.so_tanggal, '%d-%m-%Y')
+      FROM tsalesorder so
+      LEFT JOIN tcustomer c2 ON c2.cus_kode = so.so_cus_kode
+      LEFT JOIN tdivisi v2 ON v2.kode = so.so_divisi
+      WHERE ${whereSo}
+    ) x
+    ORDER BY Tanggal DESC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+// ── Ringkasan Kain — analisis lintas order: jenis kain apa yang
+// paling sering dipakai dan rata-rata harga jual per item-nya.
+// Grouping berdasarkan teks kain APA ADANYA (kolom ini free-text,
+// jadi variasi penulisan/typo tidak digabung otomatis).
+const getRingkasanKain = async (
+  user,
+  { startDate, endDate, limit = 15 } = {},
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const today = new Date();
+  const oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(today.getFullYear() - 1);
+  const toISO = (d) => d.toISOString().substring(0, 10);
+  const dStart = startDate || toISO(oneYearAgo);
+  const dEnd = endDate || toISO(today);
+
+  const sql = `
+    SELECT
+      Kain,
+      COUNT(*) AS JumlahOrder,
+      SUM(Qty) AS TotalQty,
+      ROUND(AVG(HargaPerItem), 0) AS RataRataHarga,
+      MIN(HargaPerItem) AS HargaTerendah,
+      MAX(HargaPerItem) AS HargaTertinggi
+    FROM (
+      SELECT s.spk_kain AS Kain, s.spk_harga AS HargaPerItem, s.spk_jumlah AS Qty
+      FROM tspk s
+      WHERE s.spk_aktif = 'Y' AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+        AND s.spk_kain IS NOT NULL AND s.spk_kain <> ''
+      UNION ALL
+      SELECT so.so_kain, so.so_harga, so.so_jumlah
+      FROM tsalesorder so
+      WHERE so.so_aktif = 'Y' AND so.so_tanggal >= ? AND so.so_tanggal <= ?
+        AND so.so_kain IS NOT NULL AND so.so_kain <> ''
+    ) x
+    GROUP BY Kain
+    ORDER BY JumlahOrder DESC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, [dStart, dEnd, dStart, dEnd, limit]);
+  return rows;
+};
+
 // ── Laporan Effective Calling — per sales, 90 hari terakhir ──
 // Matching MAP/SO ke Penawaran BUKAN via pen_nomor, tapi via
 // kecocokan Sales + Customer yang sama (mspk_sal_kode/spk_sal_kode/
@@ -4122,6 +4223,8 @@ module.exports = {
   getPenawaranBatalList,
   getPenawaranBatalBySales,
   getPenawaranOpenBySales,
+  getInfoKainOrder,
+  getRingkasanKain,
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
   getPiutangDashboard,
