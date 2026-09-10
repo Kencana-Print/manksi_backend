@@ -25,11 +25,14 @@ const getBrowseList = async (filters) => {
     whereClause += ` AND x.KodeCustomer = ?`;
     params.push(customer);
   }
+  const isFinance = (userBagian || "").toUpperCase() === "FINANCE";
+
   if (
     userCabang &&
     userCabang !== "HO-" &&
     userCabang !== "ADMIN" &&
-    userCabang !== ""
+    userCabang !== "" &&
+    !isFinance
   ) {
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     if (isGudang) {
