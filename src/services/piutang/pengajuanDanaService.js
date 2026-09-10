@@ -1,11 +1,11 @@
 const db = require("../../config/database");
 
-// Cek status GA user berdasarkan tabel ga2.tuser (login system terpisah,
+// Cek status GA user berdasarkan tabel ga2new.tuser (login system terpisah,
 // lihat uLogin.pas GA2 — frmMenu.USERGA := user_ga, keyed by user_kode).
-// Asumsi: user_kode di ga2 sama dengan user_kode Manksi untuk user yang sama.
+// Asumsi: user_kode di ga2new sama dengan user_kode Manksi untuk user yang sama.
 const getGaUserStatus = async (userKode) => {
   const [rows] = await db.query(
-    `SELECT user_ga FROM ga2.tuser WHERE UPPER(user_kode) = UPPER(?) AND user_aktif = 0`,
+    `SELECT user_ga FROM ga2new.tuser WHERE UPPER(user_kode) = UPPER(?) AND user_aktif = 0`,
     [userKode],
   );
   if (!rows.length) return null;
@@ -38,9 +38,9 @@ const getBrowse = async (startDate, endDate, userKode) => {
       IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed,
       h.pmt_status_finance AS StatusFinance,
       a.pjh_user_kode AS UserKode
-    FROM ga2.tpengajuan2_hdr a
-    LEFT JOIN ga2.peminta b ON a.pjh_nik = b.nik
-    LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+    FROM ga2new.tpengajuan2_hdr a
+    LEFT JOIN ga2new.peminta b ON a.pjh_nik = b.nik
+    LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
     LEFT JOIN financenew.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
     WHERE a.pjh_nonga = 0
       AND a.pjh_tanggal BETWEEN ? AND ?
@@ -81,7 +81,7 @@ const getDetail = async (nomor) => {
        a.TglClose AS TglClose,
        a.pjd_kegunaan AS Kegunaan,
        a.Keterangan AS Keterangan
-     FROM ga2.viewpengajuan a
+     FROM ga2new.viewpengajuan a
      WHERE a.pjh_nomor = ?
      ORDER BY a.pjd_nourut`,
     [nomor],
@@ -94,8 +94,8 @@ const deleteData = async (nomor) => {
     `SELECT
        IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed,
        IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified
-     FROM ga2.tpengajuan2_hdr a
-     LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+     FROM ga2new.tpengajuan2_hdr a
+     LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
      WHERE a.pjh_nomor = ?`,
     [nomor],
   );
@@ -106,7 +106,7 @@ const deleteData = async (nomor) => {
   if (Verified === "Sudah")
     throw new Error("Gak bisa dihapus. Sudah di buatkan permintaan oleh GA.");
 
-  await db.query(`DELETE FROM ga2.tpengajuan2_hdr WHERE pjh_nomor = ?`, [
+  await db.query(`DELETE FROM ga2new.tpengajuan2_hdr WHERE pjh_nomor = ?`, [
     nomor,
   ]);
 };

@@ -15,7 +15,7 @@ const generateNomor = async (tanggal) => {
   const yyyymm = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
   const [[row]] = await db.query(
     `SELECT IFNULL(MAX(CAST(RIGHT(pjh_nomor, 4) AS UNSIGNED)), 0) AS maxVal
-     FROM ga2.tpengajuan2_hdr
+     FROM ga2new.tpengajuan2_hdr
      WHERE pjh_nomor LIKE ?`,
     [`PGJ.${yyyymm}.%`],
   );
@@ -26,7 +26,7 @@ const generateNomor = async (tanggal) => {
 // --- SEARCH NIK (F1 lookup — replikasi edtNikClickBtn/edtNikKeyDown) ---
 const searchNik = async (query, lokasi, page = 1, limit = 50) => {
   let sql = `SELECT DISTINCT nik AS Nik, nama AS Nama, bagian AS Bagian, lokasi AS Lokasi
-             FROM ga2.peminta WHERE aktif = 0`;
+             FROM ga2new.peminta WHERE aktif = 0`;
   const params = [];
   if (lokasi) {
     sql += ` AND lokasi = ?`;
@@ -54,7 +54,7 @@ const searchNik = async (query, lokasi, page = 1, limit = 50) => {
 const getNikInfo = async (nik) => {
   const [rows] = await db.query(
     `SELECT nik AS Nik, nama AS Nama, bagian AS Bagian, lokasi AS Lokasi
-     FROM ga2.peminta WHERE nik = ? AND aktif = 0 LIMIT 1`,
+     FROM ga2new.peminta WHERE nik = ? AND aktif = 0 LIMIT 1`,
     [nik],
   );
   if (!rows.length) throw new Error("Nik tidak ada.");
@@ -72,9 +72,9 @@ const getFormDetail = async (nomor) => {
             a.pjh_cc_kode AS CcKode, a.pjh_cc_dcnama AS CcDcNama,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
-     FROM ga2.tpengajuan2_hdr a
-     LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
-     LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+     FROM ga2new.tpengajuan2_hdr a
+     LEFT JOIN ga2new.peminta c ON c.nik = a.pjh_nik
+     LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
      WHERE a.pjh_nomor = ?`,
     [nomor],
   );
@@ -87,7 +87,7 @@ const getFormDetail = async (nomor) => {
             pjd_satuan AS Satuan, pjd_kegunaan AS Kegunaan,
             DATE_FORMAT(pjd_deadline, '%Y-%m-%d') AS Deadline,
             pjd_jobkp AS Nomor, pjd_kode AS Kode
-     FROM ga2.tpengajuan2_dtl
+     FROM ga2new.tpengajuan2_dtl
      WHERE pjd_pjh_nomor = ? AND pjd_nama <> ''
      ORDER BY pjd_nourut`,
     [nomor],
@@ -103,8 +103,8 @@ const assertCanEdit = async (nomor, userKode) => {
     `SELECT a.pjh_user_kode AS UserKode,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
-     FROM ga2.tpengajuan2_hdr a
-     LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+     FROM ga2new.tpengajuan2_hdr a
+     LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
      WHERE a.pjh_nomor = ?`,
     [nomor],
   );
@@ -158,7 +158,7 @@ const saveData = async (payload, userKode, userCabang) => {
       // seperti Delphi (yang selalu menulis balik nilai combobox hasil
       // load, bukan menimpa dengan default baru).
       await conn.query(
-        `UPDATE ga2.tpengajuan2_hdr SET
+        `UPDATE ga2new.tpengajuan2_hdr SET
             pjh_tanggal = ?, pjh_nik = ?, pjh_keterangan = ?,
             pjh_cc_kode = ?, pjh_cc_dcnama = ?
           WHERE pjh_nomor = ?`,
@@ -174,7 +174,7 @@ const saveData = async (payload, userKode, userCabang) => {
     } else {
       nomorFinal = await generateNomor(header.Tanggal);
       await conn.query(
-        `INSERT INTO ga2.tpengajuan2_hdr
+        `INSERT INTO ga2new.tpengajuan2_hdr
           (pjh_nomor, pjh_tanggal, pjh_nik, pjh_keterangan, pjh_jenis_permintaan,
             pjh_priority, pjh_ke, pjh_user_kode, pjh_nonga, pjh_status,
             pjh_cc_kode, pjh_cc_dcnama)
@@ -195,14 +195,14 @@ const saveData = async (payload, userKode, userCabang) => {
     }
 
     await conn.query(
-      `DELETE FROM ga2.tpengajuan2_dtl WHERE pjd_pjh_nomor = ?`,
+      `DELETE FROM ga2new.tpengajuan2_dtl WHERE pjd_pjh_nomor = ?`,
       [nomorFinal],
     );
 
     let nourut = 1;
     for (const item of validItems) {
       await conn.query(
-        `INSERT INTO ga2.tpengajuan2_dtl
+        `INSERT INTO ga2new.tpengajuan2_dtl
            (pjd_pjh_nomor, pjd_nourut, pjd_nama, pjd_spesifikasi, pjd_kegunaan,
             pjd_qty, pjd_satuan, pjd_nilai, pjd_deadline, pjd_jobkp, pjd_kode)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -233,7 +233,7 @@ const saveData = async (payload, userKode, userCabang) => {
   }
 };
 
-// ── F1: Bantuan Pjh — cari Permintaan (dari ga2.tpermintaan_hdr) yang
+// ── F1: Bantuan Pjh — cari Permintaan (dari ga2new.tpermintaan_hdr) yang
 // qty-nya belum ke-buy penuh, lalu import semua detailnya ke grid ──
 const searchPermintaanPjh = async (query, page = 1, limit = 50) => {
   let sql = `
@@ -245,9 +245,9 @@ const searchPermintaanPjh = async (query, page = 1, limit = 50) => {
       j.pjh_jenis_permintaan AS Jenis,
       j.pjh_keterangan AS Keterangan,
       j.pjh_user_kode AS UserKode
-    FROM ga2.tpermintaan_hdr h
-    INNER JOIN ga2.tpermintaan_dtl d ON d.pmd_pmt_nomor = h.pmt_nomor
-    LEFT JOIN ga2.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
+    FROM ga2new.tpermintaan_hdr h
+    INNER JOIN ga2new.tpermintaan_dtl d ON d.pmd_pmt_nomor = h.pmt_nomor
+    LEFT JOIN ga2new.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
     WHERE j.pjh_tanggal >= '2020-11-01'
       AND h.pmt_buyed = 1
       AND d.pmd_nourut <> 0
@@ -279,7 +279,7 @@ const getPermintaanDtl = async (pmtNomor) => {
             (pmd_qty_riil * pmd_nilai) AS Total,
             pmd_satuan AS Satuan, pmd_kegunaan AS Kegunaan,
             DATE_FORMAT(DATE_ADD(CURDATE(), INTERVAL 7 DAY), '%Y-%m-%d') AS Deadline
-     FROM ga2.tpermintaan_dtl
+     FROM ga2new.tpermintaan_dtl
      WHERE pmd_nourut <> 0 AND pmd_qty_buyed < pmd_qty_riil AND pmd_pmt_nomor = ?`,
     [pmtNomor],
   );
@@ -287,7 +287,7 @@ const getPermintaanDtl = async (pmtNomor) => {
 };
 
 // ── F2: Bantuan Spv — cari Job Butuh (dari bsmcabang, ASUMSI: prefix
-// cross-database di server yang sama, seperti pola ga2.) yang belum
+// cross-database di server yang sama, seperti pola ga2new.) yang belum
 // selesai dan punya item ──
 const searchJobButuh = async (
   query,
@@ -333,7 +333,7 @@ const searchJobButuh = async (
 // pengecekan awal bantuanSpv sebelum tarik detail)
 const checkJobAlreadyUsed = async (jbNomor) => {
   const [rows] = await db.query(
-    `SELECT pjd_pjh_nomor AS PjhNomor FROM ga2.tpengajuan2_dtl WHERE pjd_jobkp = ? LIMIT 1`,
+    `SELECT pjd_pjh_nomor AS PjhNomor FROM ga2new.tpengajuan2_dtl WHERE pjd_jobkp = ? LIMIT 1`,
     [jbNomor],
   );
   return rows.length ? rows[0].PjhNomor : null;
