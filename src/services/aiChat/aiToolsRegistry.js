@@ -350,7 +350,8 @@ const tools = [
           divisi: r.Divisi,
           tanggal: r.Tanggal,
           nominalOrder: r.Nominal_Order,
-          qty: r.QtyOrder,
+          jumlahLembar: r.QtyGarmen,
+          luasOrder: r.QtyOrder,
         }));
 
       return {
