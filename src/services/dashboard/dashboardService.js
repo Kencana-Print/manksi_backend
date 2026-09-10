@@ -579,6 +579,81 @@ const getPenawaranBatalBySales = async (
   return rows;
 };
 
+// ── Penawaran OPEN (belum SPK/SO, belum batal, belum close) yang
+// perlu di-follow up — versi fleksibel untuk AI Chat, filter opsional
+// per sales & customer. Beda dari getPenawaranBatalBySales: ini yang
+// MASIH BERPELUANG (menunggu keputusan customer), bukan yang sudah
+// gagal/dibatalkan.
+const getPenawaranOpenBySales = async (
+  user,
+  { namaSales, namaCustomer, startDate, endDate, limit = 30 } = {},
+) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
+
+  const today = new Date();
+  const oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(today.getFullYear() - 1);
+  const toISO = (d) => d.toISOString().substring(0, 10);
+
+  const dStart = startDate || toISO(oneYearAgo);
+  const dEnd = endDate || toISO(today);
+
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
+
+  const params = [dStart, dEnd];
+  let whereExtra = "";
+  if (namaSales) {
+    whereExtra += " AND sal.sal_nama LIKE ?";
+    params.push(`%${namaSales}%`);
+  }
+  if (namaCustomer) {
+    whereExtra += " AND c.cus_nama LIKE ?";
+    params.push(`%${namaCustomer}%`);
+  }
+  params.push(limit);
+
+  const sql = `
+    SELECT
+      h.pen_nomor         AS Nomor,
+      DATE_FORMAT(h.pen_tanggal, '%d-%m-%Y') AS Tanggal,
+      sal.sal_nama        AS Sales,
+      c.cus_nama          AS NamaCustomer,
+      v.Divisi            AS Divisi,
+      h.pen_keterangan    AS Keterangan,
+      IFNULL(SUM(d.pend_qty * d.pend_harga), 0) AS TotalNilai,
+      COUNT(d.pend_id)    AS JumlahItem,
+      DATEDIFF(CURDATE(), h.pen_tanggal) AS UmurHari
+    FROM tpenawaran_hdr h
+    INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+    INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+    LEFT JOIN tsales sal ON sal.sal_kode = h.pen_sal_kode
+    LEFT JOIN tdivisi v ON v.kode = h.pen_divisi
+    LEFT JOIN (
+      SELECT spk_pen_nomor AS pen_nomor FROM tspk
+      WHERE spk_aktif = 'Y' AND spk_pen_nomor IS NOT NULL AND spk_pen_nomor <> ''
+      UNION
+      SELECT so_pen_nomor AS pen_nomor FROM tsalesorder
+      WHERE so_aktif = 'Y' AND so_pen_nomor IS NOT NULL AND so_pen_nomor <> ''
+    ) so ON so.pen_nomor = h.pen_nomor
+    LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+    WHERE so.pen_nomor IS NULL
+      AND sel.pen_nomor IS NULL
+      AND h.pen_tanggal >= ? AND h.pen_tanggal <= ?
+      ${whereExtra}
+    GROUP BY h.pen_nomor, h.pen_tanggal, sal.sal_nama, c.cus_nama, v.Divisi, h.pen_keterangan
+    ORDER BY h.pen_tanggal ASC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 const getKunjunganSalesSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = [
@@ -4046,6 +4121,7 @@ module.exports = {
   getPenawaranBatalSummary, // ⬅ baru
   getPenawaranBatalList,
   getPenawaranBatalBySales,
+  getPenawaranOpenBySales,
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
   getPiutangDashboard,

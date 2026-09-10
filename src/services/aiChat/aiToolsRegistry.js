@@ -526,6 +526,49 @@ const tools = [
         limit: input.limit || 30,
       }),
   },
+  {
+    definition: {
+      name: "get_penawaran_open",
+      description:
+        "Cari penawaran yang MASIH TERBUKA/MENGGANTUNG — sudah dibuat, belum jadi SPK/SO, dan belum dibatalkan/close (masih menunggu keputusan customer). Ini untuk kasus 'penawaran perlu di-follow up' dalam artian menagih keputusan customer, BUKAN penawaran yang sudah gagal. Bisa difilter per sales dan/atau per customer. Kalau user maksudnya penawaran yang SUDAH BATAL untuk didekati ulang dengan harga baru, pakai get_penawaran_batal sebagai gantinya — bedakan dari konteks kalimat user.",
+      input_schema: {
+        type: "object",
+        properties: {
+          namaSales: {
+            type: "string",
+            description:
+              "Opsional. Nama sales (partial match). Kosongkan untuk semua sales.",
+          },
+          namaCustomer: {
+            type: "string",
+            description: "Opsional. Nama customer (partial match).",
+          },
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). HANYA isi kalau user sebutkan rentang eksplisit. Kalau tidak, biarkan kosong (default 1 tahun terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau user sebutkan eksplisit.",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah baris maksimal, default 30",
+          },
+        },
+      },
+    },
+    handler: async (input, user) =>
+      dashboardService.getPenawaranOpenBySales(user, {
+        namaSales: input.namaSales,
+        namaCustomer: input.namaCustomer,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        limit: input.limit || 30,
+      }),
+  },
 
   // ── PIUTANG ──
   {
