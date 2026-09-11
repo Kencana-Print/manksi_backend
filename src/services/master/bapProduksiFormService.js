@@ -52,6 +52,7 @@ const getById = async (nomor) => {
       IFNULL(h.bap_review_audit, 'N') AS ReviewAudit,
       h.bap_review_audit_by AS ReviewAuditBy,
       DATE_FORMAT(h.bap_review_audit_tgl, "%Y-%m-%d %H:%i") AS ReviewAuditTgl,
+      h.bap_review_audit_catatan AS ReviewAuditCatatan,
       h.bap_spk_nomor AS LegacySpk,
       h.bap_jumlah AS LegacyJumlah,
       h.bap_harga AS LegacyHarga
@@ -339,12 +340,13 @@ const getBapBaruUntukAudit = async () => {
 };
 
 // --- TANDAI SUDAH DIREVIEW AUDIT ---
-const markReviewAudit = async (nomor, userKode) => {
+const markReviewAudit = async (nomor, userKode, catatan) => {
   await db.query(
     `UPDATE tkpi_bapproduksi
-     SET bap_review_audit = 'Y', bap_review_audit_by = ?, bap_review_audit_tgl = NOW()
+     SET bap_review_audit = 'Y', bap_review_audit_by = ?, bap_review_audit_tgl = NOW(),
+         bap_review_audit_catatan = ?
      WHERE bap_nomor = ?`,
-    [userKode, nomor],
+    [userKode, catatan || "", nomor],
   );
 };
 

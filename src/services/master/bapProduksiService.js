@@ -25,6 +25,10 @@ const getBrowse = async (startDate, endDate, userCabang, isAccKor) => {
       h.bap_spk_nomor AS SPK,
       h.user_create AS Created, 
       h.bap_apv AS Approve,
+      IFNULL(h.bap_review_audit, 'N') AS ReviewAudit,
+      h.bap_review_audit_by AS ReviewAuditBy,
+      DATE_FORMAT(h.bap_review_audit_tgl, "%d-%m-%Y") AS ReviewAuditTgl,
+      h.bap_review_audit_catatan AS ReviewAuditCatatan,
       IFNULL((
         SELECT GROUP_CONCAT(bapk_kategori ORDER BY bapk_id SEPARATOR ', ')
         FROM tkpi_bap_kategori
