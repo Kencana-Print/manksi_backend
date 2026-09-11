@@ -15,6 +15,12 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getBrowse,
 );
+router.get(
+  "/reviewed/baru",
+  verifyToken,
+  controller.getBapReviewedUntukPembuat,
+);
+router.post("/reviewed/dibaca", verifyToken, controller.reviewDibaca);
 router.delete(
   "/:nomor",
   verifyToken,

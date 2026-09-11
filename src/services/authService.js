@@ -125,6 +125,27 @@ const loginUser = async (username, password) => {
     bapBaruAudit = bapRows;
   }
 
+  // 7c. Data BAP yang sudah direview AUDIT, belum dibaca pembuatnya
+  const [bapReviewedRows] = await pool.query(
+    `SELECT
+       h.bap_nomor AS Nomor,
+       DATE_FORMAT(h.bap_tanggal, "%d-%m-%Y") AS Tanggal,
+       h.bap_tipe AS Tipe,
+       h.bap_bagnama AS BagNama,
+       h.bap_masalah AS Masalah,
+       h.bap_review_audit_catatan AS Catatan,
+       h.bap_review_audit_by AS ReviewedBy,
+       DATE_FORMAT(h.bap_review_audit_tgl, "%d-%m-%Y") AS ReviewedTgl
+     FROM tkpi_bapproduksi h
+     WHERE h.bap_review_audit = 'Y'
+       AND IFNULL(h.bap_review_audit_dibaca, 'N') <> 'Y'
+       AND h.user_create = ?
+     ORDER BY h.bap_review_audit_tgl DESC
+     LIMIT 50`,
+    [user.user_kode],
+  );
+  const bapReviewedNotif = bapReviewedRows;
+
   // 8. Update tuser_lastupdate
   await pool.query(
     `INSERT INTO pengaturan.tuser_lastupdate (computer, app, versi, usr, date_update) 
@@ -167,6 +188,7 @@ const loginUser = async (username, password) => {
     specialMessage,
     spkUrgent,
     bapBaruAudit,
+    bapReviewedNotif,
     message: "Login Berhasil",
   };
 };

@@ -141,4 +141,45 @@ const ajukanPerubahan = async (nomor, alasan, userKode) => {
   }
 };
 
-module.exports = { getBrowse, getById, remove, ajukanPerubahan };
+// --- BAP yang sudah direview AUDIT tapi belum dibaca oleh pembuatnya ---
+const getBapReviewedUntukPembuat = async (userKode) => {
+  const query = `
+    SELECT
+      h.bap_nomor AS Nomor,
+      DATE_FORMAT(h.bap_tanggal, "%d-%m-%Y") AS Tanggal,
+      h.bap_tipe AS Tipe,
+      h.bap_bagnama AS BagNama,
+      h.bap_masalah AS Masalah,
+      h.bap_review_audit_catatan AS Catatan,
+      h.bap_review_audit_by AS ReviewedBy,
+      DATE_FORMAT(h.bap_review_audit_tgl, "%d-%m-%Y") AS ReviewedTgl
+    FROM tkpi_bapproduksi h
+    WHERE h.bap_review_audit = 'Y'
+      AND IFNULL(h.bap_review_audit_dibaca, 'N') <> 'Y'
+      AND h.user_create = ?
+    ORDER BY h.bap_review_audit_tgl DESC
+    LIMIT 50
+  `;
+  const [rows] = await db.query(query, [userKode]);
+  return rows;
+};
+
+// --- Tandai sudah dibaca (bisa banyak nomor sekaligus) ---
+const markReviewDibaca = async (nomorList, userKode) => {
+  if (!nomorList || nomorList.length === 0) return;
+  await db.query(
+    `UPDATE tkpi_bapproduksi
+     SET bap_review_audit_dibaca = 'Y', bap_review_audit_dibaca_tgl = NOW()
+     WHERE bap_nomor IN (?) AND user_create = ?`,
+    [nomorList, userKode],
+  );
+};
+
+module.exports = {
+  getBrowse,
+  getById,
+  remove,
+  ajukanPerubahan,
+  getBapReviewedUntukPembuat,
+  markReviewDibaca,
+};
