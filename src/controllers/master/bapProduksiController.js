@@ -80,5 +80,5 @@ module.exports = {
   remove,
   ajukanPerubahan,
   getBapReviewedUntukPembuat,
-  markReviewDibaca,
+  reviewDibaca,
 };
