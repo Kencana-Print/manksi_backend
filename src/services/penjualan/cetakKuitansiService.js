@@ -131,6 +131,7 @@ const getById = async (nomor) => {
     `SELECT
       d.invd_spk_nomor, d.invd_jumlah, d.invd_harga,
       COALESCE(
+        NULLIF(so.so_nama2, ''),
         NULLIF(
           IF(SUBSTRING(d.invd_spk_nomor,4,2)='BI', b.brg_name, s.spk_nama2),
           ''
@@ -139,6 +140,7 @@ const getById = async (nomor) => {
       ) AS nama_barang
     FROM tinv_dtl d
     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tsalesorder so ON so.so_nomor = s.spk_so_ref
     LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
     WHERE d.invd_inv_nomor = ?
     ORDER BY d.invd_nourut`,
