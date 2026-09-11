@@ -81,12 +81,16 @@ const getKainGarmen = async () => {
         const ktg = (r.mhk_ktg || "").trim().toUpperCase();
         const key = `${kode}_${jk}`;
         const bBody = babaranBodyMap.get(key) || 0;
+        const bLengan =
+            kode === "KH-0002"
+                ? kh0002InfoMap.get(jk)?.babaranLengan || 0
+                : 0;
 
         const hargaBahan = Number(r.mhk_harga) || 0;
         const hargaBody = bBody > 0 ? Math.round(hargaBahan / bBody / 1.11) : 0;
         const hargaRib = Math.round((hargaBahan / 1.11 + 1500) / 70);
         const hargaLengan =
-            kode === "KH-0002" ? lenganPriceMap.get(jk) || 0 : 0;
+            kode === "KH-0002" ? (lenganPriceMap.get(jk) || 0) : 0;
 
         const totalHargaBahan = hargaBody + hargaLengan + hargaRib;
         const allowancePersen = Number(r.mhk_allow) || 0;
@@ -100,6 +104,12 @@ const getKainGarmen = async () => {
 
         return {
             ...r,
+            babaranBody: bBody,
+            babaran_body: bBody,
+            babaranLengan: bLengan,
+            babaran_lengan: bLengan,
+            babaranRib: 70,
+            babaran_rib: 70,
             mhk_harga_rib: hargaRib,
             hargaRib,
             mhk_harga_lengan: hargaLengan,
