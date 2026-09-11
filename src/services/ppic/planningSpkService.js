@@ -47,17 +47,18 @@ const getDetail = async (nomor) => {
   const loadDivisi = async (divisi) => {
     const [rows] = await db.query(
       `SELECT
-         d.plan_spk             AS NomorSPK,
-         s.spk_nama             AS NamaSPK,
-         DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
-         d.plan_wip             AS Wip,
-         d.plan_qty_po          AS QtyPo,
-         d.plan_qty_jadwal      AS QtyJadwal,
-         d.plan_line_kelompok   AS LineKelompok
-       FROM tplan_ppic_dtl2 d
-       LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
-       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
-       ORDER BY d.plan_tgl_jadwal ASC`,
+        d.plan_spk             AS NomorSPK,
+        s.spk_nama             AS NamaSPK,
+        DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
+        d.plan_wip             AS Wip,
+        d.plan_qty_po          AS QtyPo,
+        d.plan_qty_jadwal      AS QtyJadwal,
+        d.plan_line_kelompok   AS LineKelompok,
+        d.plan_keterangan      AS Keterangan
+      FROM tplan_ppic_dtl2 d
+      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
+      ORDER BY d.plan_tgl_jadwal ASC`,
       [nomor, divisi],
     );
     return rows;
@@ -293,7 +294,8 @@ const getExportDetail = async (startDate, endDate) => {
        d.plan_wip        AS Wip,
        d.plan_qty_po     AS QtyPO,
        d.plan_qty_jadwal AS QtyJadwal,
-       d.plan_line_kelompok AS LineKelompok
+       d.plan_line_kelompok AS LineKelompok,
+       d.plan_keterangan AS Keterangan
      FROM tplan_ppic_dtl2 d
      INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk

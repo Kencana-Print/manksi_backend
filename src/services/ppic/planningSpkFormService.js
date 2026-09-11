@@ -50,6 +50,7 @@ const getFormDetail = async (nomor) => {
         d.plan_qty_po          AS plan_qty_po,
         d.plan_qty_jadwal      AS plan_qty_jadwal,
         d.plan_line_kelompok   AS plan_line_kelompok,
+        d.plan_keterangan      AS plan_keterangan,
         d.plan_supplier_kode   AS supplierKode,
         d.plan_supplier_nama   AS supplierNama
       FROM tplan_ppic_dtl2 d
@@ -221,19 +222,20 @@ const saveData = async (payload, userKode) => {
           `INSERT IGNORE INTO tplan_ppic_dtl2
             (plan_pl_nomor, plan_spk, plan_divisi, plan_tanggal,
               plan_tgl_jadwal, plan_wip, plan_qty_po,
-              plan_qty_jadwal, plan_line_kelompok,
+              plan_qty_jadwal, plan_line_kelompok, plan_keterangan,
               plan_supplier_kode, plan_supplier_nama)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             nomor,
             row.NomorSPK,
             divisi,
-            row.plan_tgl_jadwal, // plan_tanggal = tgl_jadwal (PK)
+            row.plan_tgl_jadwal,
             row.plan_tgl_jadwal,
             Number(row.plan_wip) || 0,
             Number(row.plan_qty_po) || 0,
             Number(row.plan_qty_jadwal) || 0,
             divisi === "KOLI" ? "" : row.plan_line_kelompok || "",
+            row.plan_keterangan || "",
             isExternal ? row.supplierKode || "" : "",
             isExternal ? row.supplierNama || "" : "",
           ],
