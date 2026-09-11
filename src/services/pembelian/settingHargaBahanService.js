@@ -8,13 +8,124 @@ const getKainGarmen = async () => {
     const [rows] = await db.query(
         "SELECT * FROM tmintaharga_kain ORDER BY mhk_ktg ASC, mhk_jeniskain ASC, mhk_warna ASC",
     );
+
+    // Rumus Excel referensi: (Harga Kain Warna TUA / 1.11) / Babaran Lengan
+    const kh0002InfoMap = new Map();
+    rows.forEach((r) => {
+        const kode = (r.mhk_kode || "").trim().toUpperCase();
+        if (kode !== "KH-0002") return;
+        const jk = (r.mhk_jeniskain || "").trim();
+        if (!kh0002InfoMap.has(jk)) {
+            kh0002InfoMap.set(jk, {
+                babaranLengan: 0,
+                hargaTua: 0,
+                fallbackHarga: 0,
+            });
+        }
+        const info = kh0002InfoMap.get(jk);
+        const komp = (r.mhk_komponen || "").trim().toUpperCase();
+        const warna = (r.mhk_warna || "").trim().toUpperCase();
+        const babaran = Number(r.mhk_babaran) || 0;
+        const harga = Number(r.mhk_harga) || 0;
+
+        if (komp === "LENGAN" && babaran > 0) {
+            info.babaranLengan = babaran;
+            if (!info.fallbackHarga) info.fallbackHarga = harga;
+        }
+        if (warna === "TUA" && harga > 0) {
+            info.hargaTua = harga;
+        }
+    });
+
+    const lenganPriceMap = new Map();
+    kh0002InfoMap.forEach((info, jk) => {
+        const hrg = info.hargaTua || info.fallbackHarga || 0;
+        if (info.babaranLengan > 0 && hrg > 0) {
+            const dppTua = hrg / 1.11;
+            lenganPriceMap.set(jk, Math.round(dppTua / info.babaranLengan));
+        }
+    });
+
+    // Himpun master babaran body per model dan per jenis kain
+    const babaranBodyMap = new Map();
+    rows.forEach((r) => {
+        const kode = (r.mhk_kode || "").trim().toUpperCase();
+        const jk = (r.mhk_jeniskain || "").trim();
+        const key = `${kode}_${jk}`;
+        const komp = (r.mhk_komponen || "").trim().toUpperCase();
+        const val = Number(r.mhk_babaran) || 0;
+        if (!babaranBodyMap.has(key)) babaranBodyMap.set(key, 0);
+        if (komp === "BODY" && val > 0) {
+            babaranBodyMap.set(key, val);
+        } else if (val > 0 && babaranBodyMap.get(key) === 0) {
+            babaranBodyMap.set(key, val);
+        }
+    });
+
+    // Ambil master biaya jahit konveksi langsung dari database tmintaharga_biaya
+    const [biayaJahitRows] = await db.query(
+        "SELECT mhb_ket, mhb_biaya FROM tmintaharga_biaya WHERE mhb_jenis = 'JAHIT'",
+    );
+    const biayaJahitMap = new Map();
+    let defaultBiayaJahit = 5000;
+    biayaJahitRows.forEach((b) => {
+        const ket = (b.mhb_ket || "").trim().toUpperCase();
+        const cost = Number(b.mhb_biaya) || 0;
+        if (ket === "-" || ket === "") defaultBiayaJahit = cost;
+        else biayaJahitMap.set(ket, cost);
+    });
+
     return rows.map((r) => {
+        const kode = (r.mhk_kode || "").trim().toUpperCase();
+        const jk = (r.mhk_jeniskain || "").trim();
+        const ktg = (r.mhk_ktg || "").trim().toUpperCase();
+        const key = `${kode}_${jk}`;
+        const bBody = babaranBodyMap.get(key) || 0;
+        const bLengan =
+            kode === "KH-0002"
+                ? kh0002InfoMap.get(jk)?.babaranLengan || 0
+                : 0;
+
         const hargaBahan = Number(r.mhk_harga) || 0;
-        const hargaRib = Math.round(((hargaBahan / 1.11) + 1500) / 70);
+        const hargaBody = bBody > 0 ? Math.round(hargaBahan / bBody / 1.11) : 0;
+        const hargaRib = Math.round((hargaBahan / 1.11 + 1500) / 70);
+        const hargaLengan =
+            kode === "KH-0002" ? (lenganPriceMap.get(jk) || 0) : 0;
+
+        const totalHargaBahan = hargaBody + hargaLengan + hargaRib;
+        const allowancePersen = Number(r.mhk_allow) || 0;
+        const allowanceRp = Math.round(totalHargaBahan * (allowancePersen / 100));
+        const totalBahan = totalHargaBahan + allowanceRp;
+
+        const biayaKonveksi = biayaJahitMap.has(ktg)
+            ? biayaJahitMap.get(ktg)
+            : defaultBiayaJahit;
+        const hpp = totalBahan + biayaKonveksi;
+
         return {
             ...r,
+            babaranBody: bBody,
+            babaran_body: bBody,
+            babaranLengan: bLengan,
+            babaran_lengan: bLengan,
+            babaranRib: 70,
+            babaran_rib: 70,
             mhk_harga_rib: hargaRib,
             hargaRib,
+            mhk_harga_lengan: hargaLengan,
+            hargaLengan,
+            mhk_harga_body: hargaBody,
+            hargaBody,
+            mhk_total_harga_bahan: totalHargaBahan,
+            totalHargaBahan,
+            mhk_allowance_rp: allowanceRp,
+            allowanceRp,
+            mhk_total_bahan: totalBahan,
+            totalBahan,
+            mhk_biaya_konveksi: biayaKonveksi,
+            biayaKonveksi,
+            mhk_hpp: hpp,
+            hpp,
         };
     });
 };
