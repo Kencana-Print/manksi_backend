@@ -58,7 +58,9 @@ const ajukanPerubahan = async (req, res) => {
 
 const getBapReviewedUntukPembuat = async (req, res) => {
   try {
-    const data = await service.getBapReviewedUntukPembuat(req.user?.kode || "");
+    const data = await bapProduksiService.getBapReviewedUntukPembuat(
+      req.user?.kode || "",
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -68,7 +70,7 @@ const getBapReviewedUntukPembuat = async (req, res) => {
 const reviewDibaca = async (req, res) => {
   try {
     const { nomorList } = req.body;
-    await service.markReviewDibaca(nomorList, req.user?.kode || "");
+    await bapProduksiService.markReviewDibaca(nomorList, req.user?.kode || "");
     res.status(200).json({ success: true, message: "Ditandai sudah dibaca." });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
