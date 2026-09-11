@@ -601,17 +601,43 @@ const saveData = async (payload, user, isEdit = false) => {
       }
     }
 
-    // 4. UPDATE STATUS tmintabahan_hdr.min_close — SELALU dihitung dari
-    // qty aktual (tpo/tjumlah/tsudah dari loop di atas, yang sudah ikut
-    // menghitung baris substitusi karena baris itu tetap bagian dari
-    // payload.details). TIDAK di-force CLOSE lagi kalau ada beda bahan
-    // — status close murni tergantung apakah total realisasi sudah
-    // menutupi total permintaan, sama seperti kasus normal.
-    const tq = tjumlah + tsudah;
+    // 4. UPDATE STATUS tmintabahan_hdr.min_close — dihitung dari agregat
+    // SEMUA baris tmintabahan_dtl milik Permintaan ini (bukan cuma bahan
+    // yang ikut disubmit di realisasi kali ini — kalau dihitung dari
+    // payload.details saja, bahan yang TIDAK disentuh di realisasi ini
+    // ikut tidak terhitung sama sekali di tpo, sehingga status bisa
+    // salah ke-CLOSE walau bahan itu belum direalisasi sedikit pun).
+    // Per bahan: realized dibatasi maksimal sejumlah yang diminta
+    // (capped), supaya kelebihan realisasi di satu bahan tidak menutupi
+    // kekurangan di bahan lain.
+    const [statusRows] = await conn.query(
+      `SELECT
+         SUM(x.minta) AS total_minta,
+         SUM(LEAST(x.realized, x.minta)) AS total_realized_capped
+       FROM (
+         SELECT
+           md.mind_bhn_kode AS bhn_kode,
+           md.mind_jumlah AS minta,
+           IFNULL((
+             SELECT SUM(pd.promind_jumlah)
+             FROM tproduksiminta_dtl pd
+             INNER JOIN tproduksiminta_hdr ph ON ph.promin_nomor = pd.promind_promin_nomor
+             WHERE ph.promin_minta = md.mind_nomor
+               AND pd.promind_kodem = md.mind_bhn_kode
+           ), 0) AS realized
+         FROM tmintabahan_dtl md
+         WHERE md.mind_nomor = ?
+       ) x`,
+      [payload.noMinta],
+    );
+    const totalMinta = Number(statusRows[0].total_minta) || 0;
+    const totalRealizedCapped =
+      Number(statusRows[0].total_realized_capped) || 0;
+
     let minCloseStatus = 0;
-    if (tq >= tpo && tpo > 0) {
+    if (totalRealizedCapped >= totalMinta && totalMinta > 0) {
       minCloseStatus = 1;
-    } else if (tq > 0 && tq < tpo) {
+    } else if (totalRealizedCapped > 0) {
       minCloseStatus = 2;
     }
     await conn.query(
