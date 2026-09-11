@@ -139,8 +139,8 @@ const getById = async (nomor) => {
         s.spk_nama2, b.brg_name, ''
       ) AS nama_barang
     FROM tinv_dtl d
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-    LEFT JOIN tsalesorder so ON so.so_spk_ref = s.spk_nomor
     LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
     WHERE d.invd_inv_nomor = ?
     ORDER BY d.invd_nourut`,
