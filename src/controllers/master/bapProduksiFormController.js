@@ -89,10 +89,8 @@ const getBapBaruUntukAudit = async (req, res) => {
 const reviewAudit = async (req, res) => {
   try {
     const { nomor } = req.params;
-    await bapProduksiFormService.markReviewAudit(
-      nomor,
-      req.user?.kode || "ADMIN",
-    );
+    const { catatan } = req.body;
+    await service.markReviewAudit(nomor, req.user?.kode || "ADMIN", catatan);
     res
       .status(200)
       .json({ success: true, message: "BAP ditandai sudah direview." });

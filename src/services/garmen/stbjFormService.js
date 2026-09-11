@@ -328,17 +328,18 @@ const getPackingAvailable = async () => {
   const result = [];
   for (const r of rows) {
     const [dc] = await db.query(
-      `SELECT a.brg_kode,
-              TRIM(CONCAT(
-                a.brg_jeniskaos,' ',a.brg_tipe,' ',
-                a.brg_lengan,' ',a.brg_jeniskain,' ',a.brg_warna
-              )) AS Nama,
-              d.size, d.packd_qty
+      `SELECT
+         ba.brg_kode AS brg_kode,
+         d.packd_brg_kaosan AS Nama,
+         d.size, d.packd_qty
        FROM retail.tpacking_dtl d
-       LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_barcode = d.packd_barcode
-       LEFT JOIN retail.tbarangdc a ON a.brg_kode = b.brgd_kode
+       LEFT JOIN retail.tbarangdc ba
+         ON TRIM(CONCAT(
+              ba.brg_jeniskaos,' ',ba.brg_tipe,' ',
+              ba.brg_lengan,' ',ba.brg_jeniskain,' ',ba.brg_warna
+            )) = d.packd_brg_kaosan
        WHERE d.packd_pack_nomor = ? AND d.size = ?
-       ORDER BY d.packd_barcode`,
+       ORDER BY d.packd_id`,
       [r.nomor, r.size],
     );
     result.push({ ...r, dc });

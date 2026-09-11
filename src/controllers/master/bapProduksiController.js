@@ -56,4 +56,29 @@ const ajukanPerubahan = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, remove, ajukanPerubahan };
+const getBapReviewedUntukPembuat = async (req, res) => {
+  try {
+    const data = await service.getBapReviewedUntukPembuat(req.user?.kode || "");
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const reviewDibaca = async (req, res) => {
+  try {
+    const { nomorList } = req.body;
+    await service.markReviewDibaca(nomorList, req.user?.kode || "");
+    res.status(200).json({ success: true, message: "Ditandai sudah dibaca." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getBrowse,
+  remove,
+  ajukanPerubahan,
+  getBapReviewedUntukPembuat,
+  reviewDibaca,
+};
