@@ -59,17 +59,21 @@ const getDetail = async (nomor) => {
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
        IF(
-         COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
-           AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
-         IFNULL(d.pjwd_realisasi_manual, 0),
-         IFNULL((
-           SELECT SUM(td.stbjd_jumlah)
-           FROM tstbj_dtl td
-           INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
-           WHERE td.stbjd_spk_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-             AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
+        COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
+          AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
+        IFNULL(d.pjwd_realisasi_manual, 0),
+        IFNULL((
+          SELECT SUM(td.stbjd_jumlah)
+          FROM tstbj_dtl td
+          INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
+          WHERE td.stbjd_spk_nomor = COALESCE(
+            (SELECT so.so_spk_ref FROM tsalesorder so
+            WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+            COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+          )
+          AND th.stbj_tanggal <= h.pjw_tgl2
         ), 0)
-       ) AS Realisasi,
+      ) AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
        DATE_FORMAT(d.pjwd_tgl_kesepakatan, '%Y-%m-%d') AS Kesepakatan,
