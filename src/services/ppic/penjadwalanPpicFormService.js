@@ -1039,6 +1039,8 @@ const checkTargetPeriod = async (pjwdId, tanggalBaru) => {
     return { needMove: false };
   }
 
+  const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR"; // ⬅ BARU
+
   const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
   const [[target]] = await db.query(
     `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
@@ -1062,6 +1064,7 @@ const checkTargetPeriod = async (pjwdId, tanggalBaru) => {
 
   return {
     needMove: true,
+    arah, // ⬅ BARU — "MAJU" | "MUNDUR"
     willCreateNew: !target,
     targetNomor: target ? target.pjw_nomor : null,
     targetTgl1: tgl1,
@@ -1088,7 +1091,7 @@ const moveDetailRowToPeriod = async (
     await conn.beginTransaction();
 
     const [[row]] = await conn.query(
-      `SELECT d.pjwd_pjw_nomor, d.pjwd_so_nomor, d.pjwd_pro_nomor, d.pjwd_map_nomor,
+      `SELECT d.pjwd_pjw_nomor, d.pjwd_so_nomor, d.pjwd_pro_nomor, d.pjwd_map_nomor, d.pjwd_rencana,
               h.pjw_cab, h.pjw_divisi, h.pjw_tgl1, h.pjw_tgl2
        FROM tpenjadwalan_ppic_dtl d
        INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
@@ -1097,7 +1100,6 @@ const moveDetailRowToPeriod = async (
     );
     if (!row) throw new Error("Baris tidak ditemukan.");
 
-    // Race condition: sudah pindah/tanggal sudah pas — cukup update kolomnya
     if (tanggalBaru >= row.pjw_tgl1 && tanggalBaru <= row.pjw_tgl2) {
       await conn.query(
         `UPDATE tpenjadwalan_ppic_dtl SET pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
@@ -1110,6 +1112,8 @@ const moveDetailRowToPeriod = async (
         pjwd_id: Number(pjwdId),
       };
     }
+
+    const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR"; // ⬅ BARU
 
     const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
     const [[target]] = await conn.query(
@@ -1150,9 +1154,25 @@ const moveDetailRowToPeriod = async (
       [targetNomor, tanggalBaru, pjwdId],
     );
 
+    // ⬅ BARU: kalau MAJU, kredit sebagai Tambahan di Pencapaian periode
+    // tujuan — produksi menyelesaikan pekerjaan periode depan lebih cepat.
+    if (arah === "MAJU") {
+      await conn.query(
+        `INSERT INTO tpenjadwalan_ppic_pencapaian
+           (pjwp_pjw_nomor, pjwp_tipe, pjwp_kategori, pjwp_keterangan, pjwp_pcs, pjwp_urutan)
+         VALUES (?, 'TAMBAHAN', 'Produksi', ?, ?, 0)`,
+        [
+          targetNomor,
+          `Maju dari periode ${row.pjwd_pjw_nomor} (${key || "-"})`,
+          Number(row.pjwd_rencana) || 0,
+        ],
+      );
+    }
+
     await conn.commit();
     return {
       moved: true,
+      arah, // ⬅ BARU
       fromNomor: row.pjwd_pjw_nomor,
       nomor: targetNomor,
       pjwd_id: Number(pjwdId),
