@@ -35,20 +35,23 @@ const getDetail = async (nomor) => {
        COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) AS Nomor,
        d.pjwd_pro_nomor AS NomorPraOrder,
        IF(so_from_map.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
-       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_mh_nomor) AS NomorMh,     
-       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_nomor) AS NomorPen,    
-       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_id) AS PenId,          
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_mh_nomor) AS NomorMh,
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_nomor) AS NomorPen,
+       IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_id) AS PenId,
        CASE
           WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
           WHEN so_from_map.so_nomor IS NOT NULL THEN 'SO'
           WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
-          WHEN d.pjwd_mh_nomor IS NOT NULL THEN 'PERMINTAAN HARGA'   
-          WHEN d.pjwd_pen_nomor IS NOT NULL THEN 'PENAWARAN'          
+          WHEN d.pjwd_mh_nomor IS NOT NULL THEN 'PERMINTAAN HARGA'
+          WHEN d.pjwd_pen_nomor IS NOT NULL THEN 'PENAWARAN'
           WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
           ELSE 'MANUAL'
         END AS Sumber,
        COALESCE(src.Nama, mp.mspk_nama, mh.mh_nama, pend.pend_nama_barang, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
        COALESCE(src.Tanggal, DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'), DATE_FORMAT(pro.pro_tanggal, '%Y-%m-%d'), NULL) AS Tanggal,
+       -- ⬅ BARU: Panjang & Lebar, ambil dari sumber yang sesuai; Pra Order belum punya kolomnya jadi tidak diikutkan
+       COALESCE(src.Panjang, mp.mspk_panjang, mh.mh_panjang, pend.pend_panjang, d.pjwd_panjang_manual, 0) AS Panjang,
+       COALESCE(src.Lebar, mp.mspk_lebar, mh.mh_lebar, pend.pend_lebar, d.pjwd_lebar_manual, 0) AS Lebar,
        COALESCE(src.Pesan, mp.mspk_rencana_order, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0) AS Pesan,
        COALESCE(src.Kirim, 0, 0, d.pjwd_kirim_manual, 0) AS Kirim,
        COALESCE(src.Kurang, mp.mspk_rencana_order, pro.pro_qty_rencana,
@@ -79,9 +82,6 @@ const getDetail = async (nomor) => {
        pro.pro_status_ppic AS StatusPpicPraOrder
      FROM tpenjadwalan_ppic_dtl d
      INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
-     -- ⬅ BARU: cari SO yang "berasal dari" MAP ini (so_memo = nomor MAP).
-     -- Kalau ketemu, baris ini otomatis dianggap sumbernya SO, bukan
-     -- MAP lagi — tanpa perlu update apa pun ke tpenjadwalan_ppic_dtl.
      LEFT JOIN tsalesorder so_from_map
        ON so_from_map.so_memo = d.pjwd_map_nomor
        AND so_from_map.so_aktif = 'Y'
@@ -89,11 +89,13 @@ const getDetail = async (nomor) => {
      LEFT JOIN (
        SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
               so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
-              (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang
+              (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang,
+              so_panjang AS Panjang, so_lebar AS Lebar
        FROM tsalesorder
        UNION ALL
        SELECT spk_nomor, spk_nama, DATE_FORMAT(spk_tanggal,'%Y-%m-%d'),
-              spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0))
+              spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0)),
+              spk_panjang, spk_lebar
        FROM tspk WHERE spk_is_so = 0
      ) src ON src.Nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
      LEFT JOIN tmemospk mp
