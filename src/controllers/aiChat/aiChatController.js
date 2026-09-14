@@ -1,13 +1,14 @@
 const aiChatService = require("../../services/aiChat/aiChatService");
 const aiChatHistoryService = require("../../services/aiChat/aiChatHistoryService");
 
-const ALLOWED_CABANG = ["HO-"];
+const ALLOWED_KODE = ["DARUL", "DIR", "ADMIN", "RIO", "EDI", "WIDI", "HARIS"];
 
 const checkAccess = (req, res) => {
-  if (!ALLOWED_CABANG.includes(req.user.cabang)) {
+  const kode = (req.user?.kode || "").toUpperCase();
+  if (!ALLOWED_KODE.includes(kode)) {
     res.status(403).json({
       success: false,
-      message: "Fitur Asisten AI belum tersedia untuk cabang Anda.",
+      message: "Fitur Asisten AI belum tersedia untuk akun Anda.",
     });
     return false;
   }
