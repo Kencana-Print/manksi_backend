@@ -43,4 +43,36 @@ const deleteData = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, getDetail, toggleClose, deleteData };
+const getPencapaian = async (req, res) => {
+  try {
+    const data = await penjadwalanPpicService.getPencapaian(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const savePencapaian = async (req, res) => {
+  try {
+    const { tidakTercapai, tambahan } = req.body;
+    await penjadwalanPpicService.savePencapaian(
+      req.params.nomor,
+      tidakTercapai,
+      tambahan,
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Pencapaian berhasil disimpan." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getBrowse,
+  getDetail,
+  toggleClose,
+  deleteData,
+  getPencapaian,
+  savePencapaian,
+};

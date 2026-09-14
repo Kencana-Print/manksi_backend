@@ -16,6 +16,18 @@ router.get(
   controller.getBrowse,
 );
 router.get(
+  "/:nomor/pencapaian",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getPencapaian,
+);
+router.put(
+  "/:nomor/pencapaian",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  controller.savePencapaian,
+);
+router.get(
   "/:nomor/detail",
   verifyToken,
   checkPermission(menuId, "view"),

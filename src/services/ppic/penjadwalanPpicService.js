@@ -147,9 +147,79 @@ const deleteData = async (nomor) => {
   }
 };
 
+const getPencapaian = async (nomor) => {
+  const detailRows = await getDetail(nomor);
+
+  const totalRencana = detailRows.reduce(
+    (s, d) => s + (Number(d.Rencana) || 0),
+    0,
+  );
+  const totalRealisasi = detailRows.reduce(
+    (s, d) => s + (Number(d.Realisasi) || 0),
+    0,
+  );
+
+  const [rows] = await db.query(
+    `SELECT pjwp_id AS Id, pjwp_tipe AS Tipe, pjwp_kategori AS Kategori,
+            pjwp_keterangan AS Keterangan, pjwp_pcs AS Pcs
+     FROM tpenjadwalan_ppic_pencapaian
+     WHERE pjwp_pjw_nomor = ?
+     ORDER BY pjwp_tipe, pjwp_urutan ASC, pjwp_id ASC`,
+    [nomor],
+  );
+
+  return {
+    Rencana: totalRencana,
+    Realisasi: totalRealisasi,
+    TidakTercapai: rows.filter((r) => r.Tipe === "KURANG"),
+    Tambahan: rows.filter((r) => r.Tipe === "TAMBAHAN"),
+  };
+};
+
+// Replace-all — paling simpel untuk list yang bisa ditambah/hapus bebas dari UI
+const savePencapaian = async (nomor, tidakTercapai = [], tambahan = []) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(
+      `DELETE FROM tpenjadwalan_ppic_pencapaian WHERE pjwp_pjw_nomor = ?`,
+      [nomor],
+    );
+
+    const allRows = [
+      ...tidakTercapai.map((r, i) => ({ ...r, tipe: "KURANG", urutan: i })),
+      ...tambahan.map((r, i) => ({ ...r, tipe: "TAMBAHAN", urutan: i })),
+    ];
+
+    for (const r of allRows) {
+      await conn.query(
+        `INSERT INTO tpenjadwalan_ppic_pencapaian
+           (pjwp_pjw_nomor, pjwp_tipe, pjwp_kategori, pjwp_keterangan, pjwp_pcs, pjwp_urutan)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          nomor,
+          r.tipe,
+          r.kategori,
+          r.keterangan || null,
+          Number(r.pcs) || 0,
+          r.urutan,
+        ],
+      );
+    }
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
   toggleClose,
   deleteData,
+  getPencapaian,
+  savePencapaian,
 };
