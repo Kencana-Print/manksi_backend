@@ -71,7 +71,7 @@ const getDetail = async (nomor) => {
             WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
             COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
           )
-          AND th.stbj_tanggal <= h.pjw_tgl2
+          AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
         ), 0)
       ) AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
