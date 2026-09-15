@@ -41,6 +41,13 @@ router.get(
   ctrl.getDetail,
 );
 
+router.post(
+  "/:nomor/tunda",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  ctrl.tundaData,
+);
+
 // Delete
 router.delete(
   "/:nomor",

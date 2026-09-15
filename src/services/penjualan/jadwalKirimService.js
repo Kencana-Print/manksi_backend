@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const jadwalKirimFormService = require("./jadwalKirimFormService");
 
 // ─────────────────────────────────────────────────────────
 // HELPER
@@ -280,6 +281,143 @@ const deleteData = async (nomor, userKode) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// TUNDA PENGIRIMAN
+// ─────────────────────────────────────────────────────────
+/**
+ * Validasi:
+ * 1. Data harus ada
+ * 2. jk_status harus 'OPEN' (belum pernah ditunda sebelumnya)
+ * 3. Realisasi harus 0 (belum ada yang benar-benar terkirim)
+ *
+ * Proses (1 transaction):
+ * a. Ambil header + detail lengkap dari nomor asal (lock row)
+ * b. Generate Nomor_Kirim baru (reuse generateNomor resmi dari
+ *    jadwalKirimFormService — format KRM.YYMM.XXXX, konsisten dengan
+ *    jadwal kirim normal) untuk Tanggal = tanggal asal + 1 hari
+ * c. Clone header + semua baris detail ke nomor baru, reset kolom
+ *    yang terkait eksekusi pengiriman (jumlah_kirim/koli_kirim/
+ *    jam_kirim/expedisi/jam_ambil) karena itu belum pernah terjadi
+ *    untuk jadwal baru
+ * d. Update baris asal: jk_status='TUNDA', simpan alasan, link ke
+ *    nomor baru
+ */
+const tundaData = async (nomor, alasan, userKode) => {
+  if (!alasan || !alasan.trim()) {
+    throw new Error("Alasan tunda wajib diisi.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[header]] = await conn.query(
+      `SELECT * FROM tjadwalkirim WHERE Nomor_Kirim = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!header) throw new Error("Data tidak ditemukan.");
+
+    if ((header.jk_status || "OPEN") !== "OPEN") {
+      throw new Error(
+        `Data ini sudah berstatus '${header.jk_status}' — tidak bisa ditunda lagi.`,
+      );
+    }
+    if (Number(header.Realisasi) > 0 || Number(header.koli_Realisasi) > 0) {
+      throw new Error(
+        "Data ini sudah memiliki realisasi pengiriman — tidak bisa ditunda.",
+      );
+    }
+
+    const [details] = await conn.query(
+      `SELECT * FROM tjadwalkirim_dtl WHERE nomor_kirim = ? ORDER BY No_urut`,
+      [nomor],
+    );
+    if (details.length === 0) {
+      throw new Error("Data ini tidak punya detail — tidak bisa ditunda.");
+    }
+
+    // Tanggal baru = tanggal asal + 1 hari
+    const tglAsal = new Date(header.Tanggal);
+    const tglBaru = new Date(tglAsal);
+    tglBaru.setDate(tglBaru.getDate() + 1);
+    const tglBaruStr = `${tglBaru.getFullYear()}-${String(
+      tglBaru.getMonth() + 1,
+    ).padStart(2, "0")}-${String(tglBaru.getDate()).padStart(2, "0")}`;
+
+    // Reuse generator resmi — konsisten dengan format Jadwal Kirim
+    // normal (KRM.YYMM.XXXX)
+    const nomorBaru = await jadwalKirimFormService.generateNomor(tglBaruStr);
+
+    // Insert header baru (clone) — kolom persis sama seperti
+    // jadwalKirimFormService.save()
+    await conn.query(
+      `INSERT INTO tjadwalkirim
+         (Nomor_Kirim, Gudang, Tanggal, spk_nomor, Jumlah, Koli,
+          Realisasi, koli_Realisasi, date_Create, usr_Create,
+          jk_plan_nomor, jk_plan_tanggal, jk_plan_jumlah,
+          jk_status, jk_tunda_dari_nomor)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 0, NOW(), ?, ?, ?, ?, 'OPEN', ?)`,
+      [
+        nomorBaru,
+        header.Gudang,
+        tglBaruStr,
+        header.spk_nomor,
+        header.Jumlah,
+        header.Koli,
+        userKode,
+        header.jk_plan_nomor || "",
+        header.jk_plan_tanggal || null,
+        header.jk_plan_jumlah || 0,
+        nomor,
+      ],
+    );
+
+    // Clone detail — reset kolom yang terkait eksekusi pengiriman
+    // (belum pernah terjadi untuk jadwal baru ini), sisanya (kota,
+    // uraian, jumlah, koli, jam ready) dibawa apa adanya
+    let urut = 1;
+    for (const d of details) {
+      await conn.query(
+        `INSERT INTO tjadwalkirim_dtl
+           (nomor_kirim, no_urut, kota, uraian, jumlah, koli,
+            jami, jam, jumlah_kirim, koli_kirim, jam_kirim, expedisi, jam_ambil)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '', '', '')`,
+        [
+          nomorBaru,
+          urut,
+          d.kota || "",
+          d.uraian || "",
+          Number(d.jumlah) || 0,
+          Number(d.koli) || 0,
+          d.jami || "",
+          d.jam || "",
+        ],
+      );
+      urut++;
+    }
+
+    // Update baris asal → TUNDA
+    await conn.query(
+      `UPDATE tjadwalkirim SET
+         jk_status = 'TUNDA',
+         jk_alasan_tunda = ?,
+         jk_tunda_ke_nomor = ?,
+         jk_user_status = ?,
+         jk_date_status = NOW()
+       WHERE Nomor_Kirim = ?`,
+      [alasan.trim(), nomorBaru, userKode, nomor],
+    );
+
+    await conn.commit();
+    return { nomorBaru };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -287,4 +425,5 @@ module.exports = {
   getDataCetak,
   getListGudang,
   deleteData,
+  tundaData,
 };

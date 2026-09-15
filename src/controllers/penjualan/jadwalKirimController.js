@@ -93,6 +93,38 @@ const getCetak = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// TUNDA PENGIRIMAN
+// POST /api/penjualan/jadwal-kirim/:nomor/tunda
+// Hanya bagian KIRIM yang boleh menunda
+// ─────────────────────────────────────────────────────────
+const tundaData = async (req, res) => {
+  try {
+    // ⚠️ KONFIRMASI: apakah field & value ini benar untuk representasikan
+    // "bagian KIRIM"? Disesuaikan dari pola cek role di mintaHargaController
+    const bagianUser = (req.user?.bagian || "").toUpperCase();
+    if (bagianUser !== "KIRIM") {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya bagian Kirim yang dapat menunda jadwal pengiriman.",
+      });
+    }
+
+    const { nomor } = req.params;
+    const { alasan } = req.body;
+    const userKode = req.user?.kode || req.user?.user_kode || "";
+
+    const result = await jadwalKirimService.tundaData(nomor, alasan, userKode);
+    res.json({
+      success: true,
+      message: `Jadwal berhasil ditunda. Nomor baru: ${result.nomorBaru}`,
+      data: result,
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -100,4 +132,5 @@ module.exports = {
   getListGudang,
   deleteData,
   getCetak,
+  tundaData,
 };

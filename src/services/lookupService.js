@@ -555,10 +555,8 @@ const searchMintaHarga = async (keyword, custKode, page = 1, limit = 50) => {
   const offset = (pageNum - 1) * limitNum;
 
   let params = [];
-  // Sesuai Delphi: status bukan BELUM
   let whereClause = `WHERE m.mh_status <> "BELUM"`;
 
-  // Dinamis: Hanya filter customer JIKA custKode dikirim
   if (custKode && custKode.trim() !== "") {
     whereClause += ` AND m.mh_cus_kode = ?`;
     params.push(custKode);
