@@ -57,12 +57,8 @@ const searchSoKandidat = async (
       WHERE spk_aktif = 'Y' AND spk_close = 0 AND spk_is_so = 0
     ) src
     WHERE src.DatelineAsli BETWEEN ? AND ?
-      AND src.Nomor NOT IN (
-        SELECT pjwd_so_nomor FROM tpenjadwalan_ppic_dtl
-        WHERE pjwd_so_nomor IS NOT NULL AND pjwd_pjw_nomor <> ?
-      )
   `;
-  const params = [startDate, endDate, excludeNomor];
+  const params = [startDate, endDate];
 
   if (divisi && divisi !== "0") {
     query += ` AND src.Divisi = ?`;
@@ -97,12 +93,8 @@ const searchPraOrderKandidat = async (
     FROM tpraorder_hdr h
     WHERE h.pro_status = 'OPEN'
       AND h.pro_tgl_kirim BETWEEN ? AND ?
-      AND h.pro_nomor NOT IN (
-        SELECT pjwd_pro_nomor FROM tpenjadwalan_ppic_dtl
-        WHERE pjwd_pro_nomor IS NOT NULL AND pjwd_pjw_nomor <> ?
-      )
   `;
-  const params = [startDate, endDate, excludeNomor];
+  const params = [startDate, endDate];
 
   if (divisi && divisi !== "0") {
     query += ` AND h.pro_divisi = ?`;
@@ -112,144 +104,6 @@ const searchPraOrderKandidat = async (
 
   const [rows] = await db.query(query, params);
   return rows;
-};
-
-// ═══════════════════════════════════════════════════════════
-// DETEKSI DUPLIKASI LINTAS-RANTAI: MH → Penawaran → MAP → SO
-// Sebuah "pekerjaan" yang sama bisa direpresentasikan di titik
-// manapun sepanjang rantai ini. Sebelum nambah baris baru, cek
-// SEMUA kemungkinan representasi lain dari pekerjaan yang sama
-// sudah ada di Komitmen Kirim MANA PUN (periode apa saja).
-// ═══════════════════════════════════════════════════════════
-const assertNotDuplicateInChain = async (input, excludeNomor) => {
-  const { mhNomor, penNomor, pendId, mapNomor, soNomor } = input;
-
-  // ── 1. SO — paling mentah, tidak ada apa pun di atasnya ──
-  if (soNomor) {
-    const [[dup]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-       WHERE pjwd_so_nomor = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-      [soNomor, excludeNomor],
-    );
-    if (dup)
-      throw new Error(
-        `${soNomor} sudah diinputkan ke Komitmen Kirim nomor ${dup.pjwd_pjw_nomor}.`,
-      );
-    return;
-  }
-
-  // ── 2. MAP — cek langsung, DAN cek SO yang sudah lahir dari MAP ini ──
-  if (mapNomor) {
-    const [[dupMap]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-       WHERE pjwd_map_nomor = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-      [mapNomor, excludeNomor],
-    );
-    if (dupMap)
-      throw new Error(
-        `MAP ${mapNomor} sudah diinputkan ke Komitmen Kirim nomor ${dupMap.pjwd_pjw_nomor}.`,
-      );
-
-    const [[dupSo]] = await db.query(
-      `SELECT d.pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl d
-       INNER JOIN tsalesorder so ON so.so_nomor = d.pjwd_so_nomor
-       WHERE so.so_memo = ? AND d.pjwd_pjw_nomor <> ? LIMIT 1`,
-      [mapNomor, excludeNomor],
-    );
-    if (dupSo)
-      throw new Error(
-        `MAP ${mapNomor} sudah jadi SO dan diinputkan ke Komitmen Kirim nomor ${dupSo.pjwd_pjw_nomor}.`,
-      );
-    return;
-  }
-
-  // ── 3. Penawaran (1 baris spesifik) — cek langsung, cek SO/SPK
-  // yang lahir dari baris ini, DAN cek MAP yang lahir dari baris ini
-  // (baik MAP itu sendiri sudah masuk komitmen, atau MAP itu sudah
-  // jadi SO juga) ──
-  if (penNomor && pendId) {
-    const [[dupPen]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-       WHERE pjwd_pen_nomor = ? AND pjwd_pen_id = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-      [penNomor, pendId, excludeNomor],
-    );
-    if (dupPen)
-      throw new Error(
-        `Baris Penawaran ${penNomor} (${pendId}) sudah diinputkan ke Komitmen Kirim nomor ${dupPen.pjwd_pjw_nomor}.`,
-      );
-
-    const [[dupSoDirect]] = await db.query(
-      `SELECT d.pjwd_pjw_nomor, COALESCE(so.so_nomor, s.spk_nomor) AS nomor
-       FROM tpenjadwalan_ppic_dtl d
-       LEFT JOIN tsalesorder so ON so.so_nomor = d.pjwd_so_nomor AND so.so_pen_nomor = ? AND so.so_pen_id = ?
-       LEFT JOIN tspk s ON s.spk_nomor = d.pjwd_so_nomor AND s.spk_pen_nomor = ? AND s.spk_pen_id = ? AND s.spk_is_so = 1
-       WHERE (so.so_nomor IS NOT NULL OR s.spk_nomor IS NOT NULL) AND d.pjwd_pjw_nomor <> ?
-       LIMIT 1`,
-      [penNomor, pendId, penNomor, pendId, excludeNomor],
-    );
-    if (dupSoDirect)
-      throw new Error(
-        `Baris Penawaran ${penNomor} (${pendId}) sudah jadi SO (${dupSoDirect.nomor}) dan diinputkan ke Komitmen Kirim nomor ${dupSoDirect.pjwd_pjw_nomor}.`,
-      );
-
-    const [[mapRow]] = await db.query(
-      `SELECT mspk_nomor FROM tmemospk WHERE mspk_pen_nomor = ? AND mspk_pen_id = ? LIMIT 1`,
-      [penNomor, pendId],
-    );
-    if (mapRow) {
-      const [[dupMapFromPen]] = await db.query(
-        `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-         WHERE pjwd_map_nomor = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-        [mapRow.mspk_nomor, excludeNomor],
-      );
-      if (dupMapFromPen)
-        throw new Error(
-          `Baris Penawaran ${penNomor} (${pendId}) sudah jadi MAP (${mapRow.mspk_nomor}) dan diinputkan ke Komitmen Kirim nomor ${dupMapFromPen.pjwd_pjw_nomor}.`,
-        );
-
-      const [[dupSoFromMap]] = await db.query(
-        `SELECT d.pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl d
-         INNER JOIN tsalesorder so ON so.so_nomor = d.pjwd_so_nomor
-         WHERE so.so_memo = ? AND d.pjwd_pjw_nomor <> ? LIMIT 1`,
-        [mapRow.mspk_nomor, excludeNomor],
-      );
-      if (dupSoFromMap)
-        throw new Error(
-          `Baris Penawaran ${penNomor} (${pendId}) sudah jadi MAP lalu SO, dan diinputkan ke Komitmen Kirim nomor ${dupSoFromMap.pjwd_pjw_nomor}.`,
-        );
-    }
-    return;
-  }
-
-  // ── 4. MH — cek langsung, DAN telusuri SEMUA baris Penawaran yang
-  // lahir dari MH ini (bisa lebih dari 1), untuk masing-masing cek
-  // rantai yang sama seperti poin 3 ──
-  if (mhNomor) {
-    const [[dupMh]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-       WHERE pjwd_mh_nomor = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-      [mhNomor, excludeNomor],
-    );
-    if (dupMh)
-      throw new Error(
-        `MH ${mhNomor} sudah diinputkan ke Komitmen Kirim nomor ${dupMh.pjwd_pjw_nomor}.`,
-      );
-
-    const [penRows] = await db.query(
-      `SELECT pend_pen_nomor, pend_id FROM tpenawaran_dtl WHERE pend_minta = ?`,
-      [mhNomor],
-    );
-    for (const r of penRows) {
-      try {
-        await assertNotDuplicateInChain(
-          { penNomor: r.pend_pen_nomor, pendId: r.pend_id },
-          excludeNomor,
-        );
-      } catch (err) {
-        throw new Error(`MH ${mhNomor}: ${err.message}`);
-      }
-    }
-  }
 };
 
 // ── Info 1 SO (tambah manual) ── (tidak berubah)
@@ -278,8 +132,6 @@ const getSoInfo = async (soNomor, divisi = "", excludeNomor = "") => {
     );
   }
 
-  await assertNotDuplicateInChain({ soNomor }, excludeNomor);
-
   return row;
 };
 
@@ -302,12 +154,8 @@ const searchMapKandidat = async (
     FROM tmemospk
     WHERE mspk_aktif = 'Y' AND mspk_close = 0
       AND mspk_dateline BETWEEN ? AND ?
-      AND mspk_nomor NOT IN (
-        SELECT pjwd_map_nomor FROM tpenjadwalan_ppic_dtl
-        WHERE pjwd_map_nomor IS NOT NULL AND pjwd_pjw_nomor <> ?
-      )
   `;
-  const params = [startDate, endDate, excludeNomor];
+  const params = [startDate, endDate];
 
   if (divisi && divisi !== "0") {
     query += ` AND mspk_divisi = ?`;
@@ -341,8 +189,6 @@ const getMapInfo = async (mapNomor, divisi = "", excludeNomor = "") => {
     );
   }
 
-  await assertNotDuplicateInChain({ mapNomor }, excludeNomor);
-
   return row;
 };
 
@@ -369,8 +215,6 @@ const getMhInfo = async (mhNomor, divisi = "", excludeNomor = "") => {
       `MH ${mhNomor} bukan divisi yang sesuai dengan Cabang terpilih (Divisi MH: ${row.Divisi}).`,
     );
   }
-
-  await assertNotDuplicateInChain({ mhNomor }, excludeNomor);
 
   return row;
 };
@@ -438,8 +282,6 @@ const getPenawaranItemInfo = async (
       `Penawaran ${penNomor} bukan divisi yang sesuai dengan Cabang terpilih (Divisi: ${row.Divisi}).`,
     );
   }
-
-  await assertNotDuplicateInChain({ penNomor, pendId }, excludeNomor);
 
   return row;
 };
@@ -860,32 +702,6 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     throw new Error("Baris manual harus punya Nama.");
   }
 
-  // ⬅ BARU: gate defensif — cek ulang duplikasi lintas-periode di sini
-  // juga (bukan cuma di getSoInfo/getMapInfo), jaga-jaga kalau ada
-  // race condition antar 2 user yang input bersamaan.
-  if (SoNomor) {
-    await assertNotDuplicateInChain({ soNomor: SoNomor }, pjwNomor);
-  } else if (MapNomor) {
-    await assertNotDuplicateInChain({ mapNomor: MapNomor }, pjwNomor);
-  } else if (MhNomor) {
-    await assertNotDuplicateInChain({ mhNomor: MhNomor }, pjwNomor);
-  } else if (PenNomor && PenId) {
-    await assertNotDuplicateInChain(
-      { penNomor: PenNomor, pendId: PenId },
-      pjwNomor,
-    );
-  } else if (NomorPraOrder) {
-    const [[dup]] = await db.query(
-      `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl
-     WHERE pjwd_pro_nomor = ? AND pjwd_pjw_nomor <> ? LIMIT 1`,
-      [NomorPraOrder, pjwNomor],
-    );
-    if (dup)
-      throw new Error(
-        `${NomorPraOrder} sudah diinputkan ke Komitmen Kirim nomor ${dup.pjwd_pjw_nomor}.`,
-      );
-  }
-
   const rencanaVal = Number(Rencana) || 0;
 
   // Ambil cabang periode untuk menentukan batas kapasitas mingguan
@@ -1039,7 +855,7 @@ const checkTargetPeriod = async (pjwdId, tanggalBaru) => {
     return { needMove: false };
   }
 
-  const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR"; // ⬅ BARU
+  const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR";
 
   const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
   const [[target]] = await db.query(
@@ -1049,22 +865,9 @@ const checkTargetPeriod = async (pjwdId, tanggalBaru) => {
     [row.pjw_cab, tanggalBaru],
   );
 
-  const key = row.pjwd_so_nomor || row.pjwd_pro_nomor || row.pjwd_map_nomor;
-  if (target && key) {
-    const [[dup]] = await db.query(
-      `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
-       WHERE pjwd_pjw_nomor = ? AND (pjwd_so_nomor = ? OR pjwd_pro_nomor = ? OR pjwd_map_nomor = ?)`,
-      [target.pjw_nomor, key, key, key],
-    );
-    if (dup)
-      throw new Error(
-        `${key} sudah ada di periode ${target.pjw_nomor}. Tidak bisa dipindah otomatis.`,
-      );
-  }
-
   return {
     needMove: true,
-    arah, // ⬅ BARU — "MAJU" | "MUNDUR"
+    arah,
     willCreateNew: !target,
     targetNomor: target ? target.pjw_nomor : null,
     targetTgl1: tgl1,
@@ -1128,17 +931,6 @@ const moveDetailRowToPeriod = async (
 
     if (target) {
       targetNomor = target.pjw_nomor;
-      if (key) {
-        const [[dup]] = await conn.query(
-          `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
-           WHERE pjwd_pjw_nomor = ? AND (pjwd_so_nomor = ? OR pjwd_pro_nomor = ? OR pjwd_map_nomor = ?)`,
-          [targetNomor, key, key, key],
-        );
-        if (dup)
-          throw new Error(
-            `${key} sudah ada di periode ${targetNomor}. Tidak bisa dipindah otomatis.`,
-          );
-      }
     } else {
       targetNomor = await generateNomor(new Date(tgl1).getFullYear());
       await conn.query(
