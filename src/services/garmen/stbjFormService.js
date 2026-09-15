@@ -642,6 +642,49 @@ const searchPacking = async (q = "") => {
   return rows;
 };
 
+// ─────────────────────────────────────────────────────────
+// LIST STBJ dalam rentang tanggal — untuk AI Chat / laporan
+// ringkas. Flatten dari header + detail, 1 baris per SPK per
+// STBJ (bukan per size), supaya ringkas dibaca.
+// ─────────────────────────────────────────────────────────
+const getListByPeriode = async (
+  startDate,
+  endDate,
+  namaSpk = "",
+  limit = 30,
+) => {
+  const params = [startDate, endDate];
+  let whereNama = "";
+  if (namaSpk) {
+    whereNama = "AND (s.spk_nama LIKE ? OR d.stbjd_spk_nomor LIKE ?)";
+    params.push(`%${namaSpk}%`, `%${namaSpk}%`);
+  }
+  params.push(limit);
+
+  const [rows] = await db.query(
+    `SELECT
+       h.stbj_nomor AS NomorStbj,
+       DATE_FORMAT(h.stbj_tanggal, '%d-%m-%Y') AS Tanggal,
+       g.gdg_nama AS Gudang,
+       d.stbjd_spk_nomor AS SpkNomor,
+       IFNULL(s.spk_nama, i.spgi_nama) AS NamaSpk,
+       SUM(d.stbjd_jumlah) AS TotalJumlahJadi,
+       SUM(d.stbjd_koli) AS TotalKoli
+     FROM tstbj_hdr h
+     INNER JOIN tstbj_dtl d ON d.stbjd_stbj_nomor = h.stbj_nomor
+     LEFT JOIN tgudang g ON g.gdg_kode = h.stbj_gdg_kode
+     LEFT JOIN tspk s ON s.spk_nomor = d.stbjd_spk_nomor
+     LEFT JOIN tspk_gudangitem i ON i.spgi_spk = d.stbjd_spk_nomor
+     WHERE h.stbj_tanggal >= ? AND h.stbj_tanggal <= ?
+       ${whereNama}
+     GROUP BY h.stbj_nomor, h.stbj_tanggal, g.gdg_nama, d.stbjd_spk_nomor, NamaSpk
+     ORDER BY h.stbj_tanggal DESC
+     LIMIT ?`,
+    params,
+  );
+  return rows;
+};
+
 module.exports = {
   generateNomor,
   getById,
@@ -655,4 +698,5 @@ module.exports = {
   save,
   getDataCetak,
   searchPacking,
+  getListByPeriode,
 };

@@ -1230,6 +1230,64 @@ const tools = [
       };
     },
   },
+  {
+    definition: {
+      name: "get_daftar_stbj",
+      description:
+        "Daftar STBJ (Surat Terima Barang Jadi — bukti SPK sudah diterima gudang barang jadi/sudah 'jadi') dalam rentang tanggal tertentu, per SPK. " +
+        "Pakai ini kalau user tanya 'SPK apa saja yang sudah STBJ', 'daftar STBJ minggu ini/bulan ini', atau minta rincian nama SPK yang sudah STBJ (bukan cuma jumlahnya). " +
+        "Filter tanggal berdasarkan TANGGAL STBJ DIBUAT (stbj_tanggal), bukan tanggal SPK atau dateline.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD), berdasarkan tanggal STBJ. HANYA isi kalau user sebutkan rentang eksplisit. Kalau tidak, biarkan kosong (default 30 hari terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau eksplisit.",
+          },
+          namaSpk: {
+            type: "string",
+            description: "Opsional. Filter nama/nomor SPK (partial match).",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah baris maksimal, default 30",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const stbjService = require("../garmen/stbjFormService"); // ⬅ sesuaikan path
+
+      const today = new Date();
+      const startDefault = new Date(today);
+      startDefault.setDate(startDefault.getDate() - 30);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+
+      const startDate = input.startDate || toISO(startDefault);
+      const endDate = input.endDate || toISO(today);
+      const limit = input.limit || 30;
+
+      const rows = await stbjService.getListByPeriode(
+        startDate,
+        endDate,
+        input.namaSpk || "",
+        limit,
+      );
+
+      return {
+        periodeDicek: `${startDate} s/d ${endDate} (berdasarkan tanggal STBJ)`,
+        namaSpkDicari: input.namaSpk || null,
+        jumlahBarisDitemukan: rows.length,
+        daftarStbj: rows,
+      };
+    },
+  },
 ];
 
 const getToolDefinitions = () => tools.map((t) => t.definition);
