@@ -7,7 +7,10 @@ const getBrowse = async (query) => {
   const isTampilkanKosong = tampilkanKosong === "true";
 
   let sql = `
-    SELECT X.*, IFNULL(mk.MkbBelumRealisasi, 0) AS MkbBelumRealisasi
+    SELECT X.*, 
+      IFNULL(mk.MkbBelumRealisasi, 0) AS MkbBelumRealisasi,
+      IFNULL(po.PoBelumBpb, 0) AS PoBelumBpb,
+      IFNULL(bp.BahanBelumPo, 0) AS BahanBelumPo
     FROM (
       SELECT 
         LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) AS Kode,
@@ -62,6 +65,43 @@ const getBrowse = async (query) => {
       LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
       GROUP BY d.mkbd_bhn_kode
     ) mk ON mk.KodeBahan = X.Kode
+    LEFT JOIN (
+      -- PO yang belum ada BPB (masih open), per kode bahan.
+      -- Per baris tpo_dtl: sisa = Qty PO - total Qty BPB (tbpb_dtl2)
+      -- yang sudah dibuat atas PO+nourut itu. GREATEST(...,0) biar
+      -- BPB yang lebih (over-receive) di 1 baris PO gak nutupin sisa
+      -- open PO di baris lain. PO yang statusnya DICLOSE (po_close=9,
+      -- dibatalkan) dikeluarkan — itu bukan "masih open", itu batal.
+      SELECT po.pod_bhn_kode AS KodeBahan,
+        SUM(GREATEST(po.pod_jumlah - IFNULL(bpb.TotalTerima, 0), 0)) AS PoBelumBpb
+      FROM tpo_dtl po
+      INNER JOIN tpo_hdr ph ON ph.po_nomor = po.pod_po_nomor
+      LEFT JOIN (
+        SELECT bpbd2_po_nomor, bpbd2_nourut, SUM(bpbd2_jumlah) AS TotalTerima
+        FROM tbpb_dtl2
+        GROUP BY bpbd2_po_nomor, bpbd2_nourut
+      ) bpb ON bpb.bpbd2_po_nomor = po.pod_po_nomor AND bpb.bpbd2_nourut = po.pod_nourut
+      WHERE ph.po_close <> 9
+      GROUP BY po.pod_bhn_kode
+    ) po ON po.KodeBahan = X.Kode
+    LEFT JOIN (
+      -- Bahan belum PO: kekurangan MKB (Butuh - Ready) yang sama
+      -- sekali belum punya baris PO yang masih berlaku. PO yang
+      -- sudah DICLOSE (po_close=9, dibatalkan) dianggap tidak pernah
+      -- ada — bahan itu tetap terhitung "belum PO".
+      SELECT d.mkbd_bhn_kode AS KodeBahan,
+        SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs, 0)) AS BahanBelumPo
+      FROM tmkb_dtl d
+      LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+      WHERE NOT EXISTS (
+        SELECT 1 FROM tpo_dtl i
+        INNER JOIN tpo_hdr ih ON ih.po_nomor = i.pod_po_nomor
+        WHERE i.pod_mkb_nomor = h.mkb_nomor 
+          AND i.pod_bhn_kode = d.mkbd_bhn_kode
+          AND ih.po_close <> 9
+      )
+      GROUP BY d.mkbd_bhn_kode
+    ) bp ON bp.KodeBahan = X.Kode
   `;
   if (!isTampilkanKosong) {
     sql += ` WHERE X.Stok > 0 OR X.Stok < -0.1 `;
