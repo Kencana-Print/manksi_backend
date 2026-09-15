@@ -2828,18 +2828,17 @@ const getSpkBelumMkbCount = async (user) => {
 
   const sql = `
     SELECT COUNT(*) AS Total
-    FROM tspk s
-    WHERE s.spk_aktif = 'Y'
-      AND s.spk_close = 0
-      AND s.spk_cmo <> ''
-      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
-      AND s.spk_divisi IN (3, 4, 6)
-      AND s.spk_nomor NOT IN (
+    FROM tsalesorder s
+    WHERE s.so_aktif = 'Y'
+      AND s.so_cmo <> ''
+      AND s.so_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND LEFT(s.so_divisi, 1) IN ('3', '4', '6')
+      AND s.so_nomor NOT IN (
         SELECT h.MKB_SPK_NOMOR
         FROM tmkb_hdr h
         WHERE h.MKB_SPK_NOMOR <> ''
       )
-      AND s.spk_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      AND s.so_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
   `;
 
   const [rows] = await db.query(sql);
@@ -3054,8 +3053,10 @@ const getPipelineSpkProduksi = async (user, startDate, endDate) => {
   const sql = `
     SELECT
       COUNT(DISTINCT s.spk_nomor) AS TotalMasuk,
+      SUM(s.spk_jumlah) AS TotalQtyOrder,
       COUNT(DISTINCT CASE WHEN EXISTS (
-        SELECT 1 FROM tmkb_hdr k WHERE k.MKB_SPK_NOMOR = s.spk_nomor
+        SELECT 1 FROM tmkb_hdr k
+        WHERE k.MKB_SPK_NOMOR = IFNULL(NULLIF(s.spk_so_ref, ''), s.spk_nomor)
       ) THEN s.spk_nomor END) AS AdaMkb,
       COUNT(DISTINCT CASE WHEN EXISTS (
         SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = s.spk_nomor
@@ -3069,18 +3070,98 @@ const getPipelineSpkProduksi = async (user, startDate, endDate) => {
       COUNT(DISTINCT CASE WHEN EXISTS (
         SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
       ) THEN s.spk_nomor END) AS AdaStbj,
+      SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
+      ) THEN s.spk_jumlah ELSE 0 END) AS TotalQtyJadi,
       COUNT(DISTINCT CASE WHEN EXISTS (
         SELECT 1 FROM tsj_dtl d WHERE d.sjd_spk_nomor = s.spk_nomor
-      ) THEN s.spk_nomor END) AS AdaKirim
+      ) THEN s.spk_nomor END) AS AdaKirim,
+      SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM tsj_dtl d WHERE d.sjd_spk_nomor = s.spk_nomor
+      ) THEN s.spk_jumlah ELSE 0 END) AS TotalQtyKirim
     FROM tspk s
     WHERE s.spk_aktif = 'Y'
       AND s.spk_divisi IN (3, 4, 6)
       AND s.spk_dateline >= ? AND s.spk_dateline <= ?
+      AND s.spk_close = 0
+      AND s.spk_cmo <> ''
+      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
       ${whereExtra}
   `;
 
   const [rows] = await db.query(sql, params);
   return rows[0] || {};
+};
+
+const getSpkSudahKirim = async (
+  user,
+  startDate,
+  endDate,
+  namaSpk,
+  limit = 30,
+) => {
+  const params = [startDate, endDate];
+  let whereNama = "";
+  if (namaSpk) {
+    whereNama = "AND s.spk_nama LIKE ?";
+    params.push(`%${namaSpk}%`);
+  }
+  params.push(limit);
+
+  const sql = `
+    SELECT
+      d.SJD_SPK_Nomor AS Nomor,
+      s.spk_nama AS Nama,
+      DATE_FORMAT(MIN(h.SJ_Tanggal), '%d-%m-%Y') AS TanggalKirimPertama,
+      DATE_FORMAT(MAX(h.SJ_Tanggal), '%d-%m-%Y') AS TanggalKirimTerakhir,
+      COUNT(DISTINCT h.SJ_Nomor) AS JumlahSj,
+      SUM(d.SJD_Jumlah) AS TotalJumlahDikirim
+    FROM tsj_dtl d
+    INNER JOIN tsj_hdr h ON h.SJ_Nomor = d.SJD_SJ_Nomor
+    LEFT JOIN tspk s ON s.spk_nomor = d.SJD_SPK_Nomor
+    WHERE DATE(h.SJ_Tanggal) >= ? AND DATE(h.SJ_Tanggal) <= ?
+      ${whereNama}
+    GROUP BY d.SJD_SPK_Nomor, s.spk_nama
+    ORDER BY MAX(h.SJ_Tanggal) DESC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
+const getSpkDibuatSudahKirim = async (
+  startDate,
+  endDate,
+  namaSpk,
+  limit = 30,
+) => {
+  const params = [startDate, endDate];
+  let whereNama = "";
+  if (namaSpk) {
+    whereNama = "AND s.spk_nama LIKE ?";
+    params.push(`%${namaSpk}%`);
+  }
+  params.push(limit);
+
+  const sql = `
+    SELECT
+      s.spk_nomor AS Nomor,
+      s.spk_nama AS Nama,
+      DATE_FORMAT(s.spk_tanggal, '%d-%m-%Y') AS TanggalDibuat,
+      DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
+      DATE_FORMAT(MIN(h.SJ_Tanggal), '%d-%m-%Y') AS TanggalKirimPertama,
+      SUM(d.SJD_Jumlah) AS TotalJumlahDikirim
+    FROM tspk s
+    INNER JOIN tsj_dtl d ON d.SJD_SPK_Nomor = s.spk_nomor
+    INNER JOIN tsj_hdr h ON h.SJ_Nomor = d.SJD_SJ_Nomor
+    WHERE s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      ${whereNama}
+    GROUP BY s.spk_nomor, s.spk_nama, s.spk_tanggal, s.spk_dateline
+    ORDER BY s.spk_tanggal DESC
+    LIMIT ?
+  `;
+  const [rows] = await db.query(sql, params);
+  return rows;
 };
 
 // ── Bahan Kurang — base query SEKARANG termasuk detail per bahan
@@ -3181,22 +3262,21 @@ const getSpkBelumMkbListPaged = async (user, limit = 20, offset = 0) => {
 
   const sql = `
     SELECT
-      s.spk_nomor AS Nomor,
-      s.spk_nama AS Nama,
-      DATE_FORMAT(s.spk_tanggal, '%d-%m-%Y') AS Tanggal,
-      DATE_FORMAT(s.spk_dateline, '%d-%m-%Y') AS Dateline,
-      DATEDIFF(s.spk_dateline, CURDATE()) AS SisaHari
-    FROM tspk s
-    WHERE s.spk_aktif = 'Y'
-      AND s.spk_close = 0
-      AND s.spk_cmo <> ''
-      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
-      AND s.spk_divisi IN (3, 4, 6)
-      AND s.spk_nomor NOT IN (
+      s.so_nomor AS Nomor,
+      s.so_nama AS Nama,
+      DATE_FORMAT(s.so_tanggal, '%d-%m-%Y') AS Tanggal,
+      DATE_FORMAT(s.so_dateline, '%d-%m-%Y') AS Dateline,
+      DATEDIFF(s.so_dateline, CURDATE()) AS SisaHari
+    FROM tsalesorder s
+    WHERE s.so_aktif = 'Y'
+      AND s.so_cmo <> ''
+      AND s.so_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND LEFT(s.so_divisi, 1) IN ('3', '4', '6')
+      AND s.so_nomor NOT IN (
         SELECT h.MKB_SPK_NOMOR FROM tmkb_hdr h WHERE h.MKB_SPK_NOMOR <> ''
       )
-      AND s.spk_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
-    ORDER BY s.spk_dateline ASC
+      AND s.so_tanggal >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+    ORDER BY s.so_dateline ASC
     LIMIT ? OFFSET ?
   `;
   const [rows] = await db.query(sql, [limit, offset]);
@@ -4252,6 +4332,8 @@ module.exports = {
   getTrendSpk7Hari,
   getApprovalPendingCount,
   getPipelineSpkProduksi,
+  getSpkSudahKirim,
+  getSpkDibuatSudahKirim,
   getBahanKurangCount,
   getBahanKurangList,
   getSpkBelumMkbListPaged,

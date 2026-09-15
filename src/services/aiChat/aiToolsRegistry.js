@@ -787,7 +787,11 @@ const tools = [
     definition: {
       name: "get_pipeline_spk_produksi",
       description:
-        "Funnel SPK masuk ke tahap-tahap produksi (SPK Masuk → Ada MKB → Realisasi Minta → LHK Cutting → STBJ → Kirim), difilter berdasarkan rentang tanggal dateline.",
+        "Funnel SPK masuk ke tahap-tahap produksi (SPK Masuk → Ada MKB → Realisasi Minta → LHK Cutting → STBJ → Kirim), difilter berdasarkan rentang tanggal dateline. " +
+        "Setiap tahap juga punya angka QTY/PCS terkait, bukan cuma jumlah SPK: " +
+        "TotalMasuk = jumlah SPK yang masuk kriteria, TotalQtyOrder = total qty/pcs dari SEMUA SPK yang masuk (SUM spk_jumlah), " +
+        "TotalQtyJadi = total qty/pcs dari SPK yang sudah STBJ, TotalQtyKirim = total qty/pcs dari SPK yang sudah dikirim. " +
+        "Kalau user tanya 'total order dalam pcs' atau 'berapa qty-nya', pakai field TotalQtyOrder — JANGAN bilang data qty tidak tersedia.",
       input_schema: {
         type: "object",
         properties: {
@@ -974,6 +978,255 @@ const tools = [
         sampleDetailTerbaru: sampleTerbaru,
         catatan:
           "ringkasanTahapan sudah mencakup SEMUA baris (bukan sebagian) — pakai ini untuk menjawab progress. sampleDetailTerbaru cuma 10 baris paling akhir sebagai contoh detail, bukan data lengkap.",
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_spk_sudah_kirim",
+      description:
+        "Daftar SPK yang SUDAH PERNAH dikirim (ada Surat Jalan/SJ), lengkap dengan tanggal kirim pertama & terakhir, jumlah SJ, dan total qty yang dikirim. Filter tanggal di sini berdasarkan TANGGAL SURAT JALAN (SJ_Tanggal), BUKAN tanggal SPK/dateline. Pakai ini kalau user tanya 'SPK apa saja yang sudah kirim', 'daftar SPK yang sudah dikirim minggu ini/bulan ini', dsb.",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD), berdasarkan tanggal Surat Jalan. HANYA isi kalau user sebutkan rentang eksplisit (misal 'minggu ini', 'bulan ini'). Kalau tidak, biarkan kosong (default 30 hari terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD), berdasarkan tanggal Surat Jalan. HANYA isi kalau eksplisit.",
+          },
+          namaSpk: {
+            type: "string",
+            description: "Opsional. Filter nama SPK/produk (partial match).",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah SPK maksimal ditampilkan, default 30",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const today = new Date();
+      const startDefault = new Date(today);
+      startDefault.setDate(startDefault.getDate() - 30);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+
+      const startDate = input.startDate || toISO(startDefault);
+      const endDate = input.endDate || toISO(today);
+      const limit = input.limit || 30;
+
+      const db = require("../../config/database");
+      const params = [startDate, endDate];
+      let whereNama = "";
+      if (input.namaSpk) {
+        whereNama = "AND s.spk_nama LIKE ?";
+        params.push(`%${input.namaSpk}%`);
+      }
+      params.push(limit);
+
+      const [rows] = await db.query(
+        `SELECT
+         d.SJD_SPK_Nomor AS Nomor,
+         s.spk_nama AS Nama,
+         DATE_FORMAT(MIN(h.SJ_Tanggal), '%d-%m-%Y') AS TanggalKirimPertama,
+         DATE_FORMAT(MAX(h.SJ_Tanggal), '%d-%m-%Y') AS TanggalKirimTerakhir,
+         COUNT(DISTINCT h.SJ_Nomor) AS JumlahSj,
+         SUM(d.SJD_Jumlah) AS TotalJumlahDikirim
+       FROM tsj_dtl d
+       INNER JOIN tsj_hdr h ON h.SJ_Nomor = d.SJD_SJ_Nomor
+       LEFT JOIN tspk s ON s.spk_nomor = d.SJD_SPK_Nomor
+       WHERE DATE(h.SJ_Tanggal) >= ? AND DATE(h.SJ_Tanggal) <= ?
+         ${whereNama}
+       GROUP BY d.SJD_SPK_Nomor, s.spk_nama
+       ORDER BY MAX(h.SJ_Tanggal) DESC
+       LIMIT ?`,
+        params,
+      );
+
+      return {
+        periodeDicek: `${startDate} s/d ${endDate} (berdasarkan tanggal Surat Jalan)`,
+        namaSpkDicari: input.namaSpk || null,
+        jumlahSpkDitemukan: rows.length,
+        spkList: rows,
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_spk_dibuat_dan_kirim",
+      description:
+        "Cari SPK yang DIBUAT dalam rentang tanggal tertentu (berdasarkan spk_tanggal) DAN SUDAH PERNAH dikirim (ada Surat Jalan), kapan pun pengirimannya terjadi. Pakai ini kalau user menggabungkan dua kondisi sekaligus, misal 'SPK yang dibuat minggu ini dan sudah kirim', 'SPK bulan ini yang statusnya sudah terkirim'. Beda dari get_spk_sudah_kirim (yang filter tanggalnya berdasarkan tanggal SURAT JALAN, bukan tanggal SPK dibuat) dan get_pipeline_spk_produksi (yang filter berdasarkan DEADLINE, bukan tanggal dibuat).",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD), berdasarkan tanggal SPK DIBUAT (spk_tanggal). HANYA isi kalau user sebutkan rentang eksplisit (misal 'minggu ini', 'bulan ini'). Kalau tidak, biarkan kosong (default 30 hari terakhir).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD), berdasarkan tanggal SPK dibuat. HANYA isi kalau eksplisit.",
+          },
+          namaSpk: {
+            type: "string",
+            description: "Opsional. Filter nama SPK/produk (partial match).",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah SPK maksimal ditampilkan, default 30",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const today = new Date();
+      const startDefault = new Date(today);
+      startDefault.setDate(startDefault.getDate() - 30);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+
+      const startDate = input.startDate || toISO(startDefault);
+      const endDate = input.endDate || toISO(today);
+      const limit = input.limit || 30;
+
+      const rows = await dashboardService.getSpkDibuatSudahKirim(
+        startDate,
+        endDate,
+        input.namaSpk,
+        limit,
+      );
+
+      return {
+        periodeDicek: `${startDate} s/d ${endDate} (berdasarkan tanggal SPK dibuat)`,
+        namaSpkDicari: input.namaSpk || null,
+        jumlahSpkDitemukan: rows.length,
+        spkList: rows,
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_komitmen_kirim",
+      description:
+        "Ringkasan Komitmen Kirim — jadwal SO/Pra Order/MAP yang SUDAH DISEPAKATI Marketing & PPIC untuk dikirim dalam periode mingguan tertentu, per cabang, lengkap dengan realisasi aktualnya sejauh ini. " +
+        "PENTING: ini BEDA dari get_pipeline_spk_produksi/get_spk_sudah_kirim (yang berdasarkan histori SPK aktual apa adanya) — tool ini adalah RENCANA/TARGET kirim mingguan yang sudah disepakati kedua bagian, dibandingkan realisasinya. " +
+        "Pakai tool ini kalau user tanya 'komitmen kirim', 'jadwal kirim minggu ini/minggu depan', atau 'target kirim PPIC'. Default periode kalau tidak disebutkan = minggu berjalan (Senin-Sabtu).",
+      input_schema: {
+        type: "object",
+        properties: {
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai periode (YYYY-MM-DD). HANYA isi kalau user sebutkan minggu/tanggal eksplisit (misal 'minggu depan'). Kalau tidak, biarkan kosong (default minggu berjalan, Senin-Sabtu).",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir periode (YYYY-MM-DD). HANYA isi kalau eksplisit.",
+          },
+          cabang: {
+            type: "string",
+            description:
+              "Opsional. Kode cabang (P01/P02/P04/P05). Kosongkan untuk semua cabang.",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const penjadwalanPpicService = require("../ppic/penjadwalanPpicService"); // ⬅ sesuaikan path
+
+      const toISO = (d) => d.toISOString().substring(0, 10);
+      let { startDate, endDate } = input;
+
+      // Default: minggu berjalan, Senin s/d Sabtu — konsisten dengan
+      // getWeekRange() di formService (siklus mingguan Komitmen Kirim).
+      if (!startDate || !endDate) {
+        const today = new Date();
+        const day = today.getDay();
+        const diffToMonday = day === 0 ? -6 : 1 - day;
+        const monday = new Date(today);
+        monday.setDate(today.getDate() + diffToMonday);
+        const saturday = new Date(monday);
+        saturday.setDate(monday.getDate() + 5);
+        startDate = startDate || toISO(monday);
+        endDate = endDate || toISO(saturday);
+      }
+
+      const periods = await penjadwalanPpicService.getBrowse(
+        startDate,
+        endDate,
+        input.cabang || "",
+      );
+
+      if (periods.length === 0) {
+        return {
+          periodeDicek: `${startDate} s/d ${endDate}`,
+          cabangDicari: input.cabang || "SEMUA",
+          jumlahPeriode: 0,
+          catatan: "Belum ada Komitmen Kirim yang dibuat untuk periode ini.",
+        };
+      }
+
+      const perPeriode = await Promise.all(
+        periods.map(async (p) => {
+          const rows = await penjadwalanPpicService.getDetail(p.Nomor);
+          const totalRencana = rows.reduce(
+            (s, r) => s + (Number(r.Rencana) || 0),
+            0,
+          );
+          const totalRealisasi = rows.reduce(
+            (s, r) => s + (Number(r.Realisasi) || 0),
+            0,
+          );
+          const totalPesanAwal = rows.reduce(
+            (s, r) => s + (Number(r.Pesan) || 0),
+            0,
+          );
+          const belumKesepakatan = rows.filter((r) => !r.Kesepakatan).length;
+
+          return {
+            nomor: p.Nomor,
+            cabang: p.Cabang,
+            periode: `${p.TglAwal} s/d ${p.TglAkhir}`,
+            status: p.Close === "Y" ? "CLOSE" : "OPEN",
+            keterangan: p.Keterangan || undefined,
+            jumlahSO: p.JumlahSO,
+            totalRencanaKirim: totalRencana,
+            totalRealisasiKirim: totalRealisasi,
+            totalPesanAwal,
+            pctTercapai: totalRencana
+              ? Math.round((totalRealisasi / totalRencana) * 100)
+              : 0,
+            jumlahBarisBelumAdaTanggalKesepakatan: belumKesepakatan,
+          };
+        }),
+      );
+
+      const grandRencana = perPeriode.reduce(
+        (s, d) => s + d.totalRencanaKirim,
+        0,
+      );
+      const grandRealisasi = perPeriode.reduce(
+        (s, d) => s + d.totalRealisasiKirim,
+        0,
+      );
+
+      return {
+        periodeDicek: `${startDate} s/d ${endDate}`,
+        cabangDicari: input.cabang || "SEMUA",
+        jumlahPeriode: periods.length,
+        totalRencanaKirimSemuaPeriode: grandRencana,
+        totalRealisasiKirimSemuaPeriode: grandRealisasi,
+        pctTercapaiKeseluruhan: grandRencana
+          ? Math.round((grandRealisasi / grandRencana) * 100)
+          : 0,
+        perPeriode,
       };
     },
   },
