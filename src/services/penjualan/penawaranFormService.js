@@ -108,6 +108,30 @@ const getById = async (nomor) => {
 const save = async (data, user, isNewMode) => {
   const userKode = user.kode;
 
+  // BARU: validasi wajib di backend juga — jangan cuma andalkan frontend
+  if (!data.PerushKode || !String(data.PerushKode).trim()) {
+    throw new Error("Perusahaan wajib diisi.");
+  }
+  if (!data.CustKode || !String(data.CustKode).trim()) {
+    throw new Error("Customer wajib diisi.");
+  }
+  if (!data.SalesKode || !String(data.SalesKode).trim()) {
+    throw new Error("Sales wajib diisi.");
+  }
+  const validDetailsCheck = (data.Details || []).filter(
+    (d) => d.NamaBarang && String(d.NamaBarang).trim() !== "",
+  );
+  if (validDetailsCheck.length === 0) {
+    throw new Error("Minimal harus ada 1 detail barang.");
+  }
+
+  const zeroQtyRow = validDetailsCheck.find(
+    (d) => !d.Spk && Number(d.Qty || 0) <= 0,
+  );
+  if (zeroQtyRow) {
+    throw new Error(`Qty untuk "${zeroQtyRow.NamaBarang}" harus lebih dari 0.`);
+  }
+
   if (data.DigitalSign === "Y") {
     const divisiStr = String(data.Divisi).charAt(0);
     const punyaHakCmo =
@@ -348,11 +372,8 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
   if (mh.mh_status === "CANCEL")
     throw new Error("No. Permintaan tsb telah dicancel.");
 
-  // -----------------------------------------------------------------
-  // HAPUS ATAU KOMENTARI 2 BARIS DI BAWAH INI AGAR HARGA 0 DIPERBOLEHKAN
-  // -----------------------------------------------------------------
-  // if (Number(mh.mh_harga_kalkulasi) === 0)
-  //   throw new Error("Belum ada kalkulasi harga untuk No. Permintaan ini.");
+  if (Number(mh.mh_harga_kalkulasi) === 0)
+    throw new Error("Belum ada kalkulasi harga untuk No. Permintaan ini.");
 
   return {
     minta: mh.mh_nomor,
@@ -374,6 +395,14 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
 const processImage = async (tempFilePath, cabang) => {
   if (!fs.existsSync(tempFilePath)) {
     throw new Error("File sumber sementara tidak ditemukan.");
+  }
+
+  // BARU: validasi ukuran juga di backend — jangan cuma andalkan
+  // pengecekan client-side yang bisa dilewati
+  const stats = fs.statSync(tempFilePath);
+  if (stats.size > 1000000) {
+    fs.unlinkSync(tempFilePath);
+    throw new Error("Ukuran gambar tidak boleh > 1 MB.");
   }
 
   // Generate nama unik karena 1 penawaran bisa punya banyak gambar di detail
