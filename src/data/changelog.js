@@ -12,6 +12,10 @@ const changelog = [
         type: "added",
         text: "Release MANKSI AI untuk membantu mendapatkan data terkait Penjualan, Piutang, dan Status Produksi. Sementara hanya tersedia untuk user Head Office.",
       },
+      {
+        type: "added",
+        text: "Fitur baru : Tunda Jadwal Kirim, sistem akan otomatis membuatkan jadwal kirim dengan referensi nomor jadwal kirim yang ditunda di keesokan harinya.",
+      },
     ],
   },
   {
