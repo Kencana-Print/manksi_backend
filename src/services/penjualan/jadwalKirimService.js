@@ -312,7 +312,22 @@ const tundaData = async (nomor, alasan, userKode) => {
     await conn.beginTransaction();
 
     const [[header]] = await conn.query(
-      `SELECT * FROM tjadwalkirim WHERE Nomor_Kirim = ? FOR UPDATE`,
+      `SELECT
+         Nomor_Kirim,
+         Gudang,
+         tanggal          AS Tanggal,
+         spk_nomor,
+         jumlah           AS Jumlah,
+         koli             AS Koli,
+         realisasi        AS Realisasi,
+         koli_realisasi   AS koli_Realisasi,
+         jk_plan_nomor,
+         jk_plan_tanggal,
+         jk_plan_jumlah,
+         jk_status
+       FROM tjadwalkirim
+       WHERE Nomor_Kirim = ?
+       FOR UPDATE`,
       [nomor],
     );
     if (!header) throw new Error("Data tidak ditemukan.");
@@ -344,16 +359,12 @@ const tundaData = async (nomor, alasan, userKode) => {
       tglBaru.getMonth() + 1,
     ).padStart(2, "0")}-${String(tglBaru.getDate()).padStart(2, "0")}`;
 
-    // Reuse generator resmi — konsisten dengan format Jadwal Kirim
-    // normal (KRM.YYMM.XXXX)
     const nomorBaru = await jadwalKirimFormService.generateNomor(tglBaruStr);
 
-    // Insert header baru (clone) — kolom persis sama seperti
-    // jadwalKirimFormService.save()
     await conn.query(
       `INSERT INTO tjadwalkirim
-         (Nomor_Kirim, Gudang, Tanggal, spk_nomor, Jumlah, Koli,
-          Realisasi, koli_Realisasi, date_Create, usr_Create,
+         (Nomor_Kirim, Gudang, tanggal, spk_nomor, jumlah, koli,
+          realisasi, koli_realisasi, date_Create, usr_Create,
           jk_plan_nomor, jk_plan_tanggal, jk_plan_jumlah,
           jk_status, jk_tunda_dari_nomor)
        VALUES (?, ?, ?, ?, ?, ?, 0, 0, NOW(), ?, ?, ?, ?, 'OPEN', ?)`,
@@ -372,9 +383,6 @@ const tundaData = async (nomor, alasan, userKode) => {
       ],
     );
 
-    // Clone detail — reset kolom yang terkait eksekusi pengiriman
-    // (belum pernah terjadi untuk jadwal baru ini), sisanya (kota,
-    // uraian, jumlah, koli, jam ready) dibawa apa adanya
     let urut = 1;
     for (const d of details) {
       await conn.query(
@@ -396,7 +404,6 @@ const tundaData = async (nomor, alasan, userKode) => {
       urut++;
     }
 
-    // Update baris asal → TUNDA
     await conn.query(
       `UPDATE tjadwalkirim SET
          jk_status = 'TUNDA',
