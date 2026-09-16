@@ -53,8 +53,9 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       h.mh_nomor_kalkulasi AS NoKalkulasi, 
       h.mh_ket_kalkulasi AS KeteranganKalkulasi, 
       k.user_create AS KalCreated, 
-      k.user_modified AS KalModified, 
-      h.mh_status AS Status, 
+      k.user_modified AS KalModified,
+      IFNULL(l.kal_nomor,"") AS NoKals,  
+      h.mh_status AS Status,
       DATE_FORMAT(h.mh_apv, '%d-%m-%Y %H:%i:%s') AS Approved, 
       h.mh_apv_usr AS diApvOleh, 
       h.user_create AS usr, 
@@ -76,7 +77,8 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     FROM tmintaharga h 
     LEFT JOIN tdivisi v ON v.kode = h.mh_divisi 
     LEFT JOIN tsales s ON s.sal_kode = h.mh_sal_kode 
-    LEFT JOIN kalkulasi.tkalkulasi2_hdr k ON k.kal_nomor = h.mh_nomor_kalkulasi 
+    LEFT JOIN kalkulasi.tkalkulasi2_hdr k ON k.kal_nomor = h.mh_nomor_kalkulasi
+    LEFT JOIN kalkulasi.tkalkulasi_hdr l ON l.kal_mh_nomor = h.mh_nomor 
     WHERE h.mh_tanggal >= ? AND h.mh_tanggal <= ?
   `;
 

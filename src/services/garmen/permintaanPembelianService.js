@@ -38,13 +38,13 @@ const getBrowse = async (startDate, endDate, jenis, cabang, userBagian) => {
     queryParams.push(jenis);
 
     // Filter khusus SPAREPART untuk Bagian Tertentu (Sesuai Delphi)
-    if (
-      jenis === "SPAREPART" &&
-      (userBagian === "TEKNISI" || userBagian === "IT")
-    ) {
-      query += ` AND h.mb_bagian = ?`;
-      queryParams.push(userBagian);
-    }
+    // if (
+    //   jenis === "SPAREPART" &&
+    //   (userBagian === "TEKNISI" || userBagian === "IT")
+    // ) {
+    //   query += ` AND h.mb_bagian = ?`;
+    //   queryParams.push(userBagian);
+    // }
   }
 
   // Filter Cabang
