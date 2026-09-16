@@ -467,13 +467,13 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   let params = [jenis, kode];
 
   // Replikasi filter sparepart dari searchBarangGarmen
-  if (jenis === "SPAREPART") {
-    if (bagian === "TEKNISI") {
-      whereClause += ` AND b.brg_ktg <> "IT"`;
-    } else if (bagian === "IT") {
-      whereClause += ` AND b.brg_ktg = "IT"`;
-    }
-  }
+  // if (jenis === "SPAREPART") {
+  //   if (bagian === "TEKNISI") {
+  //     whereClause += ` AND b.brg_ktg <> "IT"`;
+  //   } else if (bagian === "IT") {
+  //     whereClause += ` AND b.brg_ktg = "IT"`;
+  //   }
+  // }
 
   // Tentukan tabel stok sesuai jenis
   let stockTable = "tmasterstok_atk";
