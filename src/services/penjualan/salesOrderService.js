@@ -423,6 +423,20 @@ const requestPin = async (nomor, alasan, userKode) => {
     );
   }
 
+  // ⬅ BARU: kalau jenis ini SUDAH punya approval yang di-ACC dan belum
+  // dipakai, JANGAN diajukan ulang — itu bikin dia ke-reset balik
+  // jadi pending padahal udah siap dipakai.
+  const hasApprovedUnused = async (jenis) => {
+    const [rows] = await db.query(
+      `SELECT pin_urut FROM tspk_pin5
+       WHERE pin_trs="SO" AND pin_jenis=? AND pin_nomor=?
+         AND pin_acc="Y" AND pin_dipakai=""
+       ORDER BY pin_urut DESC LIMIT 1`,
+      [jenis, nomor],
+    );
+    return rows.length > 0;
+  };
+
   const insertPinFor = async (jenis) => {
     const [lastPin] = await db.query(
       `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="SO" AND pin_jenis=? AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
@@ -452,16 +466,26 @@ const requestPin = async (nomor, alasan, userKode) => {
   };
 
   const jenisdiajukan = [];
+  const jenisSudahSiap = [];
+
   if (needsPpicApproval) {
-    await insertPinFor("UBAH");
-    jenisdiajukan.push("UBAH");
+    if (await hasApprovedUnused("UBAH")) {
+      jenisSudahSiap.push("UBAH");
+    } else {
+      await insertPinFor("UBAH");
+      jenisdiajukan.push("UBAH");
+    }
   }
   if (needsTutupBukuApproval) {
-    await insertPinFor("TUTUPBUKU");
-    jenisdiajukan.push("TUTUPBUKU");
+    if (await hasApprovedUnused("TUTUPBUKU")) {
+      jenisSudahSiap.push("TUTUPBUKU");
+    } else {
+      await insertPinFor("TUTUPBUKU");
+      jenisdiajukan.push("TUTUPBUKU");
+    }
   }
 
-  return { jenisdiajukan };
+  return { jenisdiajukan, jenisSudahSiap };
 };
 
 // --- APPROVE CMO ---
