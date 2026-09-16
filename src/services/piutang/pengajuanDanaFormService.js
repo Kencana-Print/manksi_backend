@@ -70,11 +70,13 @@ const getFormDetail = async (nomor) => {
             a.pjh_nik AS Nik, c.nama AS Nama, c.lokasi AS Lokasi, c.bagian AS Bagian,
             a.pjh_jenis_permintaan AS Jenis, a.pjh_user_kode AS UserKode,
             a.pjh_cc_kode AS CcKode, a.pjh_cc_dcnama AS CcDcNama,
+            cc.cc_nama AS CcNama,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
      FROM ga2.tpengajuan2_hdr a
      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
      LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
      WHERE a.pjh_nomor = ?`,
     [nomor],
   );
