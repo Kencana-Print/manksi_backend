@@ -916,7 +916,7 @@ const moveDetailRowToPeriod = async (
       };
     }
 
-    const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR"; // ⬅ BARU
+    const arah = tanggalBaru < row.pjw_tgl1 ? "MAJU" : "MUNDUR";
 
     const { tgl1, tgl2 } = getWeekRange(tanggalBaru);
     const [[target]] = await conn.query(
@@ -941,13 +941,50 @@ const moveDetailRowToPeriod = async (
       );
     }
 
-    await conn.query(
-      `UPDATE tpenjadwalan_ppic_dtl SET pjwd_pjw_nomor = ?, pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
-      [targetNomor, tanggalBaru, pjwdId],
-    );
+    // BARU: cek apakah SO/PraOrder/MAP yang sama sudah ada baris lain
+    // di periode tujuan (mis. hasil split PARTIAL sebelumnya). Kalau
+    // ada — digabung (merge Rencana), bukan pindah-tabrak (yang akan
+    // kena UNIQUE KEY constraint uq_pjwd_so).
+    let merged = false;
+    if (key && target) {
+      const identifierCol = row.pjwd_so_nomor
+        ? "pjwd_so_nomor"
+        : row.pjwd_pro_nomor
+          ? "pjwd_pro_nomor"
+          : "pjwd_map_nomor";
 
-    // ⬅ BARU: kalau MAJU, kredit sebagai Tambahan di Pencapaian periode
-    // tujuan — produksi menyelesaikan pekerjaan periode depan lebih cepat.
+      const [[existingTarget]] = await conn.query(
+        `SELECT pjwd_id, pjwd_rencana FROM tpenjadwalan_ppic_dtl
+         WHERE pjwd_pjw_nomor = ? AND ${identifierCol} = ?
+         LIMIT 1 FOR UPDATE`,
+        [targetNomor, key],
+      );
+
+      if (existingTarget) {
+        // Gabung: tambahkan Rencana baris yang dipindah ke baris tujuan
+        // yang sudah ada. Field lain (Permintaan Kirim, Kesepakatan,
+        // dll) TETAP milik baris tujuan lama — tidak ditimpa.
+        await conn.query(
+          `UPDATE tpenjadwalan_ppic_dtl SET pjwd_rencana = pjwd_rencana + ? WHERE pjwd_id = ?`,
+          [Number(row.pjwd_rencana) || 0, existingTarget.pjwd_id],
+        );
+        await conn.query(
+          `DELETE FROM tpenjadwalan_ppic_dtl WHERE pjwd_id = ?`,
+          [pjwdId],
+        );
+        merged = true;
+      }
+    }
+
+    if (!merged) {
+      await conn.query(
+        `UPDATE tpenjadwalan_ppic_dtl SET pjwd_pjw_nomor = ?, pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
+        [targetNomor, tanggalBaru, pjwdId],
+      );
+    }
+
+    // Kalau MAJU, kredit sebagai Tambahan di Pencapaian periode tujuan
+    // — produksi menyelesaikan pekerjaan periode depan lebih cepat.
     if (arah === "MAJU") {
       await conn.query(
         `INSERT INTO tpenjadwalan_ppic_pencapaian
@@ -955,7 +992,7 @@ const moveDetailRowToPeriod = async (
          VALUES (?, 'TAMBAHAN', 'Produksi', ?, ?, 0)`,
         [
           targetNomor,
-          `Maju dari periode ${row.pjwd_pjw_nomor} (${key || "-"})`,
+          `Maju dari periode ${row.pjwd_pjw_nomor} (${key || "-"})${merged ? " — digabung" : ""}`,
           Number(row.pjwd_rencana) || 0,
         ],
       );
@@ -964,7 +1001,8 @@ const moveDetailRowToPeriod = async (
     await conn.commit();
     return {
       moved: true,
-      arah, // ⬅ BARU
+      merged,
+      arah,
       fromNomor: row.pjwd_pjw_nomor,
       nomor: targetNomor,
       pjwd_id: Number(pjwdId),
