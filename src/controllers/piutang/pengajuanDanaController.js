@@ -32,8 +32,25 @@ const deleteData = async (req, res) => {
   }
 };
 
+const closeManual = async (req, res) => {
+  try {
+    const { alasan } = req.body;
+    await pengajuanDanaService.closeManual(
+      req.params.nomor,
+      alasan,
+      req.user.kode,
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Pengajuan berhasil di-close manual." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
   deleteData,
+  closeManual, // tambahkan ke export
 };

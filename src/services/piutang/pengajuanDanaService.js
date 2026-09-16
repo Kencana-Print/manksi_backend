@@ -41,7 +41,7 @@ const getBrowse = async (startDate, endDate, userKode) => {
     FROM ga2.tpengajuan2_hdr a
     LEFT JOIN ga2.peminta b ON a.pjh_nik = b.nik
     LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
-    LEFT JOIN financenew.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
+    LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
     WHERE a.pjh_nonga = 0
       AND a.pjh_tanggal BETWEEN ? AND ?
   `;
@@ -111,9 +111,63 @@ const deleteData = async (nomor) => {
   ]);
 };
 
+const closeManual = async (nomor, alasan, userKode) => {
+  if (!alasan || !alasan.trim()) {
+    throw new Error("Alasan penutupan manual wajib diisi.");
+  }
+
+  const [rows] = await db.query(
+    `SELECT
+       h.pmt_nomor, h.pmt_close, h.pmt_approval, h.pmt_buyed,
+       a.pjh_user_kode
+     FROM ga2.tpengajuan2_hdr a
+     JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+     WHERE a.pjh_nomor = ?`,
+    [nomor],
+  );
+  if (!rows.length) throw new Error("Data tidak ditemukan.");
+
+  const row = rows[0];
+  if (row.pjh_user_kode !== userKode) {
+    throw new Error("Pengajuan ini bukan milik Anda.");
+  }
+  if (Number(row.pmt_close) === 1) {
+    throw new Error("Pengajuan sudah Close.");
+  }
+  if (Number(row.pmt_approval) === 0) {
+    throw new Error("Uang muka belum di-approval Finance.");
+  }
+  if (Number(row.pmt_buyed) === 1) {
+    throw new Error("Qty sudah terpenuhi penuh, tidak perlu Close Manual.");
+  }
+
+  const pmtNomor = row.pmt_nomor;
+
+  await db.query(
+    `UPDATE ga2.tpermintaan_dtl
+     SET pmd_qty_realisasi = pmd_qty_buyed,
+         pmd_user_closed = ?,
+         pmd_tanggal_closed = NOW()
+     WHERE pmd_pmt_nomor = ?`,
+    [userKode, pmtNomor],
+  );
+
+  await db.query(
+    `UPDATE ga2.tpermintaan_hdr
+     SET pmt_close = 1,
+         pmt_tglclose = NOW(),
+         pmt_close_manual = 1,
+         pmt_alasan_close_manual = ?,
+         pmt_user_close_manual = ?
+     WHERE pmt_nomor = ?`,
+    [alasan.trim(), userKode, pmtNomor],
+  );
+};
+
 module.exports = {
   getBrowse,
   getDetail,
   deleteData,
   getGaUserStatus,
+  closeManual, // tambahkan ke export
 };

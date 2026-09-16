@@ -20,6 +20,12 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getDetail,
 );
+router.post(
+  "/:nomor/close-manual",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  controller.closeManual,
+);
 router.delete(
   "/:nomor",
   verifyToken,
