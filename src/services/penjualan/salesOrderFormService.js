@@ -77,6 +77,21 @@ const getPpicTurunanInfo = async (conn, nomor) => {
   };
 };
 
+// ⬅ BARU: cek approval "TUTUPBUKU" terpisah dari "UBAH" — ini HANYA
+// dipakai untuk bypass gate tutup buku, tidak menyentuh gate SPK PPIC
+// sama sekali (dan sebaliknya).
+const getApprovedTutupBukuPin = async (conn, nomor) => {
+  const runner = conn || db;
+  const [rows] = await runner.query(
+    `SELECT pin_urut FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=?
+       AND pin_acc="Y" AND pin_dipakai=""
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  return rows.length > 0 ? rows[0].pin_urut : null;
+};
+
 // --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
 // hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
 const generateNomor = async (conn, perushKode, joKode) => {
@@ -526,17 +541,23 @@ const saveData = async (payload, user) => {
     isSalesOrder,
   } = payload;
 
-  // ⬅ BARU: dipakai gate PPIC turunan (isEdit) DAN sync-back/reopen
-  // (step 9) — dihitung sekali, self-detected, tidak lagi bergantung
-  // pada xminta5/xurut5 dari payload (yang faktanya tidak pernah
-  // dikirim frontend, sehingga sync-back sebelumnya jadi dead code).
-  let approvedUbahPin = null; // { urut } kalau ada pin "UBAH" siap dipakai
+  let approvedUbahPin = null; // khusus gate SPK PPIC (pin_jenis="UBAH")
+  let approvedTutupBukuUrut = null; // khusus gate tutup buku (pin_jenis="TUTUPBUKU")
+  let ppicInfo = null;
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     let nomor = header.spk_nomor;
     const divisiStr = String(header.spk_divisi).charAt(0);
+
+    if (isEdit) {
+      ppicInfo = await getPpicTurunanInfo(conn, nomor);
+      if (ppicInfo.HasApprovedUbah) {
+        approvedUbahPin = { urut: ppicInfo.approvedUbahUrut };
+      }
+      approvedTutupBukuUrut = await getApprovedTutupBukuPin(conn, nomor);
+    }
 
     // Divisi 3 dengan Jenis Order murni pengerjaan (SD/SB/TG/PM) — sama
     // definisinya dengan frontend, HARUS konsisten karena backend adalah
@@ -555,7 +576,13 @@ const saveData = async (payload, user) => {
     // 1. VALIDASI DATA — TIDAK BERUBAH
     // ==========================================
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-    if (zdtClose && new Date(header.spk_tanggal) < zdtClose) {
+    // ⬅ Dikecualikan HANYA kalau ada approval khusus "TUTUPBUKU" —
+    // approval "UBAH" (SPK PPIC) tidak bisa dipakai buat bypass ini.
+    if (
+      zdtClose &&
+      new Date(header.spk_tanggal) < zdtClose &&
+      !approvedTutupBukuUrut
+    ) {
       throw new Error(
         "Anda tidak boleh input/ubah di tanggal periode yang sudah diclose.",
       );
@@ -716,10 +743,7 @@ const saveData = async (payload, user) => {
       // resmi utk edit SO yang turunannya sudah close tapi butuh
       // approval PIN5.
       // ==========================================
-      const ppicInfo = await getPpicTurunanInfo(conn, nomor);
-      const isApprovedChangeFlow = ppicInfo.HasApprovedUbah;
-      if (isApprovedChangeFlow)
-        approvedUbahPin = { urut: ppicInfo.approvedUbahUrut };
+      const isApprovedChangeFlow = !!approvedUbahPin;
 
       // GATE 1: SPK PPIC masih Open → tolak TANPA pengecualian apa pun
       if (ppicInfo.HasSpkPpic && ppicInfo.SpkPpicClose !== 1) {
@@ -1047,6 +1071,16 @@ const saveData = async (payload, user) => {
           [nomor, prefixPO],
         );
       }
+    }
+
+    // ⬅ BARU: tandai approval TUTUPBUKU sudah dipakai — independen
+    // dari approval UBAH (PPIC), tidak memicu sync-back ke SPK turunan
+    // karena tutup buku tidak berkaitan dengan itu sama sekali.
+    if (approvedTutupBukuUrut) {
+      await conn.query(
+        `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=? AND pin_urut=?`,
+        [nomor, approvedTutupBukuUrut],
+      );
     }
 
     // ==========================================

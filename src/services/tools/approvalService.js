@@ -602,7 +602,11 @@ const getPerubahanDataList = async (query) => {
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
-  let sqlCondition = ` WHERE p.pin_jenis = "UBAH" AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  // ⬅ UBAH: sekarang mencakup 2 jenis — "UBAH" (SPK PPIC turunan
+  // closed) dan "TUTUPBUKU" (SO/SPK yang tanggalnya sudah lewat
+  // periode tutup buku). Keduanya sama-sama alur "Pengajuan Perubahan
+  // Data" di menu 259, dibedakan lewat kolom Jenis yang di-return.
+  let sqlCondition = ` WHERE p.pin_jenis IN ("UBAH", "TUTUPBUKU") AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
 
   if (belumAccSaja === "true" || belumAccSaja === true) {
     sqlCondition += ` AND p.pin_acc = "" `;
@@ -612,6 +616,7 @@ const getPerubahanDataList = async (query) => {
     SELECT 
       IF(p.pin_program = "", "MANKSI", p.pin_program) AS Program,
       p.pin_trs AS Transaksi,
+      p.pin_jenis AS Jenis,
       p.pin_nomor AS Nomor,
       DATE_FORMAT(p.pin_tgl_trs, "%d-%m-%Y") AS Tanggal,
       p.pin_ket AS Keterangan,
@@ -637,9 +642,14 @@ const submitPerubahanDataOtorisasi = async (
   nomor,
   transaksi,
   urut,
+  jenis, // ⬅ BARU: "UBAH" atau "TUTUPBUKU"
   statusAcc,
   userKode,
 ) => {
+  if (!["UBAH", "TUTUPBUKU"].includes(jenis)) {
+    throw new Error("Jenis approval tidak dikenal.");
+  }
+
   const conn = await db.getConnection();
   await conn.beginTransaction();
 
@@ -649,14 +659,20 @@ const submitPerubahanDataOtorisasi = async (
         pin_tgl_pin = NOW(),
         pin_user_pin = ?,
         pin_acc = ?
-      WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "UBAH"
+      WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = ?
     `;
-    await conn.query(updateSql, [userKode, statusAcc, transaksi, nomor, urut]);
+    await conn.query(updateSql, [
+      userKode,
+      statusAcc,
+      transaksi,
+      nomor,
+      urut,
+      jenis,
+    ]);
 
-    // Ambil nama peminta untuk alert
     const [userMinta] = await conn.query(
-      `SELECT pin_user_minta FROM tspk_pin5 WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "UBAH" LIMIT 1`,
-      [transaksi, nomor, urut],
+      `SELECT pin_user_minta FROM tspk_pin5 WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = ? LIMIT 1`,
+      [transaksi, nomor, urut, jenis],
     );
 
     await conn.commit();
@@ -664,6 +680,7 @@ const submitPerubahanDataOtorisasi = async (
       nomor,
       transaksi,
       urut,
+      jenis,
       peminta: userMinta.length > 0 ? userMinta[0].pin_user_minta : "Unknown",
     };
   } catch (error) {

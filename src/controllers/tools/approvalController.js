@@ -222,13 +222,13 @@ const getPerubahanDataList = async (req, res) => {
 const submitPerubahanDataOtorisasi = async (req, res) => {
   try {
     // Karena butuh PK komposit, kita tangkap dari body
-    const { nomor, transaksi, urut, status_acc } = req.body;
+    const { nomor, transaksi, urut, jenis, status_acc } = req.body;
     const userKode = req.user.kode;
 
-    if (!nomor || !transaksi || !urut || !status_acc) {
+    if (!nomor || !transaksi || !urut || !jenis || !status_acc) {
       return res.status(400).json({
         success: false,
-        message: "Nomor, Transaksi, Urutan, dan Status ACC wajib diisi",
+        message: "Nomor, Transaksi, Urutan, Jenis, dan Status ACC wajib diisi",
       });
     }
 
@@ -236,6 +236,7 @@ const submitPerubahanDataOtorisasi = async (req, res) => {
       nomor,
       transaksi,
       urut,
+      jenis,
       status_acc,
       userKode,
     );

@@ -383,6 +383,11 @@ const toggleStatus = async (nomor, alasan, isClose) => {
 // --- REQUEST PIN (EDIT DATA CLOSED) ---
 // Tabel tspk_pin5 sendiri tidak ikut migrasi (generic by nomor
 // string), hanya SELECT nama/tanggal SO-nya yang perlu branching.
+// ⬅ BARU: pin_jenis dipisah berdasarkan ALASAN gate yang memblokir —
+// "UBAH" khusus SPK PPIC turunan yang sudah close, "TUTUPBUKU" khusus
+// SO yang tanggalnya sudah lewat periode tutup buku. Dua kondisi ini
+// independen: SO bisa kena salah satu, atau dua-duanya sekaligus
+// (maka diajukan sebagai 2 baris pin5 terpisah).
 const requestPin = async (nomor, alasan, userKode) => {
   const loc = await resolveSoLocation(nomor);
   if (!loc) throw new Error("SO tidak ditemukan.");
@@ -397,31 +402,66 @@ const requestPin = async (nomor, alasan, userKode) => {
           `SELECT spk_nama, spk_tanggal FROM tspk WHERE spk_nomor=?`,
           [nomor],
         );
+  if (!spk[0]) throw new Error("Data SPK/SO tidak ditemukan.");
 
-  const [lastPin] = await db.query(
-    `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="SO" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
+  // Cek kondisi 1: SPK PPIC turunan sudah close
+  const [[ppic]] = await db.query(
+    `SELECT spk_nomor, spk_close FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
     [nomor],
   );
-  let urut = 1;
-  if (lastPin.length > 0) {
-    urut =
-      lastPin[0].pin_dipakai === ""
-        ? lastPin[0].pin_urut
-        : lastPin[0].pin_urut + 1;
+  const needsPpicApproval = !!ppic && Number(ppic.spk_close) === 1;
+
+  // Cek kondisi 2: tanggal SO sudah lewat tutup buku
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const needsTutupBukuApproval = !!(
+    zdtClose && new Date(spk[0].spk_tanggal) < zdtClose
+  );
+
+  if (!needsPpicApproval && !needsTutupBukuApproval) {
+    throw new Error(
+      "SO ini tidak sedang terkena kondisi apa pun yang butuh Pengajuan Perubahan Data.",
+    );
   }
-  const query = `
-    INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
-    VALUES ("SO", ?, ?, "UBAH", ?, ?, NOW(), ?, ?)
-    ON DUPLICATE KEY UPDATE pin_acc="", pin_tgl_minta=NOW(), pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)
-  `;
-  await db.query(query, [
-    nomor,
-    urut,
-    spk[0].spk_tanggal,
-    spk[0].spk_nama,
-    userKode,
-    alasan,
-  ]);
+
+  const insertPinFor = async (jenis) => {
+    const [lastPin] = await db.query(
+      `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="SO" AND pin_jenis=? AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
+      [jenis, nomor],
+    );
+    let urut = 1;
+    if (lastPin.length > 0) {
+      urut =
+        lastPin[0].pin_dipakai === ""
+          ? lastPin[0].pin_urut
+          : lastPin[0].pin_urut + 1;
+    }
+    await db.query(
+      `INSERT INTO tspk_pin5 (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
+       VALUES ("SO", ?, ?, ?, ?, ?, NOW(), ?, ?)
+       ON DUPLICATE KEY UPDATE pin_acc="", pin_tgl_minta=NOW(), pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)`,
+      [
+        nomor,
+        urut,
+        jenis,
+        spk[0].spk_tanggal,
+        spk[0].spk_nama,
+        userKode,
+        alasan,
+      ],
+    );
+  };
+
+  const jenisdiajukan = [];
+  if (needsPpicApproval) {
+    await insertPinFor("UBAH");
+    jenisdiajukan.push("UBAH");
+  }
+  if (needsTutupBukuApproval) {
+    await insertPinFor("TUTUPBUKU");
+    jenisdiajukan.push("TUTUPBUKU");
+  }
+
+  return { jenisdiajukan };
 };
 
 // --- APPROVE CMO ---
