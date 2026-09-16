@@ -47,7 +47,11 @@ const getBrowse = async ({ tglAwal, tglAkhir, gudang = "" }) => {
       IFNULL(a.koli_Realisasi, 0)                          AS Koli_Realisasi,
       IFNULL(a.Realisasi, 0) - IFNULL(a.Jumlah, 0)        AS Selisih_Jumlah,
       IFNULL(a.koli_Realisasi, 0) - IFNULL(a.Koli, 0)     AS Selisih_Koli,
-      a.usr_create
+      a.usr_create,
+      IFNULL(a.jk_status, 'OPEN')                          AS jk_status,
+      a.jk_alasan_tunda,
+      a.jk_tunda_dari_nomor,
+      a.jk_tunda_ke_nomor
     FROM tjadwalkirim a
     LEFT JOIN ${SPK_UNION} b ON b.spk_nomor = a.spk_nomor
     LEFT JOIN tgudang g ON g.gdg_kode = a.Gudang
