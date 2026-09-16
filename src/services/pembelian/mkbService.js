@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { format } = require("date-fns");
 
 // --- QUERY BROWSE MKB ---
 const getBrowseMkb = async (startDate, endDate, canLihatCus = false) => {
@@ -234,9 +235,12 @@ const requestPin = async (payload, user) => {
 
   if (!alasan?.trim()) throw new Error("Alasan harus diisi.");
 
+  // Normalisasi ke 'YYYY-MM-DD' — payload.tanggal bisa berupa ISO string
+  // lengkap (dari JS Date di frontend) yang ditolak MySQL untuk kolom DATE
+  const tglTrs = format(new Date(tanggal), "yyyy-MM-dd");
+
   const conn = await db.getConnection();
   try {
-    // Cek status/urut PIN sebelumnya
     const [existing] = await conn.query(
       `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MKB" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,
       [nomor],
@@ -267,11 +271,11 @@ const requestPin = async (payload, user) => {
     await conn.query(queryInsert, [
       nomor,
       urut,
-      tanggal,
+      tglTrs,
       spk,
       user.kode,
       alasan,
-      tanggal,
+      tglTrs,
       spk,
       user.kode,
       alasan,

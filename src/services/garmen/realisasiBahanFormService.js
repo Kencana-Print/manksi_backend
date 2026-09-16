@@ -484,6 +484,10 @@ const saveData = async (payload, user, isEdit = false) => {
       for (const d of bedaBahanRows) {
         const kodePengganti = d.kode;
         const qtyPengganti = Number(d.netto) || 0;
+        // Tangkap kode ASLI yang digantikan SEBELUM di-overwrite di bawah.
+        // Baris "_extra" (murni tambahan, bukan substitusi) selalu kodem=""
+        // jadi originalKodem-nya null — nggak nge-waive baris apapun.
+        const originalKodem = d.kodem || null;
 
         // a. Tambah baris ke tmintabahan_dtl (Permintaan Bahan existing)
         //    — kalau kode ini SUDAH ada di permintaan (dari substitusi
@@ -494,16 +498,19 @@ const saveData = async (payload, user, isEdit = false) => {
         );
         if (existingMintaDtl) {
           await conn.query(
-            `UPDATE tmintabahan_dtl SET mind_jumlah = mind_jumlah + ? WHERE mind_nomor = ? AND mind_bhn_kode = ?`,
-            [qtyPengganti, payload.noMinta, kodePengganti],
+            `UPDATE tmintabahan_dtl
+             SET mind_jumlah = mind_jumlah + ?,
+                 mind_substitusi_untuk = IFNULL(mind_substitusi_untuk, ?)
+             WHERE mind_nomor = ? AND mind_bhn_kode = ?`,
+            [qtyPengganti, originalKodem, payload.noMinta, kodePengganti],
           );
         } else {
           // Salin komponen/babaran dari baris ASLI yang digantikan
           // (baris pertama non-extra di payload.details sebagai acuan)
           const baseRow = payload.details.find((r) => !r._extra) || {};
           await conn.query(
-            `INSERT INTO tmintabahan_dtl (mind_nomor, mind_bhn_kode, mind_jumlah, mind_pcs, mind_babaran, mind_komponen, mind_ket)
-             VALUES (?, ?, ROUND(?, 2), ?, ?, ?, ?)`,
+            `INSERT INTO tmintabahan_dtl (mind_nomor, mind_bhn_kode, mind_jumlah, mind_pcs, mind_babaran, mind_komponen, mind_ket, mind_substitusi_untuk)
+             VALUES (?, ?, ROUND(?, 2), ?, ?, ?, ?, ?)`,
             [
               payload.noMinta,
               kodePengganti,
@@ -512,6 +519,7 @@ const saveData = async (payload, user, isEdit = false) => {
               baseRow.babaran || 0,
               baseRow.komponen || "",
               `Substitusi — ${payload.alasanBedaBahan}`,
+              originalKodem,
             ],
           );
         }
@@ -523,7 +531,6 @@ const saveData = async (payload, user, isEdit = false) => {
             [payload.mkb, kodePengganti],
           );
           if (!existingMkbDtl) {
-            // Salin komponen, babaran, satuan dari baris MKB asli yang digantikan
             const [[baseMkbRow]] = await conn.query(
               `SELECT mkbd_komponen, mkbd_ketk, mkbd_warna, mkbd_jenis, mkbd_bhn_satuan, mkbd_babaran
                FROM tmkb_dtl
@@ -558,9 +565,9 @@ const saveData = async (payload, user, isEdit = false) => {
           }
         }
 
-        // d. Set kodem realisasi = kode pengganti itu sendiri (bukan
-        // dikosongkan lagi) — sekarang dia "match" ke baris Permintaan
-        // Bahan yang baru ditambahkan, jadi getSudah() bisa ngitung benar.
+        // d. Set kodem realisasi = kode pengganti itu sendiri — sekarang
+        // dia "match" ke baris Permintaan Bahan yang baru ditambahkan,
+        // jadi getSudah() bisa ngitung benar.
         d.kodem = kodePengganti;
       }
     }
@@ -613,7 +620,9 @@ const saveData = async (payload, user, isEdit = false) => {
     const [statusRows] = await conn.query(
       `SELECT
          SUM(x.minta) AS total_minta,
-         SUM(LEAST(x.realized, x.minta)) AS total_realized_capped
+         SUM(
+           IF(x.is_waived = 1, x.minta, LEAST(x.realized, x.minta))
+         ) AS total_realized_capped
        FROM (
          SELECT
            md.mind_bhn_kode AS bhn_kode,
@@ -624,7 +633,12 @@ const saveData = async (payload, user, isEdit = false) => {
              INNER JOIN tproduksiminta_hdr ph ON ph.promin_nomor = pd.promind_promin_nomor
              WHERE ph.promin_minta = md.mind_nomor
                AND pd.promind_kodem = md.mind_bhn_kode
-           ), 0) AS realized
+           ), 0) AS realized,
+           IF(EXISTS(
+             SELECT 1 FROM tmintabahan_dtl sub
+             WHERE sub.mind_nomor = md.mind_nomor
+               AND sub.mind_substitusi_untuk = md.mind_bhn_kode
+           ), 1, 0) AS is_waived
          FROM tmintabahan_dtl md
          WHERE md.mind_nomor = ?
        ) x`,
