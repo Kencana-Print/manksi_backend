@@ -702,6 +702,41 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     throw new Error("Baris manual harus punya Nama.");
   }
 
+  // BARU: satu SO/PRO/MAP boleh punya lebih dari satu baris di periode
+  // yang sama — TAPI hanya kalau baris yang sudah ada berstatus PARTIAL
+  // dan sudah punya Tanggal Kesepakatan terisi (batch itu sudah
+  // "dikunci"). Baris baru mewakili batch/tanggal kirim berikutnya.
+  if (!isManual) {
+    const identifierCol = SoNomor
+      ? "pjwd_so_nomor"
+      : NomorPraOrder
+        ? "pjwd_pro_nomor"
+        : MapNomor
+          ? "pjwd_map_nomor"
+          : null;
+    const identifierVal = SoNomor || NomorPraOrder || MapNomor;
+
+    if (identifierCol) {
+      const [existingRows] = await db.query(
+        `SELECT pjwd_status_permintaan, pjwd_tgl_kesepakatan
+         FROM tpenjadwalan_ppic_dtl
+         WHERE pjwd_pjw_nomor = ? AND ${identifierCol} = ?`,
+        [pjwNomor, identifierVal],
+      );
+      const belumSiapDipecah = existingRows.some(
+        (r) =>
+          r.pjwd_status_permintaan !== "PARTIAL" || !r.pjwd_tgl_kesepakatan,
+      );
+      if (existingRows.length > 0 && belumSiapDipecah) {
+        throw new Error(
+          `${identifierVal} sudah ada di daftar periode ini. Isi Rencana ` +
+            `sebagian (PARTIAL) dan Tanggal Kesepakatan pada baris yang sudah ` +
+            `ada dulu sebelum menambahkan batch/tanggal kirim lain untuk nomor ini.`,
+        );
+      }
+    }
+  }
+
   const rencanaVal = Number(Rencana) || 0;
 
   // Ambil cabang periode untuk menentukan batas kapasitas mingguan
@@ -787,10 +822,19 @@ const updateDetailField = async (
     melebihiBatas = totalSetelah > batasKapasitas;
   }
 
-  await db.query(
-    `UPDATE tpenjadwalan_ppic_dtl SET ${field} = ? WHERE pjwd_id = ?`,
-    [sanitizedValue, pjwdId],
-  );
+  try {
+    await db.query(
+      `UPDATE tpenjadwalan_ppic_dtl SET ${field} = ? WHERE pjwd_id = ?`,
+      [sanitizedValue, pjwdId],
+    );
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY" && field === "pjwd_tgl_kesepakatan") {
+      throw new Error(
+        "Sudah ada baris lain untuk nomor ini dengan Tanggal Kesepakatan yang sama di periode ini.",
+      );
+    }
+    throw err;
+  }
   return {
     pjwd_id: Number(pjwdId),
     field,
@@ -956,8 +1000,9 @@ const moveDetailRowToPeriod = async (
       const [[existingTarget]] = await conn.query(
         `SELECT pjwd_id, pjwd_rencana FROM tpenjadwalan_ppic_dtl
          WHERE pjwd_pjw_nomor = ? AND ${identifierCol} = ?
+           AND pjwd_kesepakatan_key = ?
          LIMIT 1 FOR UPDATE`,
-        [targetNomor, key],
+        [targetNomor, key, tanggalBaru],
       );
 
       if (existingTarget) {
