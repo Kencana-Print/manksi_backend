@@ -1168,10 +1168,10 @@ const searchBarangGarmen = async (
   let whereParams = [jenis];
 
   // 3. Filter khusus Sparepart berdasarkan Bagian User
-  if (jenis === "SPAREPART") {
-    if (bagian === "TEKNISI") whereClause += ` AND b.brg_ktg <> "IT"`;
-    else if (bagian === "IT") whereClause += ` AND b.brg_ktg = "IT"`;
-  }
+  // if (jenis === "SPAREPART") {
+  //   if (bagian === "TEKNISI") whereClause += ` AND b.brg_ktg <> "IT"`;
+  //   else if (bagian === "IT") whereClause += ` AND b.brg_ktg = "IT"`;
+  // }
 
   // 4. Pencarian keyword
   if (keyword && keyword.trim() !== "") {
@@ -1229,10 +1229,10 @@ const searchPermintaanBarangGarmen = async (
   params.push(jenis);
 
   // Jika jenis SPAREPART, batasi sesuai bagian user (TEKNISI / IT)
-  if (jenis === "SPAREPART" && (bagian === "TEKNISI" || bagian === "IT")) {
-    whereClause += ` AND min_bagian = ?`;
-    params.push(bagian);
-  }
+  // if (jenis === "SPAREPART" && (bagian === "TEKNISI" || bagian === "IT")) {
+  //   whereClause += ` AND min_bagian = ?`;
+  //   params.push(bagian);
+  // }
 
   // Filter Keyword Pencarian
   if (keyword && keyword.trim() !== "") {
