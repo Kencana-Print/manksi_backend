@@ -1,5 +1,9 @@
 const db = require("../../../config/database");
 
+// Cutoff data — transaksi sebelum tanggal ini tidak ikut dihitung
+// (konsisten dengan cutoff di Laporan Stok Bahan Barcode).
+const CUTOFF_DATE = "2024-01-01";
+
 // ─────────────────────────────────────────────
 // LAPORAN UMUR STOK BAHAN — single header, tanpa detail.
 // Umur dihitung dari bar_tanggal (tanggal cetak barcode) sampai
@@ -19,8 +23,8 @@ const getBrowse = async (tanggal, kodeBahan = "") => {
   // sama sekali (barcode 16 digit murni). Satu-satunya cara yang
   // robust terhadap semua variasi ini: coba cocokkan prefix 8/9/10
   // karakter langsung ke kode yang BENAR-BENAR ada di tbahan.
-  let where = `c.mst_aktif = 'Y' AND c.mst_tanggal <= ?`;
-  const params = [tanggal];
+  let where = `c.mst_aktif = 'Y' AND c.mst_tanggal >= ? AND c.mst_tanggal <= ?`;
+  const params = [CUTOFF_DATE, tanggal];
   if (kodeBahan) {
     where += ` AND (
       LEFT(c.mst_brg_kode, 9) = ?
