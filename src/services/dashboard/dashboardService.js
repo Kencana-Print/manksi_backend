@@ -2668,6 +2668,12 @@ const getStokSlowDeadStockBahan = async (user) => {
   )
     return null;
 
+  // ⚠️ SENGAJA TIDAK dikenakan CUTOFF_DATE seperti panel/laporan
+  // stok lain — panel ini justru bertujuan menemukan stok TUA
+  // (Slowmoving/Dead Stock), jadi transaksi IN yang lama justru
+  // yang paling relevan di sini. Memotongnya bikin SUM(in-out) jadi
+  // timpang (out setelah cutoff tetap terhitung, in sebelum cutoff
+  // dibuang) sehingga stok tampil minus besar padahal fisiknya tidak.
   const sql = `
     SELECT
       IFNULL(bj.bj_kode, '-') AS JenisKode,
@@ -2704,7 +2710,7 @@ const getStokSlowDeadStockBahan = async (user) => {
           LEFT JOIN tbahan b9 ON b9.Bhn_kode = LEFT(c.mst_brg_kode, 9)
           LEFT JOIN tbahan b10 ON b10.Bhn_kode = LEFT(c.mst_brg_kode, 10)
           LEFT JOIN tbahan b8 ON b8.Bhn_kode = LEFT(c.mst_brg_kode, 8)
-          WHERE c.mst_aktif = 'Y' AND c.mst_tanggal >= ? AND c.mst_tanggal <= CURDATE()
+          WHERE c.mst_aktif = 'Y' AND c.mst_tanggal <= CURDATE()
           GROUP BY c.mst_brg_kode
         ) x
         LEFT JOIN tbahan_barcode_dtl d ON d.bard_barcode = x.Barcode
@@ -2719,7 +2725,7 @@ const getStokSlowDeadStockBahan = async (user) => {
     ORDER BY JenisNama, y.UmurTerlama DESC
   `;
 
-  const [rows] = await db.query(sql, [CUTOFF_DATE]);
+  const [rows] = await db.query(sql);
 
   const byJenis = {};
   for (const r of rows) {
