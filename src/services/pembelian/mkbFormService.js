@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService"); // Sesuaikan path
+const MKB_CUTOFF_DATE = "2024-01-01";
 
 // --- HELPER: CEK STATUS PIN 5 ---
 const checkPinStatus = async (nomor, conn) => {
@@ -471,6 +472,8 @@ const getPrintData = async (nomor) => {
 // barcode (MkbBelumRealisasi), di-scope ke 1 kode bahan + exclude
 // nomor MKB yang aktif supaya kebutuhan MKB ini sendiri tidak
 // dihitung sebagai "kompetitor" atas stoknya sendiri.
+// Cutoff: hanya MKB dengan tanggal >= MKB_CUTOFF_DATE yang dihitung,
+// konsisten dengan MkbBelumRealisasi di laporan stok bahan.
 const getBahanFree = async (kodeBahan, excludeMkbNomor) => {
   const dEnd = new Date().toISOString().substring(0, 10);
 
@@ -510,8 +513,9 @@ const getBahanFree = async (kodeBahan, excludeMkbNomor) => {
      FROM tmkb_dtl d
      LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
      WHERE d.mkbd_bhn_kode = ?
-       AND d.mkbd_mkb_nomor <> ?`,
-    [kodeBahan, excludeMkbNomor || ""],
+       AND d.mkbd_mkb_nomor <> ?
+       AND h.mkb_tanggal >= ?`,
+    [kodeBahan, excludeMkbNomor || "", MKB_CUTOFF_DATE],
   );
   const mkbBelumRealisasi = parseFloat(mkbRows[0]?.MkbBelumRealisasi || 0);
 

@@ -372,8 +372,10 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
   if (mh.mh_status === "CANCEL")
     throw new Error("No. Permintaan tsb telah dicancel.");
 
-  if (Number(mh.mh_harga_kalkulasi) === 0)
-    throw new Error("Belum ada kalkulasi harga untuk No. Permintaan ini.");
+  // ⬅ BARU: belum ada kalkulasi harga bukan lagi alasan blokir (throw).
+  // Cukup dikasih flag ke FE supaya ditampilkan sebagai warning, harga
+  // dikirim 0 dan user tetap bisa lanjut memakai No. Permintaan ini.
+  const belumKalkulasi = Number(mh.mh_harga_kalkulasi) === 0;
 
   return {
     minta: mh.mh_nomor,
@@ -386,6 +388,7 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
     harga: Number(mh.mh_harga_kalkulasi) || 0,
     custKode: mh.mh_cus_kode || "",
     custNama: mh.cus_nama || "",
+    belumKalkulasi,
   };
 };
 
