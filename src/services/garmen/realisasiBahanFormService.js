@@ -146,12 +146,10 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
  * Mendapatkan Info Barcode Bahan (Tabel 1) beserta info Supplier
  */
 const getBarcodeInfo = async (barcode) => {
-  const CUTOFF_DATE = "2024-01-01";
-
   const query = `
     SELECT 
       a.bard_barcode, a.bard_kode, b.Bhn_Name, b.Bhn_satuan,
-      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_tanggal >= ? AND m.mst_brg_kode=a.bard_barcode), 0) AS stok,
+      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=a.bard_barcode), 0) AS stok,
       -- LOGIKA GETSUPPLIER: Melacak Supplier dari BPB
       IFNULL(bpb.bpb_sup_kode, "") AS kode_supplier,
       IFNULL(sup.sup_nama, "") AS nama_supplier
@@ -162,7 +160,7 @@ const getBarcodeInfo = async (barcode) => {
     LEFT JOIN tsupplier sup ON sup.sup_kode = bpb.bpb_sup_kode
     WHERE a.bard_barcode = ?
   `;
-  const [rows] = await db.query(query, [CUTOFF_DATE, barcode]);
+  const [rows] = await db.query(query, [barcode]);
 
   if (rows.length === 0)
     throw new Error("Barcode tidak terdaftar di master bahan.");
@@ -174,6 +172,7 @@ const getBarcodeInfo = async (barcode) => {
     satuan: rows[0].Bhn_satuan,
     stok: parseFloat(rows[0].stok),
     jumlah: parseFloat(rows[0].stok), // Default jumlah = stok full
+    // Tambahan dari getsupplier
     kdsup: rows[0].kode_supplier,
     nmsup: rows[0].nama_supplier,
   };
@@ -183,8 +182,6 @@ const getBarcodeInfo = async (barcode) => {
  * Load Data Edit Realisasi (loaddataall)
  */
 const getDetailRealisasi = async (nomor) => {
-  const CUTOFF_DATE = "2024-01-01";
-
   const qHdr = `
     SELECT h.*, 
       IFNULL(s.spk_nama, m.mspk_nama) AS namaspk,
@@ -201,6 +198,7 @@ const getDetailRealisasi = async (nomor) => {
 
   const qDtl = `
     SELECT d.*, b.Bhn_Name, b.Bhn_satuan, c.Bhn_Name AS namam, c.Bhn_satuan AS satuanm, p.sup_nama,
+      -- PERBAIKAN: Ditambah dengan promind_gross sesuai logika Delphi (Sisa stok dikembalikan seperti sebelum transaksi)
       (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_bahan m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=b.bhn_kode), 0) + d.promind_gross) AS Stk,
       IFNULL((SELECT i.mind_jumlah FROM tmintabahan_hdr j INNER JOIN tmintabahan_dtl i ON i.mind_nomor=j.min_nomor WHERE j.min_nomor=h.promin_minta AND i.mind_bhn_kode=d.promind_kodem LIMIT 1), 0) AS minta
     FROM tproduksiminta_dtl d
@@ -214,12 +212,12 @@ const getDetailRealisasi = async (nomor) => {
 
   const qDtlBarcode = `
     SELECT d.*, b.Bhn_Name, b.Bhn_satuan,
-      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_tanggal >= ? AND m.mst_brg_kode=d.promind2_barcode AND m.mst_noreferensi <> d.promind2_promin_nomor), 0) AS stok
+      IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=d.promind2_barcode AND m.mst_noreferensi <> d.promind2_promin_nomor), 0) AS stok
     FROM tproduksiminta_dtl2 d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind2_bhn_kode
     WHERE d.promind2_promin_nomor = ?
   `;
-  const [barcodeRows] = await db.query(qDtlBarcode, [CUTOFF_DATE, nomor]);
+  const [barcodeRows] = await db.query(qDtlBarcode, [nomor]);
 
   return {
     header: hdrRows[0],

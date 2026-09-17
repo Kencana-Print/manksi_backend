@@ -1529,7 +1529,7 @@ const getGudangBahanDashboard = async (user) => {
   const sqlTotalBarcode = `
     SELECT COUNT(DISTINCT mst_brg_kode) AS TotalBarcode
     FROM tmasterstok_barcode
-    WHERE mst_aktif = 'Y' AND mst_tanggal >= ?
+    WHERE mst_aktif = 'Y'
   `;
 
   // ── 4. Metric: Barcode stok minus ──
@@ -1540,7 +1540,7 @@ const getGudangBahanDashboard = async (user) => {
         LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7) AS Kode,
         SUM(mst_stok_in - mst_stok_out) AS Stok
       FROM tmasterstok_barcode
-      WHERE mst_aktif = 'Y' AND mst_tanggal >= ?
+      WHERE mst_aktif = 'Y'
       GROUP BY LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7)
       HAVING Stok < -0.1
     ) x
@@ -1607,7 +1607,7 @@ const getGudangBahanDashboard = async (user) => {
         SUM(c.mst_stok_in - c.mst_stok_out)   AS Stok
       FROM tmasterstok_barcode c
       LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7)
-      WHERE c.mst_aktif = 'Y' AND c.mst_tanggal >= ?
+      WHERE c.mst_aktif = 'Y'
       GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7),
               b.Bhn_Name, b.Bhn_satuan, b.bhn_buffer
     ) x
@@ -1627,11 +1627,11 @@ const getGudangBahanDashboard = async (user) => {
   ] = await Promise.all([
     db.query(sqlTotalBahan),
     db.query(sqlBawahBuffer, [cabang]),
-    db.query(sqlTotalBarcode, [CUTOFF_DATE]),
-    db.query(sqlBarcodeMinus, [CUTOFF_DATE]),
+    db.query(sqlTotalBarcode),
+    db.query(sqlBarcodeMinus),
     db.query(sqlDetailBawahBuffer, [cabang]),
     db.query(sqlTopStok, [cabang]),
-    db.query(sqlBahanBarcode, [CUTOFF_DATE]),
+    db.query(sqlBahanBarcode),
   ]);
 
   return {
@@ -1695,7 +1695,7 @@ const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
         SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
       FROM tmasterstok_barcode c
       LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7)
-      WHERE c.mst_aktif = 'Y' AND c.mst_tanggal >= ?
+      WHERE c.mst_aktif = 'Y'
       GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode) - 7),
                b.Bhn_Name, b.Bhn_satuan, b.bhn_buffer
     ) x
@@ -1704,7 +1704,7 @@ const getGudangBahanBarcode = async (user, limit = 20, offset = 0) => {
     LIMIT ? OFFSET ?
   `;
 
-  const [rows] = await db.query(sql, [CUTOFF_DATE, limit, offset]);
+  const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
 
@@ -2668,12 +2668,6 @@ const getStokSlowDeadStockBahan = async (user) => {
   )
     return null;
 
-  // ⚠️ SENGAJA TIDAK dikenakan CUTOFF_DATE seperti panel/laporan
-  // stok lain — panel ini justru bertujuan menemukan stok TUA
-  // (Slowmoving/Dead Stock), jadi transaksi IN yang lama justru
-  // yang paling relevan di sini. Memotongnya bikin SUM(in-out) jadi
-  // timpang (out setelah cutoff tetap terhitung, in sebelum cutoff
-  // dibuang) sehingga stok tampil minus besar padahal fisiknya tidak.
   const sql = `
     SELECT
       IFNULL(bj.bj_kode, '-') AS JenisKode,
@@ -2718,6 +2712,10 @@ const getStokSlowDeadStockBahan = async (user) => {
         WHERE x.Stok <> 0
       ) z
       LEFT JOIN tbahan b ON b.Bhn_kode = z.Kode
+      -- BARU: cuma barcode yang UMURNYA SENDIRI sudah slowmoving/dead
+      -- stock (>360 hari) yang boleh ikut nambah TotalStok bahan ini —
+      -- barcode yang masih "segar" (<=360 hari) tidak ikut tercampur,
+      -- meskipun bahannya sama.
       WHERE z.Umur > 360
       GROUP BY z.Kode, b.Bhn_Name, b.Bhn_satuan
     ) y
@@ -4119,11 +4117,36 @@ const STOK_BEBAS_BASE_QUERY = `
       SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
     FROM tmasterstok_barcode c
     LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
-    WHERE c.mst_aktif = 'Y' AND c.mst_tanggal >= ? AND c.mst_tanggal <= CURDATE()
+    WHERE c.mst_aktif = 'Y' AND c.mst_tanggal <= CURDATE()
     GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
   ) X
   LEFT JOIN (
-    ...（tidak berubah）
+    SELECT d.mkbd_bhn_kode AS KodeBahan,
+      SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs - (
+        IFNULL((
+          SELECT SUM(i.pod_jumlah) FROM tpo_dtl i
+          WHERE i.pod_mkb_nomor = h.mkb_nomor AND i.pod_bhn_kode = d.mkbd_bhn_kode
+        ), 0)
+        + IFNULL((
+          SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tpo_dtl p
+          LEFT JOIN tbpb_dtl2 i ON i.bpbd2_po_nomor = p.pod_po_nomor AND i.bpbd2_nourut = p.pod_nourut
+          WHERE p.pod_mkb_nomor = d.mkbd_mkb_nomor AND p.pod_bhn_kode = d.mkbd_bhn_kode
+          GROUP BY p.pod_bhn_kode, p.pod_mkb_nomor
+        ), 0)
+        + IFNULL((
+          SELECT IF(k.mkbd2_qty <= SUM(p.bpbd2_jumlah), k.mkbd2_qty, SUM(p.bpbd2_jumlah))
+          FROM tbpb_dtl2 p
+          INNER JOIN tmkb_dtl2 k ON k.mkbd2_po_nomor = p.bpbd2_po_nomor AND k.mkbd2_pourut = p.bpbd2_nourut
+          WHERE k.mkbd2_mkb_nomor = d.mkbd_mkb_nomor AND k.mkbd2_nourut = d.mkbd_nourut
+        ), 0)
+        + IFNULL((
+          SELECT SUM(i.bpbd_jumlah) FROM tbpb_dtl i
+          WHERE i.bpbd_mkb = h.mkb_nomor AND i.bpbd_bhn_kode = d.mkbd_bhn_kode AND i.bpbd_nourut = d.mkbd_nourut
+        ), 0)
+      ), 0)) AS MkbBelumRealisasi
+    FROM tmkb_dtl d
+    LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
+    GROUP BY d.mkbd_bhn_kode
   ) mk ON mk.KodeBahan = X.Kode
   WHERE X.Stok > 0 OR X.Stok < -0.1
 `;
@@ -4132,7 +4155,7 @@ const getStokBebasSummary = async (user) => {
   if (!isGudangBahanViewer(user)) return null;
 
   const sql = `SELECT COUNT(*) AS Total FROM (${STOK_BEBAS_BASE_QUERY}) y WHERE y.Free < 0`;
-  const [rows] = await db.query(sql, [CUTOFF_DATE]);
+  const [rows] = await db.query(sql);
   return { total: rows[0]?.Total || 0 };
 };
 
@@ -4146,7 +4169,7 @@ const getStokBebasList = async (user, limit = 20, offset = 0) => {
     ORDER BY y.Free ASC
     LIMIT ? OFFSET ?
   `;
-  const [rows] = await db.query(sql, [CUTOFF_DATE, limit, offset]);
+  const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
 
@@ -4164,7 +4187,7 @@ const BUFFER_KAOSAN_BASE_QUERY = `
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstok_barcode m
-        WHERE m.mst_aktif = 'Y' AND m.mst_tanggal >= ? AND m.mst_tanggal <= CURDATE()
+        WHERE m.mst_aktif = 'Y' AND m.mst_tanggal <= CURDATE()
           AND LEFT(m.mst_brg_kode, LENGTH(m.mst_brg_kode)-7) = b.Bhn_kode
       ), 0) AS StokAkhir,
       'BAHAN' AS Tipe
@@ -4199,7 +4222,7 @@ const getBufferKaosanSummary = async (user) => {
   if (!isGudangBahanViewer(user)) return null;
 
   const sql = `SELECT COUNT(*) AS Total FROM (${BUFFER_KAOSAN_BASE_QUERY}) y`;
-  const [rows] = await db.query(sql, [CUTOFF_DATE]);
+  const [rows] = await db.query(sql);
   return { total: rows[0]?.Total || 0 };
 };
 
@@ -4212,7 +4235,7 @@ const getBufferKaosanList = async (user, limit = 20, offset = 0) => {
     ORDER BY (y.StokAkhir / y.Buffer) ASC
     LIMIT ? OFFSET ?
   `;
-  const [rows] = await db.query(sql, [CUTOFF_DATE, limit, offset]);
+  const [rows] = await db.query(sql, [limit, offset]);
   return rows;
 };
 

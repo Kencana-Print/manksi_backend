@@ -284,11 +284,6 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
   const isBordirFlag =
     isBordir === true || isBordir === "true" || isBordir === "1";
 
-  // Cutoff data — transaksi sebelum tanggal ini tidak ikut dihitung
-  // (konsisten dengan cutoff di Laporan Stok Bahan Barcode, Umur Stok
-  // Bahan, dan panel Slow/Dead Stock dashboard).
-  const CUTOFF_DATE = "2024-01-01";
-
   let whereClause = `WHERE b.bhn_aktif = 0`;
   const params = [];
 
@@ -337,7 +332,6 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
         SELECT SUM(c.mst_stok_in - c.mst_stok_out) 
         FROM tmasterstok_barcode c
         WHERE c.mst_aktif = 'Y' 
-          AND c.mst_tanggal >= ?
           AND c.mst_brg_kode LIKE CONCAT(pb.bhn_kode, '_______')
       ), 0) AS Stok
     FROM paged_bahan pb
@@ -347,10 +341,14 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
     ORDER BY pb.bhn_name ASC
   `;
 
+  // Hilangkan logika push LIMIT dan OFFSET yang lama,
+  // karena sudah kita masukkan ke dalam dataParams saat membuat limitOffsetClause di atas.
+  // Pastikan menghapus baris "if (limitNum > 0) { ... }" yang lama.
+
   // Jalankan count & data secara paralel
   const [[countResult], [rows]] = await Promise.all([
     db.query(`SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`, params),
-    db.query(dataQuery, [CUTOFF_DATE, ...dataParams]),
+    db.query(dataQuery, dataParams),
   ]);
 
   return {

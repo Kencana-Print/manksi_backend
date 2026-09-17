@@ -473,18 +473,14 @@ const getPrintData = async (nomor) => {
 // dihitung sebagai "kompetitor" atas stoknya sendiri.
 const getBahanFree = async (kodeBahan, excludeMkbNomor) => {
   const dEnd = new Date().toISOString().substring(0, 10);
-  // Cutoff data — konsisten dengan Laporan Stok Bahan Barcode, Umur
-  // Stok Bahan, panel Slow/Dead Stock dashboard, dan searchBahan.
-  const CUTOFF_DATE = "2024-01-01";
 
   const [stokRows] = await db.query(
     `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS Stok
      FROM tmasterstok_barcode
      WHERE mst_aktif = 'Y'
-       AND mst_tanggal >= ?
        AND mst_tanggal <= ?
        AND LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7) = ?`,
-    [CUTOFF_DATE, dEnd, kodeBahan],
+    [dEnd, kodeBahan],
   );
   const stok = parseFloat(stokRows[0]?.Stok || 0);
 
@@ -514,9 +510,8 @@ const getBahanFree = async (kodeBahan, excludeMkbNomor) => {
      FROM tmkb_dtl d
      LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
      WHERE d.mkbd_bhn_kode = ?
-       AND d.mkbd_mkb_nomor <> ?
-       AND h.mkb_tanggal >= ?`,
-    [kodeBahan, excludeMkbNomor || "", CUTOFF_DATE],
+       AND d.mkbd_mkb_nomor <> ?`,
+    [kodeBahan, excludeMkbNomor || ""],
   );
   const mkbBelumRealisasi = parseFloat(mkbRows[0]?.MkbBelumRealisasi || 0);
 

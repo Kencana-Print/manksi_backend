@@ -1,7 +1,5 @@
 const db = require("../../../config/database");
 
-const CUTOFF_DATE = "2024-01-01";
-
 // --- 1. GET BROWSE HEADER (Master Stok Bahan) ---
 const getBrowse = async (query) => {
   const { endDate, tampilkanKosong } = query;
@@ -31,14 +29,15 @@ const getBrowse = async (query) => {
       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2)
       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.Bhn_kode, 2)
       WHERE c.mst_aktif = 'Y' 
-        AND c.mst_tanggal >= ?
         AND c.mst_tanggal <= ?
       GROUP BY LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
     ) X
     LEFT JOIN (
-      -- MKB belum realisasi per kode bahan — sekarang di-cutoff sama
-      -- seperti stok fisik: MKB yang dibuat SEBELUM 01-01-2024 tidak
-      -- ikut dihitung sebagai kekurangan (dianggap sudah tidak berlaku).
+      -- MKB belum realisasi per kode bahan — replikasi persis formula
+      -- "Kurang" dari mkbService.getDetailData (Butuh - Ready -
+      -- (Terimapo+nonpo+linkpo)), diagregasi per bahan lintas semua
+      -- MKB. Cuma nilai positif yang dihitung (GREATEST ..., 0) biar
+      -- surplus di 1 MKB gak nutupin kekurangan MKB lain.
       SELECT d.mkbd_bhn_kode AS KodeBahan,
         SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs - (
           IFNULL((
@@ -64,12 +63,15 @@ const getBrowse = async (query) => {
         ), 0)) AS MkbBelumRealisasi
       FROM tmkb_dtl d
       LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
-      WHERE h.mkb_tanggal >= ?
       GROUP BY d.mkbd_bhn_kode
     ) mk ON mk.KodeBahan = X.Kode
     LEFT JOIN (
-      -- PO yang belum ada BPB (masih open), per kode bahan — di-cutoff
-      -- juga: PO dari sebelum 01-01-2024 tidak ikut dihitung.
+      -- PO yang belum ada BPB (masih open), per kode bahan.
+      -- Per baris tpo_dtl: sisa = Qty PO - total Qty BPB (tbpb_dtl2)
+      -- yang sudah dibuat atas PO+nourut itu. GREATEST(...,0) biar
+      -- BPB yang lebih (over-receive) di 1 baris PO gak nutupin sisa
+      -- open PO di baris lain. PO yang statusnya DICLOSE (po_close=9,
+      -- dibatalkan) dikeluarkan — itu bukan "masih open", itu batal.
       SELECT po.pod_bhn_kode AS KodeBahan,
         SUM(GREATEST(po.pod_jumlah - IFNULL(bpb.TotalTerima, 0), 0)) AS PoBelumBpb
       FROM tpo_dtl po
@@ -80,24 +82,24 @@ const getBrowse = async (query) => {
         GROUP BY bpbd2_po_nomor, bpbd2_nourut
       ) bpb ON bpb.bpbd2_po_nomor = po.pod_po_nomor AND bpb.bpbd2_nourut = po.pod_nourut
       WHERE ph.po_close <> 9
-        AND ph.po_tanggal >= ?
       GROUP BY po.pod_bhn_kode
     ) po ON po.KodeBahan = X.Kode
     LEFT JOIN (
-      -- Bahan belum PO: kekurangan MKB yang belum punya PO — juga
-      -- di-cutoff dari sisi MKB-nya (h.mkb_tanggal).
+      -- Bahan belum PO: kekurangan MKB (Butuh - Ready) yang sama
+      -- sekali belum punya baris PO yang masih berlaku. PO yang
+      -- sudah DICLOSE (po_close=9, dibatalkan) dianggap tidak pernah
+      -- ada — bahan itu tetap terhitung "belum PO".
       SELECT d.mkbd_bhn_kode AS KodeBahan,
         SUM(GREATEST(d.mkbd_jumlah - d.mkbd_jumlah_rs, 0)) AS BahanBelumPo
       FROM tmkb_dtl d
       LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
-      WHERE h.mkb_tanggal >= ?
-        AND NOT EXISTS (
-          SELECT 1 FROM tpo_dtl i
-          INNER JOIN tpo_hdr ih ON ih.po_nomor = i.pod_po_nomor
-          WHERE i.pod_mkb_nomor = h.mkb_nomor 
-            AND i.pod_bhn_kode = d.mkbd_bhn_kode
-            AND ih.po_close <> 9
-        )
+      WHERE NOT EXISTS (
+        SELECT 1 FROM tpo_dtl i
+        INNER JOIN tpo_hdr ih ON ih.po_nomor = i.pod_po_nomor
+        WHERE i.pod_mkb_nomor = h.mkb_nomor 
+          AND i.pod_bhn_kode = d.mkbd_bhn_kode
+          AND ih.po_close <> 9
+      )
       GROUP BY d.mkbd_bhn_kode
     ) bp ON bp.KodeBahan = X.Kode
   `;
@@ -105,13 +107,7 @@ const getBrowse = async (query) => {
     sql += ` WHERE X.Stok > 0 OR X.Stok < -0.1 `;
   }
   sql += ` ORDER BY X.Nama ASC `;
-  const [rows] = await db.query(sql, [
-    CUTOFF_DATE, // X (mst_tanggal)
-    dEnd,
-    CUTOFF_DATE, // mk (mkb_tanggal)
-    CUTOFF_DATE, // po (po_tanggal)
-    CUTOFF_DATE, // bp (mkb_tanggal)
-  ]);
+  const [rows] = await db.query(sql, [dEnd]);
   return rows;
 };
 
@@ -174,7 +170,6 @@ const getBrowseDetail = async (kode, query) => {
         SUM(c.mst_stok_in - c.mst_stok_out) AS stk
       FROM tmasterstok_barcode c
       WHERE c.mst_aktif = 'Y' 
-        AND c.mst_tanggal >= ?
         AND c.mst_tanggal <= ?
         AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) = ?
       GROUP BY c.mst_brg_kode
@@ -187,7 +182,7 @@ const getBrowseDetail = async (kode, query) => {
 
   sql += ` ORDER BY x.Kode, x.Barcode ASC `;
 
-  const [rows] = await db.query(sql, [CUTOFF_DATE, dEnd, kode]);
+  const [rows] = await db.query(sql, [dEnd, kode]);
   return rows;
 };
 
@@ -234,8 +229,6 @@ const updateKeteranganList = async (items) => {
 
 // --- 5. DETAIL MKB BELUM REALISASI PER BAHAN ---
 const getMkbBelumRealisasiDetail = async (kode) => {
-  const CUTOFF_DATE = "2024-01-01";
-
   const sql = `
     SELECT
       x.Nomor AS NomorMkb,
@@ -297,14 +290,13 @@ const getMkbBelumRealisasiDetail = async (kode) => {
       FROM tmkb_dtl d
       LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
       WHERE d.mkbd_bhn_kode = ?
-        AND h.mkb_tanggal >= ?
     ) x
     LEFT JOIN tspk s ON s.spk_nomor = x.Spk
     LEFT JOIN tmemospk m ON m.mspk_nomor = x.Spk
     WHERE x.Kurang > 0
     ORDER BY x.Tanggal
   `;
-  const [rows] = await db.query(sql, [kode, CUTOFF_DATE]);
+  const [rows] = await db.query(sql, [kode]);
   return rows;
 };
 
