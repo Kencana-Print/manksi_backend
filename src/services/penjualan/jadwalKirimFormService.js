@@ -59,6 +59,10 @@ const getSudahDijadwalkan = async (nomorSpk, excludeNomor = "") => {
     FROM tjadwalkirim h
     LEFT JOIN tjadwalkirim_dtl d ON d.nomor_kirim = h.Nomor_Kirim
     WHERE h.spk_nomor = ?
+      -- BARU: baris yang sudah ditunda qty-nya sudah "dipindahkan"
+      -- sepenuhnya ke baris baru hasil clone — jangan dihitung lagi
+      -- di sini, atau qty-nya kehitung dobel (baris lama + baris baru).
+      AND IFNULL(h.jk_status, 'OPEN') <> 'TUNDA'
       -- Skip baris yang SJ terkaitnya Pending/Batal — qty-nya "lepas"
       -- lagi supaya bisa dipakai jadwal/SJ baru. Kalau tidak ada SJ
       -- terkait sama sekali (masih murni rencana, belum dibuatkan SJ),
