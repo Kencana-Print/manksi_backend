@@ -77,13 +77,11 @@ const getDetail = async (nomor) => {
 };
 
 // ─────────────────────────────────────────────
-// DELETE — [DEVIASI DARI DELPHI] cxButton4Click asli cuma:
-//   DELETE FROM tbarcode_hdr WHERE bch_nomor = ?
-// (detail tbarcode_dtl DIBIARKAN nyangkut/orphan). Sesuai keputusan
-// user, versi web hapus header+detail sekaligus dalam transaksi —
-// lebih bersih, tanpa validasi tambahan (tutup buku dll, karena
-// Delphi juga tidak punya validasi itu di modul ini selain cek hak
-// akses generik cekdelete()).
+// DELETE — direvisi: sekarang juga hapus retail.tbarangdc_unit yang
+// terkait, TAPI diblokir kalau ada unit yang sudah bergerak melewati
+// status DICETAK (sudah diterima STBJ atau lebih jauh) — supaya tidak
+// merusak rantai traceability unit yang sudah dipakai di transaksi lain.
+// ⚠️ tbarangdc_unit ada di DB retail, wajib prefix "retail."
 // ─────────────────────────────────────────────
 const deleteData = async (nomor) => {
   const [check] = await db.query(
@@ -92,9 +90,26 @@ const deleteData = async (nomor) => {
   );
   if (check.length === 0) throw new Error("Data tidak ditemukan.");
 
+  const [movedUnits] = await db.query(
+    `SELECT unit_serial, unit_status FROM retail.tbarangdc_unit
+     WHERE unit_bcd_nomor = ? AND unit_status <> 'DICETAK'`,
+    [nomor],
+  );
+  if (movedUnits.length > 0) {
+    throw new Error(
+      `Tidak bisa dihapus: ${movedUnits.length} unit dari dokumen ini sudah ` +
+        `diproses lebih lanjut (status: ${[...new Set(movedUnits.map((u) => u.unit_status))].join(", ")}). ` +
+        `Hubungi Audit kalau perlu koreksi.`,
+    );
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    await conn.query(
+      `DELETE FROM retail.tbarangdc_unit WHERE unit_bcd_nomor = ?`,
+      [nomor],
+    );
     await conn.query(`DELETE FROM tbarcode_dtl WHERE bcd_nomor = ?`, [nomor]);
     await conn.query(`DELETE FROM tbarcode_hdr WHERE bch_nomor = ?`, [nomor]);
     await conn.commit();

@@ -60,6 +60,15 @@ const lookupByBarcode = async (req, res) => {
   }
 };
 
+const previewPrint = async (req, res) => {
+  try {
+    const data = await svc.previewUnits(req.body);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const save = async (req, res) => {
   try {
     if (!req.body.isEdit && !req.body.tanggal) {
@@ -91,5 +100,6 @@ module.exports = {
   lookupSpk,
   lookupKodeKaosan,
   lookupByBarcode,
+  previewPrint,
   save,
 };

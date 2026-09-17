@@ -2683,8 +2683,7 @@ const getStokSlowDeadStockBahan = async (user) => {
         MAX(z.Umur) AS UmurTerlama,
         CASE
           WHEN MAX(CASE WHEN z.Umur > 720 THEN 1 ELSE 0 END) = 1 THEN 'Dead Stock'
-          WHEN MAX(CASE WHEN z.Umur > 360 THEN 1 ELSE 0 END) = 1 THEN 'Slowmoving'
-          ELSE ''
+          ELSE 'Slowmoving'
         END AS Status
       FROM (
         SELECT
@@ -2709,10 +2708,14 @@ const getStokSlowDeadStockBahan = async (user) => {
         WHERE x.Stok <> 0
       ) z
       LEFT JOIN tbahan b ON b.Bhn_kode = z.Kode
+      -- BARU: cuma barcode yang UMURNYA SENDIRI sudah slowmoving/dead
+      -- stock (>360 hari) yang boleh ikut nambah TotalStok bahan ini —
+      -- barcode yang masih "segar" (<=360 hari) tidak ikut tercampur,
+      -- meskipun bahannya sama.
+      WHERE z.Umur > 360
       GROUP BY z.Kode, b.Bhn_Name, b.Bhn_satuan
     ) y
     LEFT JOIN tbahan_jenis bj ON bj.bj_kode = LEFT(y.Kode, 2)
-    WHERE y.Status IN ('Dead Stock', 'Slowmoving')
     ORDER BY JenisNama, y.UmurTerlama DESC
   `;
 

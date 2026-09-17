@@ -50,6 +50,7 @@ const getDetail = async (nomor) => {
 
   const [rows] = await db.query(
     `SELECT
+       d.bcd_nourut,
        d.bcd_spk_nomor AS kode,
        d.bcd_kode AS kodek,
        d.bcd_ukuran AS ukuran,
@@ -63,7 +64,9 @@ const getDetail = async (nomor) => {
        CONCAT(a.brg_jeniskaos, " ", a.brg_tipe, " ", a.brg_lengan, " ", a.brg_jeniskain, " ", a.brg_warna) AS namaKaosan,
        IF(b.brgd_barcode IS NULL, z.spks_barcode, b.brgd_barcode) AS barcode,
        IFNULL(b.brgd_harga, 0) AS harga,
-       IF(c.spkd_qtyorder IS NULL, z.spks_qty, c.spkd_qtyorder) AS qtyorder
+       IF(c.spkd_qtyorder IS NULL, z.spks_qty, c.spkd_qtyorder) AS qtyorder,
+       (SELECT COUNT(*) FROM retail.tbarangdc_unit u
+          WHERE u.unit_bcd_nomor = d.bcd_nomor AND u.unit_bcd_nourut = d.bcd_nourut) AS sudahCetak
      FROM tbarcode_dtl d
      LEFT JOIN retail.tbarangdc a ON a.brg_kode = d.bcd_kode
      LEFT JOIN retail.tbarangdc_dtl b ON b.brgd_kode = d.bcd_kode AND b.brgd_ukuran = d.bcd_ukuran
@@ -91,6 +94,7 @@ const getDetail = async (nomor) => {
       harga: Number(r.harga) || 0,
       cetak: barcode !== "",
       packing: r.packing || "",
+      sudahCetak: Number(r.sudahCetak) || 0, // BARU
     };
   });
 
@@ -162,6 +166,23 @@ const lookupSpk = async (nomor) => {
     );
   }
 
+  // BARU: ambil nomor urut terakhir yang sudah tercetak per
+  // kode+ukuran untuk SPK ini, buat saran otomatis 'Awal'
+  const [nextAwalRows] = await db.query(
+    `SELECT unit_kode, unit_ukuran,
+            MAX(CAST(SUBSTRING_INDEX(unit_serial, '.', -1) AS UNSIGNED)) AS lastUrut
+     FROM retail.tbarangdc_unit
+     WHERE unit_spk_nomor = ?
+     GROUP BY unit_kode, unit_ukuran`,
+    [nomor],
+  );
+  const nextAwalMap = new Map(
+    nextAwalRows.map((r) => [
+      `${r.unit_kode}|${r.unit_ukuran}`,
+      Number(r.lastUrut) + 1,
+    ]),
+  );
+
   const items = rows.map((r) => ({
     kode: r.kode,
     kodek: r.kodek || "",
@@ -172,6 +193,7 @@ const lookupSpk = async (nomor) => {
     order: Number(r.qtyorder) || 0,
     harga: Number(r.harga) || 0,
     cetak: (r.barcode || "") !== "",
+    nextAwal: nextAwalMap.get(`${r.kodek || ""}|${r.ukuran || ""}`) || 1,
   }));
 
   return { exists: true, spkNomor: nomor, spkDivisi: spk.spk_divisi, items };
@@ -195,6 +217,20 @@ const lookupKodeKaosan = async (kode) => {
     [kode],
   );
 
+  // BARU: nomor urut terakhir per ukuran untuk kode ini (di jalur F2,
+  // kode dipakai sebagai unit_kode DAN unit_spk_nomor sekaligus)
+  const [nextAwalRows] = await db.query(
+    `SELECT unit_ukuran,
+            MAX(CAST(SUBSTRING_INDEX(unit_serial, '.', -1) AS UNSIGNED)) AS lastUrut
+     FROM retail.tbarangdc_unit
+     WHERE unit_kode = ? AND unit_spk_nomor = ?
+     GROUP BY unit_ukuran`,
+    [kode, kode],
+  );
+  const nextAwalMap = new Map(
+    nextAwalRows.map((r) => [r.unit_ukuran, Number(r.lastUrut) + 1]),
+  );
+
   const items = rows.map((r) => ({
     kode,
     kodek: kode,
@@ -205,6 +241,7 @@ const lookupKodeKaosan = async (kode) => {
     order: 0,
     harga: Number(r.harga) || 0,
     cetak: (r.barcode || "") !== "",
+    nextAwal: nextAwalMap.get(r.ukuran) || 1,
   }));
 
   return { items };
@@ -236,12 +273,27 @@ const lookupByBarcode = async (barcode) => {
 };
 
 // ─────────────────────────────────────────────
-// SAVE DATA — replikasi simpandata() + validasi F10 handler
+// BARU: builder format serial unit — {barcode lama SKU-level}.{SPK}.{urut}
+// barcode lama (brgd_barcode) sudah merepresentasikan kode+ukuran
+// secara unik, jadi tidak perlu ditulis ulang terpisah
+// ─────────────────────────────────────────────
+const buildUnitSerial = (barcodeLama, spkNomor, urut) => {
+  const clean = (s) =>
+    String(s || "")
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "");
+  return `${clean(barcodeLama)}.${clean(spkNomor)}.${urut}`;
+};
+
+// ─────────────────────────────────────────────
+// SAVE DATA — direvisi: generate unit fisik untuk baris cetak=true
+// ⚠️ tbarangdc_unit ada di DB retail, WAJIB prefix "retail." di
+// setiap query (konteks koneksi default file ini = MANKSI/kencanaprint)
 // ─────────────────────────────────────────────
 const saveData = async (payload, user) => {
   const { isEdit, nomor: nomorPayload, tanggal, cab, detail = [] } = payload;
 
-  // Validasi — replikasi persis urutan & pesan Delphi
   const validRows = detail.filter((d) => (d.nama || "").trim() !== "");
   if (validRows.length === 0) {
     throw new Error("Detail harus diisi.");
@@ -285,16 +337,62 @@ const saveData = async (payload, user) => {
       );
     }
 
-    // Replace detail — replikasi delete-all lalu insert ulang.
-    // ⚠️ nourut = POSISI ASLI baris di array (1-based), BUKAN nomor
-    // urut hasil filter — replikasi persis Delphi (`Inc(i)` jalan
-    // tiap iterasi CDS.Next, terlepas baris itu di-insert atau di-skip
-    // karena nama kosong).
-    await conn.query(`DELETE FROM tbarcode_dtl WHERE bcd_nomor = ?`, [nomor]);
+    // BARU: validasi baris yang sudah punya unit tercetak — Awal
+    // tidak boleh digeser, Akhir tidak boleh dikurangi di bawah
+    // jumlah yang sudah ada (mencegah serial lama jadi salah makna)
+    const [existingUnitsAll] = await conn.query(
+      `SELECT unit_bcd_nourut, unit_bcd_posisi, unit_serial
+         FROM retail.tbarangdc_unit
+         WHERE unit_bcd_nomor = ?`,
+      [nomor],
+    );
+    const perNourut = new Map();
+    for (const u of existingUnitsAll) {
+      const entry = perNourut.get(u.unit_bcd_nourut) || {
+        count: 0,
+        awalPosisi1: null,
+      };
+      entry.count++;
+      if (u.unit_bcd_posisi === 1) {
+        const parts = String(u.unit_serial).split(".");
+        const urut = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(urut)) entry.awalPosisi1 = urut;
+      }
+      perNourut.set(u.unit_bcd_nourut, entry);
+    }
 
     for (let i = 0; i < detail.length; i++) {
       const d = detail[i];
       if ((d.nama || "").trim() === "") continue;
+      const bcdNourut = i + 1;
+      const existing = perNourut.get(bcdNourut);
+      if (!existing || existing.count === 0) continue;
+
+      const newAwal = Number(d.awal) || 0;
+      const newAkhir = Number(d.akhir) || 0;
+      const newJumlah = newAkhir - newAwal + 1;
+
+      if (existing.awalPosisi1 !== null && newAwal !== existing.awalPosisi1) {
+        throw new Error(
+          `Baris "${d.nama}" (${d.ukuran}) sudah punya ${existing.count} unit tercetak mulai dari No Urut ${existing.awalPosisi1} — nilai Awal tidak boleh diubah.`,
+        );
+      }
+      if (newJumlah < existing.count) {
+        throw new Error(
+          `Baris "${d.nama}" (${d.ukuran}) sudah punya ${existing.count} unit tercetak — Akhir tidak boleh dikurangi sampai jumlahnya di bawah itu.`,
+        );
+      }
+    }
+
+    await conn.query(`DELETE FROM tbarcode_dtl WHERE bcd_nomor = ?`, [nomor]);
+
+    const generatedUnits = [];
+
+    for (let i = 0; i < detail.length; i++) {
+      const d = detail[i];
+      if ((d.nama || "").trim() === "") continue;
+      const bcdNourut = i + 1;
+
       await conn.query(
         `INSERT INTO tbarcode_dtl
            (bcd_nomor, bcd_spk_nomor, bcd_kode, bcd_ukuran, bcd_awal, bcd_akhir, bcd_jumlah, bcd_packing, bcd_nourut)
@@ -308,13 +406,96 @@ const saveData = async (payload, user) => {
           Number(d.akhir) || 0,
           Number(d.jumlah) || 0,
           d.packing || "",
-          i + 1,
+          bcdNourut,
         ],
       );
+
+      if (!d.cetak) continue;
+      const awal = Number(d.awal) || 0;
+      const akhir = Number(d.akhir) || 0;
+      if (awal === 0 || akhir === 0) continue;
+
+      const [existingUnits] = await conn.query(
+        `SELECT unit_serial, unit_bcd_posisi FROM retail.tbarangdc_unit
+         WHERE unit_bcd_nomor = ? AND unit_bcd_nourut = ?`,
+        [nomor, bcdNourut],
+      );
+      const existingByPosisi = new Map(
+        existingUnits.map((u) => [u.unit_bcd_posisi, u.unit_serial]),
+      );
+
+      const posisiList = [];
+      for (let p = 1; p <= akhir - awal + 1; p++) posisiList.push(p);
+
+      const toInsert = [];
+      for (const posisi of posisiList) {
+        if (existingByPosisi.has(posisi)) {
+          generatedUnits.push({
+            bcdNourut,
+            kode: d.kode,
+            kodek: d.kodek,
+            ukuran: d.ukuran,
+            nama: d.nama,
+            harga: d.harga,
+            tglspk: d.tglspk,
+            unit_serial: existingByPosisi.get(posisi),
+            posisi,
+          });
+          continue;
+        }
+        const urutLabel = awal + posisi - 1; // nilai "No Urut" yang dicetak di label
+        const serial = buildUnitSerial(d.barcode, d.kode, urutLabel);
+        toInsert.push({ posisi, serial, urutLabel });
+      }
+
+      if (toInsert.length === 0) continue;
+
+      const serials = toInsert.map((t) => t.serial);
+      const [clash] = await conn.query(
+        `SELECT unit_serial FROM retail.tbarangdc_unit WHERE unit_serial IN (?)`,
+        [serials],
+      );
+      if (clash.length > 0) {
+        throw new Error(
+          `Nomor urut sudah pernah dicetak sebelumnya untuk ${d.kodek} / ${d.kode} / ${d.ukuran}: ` +
+            clash.map((c) => c.unit_serial).join(", ") +
+            `. Cek nomor urut terakhir yang sudah dicetak untuk kombinasi ini.`,
+        );
+      }
+
+      for (const t of toInsert) {
+        await conn.query(
+          `INSERT INTO retail.tbarangdc_unit
+             (unit_serial, unit_kode, unit_ukuran, unit_bcd_nomor, unit_bcd_nourut, unit_bcd_posisi,
+              unit_spk_nomor, unit_status, user_create, date_create)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'DICETAK', ?, NOW())`,
+          [
+            t.serial,
+            d.kodek,
+            d.ukuran,
+            nomor,
+            bcdNourut,
+            t.posisi,
+            d.kode,
+            user.kode,
+          ],
+        );
+        generatedUnits.push({
+          bcdNourut,
+          kode: d.kode,
+          kodek: d.kodek,
+          ukuran: d.ukuran,
+          nama: d.nama,
+          harga: d.harga,
+          tglspk: d.tglspk,
+          unit_serial: t.serial,
+          posisi: t.posisi,
+        });
+      }
     }
 
     await conn.commit();
-    return { nomor };
+    return { nomor, units: generatedUnits };
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -323,11 +504,81 @@ const saveData = async (payload, user) => {
   }
 };
 
+// ─────────────────────────────────────────────
+// PREVIEW UNITS (read-only) — ⚠️ sama, wajib prefix "retail."
+// ─────────────────────────────────────────────
+const previewUnits = async (payload) => {
+  const { nomor: nomorPayload, detail = [] } = payload;
+  const result = [];
+
+  for (let i = 0; i < detail.length; i++) {
+    const d = detail[i];
+    if ((d.nama || "").trim() === "" || !d.cetak) continue;
+    const awal = Number(d.awal) || 0;
+    const akhir = Number(d.akhir) || 0;
+    if (awal === 0 || akhir === 0 || awal > akhir) continue;
+    const bcdNourut = i + 1;
+
+    let existingByPosisi = new Map();
+    if (nomorPayload) {
+      const [existingUnits] = await db.query(
+        `SELECT unit_serial, unit_bcd_posisi FROM retail.tbarangdc_unit
+         WHERE unit_bcd_nomor = ? AND unit_bcd_nourut = ?`,
+        [nomorPayload, bcdNourut],
+      );
+      existingByPosisi = new Map(
+        existingUnits.map((u) => [u.unit_bcd_posisi, u.unit_serial]),
+      );
+    }
+
+    for (let posisi = 1; posisi <= akhir - awal + 1; posisi++) {
+      if (existingByPosisi.has(posisi)) {
+        result.push({
+          bcdNourut,
+          kode: d.kode,
+          kodek: d.kodek,
+          ukuran: d.ukuran,
+          nama: d.nama,
+          harga: d.harga,
+          tglspk: d.tglspk,
+          unit_serial: existingByPosisi.get(posisi),
+          posisi,
+          isConflict: false,
+        });
+        continue;
+      }
+      const urutLabel = awal + posisi - 1;
+      const serial = buildUnitSerial(d.barcode, d.kode, urutLabel);
+
+      const [clash] = await db.query(
+        `SELECT 1 FROM retail.tbarangdc_unit WHERE unit_serial = ? LIMIT 1`,
+        [serial],
+      );
+
+      result.push({
+        bcdNourut,
+        kode: d.kode,
+        kodek: d.kodek,
+        ukuran: d.ukuran,
+        nama: d.nama,
+        harga: d.harga,
+        tglspk: d.tglspk,
+        unit_serial: serial,
+        posisi,
+        isConflict: clash.length > 0,
+      });
+    }
+  }
+
+  return result;
+};
+
 module.exports = {
   getDetail,
   lookupSpk,
   searchKaosanMaster,
   lookupKodeKaosan,
   lookupByBarcode,
+  previewUnits,
   saveData,
 };

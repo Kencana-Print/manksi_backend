@@ -44,6 +44,13 @@ router.get(
 );
 
 router.post(
+  "/preview-print",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.previewPrint,
+);
+
+router.post(
   "/save",
   verifyToken,
   checkPermission(MENU_ID, "insert"),
