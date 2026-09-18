@@ -1311,8 +1311,7 @@ const validateField = async (type, value, extraParam = "") => {
         `
         SELECT COUNT(p.Nota) as jmlTunggakan
         FROM piutang_debet p
-        WHERE p.flag=0 AND (debet-kredit)>100 AND DATEDIFF(CURDATE(), p.tanggal)>90
-          AND p.tanggal >= "2021-01-01"
+        WHERE p.flag=0 AND p.is_writeoff=0 AND (debet-kredit)>100 AND DATEDIFF(CURDATE(), p.tanggal)>90
           AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
           AND customer=?
       `,

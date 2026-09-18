@@ -87,7 +87,6 @@ const getPengajuanByCustomer = async (cusKode, query) => {
 const getInvoiceNunggak = async (cusKode, status, dStart) => {
   let sql = "";
 
-  // Logic Pembedaan Piutang Umum (KP) dan Kaosan
   if (status === "KP") {
     sql = `
       SELECT 
@@ -98,9 +97,9 @@ const getInvoiceNunggak = async (cusKode, status, dStart) => {
         DATEDIFF(CURDATE(), p.Tanggal) AS Umur
       FROM piutang_debet p
       WHERE p.flag = 0 
+        AND p.is_writeoff = 0
         AND (p.debet - p.kredit) > 100
         AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
-        AND p.tanggal >= "2021-01-01" 
         AND p.tanggal <= ? 
         AND p.customer = ?
       ORDER BY p.Tanggal ASC
@@ -131,7 +130,6 @@ const getInvoiceNunggak = async (cusKode, status, dStart) => {
     `;
   }
 
-  // Jika Kaosan, startdate tidak dipakai di kueri
   const params = status === "KP" ? [dStart, cusKode] : [cusKode];
   const [rows] = await db.query(sql, params);
   return rows;

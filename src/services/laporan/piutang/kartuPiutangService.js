@@ -3,7 +3,8 @@ const db = require("../../../config/database");
 /**
  * 1. MASTER: DAFTAR KARTU PIUTANG PER CUSTOMER
  * Merangkum total debet, kredit, dan saldo piutang per customer
- * yang terjadi sejak '2021-01-01' hingga batas tanggal (endDate).
+ * hingga batas tanggal (endDate). Piutang yang sudah ditandai
+ * write-off dikecualikan dari perhitungan.
  */
 const getMasterKartuPiutang = async (query) => {
   const { endDate } = query;
@@ -30,7 +31,7 @@ const getMasterKartuPiutang = async (query) => {
           SELECT SUM(p.debet) 
           FROM piutang_debet p 
           WHERE p.flag = 0 
-            AND p.tanggal >= '2021-01-01' 
+            AND p.is_writeoff = 0
             AND p.tanggal <= ? 
             AND p.customer = c.cus_kode 
             AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
@@ -41,10 +42,9 @@ const getMasterKartuPiutang = async (query) => {
           INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
           INNER JOIN piutang_debet p ON d.nota = p.nota
           WHERE p.flag = 0 
+            AND p.is_writeoff = 0
             AND p.customer = c.cus_kode 
-            AND h.tanggal >= '2021-01-01' 
             AND h.tanggal <= ? 
-            AND RIGHT(d.nota, 4) >= 2021
         ), 0) AS Kredit
       FROM tcustomer c
     ) x
@@ -59,6 +59,7 @@ const getMasterKartuPiutang = async (query) => {
 /**
  * 2. DETAIL 1: DAFTAR INVOICE MILIK SATU CUSTOMER
  * Menampilkan rincian nota piutang (invoice) untuk satu customer.
+ * Nota yang sudah write-off dikecualikan.
  */
 const getInvoiceByCustomer = async (query, customerKode) => {
   const { endDate } = query;
@@ -75,28 +76,25 @@ const getInvoiceByCustomer = async (query, customerKode) => {
         SELECT SUM(d.kredit) 
         FROM piutang_kredit_detail d
         INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE h.tanggal >= '2021-01-01' 
-          AND h.tanggal <= ? 
+        WHERE h.tanggal <= ? 
           AND d.nota = p.nota
       ), 0) AS Kredit,
       (p.debet - IFNULL((
         SELECT SUM(d.kredit) 
         FROM piutang_kredit_detail d
         INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE h.tanggal >= '2021-01-01' 
-          AND h.tanggal <= ? 
+        WHERE h.tanggal <= ? 
           AND d.nota = p.nota
       ), 0)) AS Saldo
     FROM piutang_debet p
     WHERE p.flag = 0
+      AND p.is_writeoff = 0
       AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
-      AND p.tanggal >= '2021-01-01' 
       AND p.tanggal <= ? 
       AND p.customer = ?
     ORDER BY p.tanggal ASC, p.nota ASC
   `;
 
-  // Filter end date diulang karena dipakai dalam subquery bayar juga
   const [rows] = await db.query(sql, [dEnd, dEnd, dEnd, customerKode]);
   return rows;
 };
@@ -123,8 +121,7 @@ const getPembayaranByInvoice = async (query, invNomor) => {
     FROM piutang_kredit_detail d
     LEFT JOIN piutang_kredit_header h ON h.nomor = d.nomor
     LEFT JOIN terima_bayar_debet t ON t.nomor = d.no_bukti
-    WHERE h.tanggal >= '2021-01-01' 
-      AND h.tanggal <= ? 
+    WHERE h.tanggal <= ? 
       AND d.nota = ?
     ORDER BY h.tanggal ASC
   `;

@@ -687,13 +687,18 @@ const tools = [
     definition: {
       name: "get_piutang_by_customer",
       description:
-        "Cari total piutang/outstanding invoice untuk 1 customer TERTENTU berdasarkan nama (partial match). Pakai ini kalau user tanya piutang customer spesifik, misal 'piutang PT ABC berapa?'. Kalau user cuma sebut nama customer TANPA maksud tanya piutang, jangan panggil tool ini.",
+        "Cari total piutang/outstanding invoice untuk 1 customer TERTENTU berdasarkan nama (partial match). Pakai ini kalau user tanya piutang customer spesifik, misal 'piutang PT ABC berapa?'. Kalau user cuma sebut nama customer TANPA maksud tanya piutang, jangan panggil tool ini. Kalau user menyebutkan nama perusahaan/cabang tertentu (misal 'di KP', 'Kencana Print', 'Mankasindo'), isi kodePerush sesuai kode perusahaannya (KP/JA/MD/SM/AI). Kalau tidak disebutkan, biarkan kosong — hasil akan mencakup SEMUA perusahaan sekaligus (dibedakan lewat kolom Perusahaan di tiap baris), karena 1 customer bisa punya piutang di lebih dari 1 perusahaan.",
       input_schema: {
         type: "object",
         properties: {
           namaCustomer: {
             type: "string",
             description: "Nama customer atau sebagian nama customer",
+          },
+          kodePerush: {
+            type: "string",
+            description:
+              "Opsional. Kode perusahaan (KP/JA/MD/SM/AI). Isi HANYA kalau user sebutkan perusahaan/cabang tertentu secara eksplisit. Kalau tidak, biarkan kosong.",
           },
           limit: {
             type: "number",
@@ -707,11 +712,12 @@ const tools = [
       if (!input.namaCustomer) {
         return { error: "Nama customer wajib diisi." };
       }
-      return dashboardService.getPiutangByCustomer(
-        input.namaCustomer,
-        input.limit || 20,
-        0,
-      );
+      return dashboardService.getPiutangByCustomer({
+        namaCustomer: input.namaCustomer,
+        kodePerush: input.kodePerush || null,
+        limit: input.limit || 20,
+        offset: 0,
+      });
     },
   },
   {

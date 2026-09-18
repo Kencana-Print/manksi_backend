@@ -35,7 +35,6 @@ const getFormEditData = async (nomor) => {
 
   const header = headerRows[0];
 
-  // Detail — ambil sekalian info invoice per nota untuk tampil di frontend
   const [detailRows] = await db.query(
     `SELECT
       d.nota,
@@ -43,7 +42,6 @@ const getFormEditData = async (nomor) => {
       d.no_bukti,
       d.kredit,
       d.notes                                      AS notesdetail,
-      -- Info invoice
       i.inv_cus_kode,
       c.cus_nama,
       DATE_FORMAT(i.inv_tanggal, "%Y-%m-%d")       AS inv_tanggal,
@@ -55,7 +53,7 @@ const getFormEditData = async (nomor) => {
         WHERE f.invd_inv_nomor = i.inv_nomor
       ), 0)                                        AS nilai_piutang,
       IFNULL((
-        SELECT SUM(kredit) FROM piutang_debet WHERE nota = d.nota
+        SELECT SUM(kd.kredit) FROM piutang_kredit_detail kd WHERE kd.nota = d.nota
       ), 0)                                        AS terbayar
      FROM piutang_kredit_detail d
      LEFT JOIN tinv_hdr i ON i.inv_nomor = d.nota
@@ -64,7 +62,6 @@ const getFormEditData = async (nomor) => {
     [nomor],
   );
 
-  // Hitung saldo per nota
   const details = detailRows.map((d) => ({
     ...d,
     saldo_piutang: Number(d.nilai_piutang) - Number(d.terbayar),

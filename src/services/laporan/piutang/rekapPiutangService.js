@@ -4,6 +4,7 @@ const db = require("../../../config/database");
  * MENGAMBIL REKAP PIUTANG (PIVOT BULAN)
  * Menjumlahkan saldo per customer (Debet - Bayar) yang dikelompokkan
  * ke dalam kolom Tahun Lalu, Jan, Feb, dst hingga bulan dari batas endDate.
+ * Piutang yang sudah ditandai write-off dikecualikan dari perhitungan.
  */
 const getRekapPiutang = async (query) => {
   const { endDate, perusahaan } = query;
@@ -36,7 +37,6 @@ const getRekapPiutang = async (query) => {
     subParams.push(perusahaan);
   }
 
-  // Menggunakan Conditional Aggregation untuk membuat Pivot Table otomatis
   const sql = `
     SELECT 
       p.customer AS Kode,
@@ -58,20 +58,19 @@ const getRekapPiutang = async (query) => {
     FROM piutang_debet p
     LEFT JOIN tcustomer c ON c.Cus_kode = p.customer
     LEFT JOIN (
-        -- Subquery: Ambil total bayar per nota hingga tgl batas
         SELECT d.nota, SUM(d.kredit) AS bayar
         FROM piutang_kredit_detail d
         INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE h.tanggal >= '2021-01-01' AND h.tanggal <= ?
+        WHERE h.tanggal <= ?
         GROUP BY d.nota
     ) b ON b.nota = p.nota
     WHERE p.flag = 0 
-      AND p.tanggal >= '2021-01-01' 
+      AND p.is_writeoff = 0
       AND p.tanggal <= ?
       AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
       ${filterPerusahaan}
     GROUP BY p.customer, c.Cus_nama
-    HAVING GrandTotal <> 0 OR TahunLalu <> 0 -- Hanya tampilkan yang saldonya belum lunas
+    HAVING GrandTotal <> 0 OR TahunLalu <> 0
     ORDER BY TahunLalu DESC, Jan DESC, Feb DESC, Mar DESC, Apr DESC, Mei DESC, Jun DESC, Jul DESC, Agu DESC, Sep DESC, Okt DESC, Nov DESC, Des DESC
   `;
 

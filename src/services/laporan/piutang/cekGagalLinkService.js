@@ -34,12 +34,12 @@ const getMasterGagalLink = async () => {
       FROM piutang_debet p
       LEFT JOIN tcustomer c ON c.Cus_kode = p.customer 
       WHERE p.flag = 0
+        AND p.is_writeoff = 0
     ) x
     WHERE (x.Bayar - x.Kredit) <> 0
     ORDER BY x.Tanggal ASC, x.Nota ASC
   `;
 
-  // Laporan ini menelusuri semua data tanpa batas tanggal
   const [rows] = await db.query(sql);
   return rows;
 };
@@ -69,13 +69,17 @@ const getDetailGagalLink = async (nota) => {
  * 3. SINKRONISASI (FIX) GAGAL LINK
  * Aksi ini setara dengan tombol "Link Pembayaran" di Delphi.
  * Mengubah nilai kredit di piutang_debet agar sama dengan total bayar aslinya.
+ * Tidak akan menyentuh nota yang sudah ditandai write-off — nota yang
+ * sudah diputihkan tidak lagi relevan untuk disinkronkan.
  */
 const fixGagalLink = async (nota, bayar) => {
-  const sql = `UPDATE piutang_debet SET kredit = ? WHERE nota = ?`;
+  const sql = `UPDATE piutang_debet SET kredit = ? WHERE nota = ? AND is_writeoff = 0`;
   const [result] = await db.query(sql, [bayar, nota]);
 
   if (result.affectedRows === 0) {
-    throw new Error("Gagal melakukan sinkronisasi. Nota tidak ditemukan.");
+    throw new Error(
+      "Gagal melakukan sinkronisasi. Nota tidak ditemukan, atau nota ini sudah ditandai write-off.",
+    );
   }
   return true;
 };

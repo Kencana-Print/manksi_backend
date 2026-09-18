@@ -433,7 +433,9 @@ const getPrintData = async (nomor) => {
        IF(d.feed_invt_nomor <> '', u.INV_Keterangan, j.INV_Keterangan) AS Keterangan,
        ROUND(p.debet, 0) AS Total,
        IF(d.feed_invt_nomor <> '', u.inv_no_fp, j.inv_no_fp) AS FakturPajak,
-       IF(d.feed_invt_nomor <> '', ROUND(t.kredit, 0), ROUND(p.kredit, 0)) AS Bayar,
+       IF(d.feed_invt_nomor <> '',
+          ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = t.nota), 0), 0),
+          ROUND(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail WHERE nota = p.nota), 0), 0)) AS Bayar,
        (SELECT DATE_FORMAT(a.tanggal, '%d-%m-%Y')
         FROM terima_bayar_debet a
         INNER JOIN piutang_kredit_detail b ON b.no_bukti = a.nomor

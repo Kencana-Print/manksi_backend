@@ -43,10 +43,10 @@ const generateNomor = async (kodePerush, tanggal, conn) => {
 // ─────────────────────────────────────────────────────────
 const getDebet = async (nomor) => {
   const [[row]] = await db.query(
-    `SELECT IFNULL(SUM(kredit), 0) AS kredit
-     FROM piutang_debet
-     WHERE nota = ?
-        OR nota IN (
+    `SELECT IFNULL(SUM(d.kredit), 0) AS kredit
+     FROM piutang_kredit_detail d
+     WHERE d.nota = ?
+        OR d.nota IN (
           SELECT invf_normal FROM tinv_flag WHERE invf_taknormal = ?
         )`,
     [nomor, nomor],
