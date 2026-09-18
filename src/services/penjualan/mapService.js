@@ -23,8 +23,8 @@ const getBrowseList = async (
 
   const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
   const hargaCol = canLihatHarga
-    ? "x.mspk_harga AS Harga, x.mspk_hargariil AS HargaRiil,"
-    : `NULL AS Harga, NULL AS HargaRiil,`;
+    ? "x.mspk_harga AS Harga, x.mspk_hargariil AS HargaRiil, (IFNULL(x.mspk_harga, 0) * IFNULL(x.mspk_rencana_order, 0)) AS Nominal,"
+    : `NULL AS Harga, NULL AS HargaRiil, NULL AS Nominal,`;
 
   const query = `
     SELECT 
@@ -38,7 +38,17 @@ const getBrowseList = async (
       x.mspk_aktif AS Aktif, x.mspk_nama AS Nama,
       (SELECT sjd_sj_nomor FROM tsj_dtl_memo INNER JOIN tsj_hdr_memo ON sj_nomor=sjd_sj_nomor WHERE sjd_mspk_nomor=x.mspk_nomor ORDER BY sj_tanggal DESC LIMIT 1) AS Surat_Jalan,
       x.mspk_ukuran AS Ukuran, x.mspk_panjang AS Panjang, x.mspk_lebar AS Lebar, 
-      x.mspk_gramasi AS Gramasi, x.mspk_kain AS Kain, x.mspk_finishing AS Finishing,
+      x.mspk_gramasi AS Gramasi,
+      ROUND(
+        IF(x.mspk_divisi = 1,
+          (IFNULL(x.mspk_panjang, 0) * IF(IFNULL(x.mspk_rencana_order, 0) > 0, x.mspk_rencana_order, IFNULL(x.mspk_jumlah, 0))),
+          IF(x.mspk_divisi = 5,
+            (IFNULL(x.mspk_panjang, 0) * IFNULL(x.mspk_lebar, 0) * IF(IFNULL(x.mspk_rencana_order, 0) > 0, x.mspk_rencana_order, IFNULL(x.mspk_jumlah, 0))),
+            IF(IFNULL(x.mspk_rencana_order, 0) > 0, x.mspk_rencana_order, IFNULL(x.mspk_jumlah, 0))
+          )
+        ), 2
+      ) AS QtyPesanan,
+      x.mspk_kain AS Kain, x.mspk_finishing AS Finishing,
       x.mspk_jumlah AS Jumlah, x.mspk_jumlah_kirim AS Kirim, ${custCol}
       x.mspk_rencana_order AS Rencana, x.mspk_tipe AS Tipe, ${hargaCol}
       s.sal_nama AS Salesman, x.date_create AS Created, 
