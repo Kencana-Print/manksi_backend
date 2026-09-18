@@ -284,6 +284,27 @@ const getSizes = async (nomor) => {
   );
   if (newRows.length > 0) return newRows;
 
+  // ⬅ BARU: fallback khusus Divisi Kaosan (jenis order PM dst) — size-nya
+  // tidak pernah ditulis ke tsalesorder_size, melainkan diagregasi dari
+  // tsalesorder_kaosan (per baris barang kaosan x ukuran), persis seperti
+  // yang tampil di tab "Kaosan / Detail Size". Tanpa fallback ini, SO
+  // kaosan selalu muncul "Data breakdown size tidak ditemukan" walau
+  // datanya jelas ada (lihat total 95 di tab Kaosan/Detail Size).
+  const [kaosanRows] = await db.query(
+    `SELECT 
+      z.sok_so_nomor AS Nomor,
+      z.sok_ukuran AS Size,
+      SUM(z.sok_qtyorder) AS Qty,
+      IFNULL((SELECT SUM(d.stbjd_jumlah) FROM tstbj_dtl d WHERE d.stbjd_spk_nomor=z.sok_so_nomor AND d.stbjd_size=z.sok_ukuran), 0) AS Stbj,
+      (SUM(z.sok_qtyorder) - IFNULL((SELECT SUM(d.stbjd_jumlah) FROM tstbj_dtl d WHERE d.stbjd_spk_nomor=z.sok_so_nomor AND d.stbjd_size=z.sok_ukuran), 0)) AS Kurang
+    FROM tsalesorder_kaosan z
+    WHERE z.sok_so_nomor = ?
+    GROUP BY z.sok_ukuran
+    ORDER BY z.sok_ukuran`,
+    [nomor],
+  );
+  if (kaosanRows.length > 0) return kaosanRows;
+
   const [legacyRows] = await db.query(
     `SELECT 
        z.spks_nomor AS Nomor, 
