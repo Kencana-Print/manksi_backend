@@ -25,6 +25,12 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       h.pro_cus_nama AS Customer,
       s.sal_nama AS Sales,
       h.pro_nama_pekerjaan AS NamaPekerjaan,
+      (
+        SELECT GROUP_CONCAT(tj.bj_nama SEPARATOR ', ')
+        FROM tpraorder_bahan pb
+        LEFT JOIN tbahan_jenis tj ON tj.bj_kode = pb.prob_bahan_kode
+        WHERE pb.prob_pro_nomor = h.pro_nomor
+      ) AS Bahan,
       h.pro_qty_rencana AS QtyRencana,
       DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirim,
       h.pro_status_bahan AS StatusBahan,

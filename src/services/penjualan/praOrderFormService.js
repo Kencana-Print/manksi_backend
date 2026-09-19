@@ -26,14 +26,9 @@ const generateNomor = async (tanggal) => {
 // --- INIT GRIDS (bahan + ukuran, untuk form baru) ---
 const getInitGrids = async () => {
   const [bahan] = await db.query(
-    `SELECT
-       b.Bhn_kode AS Kode, b.bhn_name AS Nama,
-       IFNULL(w.bw_nama, '') AS Warna, IFNULL(g.bg_nama, '') AS Gramasi
-     FROM tbahan b
-     LEFT JOIN tbahan_warna w ON w.bw_kode = MID(b.Bhn_kode, 3, 3)
-     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2)
-     WHERE b.bhn_aktif = 0 AND LEFT(b.Bhn_kode, 2) <> 'LL'
-     ORDER BY b.Bhn_kode ASC`,
+    `SELECT bj_kode AS Kode, bj_nama AS Nama
+     FROM tbahan_jenis
+     ORDER BY bj_kode ASC`,
   );
 
   const [sizes] = await db.query(
@@ -59,16 +54,16 @@ const getById = async (nomor) => {
   if (!hdr) throw new Error("Data Pra Order tidak ditemukan.");
 
   const [bahan] = await db.query(
-    `SELECT b.*, m.bhn_name AS NamaBahan
+    `SELECT b.*, m.bj_nama AS NamaBahan
      FROM tpraorder_bahan b
-     LEFT JOIN tbahan m ON m.Bhn_kode = b.prob_bahan_kode
+     LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
      WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
     [nomor],
   );
   const [ukuran] = await db.query(
     `SELECT u.*, t.ukuran AS NamaUkuran
      FROM tpraorder_ukuran u
-     LEFT JOIN retail.tukuran t ON t.kode = u.prou_ukuran
+     LEFT JOIN retail.tukuran t ON t.kode = u.prou_ukuran AND t.kategori = ""
      WHERE u.prou_pro_nomor = ? ORDER BY u.prou_id`,
     [nomor],
   );
@@ -150,6 +145,14 @@ const save = async (data, userKode, isNewMode) => {
         ],
       );
     } else {
+      // Lock baris header dulu — mencegah dua request save() yang overlap
+      // saling menyisipkan sebelum salah satunya sempat DELETE, yang
+      // menghasilkan duplikat baris ukuran/bahan.
+      await conn.query(
+        `SELECT pro_nomor FROM tpraorder_hdr WHERE pro_nomor = ? FOR UPDATE`,
+        [nomor],
+      );
+
       await conn.query(
         `UPDATE tpraorder_hdr SET
           pro_tanggal=?, pro_cus_kode=?, pro_cus_nama=?, pro_sal_kode=?, pro_nama_pekerjaan=?,
@@ -200,7 +203,9 @@ const save = async (data, userKode, isNewMode) => {
     for (const u of data.ukuran || []) {
       if (Number(u.qty) > 0) {
         await conn.query(
-          `INSERT INTO tpraorder_ukuran (prou_pro_nomor, prou_ukuran, prou_qty) VALUES (?, ?, ?)`,
+          `INSERT INTO tpraorder_ukuran (prou_pro_nomor, prou_ukuran, prou_qty)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE prou_qty = VALUES(prou_qty)`,
           [nomor, u.kode, u.qty],
         );
       }
@@ -291,21 +296,24 @@ const convertToMintaHarga = async (nomor, userKode) => {
       throw new Error("PPIC belum menyatakan sanggup.");
 
     const [ukuranRows] = await conn.query(
-      `SELECT prou_ukuran, prou_qty FROM tpraorder_ukuran WHERE prou_pro_nomor = ?`,
+      `SELECT t.ukuran AS nama, pu.prou_qty
+       FROM tpraorder_ukuran pu
+       LEFT JOIN retail.tukuran t ON t.kode = pu.prou_ukuran AND t.kategori = ""
+       WHERE pu.prou_pro_nomor = ?`,
       [nomor],
     );
     const ukuranStr = ukuranRows
-      .map((u) => `${u.prou_ukuran}:${u.prou_qty}`)
+      .map((u) => `${u.nama || "?"}:${u.prou_qty}`)
       .join(", ");
 
     const [bahanRows] = await conn.query(
-      `SELECT m.bhn_name FROM tpraorder_bahan b
-       LEFT JOIN tbahan m ON m.Bhn_kode = b.prob_bahan_kode
+      `SELECT m.bj_nama FROM tpraorder_bahan b
+       LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
        WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
       [nomor],
     );
     const kainStr = bahanRows
-      .map((b) => b.bhn_name)
+      .map((b) => b.bj_nama)
       .filter(Boolean)
       .join(" / ");
 
@@ -314,9 +322,9 @@ const convertToMintaHarga = async (nomor, userKode) => {
     await conn.query(
       `INSERT INTO tmintaharga (
         mh_nomor, mh_tanggal, mh_divisi, mh_cus_kode, mh_cus_nama, mh_sal_kode, mh_nama,
-        mh_jmlorder, mh_kain, mh_ukuran, mh_finishing, mh_cabkaos, mh_ket, mh_status,
+        mh_jmlorder, mh_kain, mh_ukuran, mh_finishing, mh_cabkaos, mh_ket, mh_status, mh_pro_nomor,
         date_create, user_create
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "BELUM", NOW(), ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "MINTA", ?, NOW(), ?)`,
       [
         mhNomor,
         hdr.pro_tanggal,
@@ -331,9 +339,36 @@ const convertToMintaHarga = async (nomor, userKode) => {
         hdr.pro_finishing,
         hdr.pro_cabkaos,
         hdr.pro_keterangan,
+        nomor,
         userKode,
       ],
     );
+
+    // Bawa gambar pertama Pra Order (prog_urut terkecil) jadi gambar utama
+    // Minta Harga — mengikuti konvensi penyimpanan sentral yang sama dipakai
+    // mintaHargaFormService.processImage(). Best-effort: kegagalan copy
+    // (file tidak ketemu dsb) TIDAK membatalkan konversi.
+    const [[gambarPertama]] = await conn.query(
+      `SELECT prog_file_path FROM tpraorder_gambar
+       WHERE prog_pro_nomor = ? ORDER BY prog_urut ASC LIMIT 1`,
+      [nomor],
+    );
+    if (gambarPertama) {
+      const sourceFileName = path.basename(gambarPertama.prog_file_path);
+      const sourcePath = path.join("/mnt", "image", "praorder", sourceFileName);
+      const destFolder = path.join("/mnt", "image", "mintaharga");
+      const destPath = path.join(destFolder, `${mhNomor}.jpg`);
+      try {
+        if (fs.existsSync(sourcePath)) {
+          if (!fs.existsSync(destFolder)) {
+            fs.mkdirSync(destFolder, { recursive: true });
+          }
+          fs.copyFileSync(sourcePath, destPath);
+        }
+      } catch (e) {
+        console.error("Gagal menyalin gambar Pra Order ke Minta Harga:", e);
+      }
+    }
 
     await conn.query(
       `UPDATE tpraorder_hdr SET pro_status='CLOSE', pro_mh_nomor=?, user_modified=? WHERE pro_nomor=?`,
@@ -423,6 +458,97 @@ const getKatalogCustomer = async (
   return { items, total: totalData };
 };
 
+// --- LOOKUP RINGKAS UNTUK AUTOFILL DI FORM MINTA HARGA ---
+// Beda dari getById() — cuma field yang relevan untuk autofill, bukan
+// seluruh payload form Pra Order (bahan detail, gambar, dst).
+const getLookupData = async (nomor) => {
+  const [[hdr]] = await db.query(
+    `SELECT h.pro_nomor, h.pro_cus_kode, h.pro_cus_nama, h.pro_sal_kode,
+            h.pro_nama_pekerjaan, h.pro_divisi, h.pro_finishing,
+            h.pro_qty_rencana, h.pro_mh_nomor, s.sal_nama AS SalesNama
+     FROM tpraorder_hdr h
+     LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
+     WHERE h.pro_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Nomor Pra Order tidak ditemukan.");
+
+  const [bahanRows] = await db.query(
+    `SELECT m.bj_nama FROM tpraorder_bahan b
+     LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
+     WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
+    [nomor],
+  );
+  const kainStr = bahanRows
+    .map((b) => b.bj_nama)
+    .filter(Boolean)
+    .join(" / ");
+
+  const [ukuranRows] = await db.query(
+    `SELECT t.ukuran AS nama, pu.prou_qty
+     FROM tpraorder_ukuran pu
+     LEFT JOIN retail.tukuran t ON t.kode = pu.prou_ukuran AND t.kategori = ""
+     WHERE pu.prou_pro_nomor = ? AND pu.prou_qty > 0`,
+    [nomor],
+  );
+  const ukuranStr = ukuranRows
+    .map((u) => `${u.nama || "?"}:${u.prou_qty}`)
+    .join(", ");
+
+  return {
+    nomor: hdr.pro_nomor,
+    cusKode: hdr.pro_cus_kode,
+    cusNama: hdr.pro_cus_nama,
+    salKode: hdr.pro_sal_kode,
+    salNama: hdr.SalesNama || "",
+    namaPekerjaan: hdr.pro_nama_pekerjaan,
+    divisi: String(hdr.pro_divisi),
+    finishing: hdr.pro_finishing,
+    rencanaOrder: Number(hdr.pro_qty_rencana) || 0,
+    kain: kainStr,
+    ukuran: ukuranStr,
+    // Beri tahu FE kalau Pra Order ini sudah pernah dipakai untuk MH lain,
+    // supaya bisa ditampilkan sebagai peringatan (bukan diblokir keras —
+    // relasinya opsional/informatif).
+    sudahDipakaiOleh:
+      hdr.pro_mh_nomor && hdr.pro_mh_nomor.trim() !== ""
+        ? hdr.pro_mh_nomor
+        : null,
+  };
+};
+
+// --- SEARCH PRA ORDER UNTUK MODAL LOOKUP DI FORM MINTA HARGA ---
+const searchPraOrder = async (keyword = "", page = 1, limit = 20) => {
+  const offset = (page - 1) * limit;
+  let where = "WHERE 1=1";
+  const params = [];
+  if (keyword) {
+    where += ` AND (h.pro_nomor LIKE ? OR h.pro_nama_pekerjaan LIKE ? OR h.pro_cus_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tpraorder_hdr h ${where}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       h.pro_nomor AS Nomor,
+       h.pro_nama_pekerjaan AS NamaPekerjaan,
+       h.pro_cus_nama AS Customer,
+       DATE_FORMAT(h.pro_tanggal, '%Y-%m-%d') AS Tanggal,
+       h.pro_status AS Status
+     FROM tpraorder_hdr h
+     ${where}
+     ORDER BY h.pro_tanggal DESC, h.pro_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), Number(offset)],
+  );
+
+  return { items: rows, total };
+};
+
 module.exports = {
   getInitGrids,
   getById,
@@ -434,4 +560,6 @@ module.exports = {
   setStatusPpic,
   convertToMintaHarga,
   getKatalogCustomer,
+  getLookupData,
+  searchPraOrder,
 };

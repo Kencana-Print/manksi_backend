@@ -17,13 +17,15 @@ router.get(
   verifyToken,
   controller.getKatalogCustomer,
 );
+router.get("/search", verifyToken, controller.searchPraOrder);
+router.get("/lookup/:nomor", verifyToken, controller.getLookupData);
 router.get(
   "/:nomor",
   verifyToken,
   checkPermission(menuId, "view"),
   controller.getById,
 );
-router.post("/", verifyToken, checkPermission(menuId, "add"), controller.save);
+router.post("/", verifyToken, checkPermission(menuId, "save"), controller.save);
 router.put(
   "/:nomor",
   verifyToken,

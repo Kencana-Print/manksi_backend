@@ -133,6 +133,31 @@ const getKatalogCustomer = async (req, res) => {
   }
 };
 
+const getLookupData = async (req, res) => {
+  try {
+    const data = await praOrderFormService.getLookupData(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+const searchPraOrder = async (req, res) => {
+  try {
+    const { q = "", page = 1, limit = 20 } = req.query;
+    const result = await praOrderFormService.searchPraOrder(
+      q.trim(),
+      parseInt(page),
+      parseInt(limit),
+    );
+    res
+      .status(200)
+      .json({ success: true, data: result.items, total: result.total });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getInitGrids,
   getById,
@@ -142,4 +167,6 @@ module.exports = {
   setStatusPpic,
   convertToMintaHarga,
   getKatalogCustomer,
+  getLookupData,
+  searchPraOrder,
 };

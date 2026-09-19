@@ -16,6 +16,10 @@ const changelog = [
         type: "added",
         text: "Fitur baru : Tunda Jadwal Kirim, sistem akan otomatis membuatkan jadwal kirim dengan referensi nomor jadwal kirim yang ditunda di keesokan harinya.",
       },
+      {
+        type: "added",
+        text: "Rilis modul baru Pra Order untuk Marketing, untuk menampung rencana order dari customer yang masih belum fix atau bisa jadi masih tanya-tanya terlebih dahulu. Selain itu juga dapat digunakan oleh Marketing untuk mengonfirmasi kesiapan dan kesediaan PPIC yang selama ini masih by WA.",
+      },
     ],
   },
   {

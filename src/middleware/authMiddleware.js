@@ -39,6 +39,7 @@ const checkPermission = (menuId, action) => {
       insert: "hak_men_insert",
       edit: "hak_men_edit",
       delete: "hak_men_delete",
+      save: "hak_men_save",
     };
 
     const column = actionColumnMap[action];

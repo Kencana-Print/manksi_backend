@@ -52,9 +52,10 @@ const loginUser = async (username, password) => {
       hak_men_view AS view, 
       hak_men_insert AS \`insert\`, 
       hak_men_edit AS edit, 
-      hak_men_delete AS \`delete\` 
-     FROM thakuser 
-     WHERE hak_user_kode = ?`,
+      hak_men_delete AS \`delete\`,
+      hak_men_save AS save
+    FROM thakuser 
+    WHERE hak_user_kode = ?`,
     [user.user_kode],
   );
 
@@ -64,6 +65,7 @@ const loginUser = async (username, password) => {
     insert: row.insert === "Y",
     edit: row.edit === "Y",
     delete: row.delete === "Y",
+    save: row.save === "Y",
   }));
 
   // 6. Cek Pesan Khusus User ERNA

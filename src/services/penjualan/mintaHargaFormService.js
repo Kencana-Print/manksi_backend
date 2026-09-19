@@ -130,7 +130,7 @@ const getById = async (nomor, currentUser) => {
   // 1. Ambil Header Permintaan Harga
   const queryMh = `
     SELECT h.*, v.divisi AS DivisiNama, s.sal_nama AS SalesNama, tc.cus_perfect,
-           h.user_create as usr, -- Tambahkan alias usr sesuai Delphi
+           h.user_create as usr,
            DATE_FORMAT(h.date_create, '%d-%m-%Y %T') AS tglCreateFormat,
            DATE_FORMAT(h.mh_apv, '%d-%m-%Y %T') AS tglApvFormat
     FROM tmintaharga h
@@ -352,8 +352,9 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         INSERT INTO tmintaharga (
           mh_nomor, mh_tanggal, mh_divisi, mh_cus_kode, mh_cus_nama, mh_sal_kode, mh_nama,
           mh_jmlorder, mh_harga, mh_budget, mh_dateorder, mh_kain, mh_panjang, mh_lebar, mh_ukuran,
-          mh_gramasi, mh_finishing, mh_sublim, mh_cabkaos, mh_ket, mh_status, date_create, user_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+          mh_gramasi, mh_finishing, mh_sublim, mh_cabkaos, mh_ket, mh_status, mh_pro_nomor,
+          date_create, user_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
       `;
       await conn.query(insertMh, [
         nomorMh,
@@ -366,7 +367,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.RencanaOrder || 0,
         data.HargaLama || 0,
         data.HargaBudget || 0,
-        data.TanggalOrderTerakhir,
+        data.TanggalOrderTerakhir || null,
         data.Kain,
         data.Panjang || 0,
         data.Lebar || 0,
@@ -377,6 +378,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         userCabang,
         data.Keterangan,
         data.Status,
+        data.ProNomor || null,
         userKode,
       ]);
     } else {
@@ -384,7 +386,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         UPDATE tmintaharga SET 
           mh_tanggal=?, mh_divisi=?, mh_cus_kode=?, mh_cus_nama=?, mh_sal_kode=?, mh_nama=?,
           mh_jmlorder=?, mh_harga=?, mh_budget=?, mh_dateorder=?, mh_kain=?, mh_panjang=?, mh_lebar=?, mh_ukuran=?,
-          mh_gramasi=?, mh_finishing=?, mh_sublim=?, mh_ket=?, date_modified=NOW(), user_modified=?
+          mh_gramasi=?, mh_finishing=?, mh_sublim=?, mh_ket=?, mh_pro_nomor=?, date_modified=NOW(), user_modified=?
       `;
       const updateParams = [
         data.Tanggal,
@@ -396,7 +398,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.RencanaOrder || 0,
         data.HargaLama || 0,
         data.HargaBudget || 0,
-        data.TanggalOrderTerakhir,
+        data.TanggalOrderTerakhir || null,
         data.Kain,
         data.Panjang || 0,
         data.Lebar || 0,
@@ -405,6 +407,7 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.Finishing,
         data.Sublim,
         data.Keterangan,
+        data.ProNomor || null,
         userKode,
       ];
       if (["BELUM", "MINTA", "CANCEL"].includes(data.Status)) {
@@ -812,4 +815,5 @@ module.exports = {
   updateNomorKalkulasi,
   processImage,
   getKatalogCustomer,
+  generateNomor,
 };
