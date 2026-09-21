@@ -168,16 +168,23 @@ const searchMapKandidat = async (
 };
 
 // ── Info 1 MAP (tambah manual) — dengan validasi Divisi ──
-const getMapInfo = async (mapNomor, divisi = "", excludeNomor = "") => {
+const getMapInfo = async (
+  mapNomor,
+  divisi = "",
+  excludeNomor = "",
+  periodeTgl1 = null,
+  periodeTgl2 = null,
+) => {
   const [rows] = await db.query(
-    `SELECT mspk_nomor AS Nomor, mspk_nama AS Nama,
-            DATE_FORMAT(mspk_tanggal,'%Y-%m-%d') AS Tanggal,
-            mspk_rencana_order AS Pesan,
-            0 AS Kirim,
-            mspk_rencana_order AS Kurang,
-            DATE_FORMAT(mspk_dateline, '%Y-%m-%d') AS DatelineAsli,
-            mspk_divisi AS Divisi
-     FROM tmemospk WHERE mspk_nomor = ?`,
+    `SELECT
+       m.mspk_nomor AS Nomor, m.mspk_nama AS Nama,
+       DATE_FORMAT(m.mspk_tanggal,'%Y-%m-%d') AS Tanggal,
+       m.mspk_jumlah AS Pesan,
+       m.mspk_jumlah_kirim AS KirimTotal,
+       m.mspk_jumlah_jadi AS RealisasiTotal,
+       DATE_FORMAT(m.mspk_dateline, '%Y-%m-%d') AS DatelineAsli,
+       m.mspk_divisi AS Divisi
+     FROM tmemospk m WHERE m.mspk_nomor = ?`,
     [mapNomor],
   );
   const row = rows[0];
@@ -189,7 +196,42 @@ const getMapInfo = async (mapNomor, divisi = "", excludeNomor = "") => {
     );
   }
 
-  return row;
+  let kirimPeriode = 0;
+  let realisasiPeriode = 0;
+
+  if (periodeTgl1 && periodeTgl2) {
+    const [[kirimRow]] = await db.query(
+      `SELECT IFNULL(SUM(d.sjd_jumlah), 0) AS total
+       FROM tsj_dtl_memo d
+       INNER JOIN tsj_hdr_memo h ON h.sj_nomor = d.sjd_sj_nomor
+       WHERE d.sjd_mspk_nomor = ? AND h.sj_tanggal BETWEEN ? AND ?`,
+      [mapNomor, periodeTgl1, periodeTgl2],
+    );
+    kirimPeriode = Number(kirimRow.total) || 0;
+
+    // BAST (tkesesuaianmap) yang disentuh (dibuat/diupdate) di periode
+    // ini dianggap merepresentasikan realisasi periode ini — qty
+    // jadinya tetap dari mspk_jumlah_jadi (satu-satunya sumber qty).
+    const [[bastRow]] = await db.query(
+      `SELECT COUNT(*) AS cnt FROM tkesesuaianmap
+       WHERE mspk_nomor = ?
+         AND (
+           DATE(date_create) BETWEEN ? AND ?
+           OR DATE(date_modify) BETWEEN ? AND ?
+         )`,
+      [mapNomor, periodeTgl1, periodeTgl2, periodeTgl1, periodeTgl2],
+    );
+    if (Number(bastRow.cnt) > 0) {
+      realisasiPeriode = Number(row.RealisasiTotal) || 0;
+    }
+  }
+
+  return {
+    ...row,
+    Kirim: kirimPeriode,
+    Kurang: Math.max(Number(row.Pesan) - Number(row.KirimTotal), 0),
+    Realisasi: realisasiPeriode,
+  };
 };
 
 // ── Info 1 MH (tambah manual) — dengan validasi Divisi & duplikasi ──
@@ -652,9 +694,9 @@ const createHeader = async (payload, userKode, userBagian) => {
 // ── Helper: total Rencana SAAT INI untuk satu periode, opsional exclude
 // satu baris (dipakai saat update baris itu sendiri, supaya tidak
 // menghitung nilai lamanya dobel dengan nilai barunya).
-const getTotalRencana = async (pjwNomor, excludePjwdId = null) => {
-  let query = `SELECT IFNULL(SUM(pjwd_rencana), 0) AS total FROM tpenjadwalan_ppic_dtl WHERE pjwd_pjw_nomor = ?`;
-  const params = [pjwNomor];
+const getTotalRencana = async (pjwNomor, excludePjwdId = null, tipe = "SO") => {
+  let query = `SELECT IFNULL(SUM(pjwd_rencana), 0) AS total FROM tpenjadwalan_ppic_dtl WHERE pjwd_pjw_nomor = ? AND pjwd_tipe = ?`;
+  const params = [pjwNomor, tipe];
   if (excludePjwdId) {
     query += ` AND pjwd_id <> ?`;
     params.push(excludePjwdId);
@@ -683,48 +725,57 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     );
   }
   const {
+    Tipe,
     SoNomor,
     NomorPraOrder,
     MapNomor,
     MhNomor,
     PenNomor,
-    PenId, // ⬅ baru
+    PenId,
     Rencana,
+    Realisasi,
     PermintaanKirim,
     NamaManual,
     PesanManual,
     KirimManual,
     RealisasiManual,
   } = rowData;
+  const tipe = Tipe === "MAP" ? "MAP" : "SO";
   const isManual =
     !SoNomor && !NomorPraOrder && !MapNomor && !MhNomor && !PenNomor;
   if (isManual && !NamaManual) {
     throw new Error("Baris manual harus punya Nama.");
   }
 
-  const rencanaVal = Number(Rencana) || 0;
+  const rencanaVal = tipe === "MAP" ? 0 : Number(Rencana) || 0;
+  // Realisasi untuk MAP: snapshot hasil hitung dari getMapInfo saat
+  // baris ditarik/ditambahkan (bukan dihitung ulang dinamis seperti SO
+  // via tstbj_dtl) — disimpan lewat kolom pjwd_realisasi_manual yang
+  // sudah ada, reuse kolom yang sama seperti baris MANUAL.
+  const realisasiVal =
+    tipe === "MAP" && !isManual ? Number(Realisasi) || 0 : null;
 
-  // Ambil cabang periode untuk menentukan batas kapasitas mingguan
   const [[hdrRow]] = await db.query(
     `SELECT pjw_cab FROM tpenjadwalan_ppic_hdr WHERE pjw_nomor = ?`,
     [pjwNomor],
   );
   const batasKapasitas = getCapacity(hdrRow?.pjw_cab);
 
-  const totalSekarang = await getTotalRencana(pjwNomor);
+  const totalSekarang = await getTotalRencana(pjwNomor, null, tipe);
   const totalSetelah = totalSekarang + rencanaVal;
-  const melebihiBatas = totalSetelah > batasKapasitas;
+  const melebihiBatas = tipe === "SO" && totalSetelah > batasKapasitas;
   const permintaanKirimSafe = PermintaanKirim
     ? String(PermintaanKirim).substring(0, 10)
     : null;
   const [result] = await db.query(
     `INSERT INTO tpenjadwalan_ppic_dtl
-       (pjwd_pjw_nomor, pjwd_so_nomor, pjwd_pro_nomor, pjwd_map_nomor, pjwd_mh_nomor, pjwd_pen_nomor, pjwd_pen_id, pjwd_rencana,
+       (pjwd_pjw_nomor, pjwd_tipe, pjwd_so_nomor, pjwd_pro_nomor, pjwd_map_nomor, pjwd_mh_nomor, pjwd_pen_nomor, pjwd_pen_id, pjwd_rencana,
         pjwd_tgl_permintaan_kirim, pjwd_status_permintaan, pjwd_user_create,
         pjwd_nama_manual, pjwd_pesan_manual, pjwd_kirim_manual, pjwd_realisasi_manual)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSE', ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSE', ?, ?, ?, ?, ?)`,
     [
       pjwNomor,
+      tipe,
       SoNomor || null,
       NomorPraOrder || null,
       MapNomor || null,
@@ -735,9 +786,9 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       permintaanKirimSafe,
       userKode,
       isManual ? NamaManual : null,
-      isManual ? Number(PesanManual) || 0 : null,
-      isManual ? Number(KirimManual) || 0 : null,
-      isManual ? Number(RealisasiManual) || 0 : null,
+      isManual ? Number(PesanManual) || 0 : tipe === "MAP" ? 0 : null,
+      isManual ? Number(KirimManual) || 0 : tipe === "MAP" ? 0 : null,
+      isManual ? Number(RealisasiManual) || 0 : realisasiVal,
     ],
   );
   return {
@@ -772,7 +823,7 @@ const updateDetailField = async (
 
   if (field === "pjwd_rencana") {
     const [[row]] = await db.query(
-      `SELECT d.pjwd_pjw_nomor, h.pjw_cab
+      `SELECT d.pjwd_pjw_nomor, d.pjwd_tipe, h.pjw_cab
        FROM tpenjadwalan_ppic_dtl d
        INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
        WHERE d.pjwd_id = ?`,
@@ -780,11 +831,13 @@ const updateDetailField = async (
     );
     if (!row) throw new Error("Baris tidak ditemukan.");
 
-    batasKapasitas = getCapacity(row.pjw_cab);
-    const rencanaBaru = Number(value) || 0;
-    const totalLain = await getTotalRencana(row.pjwd_pjw_nomor, pjwdId);
-    totalSetelah = totalLain + rencanaBaru;
-    melebihiBatas = totalSetelah > batasKapasitas;
+    if (row.pjwd_tipe === "SO") {
+      batasKapasitas = getCapacity(row.pjw_cab);
+      const rencanaBaru = Number(value) || 0;
+      const totalLain = await getTotalRencana(row.pjwd_pjw_nomor, pjwdId, "SO");
+      totalSetelah = totalLain + rencanaBaru;
+      melebihiBatas = totalSetelah > batasKapasitas;
+    }
   }
 
   await db.query(

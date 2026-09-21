@@ -356,14 +356,11 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
   }
 
   const conn = await db.getConnection();
+  const sjHasilMaklonList = [];
   try {
     await conn.beginTransaction();
 
     await conn.query(`DELETE FROM tdtf WHERE Cab = ? AND Tanggal = ?`, [
-      cab,
-      tanggal,
-    ]);
-    await conn.query(`DELETE FROM tdtf_maklon WHERE cab = ? AND tanggal = ?`, [
       cab,
       tanggal,
     ]);
@@ -476,7 +473,6 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
       touchedIdsByMkl[r.Kode].push(row.id);
     }
 
-    const sjHasilMaklonList = [];
     for (const [mklNomor, ids] of Object.entries(touchedIdsByMkl)) {
       const result = await sjHasilMakloonService.generateSjForIds(
         conn,

@@ -66,11 +66,13 @@ const searchMapKandidat = async (req, res) => {
 
 const getMapInfo = async (req, res) => {
   try {
-    const { divisi, excludeNomor } = req.query;
+    const { divisi, excludeNomor, tgl1, tgl2 } = req.query;
     const data = await penjadwalanPpicFormService.getMapInfo(
       req.params.mapNomor,
       divisi || "",
       excludeNomor || "",
+      tgl1 || null,
+      tgl2 || null,
     );
     if (!data)
       return res

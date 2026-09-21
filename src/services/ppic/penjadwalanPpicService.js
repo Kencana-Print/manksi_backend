@@ -9,7 +9,8 @@ const getBrowse = async (startDate, endDate, cabang = "") => {
        h.pjw_cab AS Cabang,
        h.pjw_close AS Close,
        h.pjw_keterangan AS Keterangan,
-       COUNT(d.pjwd_id) AS JumlahSO
+       SUM(CASE WHEN d.pjwd_id IS NOT NULL AND d.pjwd_tipe <> 'MAP' THEN 1 ELSE 0 END) AS JumlahSO,
+       SUM(CASE WHEN d.pjwd_id IS NOT NULL AND d.pjwd_tipe = 'MAP' THEN 1 ELSE 0 END) AS JumlahMap
      FROM tpenjadwalan_ppic_hdr h
      LEFT JOIN tpenjadwalan_ppic_dtl d ON d.pjwd_pjw_nomor = h.pjw_nomor
      WHERE h.pjw_tgl1 BETWEEN ? AND ?`;
@@ -32,6 +33,7 @@ const getDetail = async (nomor) => {
   const [rows] = await db.query(
     `SELECT
        d.pjwd_id AS PjwdId,
+       d.pjwd_tipe AS PjwdTipe,
        COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) AS Nomor,
        d.pjwd_pro_nomor AS NomorPraOrder,
        IF(so_from_map.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
@@ -52,28 +54,38 @@ const getDetail = async (nomor) => {
        -- ⬅ BARU: Panjang & Lebar, ambil dari sumber yang sesuai; Pra Order belum punya kolomnya jadi tidak diikutkan
        COALESCE(src.Panjang, mp.mspk_panjang, mh.mh_panjang, pend.pend_panjang, d.pjwd_panjang_manual, 0) AS Panjang,
        COALESCE(src.Lebar, mp.mspk_lebar, mh.mh_lebar, pend.pend_lebar, d.pjwd_lebar_manual, 0) AS Lebar,
-       COALESCE(src.Pesan, mp.mspk_rencana_order, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0) AS Pesan,
-       COALESCE(src.Kirim, 0, 0, d.pjwd_kirim_manual, 0) AS Kirim,
-       COALESCE(src.Kurang, mp.mspk_rencana_order, pro.pro_qty_rencana,
-         (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0))) AS Kurang,
+       CASE
+         WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_pesan_manual, 0)
+         ELSE COALESCE(src.Pesan, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0)
+       END AS Pesan,
+       CASE
+         WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_kirim_manual, 0)
+         ELSE COALESCE(src.Kirim, 0, d.pjwd_kirim_manual, 0)
+       END AS Kirim,
+       CASE
+         WHEN d.pjwd_tipe = 'MAP' THEN GREATEST(IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0), 0)
+         ELSE COALESCE(src.Kurang, pro.pro_qty_rencana,
+           (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0)))
+       END AS Kurang,
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
-       IF(
-        COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
-          AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL,
-        IFNULL(d.pjwd_realisasi_manual, 0),
-        IFNULL((
-          SELECT SUM(td.stbjd_jumlah)
-          FROM tstbj_dtl td
-          INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
-          WHERE td.stbjd_spk_nomor = COALESCE(
-            (SELECT so.so_spk_ref FROM tsalesorder so
-            WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-            COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-          )
-          AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-        ), 0)
-      ) AS Realisasi,
+       CASE
+         WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_realisasi_manual, 0)
+         WHEN COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
+           AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL
+         THEN IFNULL(d.pjwd_realisasi_manual, 0)
+         ELSE IFNULL((
+           SELECT SUM(td.stbjd_jumlah)
+           FROM tstbj_dtl td
+           INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
+           WHERE td.stbjd_spk_nomor = COALESCE(
+             (SELECT so.so_spk_ref FROM tsalesorder so
+             WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+             COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+           )
+           AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
+         ), 0)
+       END AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
        DATE_FORMAT(d.pjwd_tgl_kesepakatan, '%Y-%m-%d') AS Kesepakatan,
@@ -151,40 +163,57 @@ const deleteData = async (nomor) => {
 const getPencapaian = async (nomor) => {
   const detailRows = await getDetail(nomor);
 
-  const totalRencana = detailRows.reduce(
-    (s, d) => s + (Number(d.Rencana) || 0),
-    0,
-  );
-  const totalRealisasi = detailRows.reduce(
-    (s, d) => s + (Number(d.Realisasi) || 0),
-    0,
-  );
+  const soRows = detailRows.filter((d) => d.PjwdTipe !== "MAP");
+  const mapRows = detailRows.filter((d) => d.PjwdTipe === "MAP");
+
+  const sumRencana = (rows) =>
+    rows.reduce((s, d) => s + (Number(d.Rencana) || 0), 0);
+  const sumRealisasi = (rows) =>
+    rows.reduce((s, d) => s + (Number(d.Realisasi) || 0), 0);
 
   const [rows] = await db.query(
     `SELECT pjwp_id AS Id, pjwp_tipe AS Tipe, pjwp_kategori AS Kategori,
-            pjwp_keterangan AS Keterangan, pjwp_pcs AS Pcs
+            pjwp_keterangan AS Keterangan, pjwp_pcs AS Pcs, pjwp_group AS Group_
      FROM tpenjadwalan_ppic_pencapaian
      WHERE pjwp_pjw_nomor = ?
      ORDER BY pjwp_tipe, pjwp_urutan ASC, pjwp_id ASC`,
     [nomor],
   );
 
+  const soPencapaian = rows.filter((r) => r.Group_ !== "MAP");
+  const mapPencapaian = rows.filter((r) => r.Group_ === "MAP");
+
   return {
-    Rencana: totalRencana,
-    Realisasi: totalRealisasi,
-    TidakTercapai: rows.filter((r) => r.Tipe === "KURANG"),
-    Tambahan: rows.filter((r) => r.Tipe === "TAMBAHAN"),
+    So: {
+      Rencana: sumRencana(soRows),
+      Realisasi: sumRealisasi(soRows),
+      TidakTercapai: soPencapaian.filter((r) => r.Tipe === "KURANG"),
+      Tambahan: soPencapaian.filter((r) => r.Tipe === "TAMBAHAN"),
+    },
+    Map: {
+      Rencana: sumRencana(mapRows),
+      Realisasi: sumRealisasi(mapRows),
+      TidakTercapai: mapPencapaian.filter((r) => r.Tipe === "KURANG"),
+      Tambahan: mapPencapaian.filter((r) => r.Tipe === "TAMBAHAN"),
+    },
   };
 };
 
 // Replace-all — paling simpel untuk list yang bisa ditambah/hapus bebas dari UI
-const savePencapaian = async (nomor, tidakTercapai = [], tambahan = []) => {
+const savePencapaian = async (
+  nomor,
+  tidakTercapai = [],
+  tambahan = [],
+  group = null,
+) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
     await conn.query(
-      `DELETE FROM tpenjadwalan_ppic_pencapaian WHERE pjwp_pjw_nomor = ?`,
-      [nomor],
+      `DELETE FROM tpenjadwalan_ppic_pencapaian WHERE pjwp_pjw_nomor = ? AND ${
+        group ? "pjwp_group = ?" : "pjwp_group IS NULL"
+      }`,
+      group ? [nomor, group] : [nomor],
     );
 
     const allRows = [
@@ -195,11 +224,12 @@ const savePencapaian = async (nomor, tidakTercapai = [], tambahan = []) => {
     for (const r of allRows) {
       await conn.query(
         `INSERT INTO tpenjadwalan_ppic_pencapaian
-           (pjwp_pjw_nomor, pjwp_tipe, pjwp_kategori, pjwp_keterangan, pjwp_pcs, pjwp_urutan)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+           (pjwp_pjw_nomor, pjwp_tipe, pjwp_group, pjwp_kategori, pjwp_keterangan, pjwp_pcs, pjwp_urutan)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           r.tipe,
+          group || null,
           r.kategori,
           r.keterangan || null,
           Number(r.pcs) || 0,

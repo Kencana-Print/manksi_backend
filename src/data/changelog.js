@@ -16,6 +16,10 @@ const changelog = [
         type: "added",
         text: "Menu baru Alokasi Sales Order, dipisahkan dari tab Alokasi pada Sales Order. Digunakan untuk mengupdate alokasi sales order tertentu tanpa harus edit sales ordernya.",
       },
+      {
+        type: "added",
+        text: "Komitmen Kirim dipisah menjadi 2 tab, Komitmen Kirim SO dan Komitmen Kirim Sampel/MAP.",
+      },
     ],
   },
   {

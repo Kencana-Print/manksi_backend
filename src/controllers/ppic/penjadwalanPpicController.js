@@ -54,15 +54,14 @@ const getPencapaian = async (req, res) => {
 
 const savePencapaian = async (req, res) => {
   try {
-    const { tidakTercapai, tambahan } = req.body;
+    const { tidakTercapai, tambahan, group } = req.body;
     await penjadwalanPpicService.savePencapaian(
       req.params.nomor,
       tidakTercapai,
       tambahan,
+      group,
     );
-    res
-      .status(200)
-      .json({ success: true, message: "Pencapaian berhasil disimpan." });
+    res.status(200).json({ success: true, message: "Data berhasil disimpan." });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
