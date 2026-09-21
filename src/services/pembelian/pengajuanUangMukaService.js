@@ -117,7 +117,7 @@ const createPengajuan = async ({ tanggal, keterangan, items }, user) => {
         pmtNomor = await ensurePermintaanDana(it.nomorSumber, conn);
         const [[jml]] = await conn.query(
           `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total
-           FROM ga2.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
+           FROM ga2new.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
           [it.nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);

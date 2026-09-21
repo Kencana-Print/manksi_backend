@@ -22,11 +22,11 @@ const getOutstanding = async ({
         c.lokasi AS Cabang,
         IFNULL((
           SELECT SUM(d.pjd_qty * d.pjd_nilai)
-          FROM ga2.tpengajuan2_dtl d
+          FROM ga2new.tpengajuan2_dtl d
           WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
             AND NOT EXISTS (
-              SELECT 1 FROM ga2.tpermintaan_dtl td
-              JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+              SELECT 1 FROM ga2new.tpermintaan_dtl td
+              JOIN ga2new.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
               WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = d.pjd_nourut
                 AND (td.pmd_tanggal_approved IS NOT NULL OR td.pmd_tanggal_reject IS NOT NULL)
             )
@@ -37,14 +37,14 @@ const getOutstanding = async ({
                 AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
             )
         ), 0) AS Nominal
-      FROM ga2.tpengajuan2_hdr a
-      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
+      FROM ga2new.tpengajuan2_hdr a
+      LEFT JOIN ga2new.peminta c ON c.nik = a.pjh_nik
       WHERE EXISTS (
-        SELECT 1 FROM ga2.tpengajuan2_dtl d
+        SELECT 1 FROM ga2new.tpengajuan2_dtl d
         WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
           AND NOT EXISTS (
-            SELECT 1 FROM ga2.tpermintaan_dtl td
-            JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+            SELECT 1 FROM ga2new.tpermintaan_dtl td
+            JOIN ga2new.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
             WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = d.pjd_nourut
               AND (td.pmd_tanggal_approved IS NOT NULL OR td.pmd_tanggal_reject IS NOT NULL)
           )
@@ -147,6 +147,12 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
          a.Keterangan AS Keterangan
        FROM ga2.viewpengajuan a
        WHERE a.pjh_nomor = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM ga2.tpermintaan_dtl td
+           JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+           WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = a.pjd_nourut
+             AND (td.pmd_tanggal_approved IS NOT NULL OR td.pmd_tanggal_reject IS NOT NULL)
+         )
          AND NOT EXISTS (
            SELECT 1 FROM tpengajuan_uang_muka_dtl pd
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor

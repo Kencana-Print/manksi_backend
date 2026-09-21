@@ -355,10 +355,12 @@ const tundaData = async (nomor, alasan, userKode) => {
       throw new Error("Data ini tidak punya detail — tidak bisa ditunda.");
     }
 
-    // Tanggal baru = tanggal asal + 1 hari
+    // Tanggal baru = tanggal asal + 1 hari.
+    // Khusus jadwal hari Sabtu (getDay() === 6) → dijadwal ulang ke Senin (+2 hari).
     const tglAsal = new Date(header.Tanggal);
     const tglBaru = new Date(tglAsal);
-    tglBaru.setDate(tglBaru.getDate() + 1);
+    const tambahHari = tglAsal.getDay() === 6 ? 2 : 1;
+    tglBaru.setDate(tglBaru.getDate() + tambahHari);
     const tglBaruStr = `${tglBaru.getFullYear()}-${String(
       tglBaru.getMonth() + 1,
     ).padStart(2, "0")}-${String(tglBaru.getDate()).padStart(2, "0")}`;
