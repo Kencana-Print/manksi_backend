@@ -116,16 +116,16 @@ const createPengajuan = async ({ tanggal, keterangan, items }, user) => {
       if (it.sumber === "PENGAJUAN_DANA") {
         pmtNomor = await ensurePermintaanDana(it.nomorSumber, conn);
         const [[jml]] = await conn.query(
-          `SELECT IFNULL(SUM(d.pjd_qty * d.pjd_nilai),0) AS total
-           FROM ga2new.tpengajuan2_dtl d WHERE d.pjd_pjh_nomor = ?`,
-          [it.nomorSumber],
+          `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total
+           FROM ga2.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
+          [it.nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
       } else if (it.sumber === "PERMINTAAN_PEMBELIAN") {
         const [[jml]] = await conn.query(
-          `SELECT IFNULL(SUM(d.mbd_jumlah * d.mbd_harga),0) AS total
-           FROM tgarmenmintabeli_dtl d WHERE d.mbd_nomor = ?`,
-          [it.nomorSumber],
+          `SELECT IFNULL(mbd_jumlah * mbd_harga, 0) AS total
+           FROM tgarmenmintabeli_dtl WHERE mbd_nomor = ? AND mbd_nourut = ?`,
+          [it.nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
       } else {
