@@ -5,6 +5,20 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.10",
+    date: "2026-09-21",
+    changes: [
+      {
+        type: "added",
+        text: "Menu Baru Makloon Barang untuk Gudang, digunakan untuk memproses barang polosan menjadi barang jadi dengan gudang tujuan tertentu",
+      },
+      {
+        type: "added",
+        text: "Menu baru Alokasi Sales Order, dipisahkan dari tab Alokasi pada Sales Order. Digunakan untuk mengupdate alokasi sales order tertentu tanpa harus edit sales ordernya.",
+      },
+    ],
+  },
+  {
     version: "1.0.9",
     date: "2026-09-09",
     changes: [

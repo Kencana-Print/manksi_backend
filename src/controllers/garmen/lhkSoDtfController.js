@@ -75,12 +75,14 @@ const update = async (req, res) => {
 const remove = async (req, res) => {
   try {
     const { spkNomor, cab, tanggal } = req.params;
+    const { tipe } = req.query;
     const userCab = req.user?.cab || "";
     await lhkSoDtfService.deleteData(
       decodeURIComponent(spkNomor),
       decodeURIComponent(cab),
       decodeURIComponent(tanggal),
       userCab,
+      tipe,
     );
     res.status(200).json({ success: true, message: "Berhasil dihapus." });
   } catch (error) {

@@ -76,14 +76,23 @@ const getSpkByNomor = async (req, res) => {
   }
 };
 
+const getSizesBySpk = async (req, res) => {
+  try {
+    const data = await svc.getSizesBySpk(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const uploadGambar = async (req, res) => {
   try {
     if (!req.file) throw new Error("File gambar tidak ditemukan.");
-    const { lhkNomor, tab, spkNomor } = req.body; // tab: 'marker' atau 'grading'
+    const { lhkNomor, tab, spkNomor, size } = req.body; // tab: 'marker' atau 'grading'
 
-    if (!lhkNomor || !tab || !spkNomor) {
+    if (!lhkNomor || !tab || !spkNomor || !size) {
       throw new Error(
-        "Nomor LHK Pola, Tab (marker/grading), dan No. SPK harus disertakan.",
+        "Nomor LHK Pola, Tab (marker/grading), No. SPK, dan Size harus disertakan.",
       );
     }
 
@@ -92,6 +101,7 @@ const uploadGambar = async (req, res) => {
       lhkNomor,
       tab,
       spkNomor,
+      size,
     );
     res
       .status(200)
@@ -108,5 +118,6 @@ module.exports = {
   remove,
   searchSpk,
   getSpkByNomor,
+  getSizesBySpk,
   uploadGambar,
 };

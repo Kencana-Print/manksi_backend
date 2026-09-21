@@ -29,6 +29,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getSpkByNomor,
 );
+router.get(
+  "/lookup/spk-sizes/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getSizesBySpk,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.get(

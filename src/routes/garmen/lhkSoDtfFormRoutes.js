@@ -34,6 +34,24 @@ router.get(
   controller.lookupSoDtf,
 );
 router.get(
+  "/lookup-maklon",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.lookupMaklon,
+);
+router.get(
+  "/validate-maklon/:kode",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.validateMaklonKode,
+);
+router.get(
+  "/maklon-autofill/:mklNomor",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getMaklonAutofill,
+);
+router.get(
   "/validate-kode/:kode",
   verifyToken,
   checkPermission(MENU_ID, "view"),

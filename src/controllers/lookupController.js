@@ -776,8 +776,14 @@ const searchKaryawan = async (req, res) => {
 
 const searchAccount = async (req, res) => {
   try {
-    const { q, page, limit, filterMode } = req.query;
-    const data = await lookupService.searchAccount(q, page, limit, filterMode);
+    const { q, page, limit, filterMode, jenis } = req.query;
+    const data = await lookupService.searchAccount(
+      q,
+      page,
+      limit,
+      filterMode,
+      jenis,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

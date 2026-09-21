@@ -51,6 +51,21 @@ router.get(
   verifyToken,
   controller.getEffectiveCallingDetail,
 );
+router.get(
+  "/target-collection-sales",
+  verifyToken,
+  controller.getTargetCollectionSales,
+);
+router.get(
+  "/potensi-source-options",
+  verifyToken,
+  controller.getPotensiSourceOptions,
+);
+router.post("/potensi", verifyToken, controller.setPotensi);
+router.post("/potensi-bulk", verifyToken, controller.setPotensiBulk);
+router.patch("/potensi/:nomor/batal", verifyToken, controller.batalPotensi);
+router.get("/potensi-summary", verifyToken, controller.getPotensiSummary);
+router.get("/potensi-list", verifyToken, controller.getPotensiList);
 router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
 router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
 router.get("/penerimaan-summary", verifyToken, controller.getPenerimaanSummary);

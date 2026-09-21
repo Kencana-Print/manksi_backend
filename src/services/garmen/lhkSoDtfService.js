@@ -17,15 +17,6 @@ const getBrowseData = async (startDate, endDate, cab) => {
     params.push(cab);
   }
 
-  // Delphi asli: WHERE tanggal >= :start AND tanggal <= :end (tanpa DATE()).
-  // Di sini dibungkus DATE(d.Tanggal) sebagai pengaman kalau kolom
-  // ternyata DATETIME (bukan DATE murni) — pola bug yang sudah pernah
-  // ditemukan berulang di modul lain (lihat tutup buku & modul tanggal
-  // lainnya). Tidak mengubah hasil filter kalau kolom memang DATE.
-  //
-  // ⚠️ ORDER BY di source Delphi DI-COMMENT (urutan tampil aslinya
-  // undefined) — ditambah ORDER BY di sini supaya tampilan web
-  // konsisten, TIDAK mengubah data yang di-filter.
   const q = `
     SELECT
       DATE_FORMAT(d.Tanggal, '%Y-%m-%d') AS Tanggal,
@@ -33,16 +24,43 @@ const getBrowseData = async (startDate, endDate, cab) => {
       d.spk_nomor AS SPK,
       IFNULL(s.spk_nama, IFNULL(m.mspk_nama, h.sd_nama)) AS NamaOrder,
       d.Depan, d.Belakang, d.Lengan, d.Variasi, d.Saku,
-      d.Panjang AS PanjangM, d.Buangan, d.Keterangan
+      d.Panjang AS PanjangM, d.Buangan, d.Keterangan,
+      'SPK' AS Tipe
     FROM tdtf d
     LEFT JOIN tspk s ON s.spk_nomor = d.spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = d.spk_nomor
     LEFT JOIN retail.tsodtf_hdr h ON h.sd_nomor = d.spk_nomor
     WHERE DATE(d.Tanggal) BETWEEN ? AND ?
     ${cabFilter}
-    ORDER BY d.Tanggal, d.spk_nomor
+
+    UNION ALL
+
+    SELECT
+      DATE_FORMAT(dm.tanggal, '%Y-%m-%d') AS Tanggal,
+      dm.cab AS Cab,
+      dm.mkl_nomor AS SPK,
+      CONCAT('[MAKLON] ', IFNULL(bh.brg_nama, dm.kode_hasil)) AS NamaOrder,
+      dm.qty_masuk AS Depan,
+      0 AS Belakang,
+      0 AS Lengan,
+      dm.qty_hasil AS Variasi,
+      dm.bs_afval AS Saku,
+      0 AS PanjangM,
+      0 AS Buangan,
+      CONCAT(dm.keterangan, ' (', dm.satuan, ')') AS Keterangan,
+      'MAKLON' AS Tipe
+    FROM tdtf_maklon dm
+    LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dm.kode_hasil
+    WHERE dm.tanggal BETWEEN ? AND ?
+    ${cab && cab !== "ALL" ? " AND dm.cab = ?" : ""}
+
+    ORDER BY Tanggal, SPK
   `;
-  const [rows] = await db.query(q, params);
+
+  const unionParams = [...params, startDate, endDate];
+  if (cab && cab !== "ALL") unionParams.push(cab);
+
+  const [rows] = await db.query(q, unionParams);
 
   const data = rows.map((r) => ({
     ...r,
@@ -55,8 +73,6 @@ const getBrowseData = async (startDate, endDate, cab) => {
     Buangan: Number(r.Buangan) || 0,
   }));
 
-  // Footer summary — replikasi FooterKind:=skSum pada Columns[4..10]
-  // (Depan, Belakang, Lengan, Variasi, Saku, Panjang(M), Buangan).
   const summary = data.reduce(
     (acc, r) => {
       acc.Depan += r.Depan;
@@ -116,7 +132,25 @@ const assertCabAccess = (rowCab, userCab) => {
  * replikasi PERSIS WHERE clause cxButton4Click. tdtf tidak punya
  * single PK, jadi ketiga kolom ini wajib match semua.
  */
-const deleteData = async (spkNomor, cab, tanggal, userCab) => {
+const deleteData = async (spkNomor, cab, tanggal, userCab, tipe) => {
+  if (tipe === "MAKLON") {
+    const [[row]] = await db.query(
+      `SELECT cab FROM tdtf_maklon WHERE mkl_nomor = ? AND cab = ? AND tanggal = ? LIMIT 1`,
+      [spkNomor, cab, tanggal],
+    );
+    if (!row) {
+      const err = new Error("Data tidak ditemukan.");
+      err.statusCode = 404;
+      throw err;
+    }
+    assertCabAccess(row.cab, userCab);
+    await db.query(
+      `DELETE FROM tdtf_maklon WHERE mkl_nomor = ? AND cab = ? AND tanggal = ?`,
+      [spkNomor, cab, tanggal],
+    );
+    return true;
+  }
+
   const [[row]] = await db.query(
     `SELECT Cab FROM tdtf WHERE spk_nomor = ? AND Cab = ? AND Tanggal = ? LIMIT 1`,
     [spkNomor, cab, tanggal],
@@ -127,7 +161,6 @@ const deleteData = async (spkNomor, cab, tanggal, userCab) => {
     throw err;
   }
   assertCabAccess(row.Cab, userCab);
-
   await db.query(
     `DELETE FROM tdtf WHERE spk_nomor = ? AND Cab = ? AND Tanggal = ?`,
     [spkNomor, cab, tanggal],

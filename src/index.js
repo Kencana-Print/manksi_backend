@@ -115,6 +115,10 @@ const mkaGarmenRoutes = require("./routes/garmen/mkaRoutes");
 const mkaFormRoutes = require("./routes/garmen/mkaFormRoutes");
 const spkGudangRoutes = require("./routes/garmen/spkGudangRoutes");
 const spkGudangFormRoutes = require("./routes/garmen/spkGudangFormRoutes");
+const maklonBarangRoutes = require("./routes/garmen/maklonBarangRoutes");
+const maklonBarangFormRoutes = require("./routes/garmen/maklonBarangFormRoutes");
+const sjHasilMakloonRoutes = require("./routes/garmen/sjHasilMakloonRoutes");
+const maklonTerimaRoutes = require("./routes/garmen/maklonTerimaRoutes");
 
 const poInternalMapRoutes = require("./routes/garmen/poInternalMapRoutes");
 const poInternalMapSjRoutes = require("./routes/garmen/poInternalMapSjRoutes");
@@ -153,6 +157,9 @@ const poBahanRoutes = require("./routes/pembelian/poBahanRoutes");
 const poBahanFormRoutes = require("./routes/pembelian/poBahanFormRoutes");
 const poExternalGarmenRoutes = require("./routes/pembelian/poExternalGarmenRoutes");
 const poExternalGarmenFormRoutes = require("./routes/pembelian/poExternalGarmenFormRoutes");
+const uangMukaRoutes = require("./routes/pembelian/uangMukaRoutes");
+const pengajuanUangMukaRoutes = require("./routes/pembelian/pengajuanUangMukaRoutes");
+const uangMukaRealisasiRoutes = require("./routes/pembelian/uangMukaRealisasiRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -165,6 +172,7 @@ const penawaranRoutes = require("./routes/penjualan/penawaranRoutes");
 const penawaranFormRoutes = require("./routes/penjualan/penawaranFormRoutes");
 const salesOrderRoutes = require("./routes/penjualan/salesOrderRoutes");
 const salesOrderFormRoutes = require("./routes/penjualan/salesOrderFormRoutes");
+const alokasiSoRoutes = require("./routes/penjualan/alokasiSoRoutes");
 const praSuratJalanRoutes = require("./routes/penjualan/praSuratJalanRoutes");
 const praSuratJalanFormRoutes = require("./routes/penjualan/praSuratJalanFormRoutes");
 const suratJalanRoutes = require("./routes/penjualan/suratJalanRoutes");
@@ -215,6 +223,7 @@ const umurStokBahanRoutes = require("./routes/laporan/gudang-garmen/umurStokBaha
 const kartuStokBarangRoutes = require("./routes/laporan/gudang-garmen/kartuStokGarmenRoutes");
 const mutasiStokBahanRoutes = require("./routes/laporan/gudang-garmen/mutasiStokBahanRoutes");
 const stokAccVsMkaRoutes = require("./routes/laporan/gudang-garmen/stokAccVsMkaRoutes");
+const monitoringMakloonRoutes = require("./routes/laporan/gudang-garmen/monitoringMakloonRoutes");
 const stokDcRoutes = require("./routes/laporan/gudang-garmen/stokDcRoutes");
 const stokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/stokBarangJadiRoutes");
 const kartuStokBarangJadiRoutes = require("./routes/laporan/gudang-garmen/kartuStokBarangJadiRoutes");
@@ -418,6 +427,9 @@ app.use("/api/pembelian/po-bahan/form", poBahanFormRoutes);
 app.use("/api/pembelian/po-external-garmen", poExternalGarmenRoutes);
 app.use("/api/pembelian/po-external-garmen/form", poExternalGarmenFormRoutes);
 app.use("/api/pembelian/setting-harga-bahan", settingHargaBahanRoutes);
+app.use("/api/pembelian/uang-muka", uangMukaRoutes);
+app.use("/api/pembelian/pengajuan-uang-muka", pengajuanUangMukaRoutes);
+app.use("/api/pembelian/uang-muka-realisasi", uangMukaRealisasiRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
@@ -513,6 +525,10 @@ app.use("/api/garmen/mka", mkaGarmenRoutes);
 app.use("/api/garmen/mka-form", mkaFormRoutes);
 app.use("/api/garmen/spk-gudang", spkGudangRoutes);
 app.use("/api/garmen/spk-gudang/form", spkGudangFormRoutes);
+app.use("/api/garmen/maklon/makloon-barang", maklonBarangRoutes);
+app.use("/api/garmen/maklon/makloon-barang/form", maklonBarangFormRoutes);
+app.use("/api/garmen/makloon/sj-hasil-makloon", sjHasilMakloonRoutes);
+app.use("/api/garmen/maklon/terima", maklonTerimaRoutes);
 
 app.use("/api/garmen/po-internal-map", poInternalMapRoutes);
 app.use("/api/garmen/po-internal-map/surat-jalan", poInternalMapSjRoutes);
@@ -572,6 +588,7 @@ app.use("/api/penjualan/penawaran", penawaranRoutes);
 app.use("/api/penjualan/penawaran-form", penawaranFormRoutes);
 app.use("/api/penjualan/sales-order", salesOrderRoutes);
 app.use("/api/penjualan/sales-order/form", salesOrderFormRoutes);
+app.use("/api/penjualan/alokasi-so", alokasiSoRoutes);
 app.use("/api/penjualan/pra-sj", praSuratJalanRoutes);
 app.use("/api/penjualan/pra-sj-form", praSuratJalanFormRoutes);
 app.use("/api/penjualan/surat-jalan", suratJalanRoutes);
@@ -625,6 +642,10 @@ app.use(
 );
 app.use("/api/laporan/gudang-garmen/umur-stok-bahan", umurStokBahanRoutes);
 app.use("/api/laporan/gudang-garmen/stok-acc-vs-mka", stokAccVsMkaRoutes);
+app.use(
+  "/api/laporan/gudang-garmen/monitoring-makloon",
+  monitoringMakloonRoutes,
+);
 app.use("/api/laporan/gudang-garmen/stok-dc", stokDcRoutes);
 app.use("/api/laporan/gudang-garmen/stok-barang-jadi", stokBarangJadiRoutes);
 app.use(

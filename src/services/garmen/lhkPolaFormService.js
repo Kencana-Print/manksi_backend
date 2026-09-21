@@ -9,8 +9,8 @@ const path = require("path");
 const sanitizeForFilename = (str) =>
   String(str || "").replace(/[\/\\:*?"<>|]/g, "_");
 
-const buildGambarFileName = (lhkNomor, tab, spkNomor) =>
-  `${sanitizeForFilename(lhkNomor)}-${tab}-${sanitizeForFilename(spkNomor)}.jpg`;
+const buildGambarFileName = (lhkNomor, tab, spkNomor, size) =>
+  `${sanitizeForFilename(lhkNomor)}-${tab}-${sanitizeForFilename(spkNomor)}-${sanitizeForFilename(size)}.jpg`;
 
 // --- GENERATE NOMOR (format: LHKP/0001/2026) ---
 const generateNomor = async (tanggal) => {
@@ -45,6 +45,7 @@ const getDetail = async (nomor) => {
             IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
             d.ldg_divisi AS divisi, d.ldg_grading_size AS gradingSize,
             d.ldg_panjang AS panjang, d.ldg_lebar AS lebar,
+            d.ldg_panjang_mentah AS panjangMentah, d.ldg_lebar_mentah AS lebarMentah,
             d.ldg_keterangan AS keterangan, d.ldg_gambar AS gambar
     FROM tlhkpola_grading_dtl d
     LEFT JOIN tspk s ON s.spk_nomor = d.ldg_spk_nomor
@@ -84,7 +85,6 @@ const saveData = async (payload, user, isEdit) => {
     throw new Error("Minimal harus ada 1 baris SPK terisi di Pola/Grading.");
   }
 
-  // Panjang & Lebar wajib diisi untuk setiap baris yang sudah ada SPK-nya
   const invalidRow = gradingFilled.find(
     (r) =>
       r.panjang === "" ||
@@ -130,18 +130,17 @@ const saveData = async (payload, user, isEdit) => {
       );
     }
 
-    // Tarik mapping gambar lama (per spkNomor) SEBELUM di-delete, supaya
-    // gambar "nempel" ke SPK meski urut baris berubah.
+    // Kunci gambar sekarang gabungan spkNomor+size, karena 1 SPK bisa
+    // punya banyak baris (1 per size) sejak breakdown otomatis.
     const [oldGradingGambar] = await conn.query(
-      `SELECT ldg_spk_nomor AS spkNomor, ldg_gambar AS gambar
+      `SELECT ldg_spk_nomor AS spkNomor, ldg_grading_size AS size, ldg_gambar AS gambar
        FROM tlhkpola_grading_dtl WHERE ldg_nomor = ? AND ldg_gambar IS NOT NULL`,
       [nomor],
     );
     const gradingGambarMap = new Map(
-      oldGradingGambar.map((r) => [r.spkNomor, r.gambar]),
+      oldGradingGambar.map((r) => [`${r.spkNomor}|${r.size}`, r.gambar]),
     );
 
-    // --- Replace total detail Pola/Grading ---
     await conn.query(`DELETE FROM tlhkpola_grading_dtl WHERE ldg_nomor = ?`, [
       nomor,
     ]);
@@ -153,13 +152,16 @@ const saveData = async (payload, user, isEdit) => {
       r.gradingSize || "",
       r.panjang,
       r.lebar,
+      r.panjangMentah ?? null,
+      r.lebarMentah ?? null,
       r.keterangan || "",
-      gradingGambarMap.get(r.spkNomor) || null,
+      gradingGambarMap.get(`${r.spkNomor}|${r.gradingSize}`) || null,
     ]);
     await conn.query(
       `INSERT INTO tlhkpola_grading_dtl
         (ldg_nomor, ldg_urut, ldg_spk_nomor, ldg_divisi, ldg_grading_size,
-          ldg_panjang, ldg_lebar, ldg_keterangan, ldg_gambar)
+          ldg_panjang, ldg_lebar, ldg_panjang_mentah, ldg_lebar_mentah,
+          ldg_keterangan, ldg_gambar)
       VALUES ?`,
       [vals],
     );
@@ -177,12 +179,18 @@ const saveData = async (payload, user, isEdit) => {
 // ============================================================
 // UPLOAD GAMBAR PER BARIS (khusus tab grading)
 // ============================================================
-const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
+const uploadGambarDetail = async (
+  tempFilePath,
+  lhkNomor,
+  tab,
+  spkNomor,
+  size,
+) => {
   if (!fs.existsSync(tempFilePath))
     throw new Error("File sumber sementara tidak ditemukan.");
   if (tab !== "grading") throw new Error("Tab tidak valid.");
 
-  const finalFileName = buildGambarFileName(lhkNomor, tab, spkNomor);
+  const finalFileName = buildGambarFileName(lhkNomor, tab, spkNomor, size);
   const folderPath = path.join(process.cwd(), "public", "images", "lhkpola");
   if (!fs.existsSync(folderPath)) {
     fs.mkdirSync(folderPath, { recursive: true });
@@ -203,12 +211,12 @@ const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
 
   const [result] = await db.query(
     `UPDATE tlhkpola_grading_dtl SET ldg_gambar = ?
-     WHERE ldg_nomor = ? AND ldg_spk_nomor = ?`,
-    [finalFileName, lhkNomor, spkNomor],
+     WHERE ldg_nomor = ? AND ldg_spk_nomor = ? AND ldg_grading_size = ?`,
+    [finalFileName, lhkNomor, spkNomor, size],
   );
   if (result.affectedRows === 0) {
     throw new Error(
-      `Baris SPK ${spkNomor} tidak ditemukan di grading untuk LHK Pola ${lhkNomor}.`,
+      `Baris SPK ${spkNomor} size ${size} tidak ditemukan di grading untuk LHK Pola ${lhkNomor}.`,
     );
   }
 
@@ -267,6 +275,19 @@ const searchSpk = async (q = "") => {
   return rows;
 };
 
+// ============================================================
+// BREAKDOWN SIZE — ambil semua size dari SPK untuk auto-generate
+// baris grading, Panjang/Lebar diambil dari spks_a/spks_b.
+// ============================================================
+const getSizesBySpk = async (spkNomor) => {
+  const [rows] = await db.query(
+    `SELECT spks_size AS size, spks_a AS panjang, spks_b AS lebar
+     FROM tspk_size WHERE spks_nomor = ? ORDER BY spks_size`,
+    [spkNomor],
+  );
+  return rows;
+};
+
 const getSpkByNomor = async (nomor) => {
   const [rows] = await db.query(
     `SELECT x.* FROM (
@@ -300,5 +321,6 @@ module.exports = {
   searchSpk,
   getSpkByNomor,
   getDivisiNama,
+  getSizesBySpk,
   buildGambarFileName,
 };

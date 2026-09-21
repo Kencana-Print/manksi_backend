@@ -147,6 +147,110 @@ const getEffectiveCallingDetail = async (req, res) => {
   }
 };
 
+const getTargetCollectionSales = async (req, res) => {
+  try {
+    const { bulan, tahun } = req.query;
+    const data = await service.getTargetCollectionSales(
+      req.user,
+      bulan ? Number(bulan) : undefined,
+      tahun ? Number(tahun) : undefined,
+    );
+    res.status(200).json({
+      success: true,
+      data: data || { items: [], grandTotal: {} },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPotensiSourceOptions = async (req, res) => {
+  try {
+    const { namaCustomer, sumber, limit = 20, offset = 0 } = req.query;
+    const data = await service.getPotensiSourceOptions(req.user, {
+      namaCustomer,
+      sumber,
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { items: [], total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const setPotensi = async (req, res) => {
+  try {
+    const { sumber, nomorSumber, namaItem, harga } = req.body;
+    const data = await service.setPotensi(
+      { sumber, nomorSumber, namaItem, harga },
+      req.user,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const setPotensiBulk = async (req, res) => {
+  try {
+    const { items } = req.body;
+    const data = await service.setPotensiBulk(items, req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const batalPotensi = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { alasan } = req.body;
+    await service.batalPotensi(nomor, alasan, req.user);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getPotensiSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const data = await service.getPotensiSummary(req.user, {
+      startDate,
+      endDate,
+    });
+    res.status(200).json({
+      success: true,
+      data: data || {
+        jmlItem: 0,
+        totalPotensi: 0,
+        totalRealisasi: 0,
+        totalBatal: 0,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getPotensiList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getPotensiList(req.user, {
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { items: [], total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPiutangDashboard = async (req, res) => {
   try {
     const data = await service.getPiutangDashboard(req.user);
@@ -999,6 +1103,13 @@ module.exports = {
   getPenawaranBatalList,
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
+  getTargetCollectionSales,
+  getPotensiSourceOptions,
+  setPotensi,
+  setPotensiBulk,
+  batalPotensi,
+  getPotensiSummary,
+  getPotensiList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,

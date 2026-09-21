@@ -1735,16 +1735,10 @@ const searchSupplier = async (keyword, jenis, page = 1, limit = 50) => {
 
   let whereClause = `WHERE sup_aktif = "Y"`;
 
-  // ISI KOREKSI: Replikasi filter flag kualifikasi supplier sesuai F1 Delphi
   if (jenis === "ACCESORIES") whereClause += ` AND sup_accesories = "Y"`;
   else if (jenis === "OBAT") whereClause += ` AND sup_obat = "Y"`;
   else if (jenis === "SPAREPART") whereClause += ` AND sup_sparepart = "Y"`;
   else if (jenis === "ATK/RTK") whereClause += ` AND sup_atk = "Y"`;
-
-  if (keyword && keyword.trim() !== "") {
-    whereClause += ` AND (sup_kode LIKE ? OR sup_nama LIKE ?)`;
-    params.push(`%${keyword}%`, `%${keyword}%`);
-  }
 
   if (keyword && keyword.trim() !== "") {
     whereClause += ` AND (sup_kode LIKE ? OR sup_nama LIKE ?)`;
@@ -1757,10 +1751,15 @@ const searchSupplier = async (keyword, jenis, page = 1, limit = 50) => {
   );
 
   let query = `
-    SELECT sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota 
-    FROM tsupplier 
-    ${whereClause} 
-    ORDER BY sup_nama ASC 
+    SELECT
+      sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota,
+      IFNULL(i.supd_bank, '') AS Bank,
+      IFNULL(i.supd_rekening, '') AS Rekening,
+      IFNULL(i.supd_atasnama, '') AS AtasNama
+    FROM tsupplier
+    LEFT JOIN tsupplieritem i ON i.supd_kode = tsupplier.sup_kode
+    ${whereClause}
+    ORDER BY sup_nama ASC
     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
@@ -2088,15 +2087,27 @@ const searchKaryawan = async (keyword, page = 1, limit = 20) => {
 };
 
 // --- GET ALL ACCOUNTS (T-REKENING) ---
-const searchAccount = async (keyword, page = 1, limit = 50, filterMode) => {
+const searchAccount = async (
+  keyword,
+  page = 1,
+  limit = 50,
+  filterMode,
+  jenis,
+) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   let params = [];
-  // Mengikuti kondisi Delphi: rek_rekening <> ""
-  let whereClause = `WHERE rek_rekening <> ""`;
+  let whereClause = `WHERE 1=1`;
 
-  // Khusus form Potongan (Manksi Desktop: ufrmBayarPotongan) —
-  // filter rek_jp = 1, bukan whitelist kode manual.
+  if (jenis === "KAS") {
+    whereClause += ` AND LEFT(rek_kode,5) = 'A-111'`;
+  } else if (jenis === "BANK") {
+    whereClause += ` AND (LEFT(rek_kode,5) = 'A-112' OR LEFT(rek_kode,5) = 'B-211')`;
+  } else {
+    // Tanpa jenis spesifik — pertahankan perilaku lama (mengikuti Delphi: rek_rekening <> "")
+    whereClause += ` AND rek_rekening <> ""`;
+  }
+
   if (filterMode === "potongan") {
     whereClause += ` AND rek_jp = 1`;
   }

@@ -901,6 +901,623 @@ const getEffectiveCallingDetail = async (user, namaSales) => {
   return rows;
 };
 
+// ── Target Collection per Sales — untuk card Marketing & Finance/Piutang ──
+// Target bulan berjalan = omzet (nilai invoice) sales tsb pada BULAN M-2
+// (misal bulan berjalan September → target diambil dari omzet Juli).
+// Piutang Saat Ini = seluruh piutang outstanding aktif (flag=0, belum
+// writeoff) milik customer yang invoice-nya terhubung ke sales tsb —
+// TIDAK dibatasi bulan (kondisi piutang hari ini, apa adanya).
+// Collection = pembayaran (piutang_kredit_detail.kredit) yang masuk pada
+// periode berjalan (MTD) dan sejak awal tahun (YTD), untuk invoice yang
+// terhubung ke sales tsb — terlepas dari kapan invoice itu terbit.
+// ⚠️ ASUMSI: sales suatu invoice ditentukan dari SPK/SO yang menaungi
+// baris detailnya (spk_sal_kode / so_sal_kode via invd_spk_nomor) —
+// kalau 1 invoice punya baris dari SPK/SO beda sales (jarang terjadi),
+// diambil salah satu (MAX) sebagai representasi invoice tsb. Invoice
+// yang barisnya murni tbarang (tidak match SPK/SO manapun) tidak
+// punya atribusi sales, dikecualikan dari perhitungan ini.
+const EXCLUDED_SALES = [
+  "YUNI",
+  "KHALILI",
+  "SALMA",
+  "NURUL",
+  "AHMAD PANCA NOVRIAWAN",
+  "AYU WULANDARI",
+  "UMI KARUNIATI",
+];
+
+const getTargetCollectionSales = async (user, bulan, tahun) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "MARKETING",
+    "FINANCE",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const now = new Date();
+  const bln = bulan ? Number(bulan) : now.getMonth() + 1;
+  const thn = tahun ? Number(tahun) : now.getFullYear();
+
+  let targetBln = bln - 2;
+  let targetThn = thn;
+  if (targetBln <= 0) {
+    targetBln += 12;
+    targetThn -= 1;
+  }
+
+  let rangeStartBln = 1 - 2;
+  let rangeStartThn = thn;
+  if (rangeStartBln <= 0) {
+    rangeStartBln += 12;
+    rangeStartThn -= 1;
+  }
+  const rangeStart = `${rangeStartThn}-${String(rangeStartBln).padStart(2, "0")}-01`;
+  const rangeEndDate = new Date(targetThn, targetBln, 0);
+  const rangeEnd = rangeEndDate.toISOString().substring(0, 10);
+
+  const INV_SALES_SUBQUERY = `
+    SELECT d.invd_inv_nomor AS nota,
+           MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
+    FROM tinv_dtl d
+    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+    GROUP BY d.invd_inv_nomor
+  `;
+
+  const NOT_DIKIRIM_FILTER = `
+    AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
+  `;
+
+  const [targetRows] = await db.query(
+    `SELECT
+       inv.sal_kode,
+       DATE_FORMAT(p.tanggal, '%Y-%m') AS Bulan,
+       SUM(p.debet) AS Omzet
+     FROM piutang_debet p
+     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
+     WHERE inv.sal_kode IS NOT NULL
+       AND p.flag = 0
+       AND p.tanggal >= ? AND p.tanggal <= ?
+       ${NOT_DIKIRIM_FILTER}
+     GROUP BY inv.sal_kode, Bulan`,
+    [rangeStart, rangeEnd],
+  );
+
+  const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
+  const targetMtdBySales = {};
+  const targetYtdBySales = {};
+  for (const r of targetRows) {
+    const omzet = Number(r.Omzet) || 0;
+    targetYtdBySales[r.sal_kode] = (targetYtdBySales[r.sal_kode] || 0) + omzet;
+    if (r.Bulan === targetBulanKey) {
+      targetMtdBySales[r.sal_kode] =
+        (targetMtdBySales[r.sal_kode] || 0) + omzet;
+    }
+  }
+
+  const [piutangRows] = await db.query(
+    `SELECT inv.sal_kode,
+            SUM(p.debet - IFNULL((
+              SELECT SUM(kd.kredit) FROM piutang_kredit_detail kd WHERE kd.nota = p.nota
+            ), 0)) AS Sisa
+     FROM piutang_debet p
+     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
+     WHERE inv.sal_kode IS NOT NULL
+       AND p.flag = 0
+       AND p.is_writeoff = 0
+       ${NOT_DIKIRIM_FILTER}
+     GROUP BY inv.sal_kode
+     HAVING Sisa > 0`,
+  );
+  const piutangBySales = {};
+  for (const r of piutangRows) piutangBySales[r.sal_kode] = Number(r.Sisa) || 0;
+
+  const mtdEndDate = new Date(thn, bln, 0);
+  const todayStr = now.toISOString().substring(0, 10);
+  const mtdEndCandidate = mtdEndDate.toISOString().substring(0, 10);
+  const mtdEnd = mtdEndCandidate < todayStr ? mtdEndCandidate : todayStr;
+  const ytdStart = `${thn}-01-01`;
+
+  const [collectionRows] = await db.query(
+    `SELECT inv.sal_kode, DATE_FORMAT(h.tanggal, '%Y-%m') AS Bulan, SUM(d.kredit) AS Bayar
+     FROM piutang_kredit_detail d
+     INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+     INNER JOIN piutang_debet p ON p.nota = d.nota
+     INNER JOIN (
+       SELECT dd.invd_inv_nomor AS nota,
+              MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
+       FROM tinv_dtl dd
+       LEFT JOIN tspk s ON s.spk_nomor = dd.invd_spk_nomor
+       LEFT JOIN tsalesorder so ON so.so_nomor = dd.invd_spk_nomor
+       GROUP BY dd.invd_inv_nomor
+     ) inv ON inv.nota = d.nota
+     WHERE inv.sal_kode IS NOT NULL
+       AND h.tanggal >= ? AND h.tanggal <= ?
+       ${NOT_DIKIRIM_FILTER}
+     GROUP BY inv.sal_kode, Bulan`,
+    [ytdStart, mtdEnd],
+  );
+  const collectionMtdBySales = {};
+  const collectionYtdBySales = {};
+  const mtdBulanKey = `${thn}-${String(bln).padStart(2, "0")}`;
+  for (const r of collectionRows) {
+    const bayar = Number(r.Bayar) || 0;
+    collectionYtdBySales[r.sal_kode] =
+      (collectionYtdBySales[r.sal_kode] || 0) + bayar;
+    if (r.Bulan === mtdBulanKey) {
+      collectionMtdBySales[r.sal_kode] =
+        (collectionMtdBySales[r.sal_kode] || 0) + bayar;
+    }
+  }
+
+  const [salesRows] = await db.query(
+    `SELECT sal_kode, sal_nama FROM tsales WHERE sal_nama NOT IN (?)`,
+    [EXCLUDED_SALES],
+  );
+  const salKodeSet = new Set([
+    ...Object.keys(targetYtdBySales),
+    ...Object.keys(piutangBySales),
+    ...Object.keys(collectionYtdBySales),
+  ]);
+
+  const items = salesRows
+    .filter((s) => salKodeSet.has(s.sal_kode))
+    .map((s) => {
+      const targetMtd = targetMtdBySales[s.sal_kode] || 0;
+      const targetYtd = targetYtdBySales[s.sal_kode] || 0;
+      const piutang = piutangBySales[s.sal_kode] || 0;
+      const collectionMtd = collectionMtdBySales[s.sal_kode] || 0;
+      const collectionYtd = collectionYtdBySales[s.sal_kode] || 0;
+      return {
+        salKode: s.sal_kode,
+        namaSales: s.sal_nama,
+        targetBulanIni: targetMtd,
+        piutangSaatIni: piutang,
+        collectionMtd,
+        collectionYtd,
+        pctCollectionMtd:
+          targetMtd > 0 ? (collectionMtd / targetMtd) * 100 : null,
+        pctCollectionYtd:
+          targetYtd > 0 ? (collectionYtd / targetYtd) * 100 : null,
+      };
+    })
+    .sort((a, b) => b.targetBulanIni - a.targetBulanIni);
+
+  const grandTotal = items.reduce(
+    (acc, r) => ({
+      targetBulanIni: acc.targetBulanIni + r.targetBulanIni,
+      piutangSaatIni: acc.piutangSaatIni + r.piutangSaatIni,
+      collectionMtd: acc.collectionMtd + r.collectionMtd,
+      collectionYtd: acc.collectionYtd + r.collectionYtd,
+    }),
+    {
+      targetBulanIni: 0,
+      piutangSaatIni: 0,
+      collectionMtd: 0,
+      collectionYtd: 0,
+    },
+  );
+  const targetYtdGrand = Object.values(targetYtdBySales).reduce(
+    (s, v) => s + v,
+    0,
+  );
+
+  return {
+    bulan: bln,
+    tahun: thn,
+    targetBulanLabel: `${String(targetBln).padStart(2, "0")}/${targetThn}`,
+    items,
+    grandTotal: {
+      ...grandTotal,
+      pctCollectionMtd:
+        grandTotal.targetBulanIni > 0
+          ? (grandTotal.collectionMtd / grandTotal.targetBulanIni) * 100
+          : null,
+      pctCollectionYtd:
+        targetYtdGrand > 0
+          ? (grandTotal.collectionYtd / targetYtdGrand) * 100
+          : null,
+    },
+  };
+};
+
+// ── Potensi: role helpers ──
+const isCmoUser = (user) => {
+  const flags = user.flags || {};
+  const truthy = (v) => v === 1 || v === "1" || v === true || v === "Y";
+  return truthy(flags.cmo) || truthy(flags.cmo3);
+};
+
+const KAOSAN_CABANG_PREFIX = "K";
+const isMoSalesUser = (user) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const cabang = (user.cabang || "").toUpperCase();
+  if (bagian !== "MARKETING") return false;
+  if (cabang === "P03") return false;
+  if (cabang.startsWith(KAOSAN_CABANG_PREFIX)) return false;
+  return true;
+};
+
+// Siapa yang boleh LIHAT (semua data, tanpa filter kepemilikan — web ini shared workspace)
+const canViewPotensi = (user) =>
+  isMoSalesUser(user) ||
+  isCmoUser(user) ||
+  ["EDP", "DIREKSI", "OWNER", "AUDIT"].includes(
+    (user.bagian || "").toUpperCase(),
+  );
+
+// Siapa yang boleh SET/BATAL (hanya MO + CMO — bukan role oversight EDP/DIREKSI/OWNER/AUDIT)
+const canWritePotensi = (user) => isMoSalesUser(user) || isCmoUser(user);
+
+// ── Daftar Penawaran/MAP Open yang belum ditandai potensial (SEMUA, tanpa filter sal_kode) ──
+const getPotensiSourceOptions = async (
+  user,
+  { namaCustomer, sumber, limit = 20, offset = 0 } = {},
+) => {
+  if (!canViewPotensi(user)) return { items: [], total: 0 };
+
+  const params = [];
+  let sumberFilter = "";
+  if (sumber === "PENAWARAN" || sumber === "MAP") {
+    sumberFilter = "AND src.Sumber = ?";
+    params.push(sumber);
+  }
+  let custFilter = "";
+  if (namaCustomer) {
+    custFilter = "AND src.cus_nama LIKE ?";
+    params.push(`%${namaCustomer}%`);
+  }
+
+  const SELESAI_SUBQUERY = `
+    SELECT pend_pen_nomor AS pen_nomor
+    FROM tpenawaran_dtl
+    GROUP BY pend_pen_nomor
+    HAVING SUM(CASE WHEN pend_status NOT IN ('BATAL', 'CLOSE') THEN 1 ELSE 0 END) = 0
+  `;
+
+  const sql = `
+    SELECT * FROM (
+      SELECT
+        'PENAWARAN' AS Sumber,
+        h.pen_nomor AS Nomor,
+        h.pen_tanggal AS Tanggal,
+        h.pen_sal_kode AS sal_kode,
+        s.sal_nama,
+        c.cus_nama,
+        h.pen_keterangan AS NamaItem,
+        IFNULL(SUM(d.pend_qty * d.pend_harga), 0) AS Nominal
+      FROM tpenawaran_hdr h
+      INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
+      INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
+      LEFT JOIN tsales s ON s.sal_kode = h.pen_sal_kode
+      LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
+      WHERE sel.pen_nomor IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM tpotensi p
+          WHERE p.pot_pen_nomor = h.pen_nomor AND p.pot_status <> 'BATAL'
+        )
+      GROUP BY h.pen_nomor, h.pen_tanggal, h.pen_sal_kode, s.sal_nama, c.cus_nama, h.pen_keterangan
+
+      UNION ALL
+
+      SELECT
+        'MAP' AS Sumber,
+        m.mspk_nomor AS Nomor,
+        m.mspk_tanggal AS Tanggal,
+        m.mspk_sal_kode AS sal_kode,
+        s.sal_nama,
+        c.cus_nama,
+        m.mspk_nama AS NamaItem,
+        (m.mspk_harga * m.mspk_rencana_order) AS Nominal
+      FROM tmemospk m
+      INNER JOIN tcustomer c ON c.cus_kode = m.mspk_cus_kode
+      LEFT JOIN tsales s ON s.sal_kode = m.mspk_sal_kode
+      WHERE m.mspk_aktif = 'Y' AND m.mspk_close = 0
+        AND NOT EXISTS (SELECT 1 FROM tspk sp WHERE sp.spk_memo = m.mspk_nomor AND sp.spk_aktif = 'Y')
+        AND NOT EXISTS (SELECT 1 FROM tsalesorder so WHERE so.so_memo = m.mspk_nomor AND so.so_aktif = 'Y')
+        AND NOT EXISTS (
+          SELECT 1 FROM tpotensi p
+          WHERE p.pot_mspk_nomor = m.mspk_nomor AND p.pot_status <> 'BATAL'
+        )
+    ) src
+    WHERE 1=1 ${sumberFilter} ${custFilter}
+    ORDER BY src.Tanggal DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM (${sql.replace(/LIMIT \? OFFSET \?/, "")}) x`,
+    params,
+  );
+  const [rows] = await db.query(sql, [
+    ...params,
+    Number(limit),
+    Number(offset),
+  ]);
+
+  return { items: rows, total: Number(total) };
+};
+
+// --- GENERATE NOMOR POTENSI ---
+// Format: POT_{perushKode}_{joKode}_{6 digit urut}, scan counter per kombinasi perush+JO
+const generatePotensiNomor = async (conn, perushKode, joKode) => {
+  const query = `
+    SELECT IFNULL(MAX(CAST(SUBSTR(pot_nomor, LENGTH(pot_nomor) - 5) AS UNSIGNED)), 0) AS max_val
+    FROM tpotensi
+    WHERE pot_nomor LIKE ?
+    FOR UPDATE
+  `;
+  const prefix = `POT_${perushKode}_${joKode}_`;
+  const [[row]] = await conn.query(query, [`${prefix}%`]);
+
+  const nextNum = parseInt(row.max_val, 10) + 1;
+  const numStr = String(nextNum).padStart(6, "0");
+
+  return `${prefix}${numStr}`;
+};
+
+// payload: { sumber: 'PENAWARAN'|'MAP', nomorSumber, namaItem, harga }
+// Tidak ada lagi pengecekan kepemilikan — siapapun MO/CMO boleh menandai
+// Penawaran/MAP siapapun; pot_sal_kode tetap dicatat dari sales pemilik ASLI transaksi,
+// bukan dari user yang menandai (itu tercatat di user_create).
+const setPotensi = async (payload, user) => {
+  if (!canWritePotensi(user)) {
+    throw new Error("Anda tidak memiliki akses untuk menandai potensi.");
+  }
+
+  const { sumber, nomorSumber, namaItem, harga } = payload;
+  if (!sumber || !nomorSumber) throw new Error("Sumber & nomor wajib diisi.");
+  if (!namaItem) throw new Error("Nama item wajib diisi.");
+
+  let salKode, cusKode, perushKode, joKode;
+  if (sumber === "PENAWARAN") {
+    const [[h]] = await db.query(
+      `SELECT pen_sal_kode, pen_cus_kode, pen_perush_kode FROM tpenawaran_hdr WHERE pen_nomor = ?`,
+      [nomorSumber],
+    );
+    if (!h) throw new Error("Penawaran tidak ditemukan.");
+    salKode = h.pen_sal_kode;
+    cusKode = h.pen_cus_kode;
+    perushKode = h.pen_perush_kode;
+    joKode = "LL"; // Penawaran tidak punya kolom JO — placeholder tetap
+  } else if (sumber === "MAP") {
+    const [[m]] = await db.query(
+      `SELECT mspk_sal_kode, mspk_cus_kode, mspk_perush_kode, mspk_jo_kode FROM tmemospk WHERE mspk_nomor = ?`,
+      [nomorSumber],
+    );
+    if (!m) throw new Error("MAP tidak ditemukan.");
+    salKode = m.mspk_sal_kode;
+    cusKode = m.mspk_cus_kode;
+    perushKode = m.mspk_perush_kode;
+    joKode = m.mspk_jo_kode;
+  } else {
+    throw new Error("Sumber tidak dikenali.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[dup]] = await conn.query(
+      `SELECT pot_nomor FROM tpotensi
+       WHERE ${sumber === "PENAWARAN" ? "pot_pen_nomor" : "pot_mspk_nomor"} = ?
+         AND pot_status <> 'BATAL' FOR UPDATE`,
+      [nomorSumber],
+    );
+    if (dup)
+      throw new Error("Transaksi ini sudah ditandai potensial sebelumnya.");
+
+    const nomor = await generatePotensiNomor(conn, perushKode, joKode);
+    await conn.query(
+      `INSERT INTO tpotensi
+         (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_mspk_nomor,
+          pot_nama_item, pot_harga, pot_status, user_create, date_create)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
+      [
+        nomor,
+        salKode,
+        cusKode || "",
+        sumber === "PENAWARAN" ? nomorSumber : null,
+        sumber === "MAP" ? nomorSumber : null,
+        namaItem,
+        Number(harga) || 0,
+        user.kode,
+      ],
+    );
+
+    await conn.commit();
+    return { nomor };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+// items: [{ sumber: 'PENAWARAN'|'MAP', nomorSumber, namaItem, harga }, ...]
+// Sekali transaksi, all-or-nothing — kalau satu item gagal (duplikat/nomor
+// tidak ketemu), seluruh batch dibatalkan supaya user tahu persis item mana
+// yang bermasalah dan tidak ada insert setengah jalan.
+const setPotensiBulk = async (items, user) => {
+  if (!canWritePotensi(user)) {
+    throw new Error("Anda tidak memiliki akses untuk menandai potensi.");
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("Tidak ada item dipilih.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const created = [];
+
+    for (const it of items) {
+      const { sumber, nomorSumber, namaItem, harga } = it;
+      if (!sumber || !nomorSumber || !namaItem) {
+        throw new Error(`Data tidak lengkap untuk ${nomorSumber || "-"}.`);
+      }
+
+      let salKode, cusKode, perushKode, joKode;
+      if (sumber === "PENAWARAN") {
+        const [[h]] = await conn.query(
+          `SELECT pen_sal_kode, pen_cus_kode, pen_perush_kode FROM tpenawaran_hdr WHERE pen_nomor = ? FOR UPDATE`,
+          [nomorSumber],
+        );
+        if (!h) throw new Error(`Penawaran ${nomorSumber} tidak ditemukan.`);
+        salKode = h.pen_sal_kode;
+        cusKode = h.pen_cus_kode;
+        perushKode = h.pen_perush_kode;
+        joKode = "LL";
+      } else if (sumber === "MAP") {
+        const [[m]] = await conn.query(
+          `SELECT mspk_sal_kode, mspk_cus_kode, mspk_perush_kode, mspk_jo_kode FROM tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
+          [nomorSumber],
+        );
+        if (!m) throw new Error(`MAP ${nomorSumber} tidak ditemukan.`);
+        salKode = m.mspk_sal_kode;
+        cusKode = m.mspk_cus_kode;
+        perushKode = m.mspk_perush_kode;
+        joKode = m.mspk_jo_kode;
+      } else {
+        throw new Error("Sumber tidak dikenali.");
+      }
+
+      const [[dup]] = await conn.query(
+        `SELECT pot_nomor FROM tpotensi
+         WHERE ${sumber === "PENAWARAN" ? "pot_pen_nomor" : "pot_mspk_nomor"} = ?
+           AND pot_status <> 'BATAL' FOR UPDATE`,
+        [nomorSumber],
+      );
+      if (dup)
+        throw new Error(`${nomorSumber} sudah ditandai potensial sebelumnya.`);
+
+      const nomor = await generatePotensiNomor(conn, perushKode, joKode);
+      await conn.query(
+        `INSERT INTO tpotensi
+           (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_mspk_nomor,
+            pot_nama_item, pot_harga, pot_status, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
+        [
+          nomor,
+          salKode,
+          cusKode || "",
+          sumber === "PENAWARAN" ? nomorSumber : null,
+          sumber === "MAP" ? nomorSumber : null,
+          namaItem,
+          Number(harga) || 0,
+          user.kode,
+        ],
+      );
+      created.push(nomor);
+    }
+
+    await conn.commit();
+    return { created };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+const batalPotensi = async (nomor, alasan, user) => {
+  if (!canWritePotensi(user)) {
+    throw new Error("Anda tidak memiliki akses untuk membatalkan potensi.");
+  }
+  if (!alasan) throw new Error("Alasan batal wajib diisi.");
+
+  const [[row]] = await db.query(
+    `SELECT pot_status FROM tpotensi WHERE pot_nomor = ?`,
+    [nomor],
+  );
+  if (!row) throw new Error("Data potensi tidak ditemukan.");
+  if (row.pot_status === "BATAL") throw new Error("Data ini sudah dibatalkan.");
+
+  await db.query(
+    `UPDATE tpotensi
+     SET pot_status = 'BATAL', pot_alasan_batal = ?, user_modified = ?, date_modified = NOW()
+     WHERE pot_nomor = ?`,
+    [alasan, user.kode, nomor],
+  );
+};
+
+// Status Realisasi dihitung DINAMIS
+const POTENSI_REALISASI_CHECK = `
+  IF(
+    p.pot_pen_nomor IS NOT NULL AND EXISTS (
+      SELECT 1 FROM tspk s WHERE s.spk_pen_nomor = p.pot_pen_nomor AND s.spk_aktif = 'Y'
+      UNION SELECT 1 FROM tsalesorder so WHERE so.so_pen_nomor = p.pot_pen_nomor AND so.so_aktif = 'Y'
+    ), 1,
+    IF(
+      p.pot_mspk_nomor IS NOT NULL AND EXISTS (
+        SELECT 1 FROM tspk s WHERE s.spk_memo = p.pot_mspk_nomor AND s.spk_aktif = 'Y'
+        UNION SELECT 1 FROM tsalesorder so WHERE so.so_memo = p.pot_mspk_nomor AND so.so_aktif = 'Y'
+      ), 1, 0
+    )
+  )
+`;
+
+// SEMUA data — tanpa filter sal_kode
+const getPotensiSummary = async (user, { startDate, endDate } = {}) => {
+  if (!canViewPotensi(user)) return null;
+
+  const params = [];
+  let dateFilter = "";
+  if (startDate && endDate) {
+    dateFilter = "AND p.date_create >= ? AND p.date_create <= ?";
+    params.push(startDate, `${endDate} 23:59:59`);
+  }
+
+  const sql = `
+    SELECT
+      COUNT(*) AS JmlItem,
+      SUM(p.pot_harga) AS TotalPotensi,
+      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 1 THEN p.pot_harga ELSE 0 END) AS TotalRealisasi,
+      SUM(CASE WHEN p.pot_status = 'BATAL' THEN p.pot_harga ELSE 0 END) AS TotalBatal
+    FROM tpotensi p
+    WHERE 1=1 ${dateFilter}
+  `;
+  const [[row]] = await db.query(sql, params);
+  return {
+    jmlItem: Number(row.JmlItem) || 0,
+    totalPotensi: Number(row.TotalPotensi) || 0,
+    totalRealisasi: Number(row.TotalRealisasi) || 0,
+    totalBatal: Number(row.TotalBatal) || 0,
+  };
+};
+
+const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
+  if (!canViewPotensi(user)) return { items: [], total: 0 };
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tpotensi`,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       p.pot_nomor, p.pot_nama_item, p.pot_harga, p.pot_status, p.pot_alasan_batal,
+       p.date_create, p.user_create, s.sal_nama, c.cus_nama,
+       IFNULL(p.pot_pen_nomor, p.pot_mspk_nomor) AS NomorSumber,
+       IF(p.pot_pen_nomor IS NOT NULL, 'PENAWARAN', 'MAP') AS Sumber,
+       (${POTENSI_REALISASI_CHECK}) AS IsRealisasi
+     FROM tpotensi p
+     LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
+     ORDER BY p.date_create DESC
+     LIMIT ? OFFSET ?`,
+    [Number(limit), Number(offset)],
+  );
+
+  return { items: rows, total: Number(total) };
+};
+
 // ══════════════════════════════════════════════
 // DASHBOARD MARKETING — TAMBAHAN
 // ══════════════════════════════════════════════
@@ -4315,7 +4932,7 @@ module.exports = {
   getPoBahanVsBpbSummary,
   getPenawaranBelumMap,
   getPenawaranMapSummary,
-  getPenawaranBatalSummary, // ⬅ baru
+  getPenawaranBatalSummary,
   getPenawaranBatalList,
   getPenawaranBatalBySales,
   getPenawaranOpenBySales,
@@ -4323,6 +4940,13 @@ module.exports = {
   getRingkasanKain,
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
+  getTargetCollectionSales,
+  getPotensiSourceOptions,
+  setPotensi,
+  setPotensiBulk,
+  batalPotensi,
+  getPotensiSummary,
+  getPotensiList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,

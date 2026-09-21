@@ -46,6 +46,38 @@ const lookupSoDtf = async (req, res) => {
   }
 };
 
+const lookupMaklon = async (req, res) => {
+  try {
+    const { keyword, page, limit } = req.query;
+    const data = await lhkSoDtfFormService.lookupMaklon(keyword, page, limit);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const validateMaklonKode = async (req, res) => {
+  try {
+    const data = await lhkSoDtfFormService.validateMaklonKode(req.params.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res
+      .status(error.statusCode || 500)
+      .json({ success: false, message: error.message });
+  }
+};
+
+const getMaklonAutofill = async (req, res) => {
+  try {
+    const data = await lhkSoDtfFormService.getMaklonAutofill(
+      req.params.mklNomor,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 const validateKode = async (req, res) => {
   try {
     const data = await lhkSoDtfFormService.validateKode(req.params.kode);
@@ -91,6 +123,9 @@ module.exports = {
   getDefaultCab,
   lookupSpkMap,
   lookupSoDtf,
+  lookupMaklon,
+  validateMaklonKode,
+  getMaklonAutofill,
   validateKode,
   save,
 };
