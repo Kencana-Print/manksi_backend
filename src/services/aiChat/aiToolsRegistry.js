@@ -1294,6 +1294,455 @@ const tools = [
       };
     },
   },
+  // ── BAST / MKB / PO BAHAN / BPB / PERMINTAAN & REALISASI BAHAN ──
+  {
+    definition: {
+      name: "get_bast_map",
+      description:
+        "Cari status BAST (Berita Acara Serah Terima) untuk order MAP/Maklon (divisi Kaosan/Garmen, kode 3/4/6) — sudah BAST atau belum, kendala produksi, gramasi setting aktual, kain, finishing, jumlah jadi, dan rincian bahan komponen & obat kimia yang dipakai. Isi nomorMap untuk lihat 1 MAP spesifik (paling akurat & lengkap termasuk rincian bahan). Kalau nomorMap tidak diketahui, kosongkan untuk browse daftar dalam periode (bisa filter onProgressOnly untuk yang masih dikerjakan).",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorMap: {
+            type: "string",
+            description:
+              "Nomor MAP persis, contoh MAP-JA-000123. Kalau diisi, hasil termasuk rincian bahan komponen & obat.",
+          },
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). HANYA isi kalau user sebutkan eksplisit. Default 60 hari terakhir.",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau eksplisit.",
+          },
+          onProgressOnly: {
+            type: "boolean",
+            description:
+              "True kalau user tanya MAP yang masih 'on progress'/belum selesai dikerjakan.",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah baris maksimal di mode browse, default 20",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const db = require("../../config/database");
+
+      if (input.nomorMap) {
+        const [rows] = await db.query(
+          `SELECT 
+             m.mspk_nomor AS Nomor,
+             IF(m.mspk_divisi = 3, "KAOSAN", "GARMEN") AS Divisi,
+             m.mspk_tipe AS Tipe,
+             m.mspk_tanggal AS Tanggal,
+             IF((SELECT s.mspk_nomor FROM tkesesuaianmap s WHERE s.mspk_nomor = m.mspk_nomor LIMIT 1) IS NULL, "BELUM BAST", "SUDAH BAST") AS StatusBast,
+             m.mspk_nama AS NamaPekerjaan,
+             m.mspk_ukuran AS Ukuran,
+             m.mspk_gramasi AS Gramasi,
+             IFNULL((SELECT k.keterangan FROM tkesesuaianmap k WHERE k.kode_sesuai = 2 AND k.mspk_nomor = m.mspk_nomor LIMIT 1), "") AS GramasiSettingAktual,
+             m.mspk_kain AS Kain,
+             m.mspk_finishing AS Finishing,
+             m.mspk_kendala AS KendalaProduksi,
+             m.mspk_jumlah_jadi AS JumlahJadi
+           FROM tmemospk m
+           WHERE m.mspk_nomor = ?`,
+          [input.nomorMap],
+        );
+        if (rows.length === 0) {
+          return { ditemukan: false, pesan: "Nomor MAP tidak ditemukan." };
+        }
+        const [komponen] = await db.query(
+          `SELECT c.kode AS Kode, b.bhn_name AS Nama, c.babaran AS Qty, b.bhn_satuan AS Satuan
+           FROM tkesesuaianmap_komponen c LEFT JOIN tbahan b ON b.bhn_kode = c.kode
+           WHERE c.nomor = ?`,
+          [input.nomorMap],
+        );
+        const [obat] = await db.query(
+          `SELECT o.ko_kode AS Kode, b.bhn_name AS Nama, o.ko_qty AS Qty, b.bhn_satuan AS Satuan
+           FROM tkesesuaianmap_obat o LEFT JOIN tbahan b ON b.bhn_kode = o.ko_kode
+           WHERE o.ko_nomor = ?`,
+          [input.nomorMap],
+        );
+        return {
+          ditemukan: true,
+          info: rows[0],
+          bahanKomponen: komponen,
+          bahanObat: obat,
+        };
+      }
+
+      const bastService = require("../garmen/bastService"); // ⬅ sesuaikan path
+      const today = new Date();
+      const startDefault = new Date(today);
+      startDefault.setDate(startDefault.getDate() - 60);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+      const startDate = input.startDate || toISO(startDefault);
+      const endDate = input.endDate || toISO(today);
+
+      const rows = await bastService.getBrowseList(
+        { startDate, endDate, onProgressOnly: input.onProgressOnly || false },
+        "ALL",
+      );
+
+      const limit = input.limit || 20;
+      return {
+        periodeDicek: `${startDate} s/d ${endDate}`,
+        jumlahDitemukan: rows.length,
+        daftarMap: rows.slice(0, limit).map((r) => ({
+          nomor: r.Nomor,
+          divisi: r.Divisi,
+          tanggal: r.Tanggal,
+          namaPekerjaan: r.NamaPekerjaan,
+          statusBast: r.CetakBAST === "SUDAH" ? "SUDAH BAST" : "BELUM BAST",
+          jumlahJadi: r.Jumlah,
+          kendalaProduksi: r.kendalaProduksi || undefined,
+        })),
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_mkb_detail",
+      description:
+        "Cari MKB (Memo Kebutuhan Bahan) untuk 1 SPK — ketersediaan bahan (butuh vs ready gudang vs sudah PO vs sudah diterima vs masih kurang) dan daftar nomor PO yang terkait MKB itu. WAJIB isi nomorMkb (kalau sudah tahu persis) ATAU nomorSpk (nanti dicarikan MKB-nya). Berguna untuk jawab 'apakah bahan SPK X sudah cukup/masih kurang' atau 'MKB SPK X sudah di-PO-kan belum'.",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorMkb: { type: "string", description: "Nomor MKB persis" },
+          nomorSpk: {
+            type: "string",
+            description:
+              "Nomor SPK/SO/MAP persis, dipakai kalau nomor MKB tidak diketahui",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      if (!input.nomorMkb && !input.nomorSpk) {
+        return { error: "Nomor MKB atau nomor SPK wajib diisi." };
+      }
+      const db = require("../../config/database");
+      const mkbService = require("../pembelian/mkbService");
+
+      let nomorMkb = input.nomorMkb;
+      if (!nomorMkb) {
+        const [candidates] = await db.query(
+          `SELECT mkb_nomor AS Nomor, mkb_tanggal AS Tanggal
+           FROM tmkb_hdr WHERE mkb_spk_nomor = ? ORDER BY mkb_tanggal DESC`,
+          [input.nomorSpk],
+        );
+        if (candidates.length === 0) {
+          return {
+            ditemukan: false,
+            pesan: "Tidak ada MKB untuk SPK tersebut.",
+          };
+        }
+        if (candidates.length > 1) {
+          return {
+            ditemukan: true,
+            catatan:
+              "Ada lebih dari 1 MKB untuk SPK ini, sebutkan nomorMkb spesifik ke user lalu panggil ulang tool ini.",
+            kandidat: candidates,
+          };
+        }
+        nomorMkb = candidates[0].Nomor;
+      }
+
+      const [detailBahan, poTerkait] = await Promise.all([
+        mkbService.getDetailData(nomorMkb),
+        mkbService.getLinkedPo(nomorMkb),
+      ]);
+
+      if (detailBahan.length === 0) {
+        return { ditemukan: false, pesan: "Nomor MKB tidak ditemukan." };
+      }
+
+      return {
+        nomorMkb,
+        rincianBahan: detailBahan.map((d) => ({
+          kodeBahan: d.Kode,
+          namaBahan: d.NamaBahan,
+          satuan: d.Satuan,
+          butuh: d.Butuh,
+          readyGudang: d.Ready,
+          sudahPo: d.SudahPO,
+          sudahTerima: d.Terima,
+          kurang: d.Kurang,
+          nomorPo: d.Nopo || undefined,
+        })),
+        poTerkait,
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_po_bahan",
+      description:
+        "Cari PO Bahan (Purchase Order pembelian kain/bahan ke supplier). Isi nomorPo untuk lihat rincian per item (qty PO vs qty sudah diterima via BPB vs retur — kunci untuk cek apakah barang datang sesuai PO atau tidak). Kalau nomorPo tidak diketahui, kosongkan untuk browse daftar PO dalam periode (bisa filter search nama bahan/keterangan).",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorPo: { type: "string", description: "Nomor PO persis" },
+          startDate: {
+            type: "string",
+            description:
+              "Tanggal mulai (YYYY-MM-DD). HANYA isi kalau eksplisit. Default 30 hari terakhir.",
+          },
+          endDate: {
+            type: "string",
+            description:
+              "Tanggal akhir (YYYY-MM-DD). HANYA isi kalau eksplisit.",
+          },
+          search: {
+            type: "string",
+            description:
+              "Opsional. Cari berdasarkan nama bahan/keterangan PO (partial match).",
+          },
+          limit: {
+            type: "number",
+            description: "Jumlah PO maksimal di mode browse, default 20",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const poBahanService = require("../pembelian/poBahanService"); // ⬅ sesuaikan path
+      // ⚠️ Flag lihatSup/lihatBeli belum terhubung ke permission user asli —
+      // sengaja di-hardcode FALSE (sembunyikan nama supplier & harga beli)
+      // demi keamanan data sensitif lewat chatbot internal.
+      const canLihatSup = false;
+      const canLihatBeli = false;
+
+      if (input.nomorPo) {
+        const rows = await poBahanService.getBrowseDetail(
+          input.nomorPo,
+          canLihatBeli,
+        );
+        if (rows.length === 0) {
+          return { ditemukan: false, pesan: "Nomor PO tidak ditemukan." };
+        }
+        return {
+          nomorPo: input.nomorPo,
+          rincianItem: rows.map((r) => ({
+            kodeBahan: r.Kode,
+            namaBahan: r.Nama,
+            satuan: r.Satuan,
+            qtyPo: r.Jumlah,
+            qtySudahDiterima: r.QtyBpb,
+            qtyRetur: r.QtyRetur,
+            statusBarang: r.Status_barang,
+            spkTerkait: r.SPK || undefined,
+            namaSpkTerkait: r.Nama_SPK || undefined,
+          })),
+        };
+      }
+
+      const today = new Date();
+      const startDefault = new Date(today);
+      startDefault.setDate(startDefault.getDate() - 30);
+      const toISO = (d) => d.toISOString().substring(0, 10);
+      const startDate = input.startDate || toISO(startDefault);
+      const endDate = input.endDate || toISO(today);
+
+      const rows = await poBahanService.getBrowse(
+        { startDate, endDate, search: input.search || "" },
+        canLihatSup,
+      );
+
+      const limit = input.limit || 20;
+      return {
+        periodeDicek: `${startDate} s/d ${endDate}`,
+        jumlahDitemukan: rows.length,
+        daftarPo: rows.slice(0, limit).map((r) => ({
+          nomor: r.Nomor,
+          jenisPo: r.JenisPO,
+          tanggal: r.Tanggal,
+          qtyPo: r.QtyPO,
+          qtySudahDiterima: r.QtyBPB,
+          status: r.Status,
+          keterangan: r.Keterangan || undefined,
+        })),
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_bpb_bahan",
+      description:
+        "Cari BPB (Bukti Penerimaan Barang dari supplier). Isi nomorBpb untuk rincian 1 penerimaan spesifik, ATAU nomorPo untuk cari SEMUA BPB yang terkait 1 PO tertentu (kalau kosong berarti barang PO itu belum datang sama sekali). WAJIB isi salah satu.",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorBpb: { type: "string", description: "Nomor BPB persis" },
+          nomorPo: {
+            type: "string",
+            description: "Nomor PO — cari semua BPB dari PO ini",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      if (!input.nomorBpb && !input.nomorPo) {
+        return { error: "Nomor BPB atau nomor PO wajib diisi." };
+      }
+      const db = require("../../config/database");
+      const bpbBahanService = require("../garmen/bpbBahanService");
+
+      let nomorBpbList = [];
+      if (input.nomorBpb) {
+        nomorBpbList = [input.nomorBpb];
+      } else {
+        const [headers] = await db.query(
+          `SELECT bpb_nomor AS Nomor, DATE_FORMAT(bpb_tanggal, '%d-%m-%Y') AS Tanggal
+           FROM tbpb_hdr WHERE bpb_po_nomor = ? ORDER BY bpb_tanggal`,
+          [input.nomorPo],
+        );
+        if (headers.length === 0) {
+          return {
+            ditemukan: false,
+            pesan:
+              "Belum ada BPB untuk PO tersebut — barang belum datang sama sekali.",
+          };
+        }
+        nomorBpbList = headers.map((h) => h.Nomor);
+      }
+
+      const hasil = await Promise.all(
+        nomorBpbList.map(async (nomor) => ({
+          nomorBpb: nomor,
+          rincian: await bpbBahanService.getBrowseDetail(nomor),
+        })),
+      );
+
+      return { jumlahBpbDitemukan: hasil.length, daftarBpb: hasil };
+    },
+  },
+  {
+    definition: {
+      name: "get_permintaan_bahan",
+      description:
+        "Cari Permintaan Bahan (produksi minta bahan ke gudang untuk 1 SPK) — status open/close, sudah direalisasi/dipenuhi gudang atau belum, rincian tiap item bahan yang diminta vs yang sudah direalisasi. WAJIB isi nomorMinta ATAU nomorSpk. Hasil juga berisi historiRealisasi (daftar nomorRealisasi) — pakai get_realisasi_bahan_detail kalau user butuh rincian barang dari 1 realisasi spesifik.",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorMinta: {
+            type: "string",
+            description: "Nomor Permintaan Bahan persis",
+          },
+          nomorSpk: {
+            type: "string",
+            description:
+              "Nomor SPK, dipakai kalau nomor Minta Bahan tidak diketahui",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      if (!input.nomorMinta && !input.nomorSpk) {
+        return { error: "Nomor Minta Bahan atau nomor SPK wajib diisi." };
+      }
+      const db = require("../../config/database");
+      const mintaBahanService = require("../garmen/mintaBahanService");
+
+      let nomorMinta = input.nomorMinta;
+      if (!nomorMinta) {
+        const [candidates] = await db.query(
+          `SELECT min_nomor AS Nomor, min_tanggal AS Tanggal,
+             IF(min_close=0,"OPEN",IF(min_close=1,"CLOSE",IF(min_close=9,"DICLOSE","ONPROSES"))) AS Status
+           FROM tmintabahan_hdr WHERE min_spk_nomor = ? ORDER BY min_tanggal DESC`,
+          [input.nomorSpk],
+        );
+        if (candidates.length === 0) {
+          return {
+            ditemukan: false,
+            pesan: "Tidak ada Permintaan Bahan untuk SPK tersebut.",
+          };
+        }
+        if (candidates.length > 1) {
+          return {
+            ditemukan: true,
+            catatan:
+              "Ada lebih dari 1 Permintaan Bahan untuk SPK ini, sebutkan nomorMinta spesifik ke user lalu panggil ulang tool ini.",
+            kandidat: candidates,
+          };
+        }
+        nomorMinta = candidates[0].Nomor;
+      }
+
+      const [detailBahan, histRealisasi] = await Promise.all([
+        mintaBahanService.getDetailBahan(nomorMinta),
+        mintaBahanService.getDetailRealisasi(nomorMinta),
+      ]);
+
+      if (detailBahan.length === 0) {
+        return {
+          ditemukan: false,
+          pesan: "Nomor Minta Bahan tidak ditemukan.",
+        };
+      }
+
+      return {
+        nomorMinta,
+        rincianBahanDiminta: detailBahan.map((d) => ({
+          kodeBahan: d.Kode,
+          namaBahan: d.NamaBahan,
+          satuan: d.Satuan,
+          jumlahDiminta: d.Jumlah,
+          sudahDirealisasi: d.Realisasi,
+          kurang: (Number(d.Jumlah) || 0) - (Number(d.Realisasi) || 0),
+        })),
+        historiRealisasi: histRealisasi.map((h) => ({
+          nomorRealisasi: h.NomorRealisasi,
+          tanggal: h.TglRealisasi,
+          waktuApprove: h.WaktuApprove || "BELUM APPROVE",
+          totalJumlah: h.TotalJumlah,
+        })),
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_realisasi_bahan_detail",
+      description:
+        "Cari rincian barang (kode bahan, nama, qty net/gross) dari 1 nomor Realisasi Bahan spesifik — nomor realisasi ini didapat dari field historiRealisasi hasil get_permintaan_bahan. Pakai ini kalau user tanya lebih detail bahan apa saja yang keluar di satu transaksi realisasi tertentu.",
+      input_schema: {
+        type: "object",
+        properties: {
+          nomorRealisasi: {
+            type: "string",
+            description: "Nomor Realisasi Bahan persis, WAJIB diisi",
+          },
+        },
+        required: ["nomorRealisasi"],
+      },
+    },
+    handler: async (input) => {
+      if (!input.nomorRealisasi) {
+        return { error: "Nomor Realisasi wajib diisi." };
+      }
+      const realisasiBahanService = require("../garmen/realisasiBahanService");
+      const rows = await realisasiBahanService.getDetail(input.nomorRealisasi);
+      if (rows.length === 0) {
+        return { ditemukan: false, pesan: "Nomor Realisasi tidak ditemukan." };
+      }
+      return {
+        nomorRealisasi: input.nomorRealisasi,
+        rincianBahan: rows.map((r) => ({
+          kodeBahan: r.Kode,
+          namaBahan: r.Nama,
+          satuan: r.Satuan,
+          qtyNet: r.Net,
+          qtyGross: r.Gross,
+          keterangan: r.Keterangan || undefined,
+        })),
+      };
+    },
+  },
 ];
 
 const getToolDefinitions = () => tools.map((t) => t.definition);
