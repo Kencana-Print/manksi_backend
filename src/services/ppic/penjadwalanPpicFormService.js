@@ -1085,12 +1085,12 @@ const KOMITMEN_KIRIM_CABANG = ["P01", "P02", "P04", "P05"];
 const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
   try {
     const [[map]] = await db.query(
-      `SELECT mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tanggal, '%Y-%m-%d') AS mspk_tanggal,
+      `SELECT mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tgl_cmo, '%Y-%m-%d') AS tgl_approve,
               mspk_cab, mspk_divisi, mspk_jumlah
        FROM tmemospk WHERE mspk_nomor = ? AND mspk_aktif = 'Y'`,
       [mapNomor],
     );
-    if (!map) return;
+    if (!map || !map.tgl_approve) return; // belum di-approve, tidak ada tanggal acuan
 
     const cab = map.mspk_cab || "";
     if (!KOMITMEN_KIRIM_CABANG.includes(cab)) return;
@@ -1101,24 +1101,18 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
     );
     if (existing) return;
 
-    // Cari periode YANG SUDAH ADA di cabang ini yang tanggal MAP-nya
-    // jatuh di dalam rentang tgl1..tgl2 — bukan cocokkan hasil hitung
-    // ulang getWeekRange, karena periode bisa dibuat manual dengan
-    // rentang berbeda dari default Senin-Sabtu (mis. Senin-Minggu).
     const [[periode]] = await db.query(
       `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
        WHERE pjw_cab = ? AND ? BETWEEN pjw_tgl1 AND pjw_tgl2
        ORDER BY pjw_tgl1 DESC LIMIT 1`,
-      [cab, map.mspk_tanggal],
+      [cab, map.tgl_approve],
     );
 
     let pjwNomor;
     if (periode) {
       pjwNomor = periode.pjw_nomor;
     } else {
-      // Tidak ada periode yang mencakup tanggal ini — baru generate
-      // periode mingguan default (Senin-Sabtu).
-      const { tgl1, tgl2 } = getWeekRange(map.mspk_tanggal);
+      const { tgl1, tgl2 } = getWeekRange(map.tgl_approve);
       pjwNomor = await generateNomor(new Date(tgl1).getFullYear());
       await db.query(
         `INSERT INTO tpenjadwalan_ppic_hdr

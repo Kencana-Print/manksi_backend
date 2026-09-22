@@ -167,17 +167,19 @@ const toggleClose = async (nomor, isClose) => {
 
 // --- APPROVAL CMO ---
 const approveCmo = async (nomor, userKode) => {
-  await db.query(`UPDATE tmemospk SET mspk_cmo = ? WHERE mspk_nomor = ?`, [
-    userKode,
-    nomor,
-  ]);
+  await db.query(
+    `UPDATE tmemospk SET mspk_cmo = ?, mspk_tgl_cmo = NOW() WHERE mspk_nomor = ?`,
+    [userKode, nomor],
+  );
   await penjadwalanPpicFormService.pushMapToKomitmenKirim(nomor, userKode);
 };
 
+// --- BATAL APPROVAL CMO ---
 const batalApproveCmo = async (nomor) => {
-  await db.query(`UPDATE tmemospk SET mspk_cmo = '' WHERE mspk_nomor = ?`, [
-    nomor,
-  ]);
+  await db.query(
+    `UPDATE tmemospk SET mspk_cmo = '', mspk_tgl_cmo = NULL WHERE mspk_nomor = ?`,
+    [nomor],
+  );
   await penjadwalanPpicFormService.removeMapFromKomitmenKirim(nomor);
 };
 

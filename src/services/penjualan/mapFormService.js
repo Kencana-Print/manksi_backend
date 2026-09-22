@@ -336,7 +336,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_jo_kode, mspk_tanggal, mspk_dateline, mspk_pen_nomor, mspk_pen_id, mspk_mh_nomor,
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
-          mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size,
+          mspk_tipe, mspk_cmo, mspk_tgl_cmo, mspk_newdesign, mspk_rencana_size,
           mspk_acc_customer, mspk_acc_tanggal, mspk_aktif
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
@@ -383,6 +383,7 @@ const save = async (data, userKode, isNewMode) => {
         data.RevisiNote || "",
         data.TipeSpk,
         data.Cmo || "",
+        data.Cmo && String(data.Cmo).trim() ? new Date() : null,
         data.DesignBaru || "N",
         data.RencanaSize || "",
         data.AccCustomer || "N",
@@ -412,6 +413,24 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
     } else {
+      // Cek status CMO existing dulu — supaya mspk_tgl_cmo cuma diisi
+      // sekali (pertama kali di-approve), tidak ketimpa NOW() tiap
+      // kali form ini disimpan ulang selagi CMO sudah terisi.
+      const [[existingCmo]] = await conn.query(
+        `SELECT mspk_cmo, mspk_tgl_cmo FROM tmemospk WHERE mspk_nomor = ?`,
+        [nomorMap],
+      );
+      const cmoBaruDicentang =
+        (!existingCmo?.mspk_cmo || !existingCmo.mspk_cmo.trim()) &&
+        data.Cmo &&
+        String(data.Cmo).trim();
+      const cmoBatalDicentang =
+        existingCmo?.mspk_cmo && (!data.Cmo || !String(data.Cmo).trim());
+
+      let tglCmoValue = existingCmo?.mspk_tgl_cmo || null;
+      if (cmoBaruDicentang) tglCmoValue = new Date();
+      if (cmoBatalDicentang) tglCmoValue = null;
+
       // ← tambahan: sync approval NOPO
       const noPoPendingEdit = await syncNoPoApproval(
         conn,
@@ -430,7 +449,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
           mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
           mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
-          mspk_tipe_revisi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
+          mspk_tipe_revisi=?, mspk_tipe=?, mspk_cmo=?, mspk_tgl_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
           mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?
         WHERE mspk_nomor=?
       `;
@@ -471,11 +490,12 @@ const save = async (data, userKode, isNewMode) => {
         data.TipeRevisi || 1,
         data.TipeSpk,
         data.Cmo || "",
+        tglCmoValue,
         data.DesignBaru || "N",
         data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
-        mspkAktif, // ← tambahan param
+        mspkAktif,
         nomorMap,
       ];
       await conn.query(updateQ, updateParams);
