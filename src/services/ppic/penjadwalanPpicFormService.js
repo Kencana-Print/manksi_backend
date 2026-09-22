@@ -734,6 +734,8 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     PenId,
     Rencana,
     Realisasi,
+    Pesan,
+    Kirim,
     PermintaanKirim,
     NamaManual,
     PesanManual,
@@ -748,12 +750,13 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
   }
 
   const rencanaVal = tipe === "MAP" ? 0 : Number(Rencana) || 0;
-  // Realisasi untuk MAP: snapshot hasil hitung dari getMapInfo saat
-  // baris ditarik/ditambahkan (bukan dihitung ulang dinamis seperti SO
-  // via tstbj_dtl) — disimpan lewat kolom pjwd_realisasi_manual yang
-  // sudah ada, reuse kolom yang sama seperti baris MANUAL.
   const realisasiVal =
     tipe === "MAP" && !isManual ? Number(Realisasi) || 0 : null;
+  // Pesan/Kirim untuk MAP: snapshot mspk_jumlah/qty kirim SJ dari
+  // getMapInfo saat baris ditarik — sebelumnya salah dihardcode 0,
+  // sekarang ambil dari nilai yang dikirim frontend.
+  const pesanVal = tipe === "MAP" && !isManual ? Number(Pesan) || 0 : null;
+  const kirimVal = tipe === "MAP" && !isManual ? Number(Kirim) || 0 : null;
 
   const [[hdrRow]] = await db.query(
     `SELECT pjw_cab FROM tpenjadwalan_ppic_hdr WHERE pjw_nomor = ?`,
@@ -786,8 +789,8 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       permintaanKirimSafe,
       userKode,
       isManual ? NamaManual : null,
-      isManual ? Number(PesanManual) || 0 : tipe === "MAP" ? 0 : null,
-      isManual ? Number(KirimManual) || 0 : tipe === "MAP" ? 0 : null,
+      isManual ? Number(PesanManual) || 0 : pesanVal,
+      isManual ? Number(KirimManual) || 0 : kirimVal,
       isManual ? Number(RealisasiManual) || 0 : realisasiVal,
     ],
   );
