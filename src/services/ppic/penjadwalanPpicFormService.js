@@ -622,7 +622,7 @@ const assertFieldOwnership = (field, ownershipMap, userKode, userBagian) => {
   if (isAdmin) return;
 
   const owner = ownershipMap[field];
-  if (!owner) return; // field tidak diatur kepemilikannya — bebas siapa saja
+  if (!owner) return;
 
   const bagianUpper = (userBagian || "").toUpperCase();
 
@@ -630,8 +630,12 @@ const assertFieldOwnership = (field, ownershipMap, userKode, userBagian) => {
     if (bagianUpper === "MARKETING") {
       throw new Error("Field ini tidak bisa diubah oleh bagian Marketing.");
     }
-    return; // bagian apa pun selain Marketing boleh
+    return;
   }
+
+  // AUDIT diberi akses sama seperti MARKETING untuk field-field ini
+  // (Rencana, Ket Rencana, Permintaan Kirim, dst) — permintaan khusus.
+  if (owner === "MARKETING" && bagianUpper === "AUDIT") return;
 
   if (bagianUpper !== owner) {
     throw new Error(`Field ini hanya bisa diubah oleh bagian ${owner}.`);
@@ -662,7 +666,7 @@ const updateHeaderField = async (
 const createHeader = async (payload, userKode, userBagian) => {
   const isAdmin = (userKode || "").toUpperCase() === "ADMIN";
   const bagianUpper = (userBagian || "").toUpperCase();
-  if (!isAdmin && bagianUpper !== "MARKETING") {
+  if (!isAdmin && bagianUpper !== "MARKETING" && bagianUpper !== "AUDIT") {
     throw new Error(
       "Membuat Komitmen Kirim baru hanya bisa dilakukan oleh bagian MARKETING.",
     );
@@ -719,7 +723,7 @@ const getCapacity = (cabang) => CABANG_CAPACITY[cabang] || DEFAULT_CAPACITY;
 const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
   const isAdmin = (userKode || "").toUpperCase() === "ADMIN";
   const bagianUpper = (userBagian || "").toUpperCase();
-  if (!isAdmin && bagianUpper !== "MARKETING") {
+  if (!isAdmin && bagianUpper !== "MARKETING" && bagianUpper !== "AUDIT") {
     throw new Error(
       "Menambah baris hanya bisa dilakukan oleh bagian MARKETING.",
     );
@@ -859,7 +863,7 @@ const updateDetailField = async (
 const deleteDetailRow = async (pjwdId, userKode, userBagian) => {
   const isAdmin = (userKode || "").toUpperCase() === "ADMIN";
   const bagianUpper = (userBagian || "").toUpperCase();
-  if (!isAdmin && bagianUpper !== "MARKETING") {
+  if (!isAdmin && bagianUpper !== "MARKETING" && bagianUpper !== "AUDIT") {
     throw new Error(
       "Menghapus baris hanya bisa dilakukan oleh bagian MARKETING.",
     );
@@ -1071,6 +1075,90 @@ const moveDetailRowToPeriod = async (
   }
 };
 
+// ── Cabang yang didukung modul Komitmen Kirim (sama seperti getCabangOptions) ──
+const KOMITMEN_KIRIM_CABANG = ["P01", "P02", "P04", "P05"];
+
+// ── Auto-push MAP yang baru di-approve CMO ke Komitmen Kirim MAP/Sampel ──
+// Dipanggil dari approveCmo (Browse) dan save (Form, saat Cmo terisi).
+// Best-effort & idempotent — kegagalan di sini TIDAK boleh menggagalkan
+// approve/save MAP itu sendiri.
+const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
+  try {
+    const [[map]] = await db.query(
+      `SELECT mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tanggal, '%Y-%m-%d') AS mspk_tanggal,
+              mspk_cab, mspk_divisi, mspk_jumlah
+       FROM tmemospk WHERE mspk_nomor = ? AND mspk_aktif = 'Y'`,
+      [mapNomor],
+    );
+    if (!map) return;
+
+    const cab = map.mspk_cab || "";
+    if (!KOMITMEN_KIRIM_CABANG.includes(cab)) return;
+
+    const [[existing]] = await db.query(
+      `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl WHERE pjwd_map_nomor = ? AND pjwd_tipe = 'MAP' LIMIT 1`,
+      [mapNomor],
+    );
+    if (existing) return;
+
+    // Cari periode YANG SUDAH ADA di cabang ini yang tanggal MAP-nya
+    // jatuh di dalam rentang tgl1..tgl2 — bukan cocokkan hasil hitung
+    // ulang getWeekRange, karena periode bisa dibuat manual dengan
+    // rentang berbeda dari default Senin-Sabtu (mis. Senin-Minggu).
+    const [[periode]] = await db.query(
+      `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
+       WHERE pjw_cab = ? AND ? BETWEEN pjw_tgl1 AND pjw_tgl2
+       ORDER BY pjw_tgl1 DESC LIMIT 1`,
+      [cab, map.mspk_tanggal],
+    );
+
+    let pjwNomor;
+    if (periode) {
+      pjwNomor = periode.pjw_nomor;
+    } else {
+      // Tidak ada periode yang mencakup tanggal ini — baru generate
+      // periode mingguan default (Senin-Sabtu).
+      const { tgl1, tgl2 } = getWeekRange(map.mspk_tanggal);
+      pjwNomor = await generateNomor(new Date(tgl1).getFullYear());
+      await db.query(
+        `INSERT INTO tpenjadwalan_ppic_hdr
+           (pjw_nomor, pjw_tgl1, pjw_tgl2, pjw_cab, pjw_divisi, pjw_keterangan, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, '', ?, NOW())`,
+        [pjwNomor, tgl1, tgl2, cab, map.mspk_divisi || null, userKode],
+      );
+    }
+
+    await db.query(
+      `INSERT INTO tpenjadwalan_ppic_dtl
+         (pjwd_pjw_nomor, pjwd_tipe, pjwd_map_nomor, pjwd_rencana,
+          pjwd_status_permintaan, pjwd_user_create,
+          pjwd_pesan_manual, pjwd_kirim_manual)
+       VALUES (?, 'MAP', ?, 0, 'CLOSE', ?, ?, 0)`,
+      [pjwNomor, mapNomor, userKode, Number(map.mspk_jumlah) || 0],
+    );
+  } catch (e) {
+    console.error(`Gagal auto-push MAP ${mapNomor} ke Komitmen Kirim:`, e);
+  }
+};
+
+// ── Hapus baris Komitmen Kirim MAP terkait — dipanggil saat MAP
+// dihapus, dinonaktifkan (revisi/pending NOPO), atau batal approve
+// CMO. Best-effort, tidak boleh menggagalkan aksi utamanya.
+// Baris yang Rencana-nya sudah diisi user (>0) TIDAK dihapus otomatis
+// — itu tanda PPIC/Marketing sudah mulai kerjakan, hapus manual saja
+// supaya tidak kehilangan data kerja mereka tanpa sadar.
+const removeMapFromKomitmenKirim = async (mapNomor) => {
+  try {
+    await db.query(
+      `DELETE FROM tpenjadwalan_ppic_dtl
+       WHERE pjwd_map_nomor = ? AND pjwd_tipe = 'MAP' AND pjwd_rencana = 0`,
+      [mapNomor],
+    );
+  } catch (e) {
+    console.error(`Gagal hapus MAP ${mapNomor} dari Komitmen Kirim:`, e);
+  }
+};
+
 module.exports = {
   generateNomor,
   getCabangOptions,
@@ -1092,4 +1180,6 @@ module.exports = {
   deleteDetailRow,
   checkTargetPeriod,
   moveDetailRowToPeriod,
+  pushMapToKomitmenKirim,
+  removeMapFromKomitmenKirim,
 };

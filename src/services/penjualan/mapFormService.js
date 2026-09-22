@@ -3,6 +3,7 @@ const tutupBukuService = require("../tutupBukuService");
 const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
+const penjadwalanPpicFormService = require("../ppic/penjadwalanPpicFormService");
 
 // --- GENERATE NOMOR ---
 const generateNomor = async (perushKode, joKode) => {
@@ -335,9 +336,9 @@ const save = async (data, userKode, isNewMode) => {
           mspk_jo_kode, mspk_tanggal, mspk_dateline, mspk_pen_nomor, mspk_pen_id, mspk_mh_nomor,
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
-          mspk_estimasijadi, mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size,
+          mspk_tipe, mspk_cmo, mspk_newdesign, mspk_rencana_size,
           mspk_acc_customer, mspk_acc_tanggal, mspk_aktif
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
       const insertParams = [
         nomorMap,
@@ -380,14 +381,13 @@ const save = async (data, userKode, isNewMode) => {
         data.RevisiNo || 0,
         data.Referensi || "",
         data.RevisiNote || "",
-        data.EstimasiJadi || "1899-12-30",
         data.TipeSpk,
         data.Cmo || "",
         data.DesignBaru || "N",
         data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
-        mspkAktif, // ← tambahan param terakhir
+        mspkAktif,
       ];
 
       // ── DEBUG WRAP: insertQ ──
@@ -430,7 +430,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_hargariil=?, mspk_keterangan=?, mspk_cab=?, mspk_cab2=?, mspk_workshop=?, mspk_workshop2=?,
           mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
           mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
-          mspk_tipe_revisi=?, mspk_estimasijadi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
+          mspk_tipe_revisi=?, mspk_tipe=?, mspk_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
           mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?
         WHERE mspk_nomor=?
       `;
@@ -469,7 +469,6 @@ const save = async (data, userKode, isNewMode) => {
         rencanaOrder,
         userKode,
         data.TipeRevisi || 1,
-        data.EstimasiJadi || "1899-12-30",
         data.TipeSpk,
         data.Cmo || "",
         data.DesignBaru || "N",
@@ -533,6 +532,35 @@ const save = async (data, userKode, isNewMode) => {
     }
 
     await conn.commit();
+
+    // MAP lama yang digantikan revisi ini sudah dinonaktifkan (mspk_aktif='N')
+    // di dalam transaksi di atas — hapus juga dari Komitmen Kirim.
+    if (data.IsRevisi === "Y" && data.Referensi) {
+      await penjadwalanPpicFormService.removeMapFromKomitmenKirim(
+        data.Referensi,
+      );
+    }
+
+    // MAP ini sendiri jadi PASIF (menunggu approval NOPO) — hapus dari
+    // Komitmen Kirim kalau sebelumnya sempat masuk (approve lalu edit
+    // ulang jadi tanpa PO).
+    const mspkAktifFinal = isNewMode
+      ? mspkAktif
+      : (
+          await db.query(
+            `SELECT mspk_aktif FROM tmemospk WHERE mspk_nomor = ?`,
+            [nomorMap],
+          )
+        )[0][0]?.mspk_aktif;
+    if (mspkAktifFinal === "N") {
+      await penjadwalanPpicFormService.removeMapFromKomitmenKirim(nomorMap);
+    } else if (data.Cmo && String(data.Cmo).trim()) {
+      await penjadwalanPpicFormService.pushMapToKomitmenKirim(
+        nomorMap,
+        userKode,
+      );
+    }
+
     return nomorMap;
   } catch (error) {
     await conn.rollback();

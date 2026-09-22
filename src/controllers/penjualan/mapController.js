@@ -67,6 +67,25 @@ const approveCmo = async (req, res) => {
   }
 };
 
+const batalApproveCmo = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+
+    if (req.user.flags?.cmo !== 1) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Anda tidak memiliki hak CMO." });
+    }
+
+    await mapService.batalApproveCmo(nomor);
+    res
+      .status(200)
+      .json({ success: true, message: "Approval berhasil dibatalkan." });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const requestPin5 = async (req, res) => {
   try {
     const { nomor } = req.params;
@@ -120,6 +139,7 @@ module.exports = {
   deleteMap,
   toggleClose,
   approveCmo,
+  batalApproveCmo,
   requestPin5,
   getDesignList,
   updateDesignStatus,

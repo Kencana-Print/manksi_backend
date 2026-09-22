@@ -57,6 +57,14 @@ router.put(
   controller.approveCmo,
 );
 
+// Rute BATAL APPROVAL CMO
+router.put(
+  "/:nomor/batal-approve",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.batalApproveCmo,
+);
+
 // Rute PENGAJUAN PIN 5
 router.post(
   "/:nomor/pin5",

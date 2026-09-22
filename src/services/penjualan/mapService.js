@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const penjadwalanPpicFormService = require("../ppic/penjadwalanPpicFormService");
 
 // --- GET BROWSE LIST ---
 const getBrowseList = async (
@@ -139,6 +140,8 @@ const deleteMap = async (nomor, userDetails) => {
   } finally {
     conn.release();
   }
+
+  await penjadwalanPpicFormService.removeMapFromKomitmenKirim(nomor);
 };
 
 // --- TOGGLE CLOSE / OPEN ---
@@ -164,11 +167,18 @@ const toggleClose = async (nomor, isClose) => {
 
 // --- APPROVAL CMO ---
 const approveCmo = async (nomor, userKode) => {
-  // Pengecekan Hak Akses CMO (zCMO) biasanya dilakukan di Controller melalui data user.role/permission
   await db.query(`UPDATE tmemospk SET mspk_cmo = ? WHERE mspk_nomor = ?`, [
     userKode,
     nomor,
   ]);
+  await penjadwalanPpicFormService.pushMapToKomitmenKirim(nomor, userKode);
+};
+
+const batalApproveCmo = async (nomor) => {
+  await db.query(`UPDATE tmemospk SET mspk_cmo = '' WHERE mspk_nomor = ?`, [
+    nomor,
+  ]);
+  await penjadwalanPpicFormService.removeMapFromKomitmenKirim(nomor);
 };
 
 // --- PENGAJUAN PIN 5 (EDIT CLOSED DATA) ---
@@ -263,6 +273,7 @@ module.exports = {
   deleteMap,
   toggleClose,
   approveCmo,
+  batalApproveCmo,
   requestPin5,
   getDesignList,
   updateDesignStatus,
