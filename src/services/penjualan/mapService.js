@@ -10,19 +10,7 @@ const getBrowseList = async (
 ) => {
   const { startDate, endDate, cabang, isKaosan } = filters;
 
-  // ⚡ OPTIMASI: startDate dipakai juga sebagai lower-bound filter untuk
-  // subquery k/z/m — supaya MySQL tidak scan SELURUH histori
-  // tkesesuaianmap/tlhkdesign_status/tlhk_proofmmt_dtl, cukup baris
-  // yang tanggalnya >= awal periode laporan. Aman selama BAST/design/
-  // proof selalu terjadi PADA ATAU SETELAH tanggal MAP itu sendiri
-  // (MAP-nya sendiri sudah difilter mspk_tanggal >= startDate).
-  let params = [
-    `${startDate} 00:00:00`,
-    `${endDate} 23:59:59`,
-    startDate, // k: tkesesuaianmap date_create/date_modify >= ?
-    startDate, // z: tlhkdesign_status.lds_tgl >= ?
-    startDate, // m: tlhk_proofmmt_hdr.lpr_tanggal >= ?
-  ];
+  let params = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   let whereClause = `WHERE x.mspk_tanggal >= ? AND x.mspk_tanggal <= ?`;
 
   if (cabang === "P02") {
@@ -89,23 +77,15 @@ const getBrowseList = async (
             MIN(date_create) AS date_create
       FROM tkesesuaianmap
       WHERE kode_sesuai = 1
-        AND IFNULL(date_modify, date_create) >= ?
       GROUP BY mspk_nomor
-    ) k ON k.mspk_nomor = CONVERT(x.mspk_nomor USING latin1)
+    ) k ON k.mspk_nomor = x.mspk_nomor
     LEFT JOIN (
-      SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note
-      FROM tlhkdesign_status
-      WHERE UPPER(lds_status)="DONE" AND lds_tgl >= ?
-      GROUP BY lds_spk
-    ) z ON z.lds_spk = CONVERT(x.mspk_nomor USING latin1)
+      SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk
+    ) z ON z.lds_spk = x.mspk_nomor
     LEFT JOIN tdivisi d ON d.kode = x.mspk_divisi
     LEFT JOIN (
-      SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal
-      FROM tlhk_proofmmt_dtl
-      INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor)
-      WHERE lpr_tanggal >= ?
-      GROUP BY lprd_spk_nomor
-    ) m ON m.lprd_spk_nomor = CONVERT(x.mspk_nomor USING latin1)
+      SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal FROM tlhk_proofmmt_dtl INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor) GROUP BY lprd_spk_nomor
+    ) m ON m.lprd_spk_nomor = x.mspk_nomor 
     ${whereClause}
     ORDER BY x.date_create DESC
   `;
