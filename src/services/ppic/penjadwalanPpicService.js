@@ -255,10 +255,11 @@ const savePencapaian = async (
   }
 };
 
-// ── Notifikasi MAP baru masuk Komitmen Kirim — dipanggil saat Browse
-// dibuka (non-MARKETING). Dikelompokkan per periode supaya user lihat
-// konteks lengkap (nomor KK + rentang tanggal), bukan daftar MAP lepas.
-const getUnnotifiedMap = async () => {
+// ── Notifikasi MAP baru masuk Komitmen Kirim — per USER. Baris yang
+// belum ada catatan "sudah dibaca" oleh user ini di
+// tpenjadwalan_ppic_notif_read akan tampil, terlepas apakah user lain
+// sudah pernah melihatnya atau belum.
+const getUnnotifiedMap = async (userKode) => {
   const [rows] = await db.query(
     `SELECT
        d.pjwd_id AS PjwdId,
@@ -271,11 +272,15 @@ const getUnnotifiedMap = async () => {
      FROM tpenjadwalan_ppic_dtl d
      INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
      LEFT JOIN tmemospk m ON m.mspk_nomor = d.pjwd_map_nomor
-     WHERE d.pjwd_tipe = 'MAP' AND d.pjwd_notified = 0
+     WHERE d.pjwd_tipe = 'MAP'
+       AND NOT EXISTS (
+         SELECT 1 FROM tpenjadwalan_ppic_notif_read r
+         WHERE r.pjwd_id = d.pjwd_id AND r.user_kode = ?
+       )
      ORDER BY h.pjw_nomor, d.pjwd_id`,
+    [userKode],
   );
 
-  // Kelompokkan per pjw_nomor
   const byPeriode = {};
   for (const r of rows) {
     if (!byPeriode[r.PjwNomor]) {
@@ -296,15 +301,16 @@ const getUnnotifiedMap = async () => {
   return Object.values(byPeriode);
 };
 
-// ── Tandai sudah dilihat — dipanggil setelah popup ditampilkan ──
-const markMapNotified = async (pjwdIds) => {
+// ── Tandai sudah dilihat OLEH USER INI — insert baris per pjwd_id,
+// aman dipanggil berulang (duplicate key diabaikan).
+const markMapNotified = async (pjwdIds, userKode) => {
   if (!Array.isArray(pjwdIds) || pjwdIds.length === 0) return;
+  const values = pjwdIds.map((id) => [id, userKode]);
   await db.query(
-    `UPDATE tpenjadwalan_ppic_dtl SET pjwd_notified = 1 WHERE pjwd_id IN (?)`,
-    [pjwdIds],
+    `INSERT IGNORE INTO tpenjadwalan_ppic_notif_read (pjwd_id, user_kode) VALUES ?`,
+    [values],
   );
 };
-
 module.exports = {
   getBrowse,
   getDetail,
