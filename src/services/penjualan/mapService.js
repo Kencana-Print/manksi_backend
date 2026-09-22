@@ -57,7 +57,7 @@ const getBrowseList = async (
       IF(x.mspk_estimasijadi="1899-12-30", "", x.mspk_estimasijadi) AS EstimasiJadi, 
       x.mspk_close AS CloseStatus,
       IFNULL(
-        (SELECT so_nomor FROM tsalesorder WHERE so_memo = x.mspk_nomor ORDER BY so_tanggal DESC LIMIT 1),
+        (SELECT so_nomor FROM tsalesorder WHERE so_memo = CONVERT(x.mspk_nomor USING utf8mb4) ORDER BY so_tanggal DESC LIMIT 1),
         (SELECT spk_nomor FROM tspk WHERE spk_memo = x.mspk_nomor ORDER BY spk_tanggal DESC LIMIT 1)
       ) AS SPK, 
       IF(x.mspk_divisi=5, m.lpr_tanggal, z.lds_tgl) AS Design_Tanggal,
@@ -80,12 +80,18 @@ const getBrowseList = async (
       GROUP BY mspk_nomor
     ) k ON k.mspk_nomor = x.mspk_nomor
     LEFT JOIN (
-      SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note FROM tlhkdesign_status WHERE UPPER(lds_status)="DONE" GROUP BY lds_spk
-    ) z ON z.lds_spk = x.mspk_nomor
+      SELECT lds_spk, lds_user, MAX(lds_tgl) AS lds_tgl, lds_note
+      FROM tlhkdesign_status
+      WHERE UPPER(lds_status)="DONE"
+      GROUP BY lds_spk
+    ) z ON z.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
     LEFT JOIN tdivisi d ON d.kode = x.mspk_divisi
     LEFT JOIN (
-      SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal FROM tlhk_proofmmt_dtl INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor) GROUP BY lprd_spk_nomor
-    ) m ON m.lprd_spk_nomor = x.mspk_nomor 
+      SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal
+      FROM tlhk_proofmmt_dtl
+      INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor)
+      GROUP BY lprd_spk_nomor
+    ) m ON m.lprd_spk_nomor = x.mspk_nomor
     ${whereClause}
     ORDER BY x.date_create DESC
   `;
