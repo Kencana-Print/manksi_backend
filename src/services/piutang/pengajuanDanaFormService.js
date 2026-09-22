@@ -1,10 +1,7 @@
 const db = require("../../config/database");
 
 // Replikasi frmLogin.pas: if user_lokasi in (P04,P05) then PJHKE='P04' else 'P01'
-const derivePjhKe = (userCabang) => {
-  if (userCabang === "P04" || userCabang === "P05") return "P04";
-  return "P01";
-};
+const DEFAULT_PJH_KE = "P01";
 
 const DEFAULT_PRIORITY = "Segera"; // field Priority dihapus dari UI web
 const JENIS_PENGAJUAN = "Pengajuan Dana"; // modul ini scope-nya khusus Pengajuan Dana
@@ -188,7 +185,7 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Keterangan || "",
           JENIS_PENGAJUAN,
           DEFAULT_PRIORITY,
-          derivePjhKe(userCabang),
+          DEFAULT_PJH_KE, // ⬅ selalu 'P01', parameter userCabang tidak dipakai lagi di sini
           userKode,
           header.CcKode || null,
           header.CcDcNama || null,
