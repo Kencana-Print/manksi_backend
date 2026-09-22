@@ -25,6 +25,7 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getPumOptions,
 );
+router.get("/print/:nomor", verifyToken, ctrl.getPrintData);
 router.get("/:nomor", checkPermission(MENU_ID, "view"), ctrl.getDetail);
 router.post(
   "/:nomor/realisasi",

@@ -1,4 +1,7 @@
 const db = require("../../config/database");
+const {
+  getTanggalTutupBukuUntukTanggal,
+} = require("../../services/tutupBukuService");
 
 const generateNomor = async (tanggal, conn) => {
   const year = new Date(tanggal).getFullYear();
@@ -84,91 +87,101 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
 // ── Create Pengajuan Uang Muka (dialog "Ajukan" Purchasing) ──
 // items: [{ sumber: 'PENGAJUAN_DANA'|'PERMINTAAN_PEMBELIAN', nomorSumber, keterangan? }]
 // Nominal dihitung ulang server-side dari tabel sumber — TIDAK percaya nominal dari frontend.
-const createPengajuan = async ({ tanggal, keterangan, items }, user) => {
+const createPengajuan = async (
+  { tanggal, keterangan, nota, nominalDiajukan, items },
+  user,
+) => {
   if (!items || !items.length) throw new Error("Minimal pilih 1 transaksi.");
+  const totalDiajukan = Number(nominalDiajukan);
+  if (!totalDiajukan || totalDiajukan <= 0) {
+    throw new Error("Nominal yang diajukan wajib diisi.");
+  }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
     const nomor = await generateNomor(tanggal, conn);
-    let totalNominal = 0;
     const rowsToInsert = [];
 
     for (const it of items) {
       let nominalSumber = 0;
-      let nominal = 0;
       let pmtNomor = null;
+      const nomorSumber = it.nomorSumber || it.nomorHeader;
 
       const [[dup]] = await conn.query(
         `SELECT 1 FROM tpengajuan_uang_muka_dtl d
          JOIN tpengajuan_uang_muka_hdr h ON h.pum_nomor = d.pumd_pum_nomor
          WHERE d.pumd_sumber = ? AND d.pumd_nomor_sumber = ?
            AND h.pum_status NOT IN ('DITOLAK','BATAL')`,
-        [it.sumber, it.nomorSumber],
+        [it.sumber, nomorSumber],
       );
       if (dup) {
-        throw new Error(
-          `${it.nomorSumber} sudah masuk pengajuan uang muka lain.`,
-        );
+        throw new Error(`${nomorSumber} sudah masuk pengajuan uang muka lain.`);
       }
 
       if (it.sumber === "PENGAJUAN_DANA") {
-        pmtNomor = await ensurePermintaanDana(it.nomorSumber, conn);
+        pmtNomor = await ensurePermintaanDana(nomorSumber, conn);
         const [[jml]] = await conn.query(
           `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total
            FROM ga2new.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
-          [it.nomorSumber, it.itemNourut],
+          [nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
       } else if (it.sumber === "PERMINTAAN_PEMBELIAN") {
         const [[jml]] = await conn.query(
           `SELECT IFNULL(mbd_jumlah * mbd_harga, 0) AS total
            FROM tgarmenmintabeli_dtl WHERE mbd_nomor = ? AND mbd_nourut = ?`,
-          [it.nomorSumber, it.itemNourut],
+          [nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
       } else {
         throw new Error(`Sumber tidak dikenali: ${it.sumber}`);
       }
 
-      // Nominal FINAL ditentukan Purchasing (kadang harga belum ada dari
-      // peminta, Purchasing yang mencarikan/mengisi harga saat mengajukan).
-      // nominalSumber tetap disimpan sebagai referensi/audit trail.
-      if (
-        it.nominal !== undefined &&
-        it.nominal !== null &&
-        it.nominal !== ""
-      ) {
-        nominal = Number(it.nominal);
-        if (Number.isNaN(nominal) || nominal < 0) {
-          throw new Error(`Nominal untuk ${it.nomorSumber} tidak valid.`);
-        }
-      } else {
-        nominal = nominalSumber;
-      }
-
-      totalNominal += nominal;
-      rowsToInsert.push({ ...it, nominal, nominalSumber, pmtNomor });
+      // Nominal per-baris tidak lagi diedit manual — baris hanya menyimpan
+      // nilai sumber sebagai referensi/audit trail. Angka yang benar-benar
+      // diajukan ke Finance adalah total di header (totalDiajukan),
+      // diisi Purchasing sebagai satu nilai gabungan.
+      rowsToInsert.push({
+        ...it,
+        nomorSumber,
+        nominal: nominalSumber,
+        nominalSumber,
+        pmtNomor,
+      });
     }
 
     await conn.query(
       `INSERT INTO tpengajuan_uang_muka_hdr
-        (pum_nomor, pum_tanggal, pum_keterangan, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_total_nominal)
-       VALUES (?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?)`,
-      [nomor, tanggal, keterangan || "", user.cabang, user.kode, totalNominal],
+        (pum_nomor, pum_tanggal, pum_keterangan, pum_nota, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_total_nominal)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?)`,
+      [
+        nomor,
+        tanggal,
+        keterangan || "",
+        nota || "",
+        user.cabang,
+        user.kode,
+        totalDiajukan,
+      ],
     );
 
     for (const r of rowsToInsert) {
       await conn.query(
         `INSERT INTO tpengajuan_uang_muka_dtl
-           (pumd_pum_nomor, pumd_sumber, pumd_nomor_sumber, pumd_keterangan,
+           (pumd_pum_nomor, pumd_sumber, pumd_nomor_sumber, pumd_item_nourut,
+            pumd_nama, pumd_satuan, pumd_qty, pumd_keterangan,
             pumd_nominal_ajuan, pumd_nominal_sumber, pumd_pmt_nomor)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           r.sumber,
           r.nomorSumber,
+          r.itemNourut,
+          r.nama || "",
+          r.satuan || "",
+          r.qty || 0,
           r.keterangan || "",
           r.nominal,
           r.nominalSumber,
@@ -178,7 +191,7 @@ const createPengajuan = async ({ tanggal, keterangan, items }, user) => {
     }
 
     await conn.commit();
-    return { nomor, totalNominal };
+    return { nomor, totalNominal: totalDiajukan };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -199,8 +212,23 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
       h.pum_total_nominal AS TotalNominal,
       h.pum_bon_nomor AS BonNomor,
       h.pum_user_create AS UserCreate,
-      h.pum_user_realisasi AS UserRealisasi
+      h.pum_user_realisasi AS UserRealisasi,
+      k.bon_selesai AS BonSelesai,
+      IF(k.bon_jenis=0,'KAS','BANK') AS Jenis,
+      r.rek_nama AS Account,
+      k.bon_pjh_nomor AS Pjh,
+      k.bon_nota AS Nota,
+      k.bon_penerima AS Penerima,
+      k.bon_jur_no AS NoBukti,
+      k.bon_tanggal AS BonTanggal,
+      IF(k.bon_jur_no='', 0,
+        IFNULL((SELECT SUM(d.jurd_kredit) FROM financenew.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
+      ) AS Terpakai,
+      DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
+      k.user_create AS DibuatOleh
     FROM tpengajuan_uang_muka_hdr h
+    LEFT JOIN financenew.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+    LEFT JOIN financenew.trekening r ON r.rek_kode = k.bon_rek_kode
     WHERE 1=1
   `;
   const params = [];
@@ -220,19 +248,95 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
   sql += ` ORDER BY h.pum_tanggal DESC, h.pum_nomor DESC`;
 
   const [rows] = await db.query(sql, params);
+
+  // Sisa & Closed dihitung di JS — Sisa perlu Nominal (bon_nominal,
+  // bukan pum_total_nominal, karena nominal terpakai dihitung dari jurnal
+  // atas bon, bukan atas PUM) dan Closed perlu cek periode tutup buku
+  // per baris (tidak murah sebagai subquery per-row di SQL).
+  for (const row of rows) {
+    row.Sisa = Number(row.TotalNominal) - Number(row.Terpakai || 0);
+    if (row.BonTanggal) {
+      const boundary = await getTanggalTutupBukuUntukTanggal(row.BonTanggal);
+      row.Closed = new Date(row.BonTanggal) < boundary;
+    } else {
+      row.Closed = false;
+    }
+  }
+
   return rows;
 };
 
 const getDetail = async (nomor) => {
+  const [[hdr]] = await db.query(
+    `SELECT pum_total_nominal, pum_keterangan FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ?`,
+    [nomor],
+  );
+
   const [rows] = await db.query(
     `SELECT pumd_id AS Id, pumd_sumber AS Sumber, pumd_nomor_sumber AS NomorSumber,
-            pumd_keterangan AS Keterangan, pumd_nominal_ajuan AS NominalAjuan,
+            pumd_item_nourut AS ItemNourut, pumd_nama AS Nama, pumd_satuan AS Satuan,
+            pumd_qty AS Qty, pumd_keterangan AS Keterangan, pumd_nominal_ajuan AS NominalAjuan,
             pumd_nominal_sumber AS NominalSumber,
             pumd_status_acc AS StatusAcc, pumd_nominal_acc AS NominalAcc
      FROM tpengajuan_uang_muka_dtl WHERE pumd_pum_nomor = ? ORDER BY pumd_id`,
     [nomor],
   );
-  return rows;
+
+  // Baris sintetis KASBON — mewakili total nominal yang benar-benar
+  // diajukan Purchasing ke Finance (pum_total_nominal), terpisah dari
+  // rincian per item yang nominalnya murni informasi/estimasi.
+  const kasbonRow = {
+    Id: null,
+    Sumber: "KASBON",
+    NomorSumber: nomor,
+    ItemNourut: null,
+    Nama: "KASBON",
+    Satuan: "",
+    Qty: null,
+    Keterangan: hdr?.pum_keterangan || "",
+    NominalAjuan: Number(hdr?.pum_total_nominal) || 0,
+    NominalSumber: Number(hdr?.pum_total_nominal) || 0,
+    StatusAcc: null,
+    NominalAcc: null,
+  };
+
+  return [...rows, kasbonRow];
+};
+
+// ── Data cetak Bukti Pengajuan Uang Muka — dari PUM sebelum Realisasi ──
+const getPrintData = async (nomor, user) => {
+  const [[hdr]] = await db.query(
+    `SELECT pum_nomor, DATE_FORMAT(pum_tanggal,'%d-%m-%Y') AS tanggal_fmt,
+            pum_keterangan, pum_cabang, pum_total_nominal, pum_user_create
+     FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
+
+  const [dtl] = await db.query(
+    `SELECT pumd_sumber, pumd_nomor_sumber, pumd_nama, pumd_satuan, pumd_qty, pumd_nominal_sumber
+     FROM tpengajuan_uang_muka_dtl WHERE pumd_pum_nomor = ? ORDER BY pumd_id`,
+    [nomor],
+  );
+
+  const detail = dtl.map((d) => ({
+    sumber: d.pumd_sumber,
+    nomorSumber: d.pumd_nomor_sumber,
+    nama: d.pumd_nama,
+    spesifikasi: d.pumd_satuan || "",
+    qty: Number(d.pumd_qty) || 0,
+    nominal: Number(d.pumd_nominal_sumber) || 0,
+  }));
+
+  return {
+    nomor: hdr.pum_nomor,
+    tanggal_fmt: hdr.tanggal_fmt,
+    keterangan: hdr.pum_keterangan || "",
+    cabang: hdr.pum_cabang,
+    pemohon: user?.nama || user?.kode || hdr.pum_user_create,
+    detail,
+    totalDiajukan: Number(hdr.pum_total_nominal) || 0,
+  };
 };
 
 module.exports = {
@@ -240,4 +344,5 @@ module.exports = {
   getBrowse,
   getDetail,
   ensurePermintaanDana,
+  getPrintData,
 };

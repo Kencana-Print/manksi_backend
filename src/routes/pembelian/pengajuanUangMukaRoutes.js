@@ -20,6 +20,11 @@ router.get(
   checkPermission(MENU_ID, "view"),
   pengajuanUangMukaController.getDetail,
 );
+router.get(
+  "/print/:nomor",
+  verifyToken,
+  pengajuanUangMukaController.getPrintData,
+);
 router.post(
   "/",
   checkPermission(MENU_ID, "insert"),

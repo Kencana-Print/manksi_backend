@@ -1,4 +1,5 @@
 const svc = require("../../services/pembelian/uangMukaRealisasiService");
+const { getPrint } = require("../garmen/realisasiBarangFormController");
 
 const getAccountOptions = async (req, res) => {
   try {
@@ -46,10 +47,20 @@ const saveRealisasi = async (req, res) => {
   }
 };
 
+const getPrintData = async (req, res) => {
+  try {
+    const data = await svc.getPrintData(req.params.nomor, req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getSupplierOptions,
   getPumOptions,
   getDetail,
   saveRealisasi,
+  getPrintData,
 };

@@ -2,9 +2,9 @@ const pengajuanUangMukaService = require("../../services/pembelian/pengajuanUang
 
 const create = async (req, res) => {
   try {
-    const { tanggal, keterangan, items } = req.body;
+    const { tanggal, keterangan, nota, nominalDiajukan, items } = req.body;
     const result = await pengajuanUangMukaService.createPengajuan(
-      { tanggal, keterangan, items },
+      { tanggal, keterangan, nota, nominalDiajukan, items },
       req.user,
     );
     res.json(result);
@@ -37,4 +37,16 @@ const getDetail = async (req, res) => {
   }
 };
 
-module.exports = { create, getBrowse, getDetail };
+const getPrintData = async (req, res) => {
+  try {
+    const data = await pengajuanUangMukaService.getPrintData(
+      req.params.nomor,
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(404).json({ success: false, message: err.message });
+  }
+};
+
+module.exports = { create, getBrowse, getDetail, getPrintData };

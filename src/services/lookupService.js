@@ -2096,15 +2096,17 @@ const searchAccount = async (
 ) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
-  let params = [];
+  const params = [];
   let whereClause = `WHERE 1=1`;
 
   if (jenis === "KAS") {
     whereClause += ` AND LEFT(rek_kode,5) = 'A-111'`;
   } else if (jenis === "BANK") {
     whereClause += ` AND (LEFT(rek_kode,5) = 'A-112' OR LEFT(rek_kode,5) = 'B-211')`;
+  } else if (jenis === "ALL") {
+    // Tanpa filter prefix — dipakai untuk pilih akun biaya/GL di
+    // baris detail Penyelesaian Uang Muka, bukan akun kas/bank header.
   } else {
-    // Tanpa jenis spesifik — pertahankan perilaku lama (mengikuti Delphi: rek_rekening <> "")
     whereClause += ` AND rek_rekening <> ""`;
   }
 
@@ -2116,22 +2118,24 @@ const searchAccount = async (
     whereClause += ` AND (rek_kode LIKE ? OR rek_nama LIKE ? OR rek_rekening LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
   }
+
   const [countResult] = await db.query(
-    `SELECT COUNT(*) AS total FROM finance.trekening ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM financenew.trekening ${whereClause}`,
     params,
   );
-  let query = `
-    SELECT 
-      rek_nama AS Nama, 
-      rek_kode AS Kode, 
-      rek_rekening AS Rekening 
-    FROM finance.trekening 
-    ${whereClause} 
-    ORDER BY rek_rekening ASC 
+
+  const query = `
+    SELECT
+      rek_nama AS Nama,
+      rek_kode AS Kode,
+      rek_rekening AS Rekening
+    FROM financenew.trekening
+    ${whereClause}
+    ORDER BY rek_rekening ASC
     LIMIT ? OFFSET ?
   `;
-  params.push(limitNum, offset);
-  const [rows] = await db.query(query, params);
+  const [rows] = await db.query(query, [...params, limitNum, offset]);
+
   return {
     items: rows,
     total: countResult[0].total,

@@ -1,7 +1,7 @@
 const db = require("../../config/database");
 
 // Cek status GA user berdasarkan tabel ga2.tuser (login system terpisah,
-// lihat uLogin.pas GA2 — frmMenu.USERGA := user_ga, keyed by user_kode).
+// lihat uLogin.pas ga2 — frmMenu.USERGA := user_ga, keyed by user_kode).
 // Asumsi: user_kode di ga2 sama dengan user_kode Manksi untuk user yang sama.
 const getGaUserStatus = async (userKode) => {
   const [rows] = await db.query(

@@ -160,6 +160,7 @@ const poExternalGarmenFormRoutes = require("./routes/pembelian/poExternalGarmenF
 const uangMukaRoutes = require("./routes/pembelian/uangMukaRoutes");
 const pengajuanUangMukaRoutes = require("./routes/pembelian/pengajuanUangMukaRoutes");
 const uangMukaRealisasiRoutes = require("./routes/pembelian/uangMukaRealisasiRoutes");
+const uangMukaPenyelesaianRoutes = require("./routes/pembelian/uangMukaPenyelesaianRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -430,6 +431,7 @@ app.use("/api/pembelian/setting-harga-bahan", settingHargaBahanRoutes);
 app.use("/api/pembelian/uang-muka", uangMukaRoutes);
 app.use("/api/pembelian/pengajuan-uang-muka", pengajuanUangMukaRoutes);
 app.use("/api/pembelian/uang-muka-realisasi", uangMukaRealisasiRoutes);
+app.use("/api/pembelian/uang-muka-penyelesaian", uangMukaPenyelesaianRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
