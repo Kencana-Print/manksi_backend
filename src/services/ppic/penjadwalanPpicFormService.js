@@ -1089,11 +1089,12 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
   try {
     const [[map]] = await db.query(
       `SELECT mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tgl_cmo, '%Y-%m-%d') AS tgl_approve,
+              DATE_FORMAT(mspk_dateline, '%Y-%m-%d') AS tgl_dateline,
               mspk_cab, mspk_divisi, mspk_jumlah
        FROM tmemospk WHERE mspk_nomor = ? AND mspk_aktif = 'Y'`,
       [mapNomor],
     );
-    if (!map || !map.tgl_approve) return; // belum di-approve, tidak ada tanggal acuan
+    if (!map || !map.tgl_approve) return;
 
     const cab = map.mspk_cab || "";
     if (!KOMITMEN_KIRIM_CABANG.includes(cab)) return;
@@ -1128,13 +1129,14 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
     await db.query(
       `INSERT INTO tpenjadwalan_ppic_dtl
          (pjwd_pjw_nomor, pjwd_tipe, pjwd_map_nomor, pjwd_rencana,
-          pjwd_status_permintaan, pjwd_user_create,
+          pjwd_tgl_permintaan_kirim, pjwd_status_permintaan, pjwd_user_create,
           pjwd_pesan_manual, pjwd_kirim_manual)
-       VALUES (?, 'MAP', ?, ?, 'CLOSE', ?, ?, 0)`,
+       VALUES (?, 'MAP', ?, ?, ?, 'CLOSE', ?, ?, 0)`,
       [
         pjwNomor,
         mapNomor,
         Number(map.mspk_jumlah) || 0,
+        map.tgl_dateline || null,
         userKode,
         Number(map.mspk_jumlah) || 0,
       ],
