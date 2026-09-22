@@ -69,11 +69,20 @@ const getDetail = async (nomor) => {
        END AS Kurang,
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
-       CASE
+              CASE
          WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_realisasi_manual, 0)
          WHEN COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
            AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL
          THEN IFNULL(d.pjwd_realisasi_manual, 0)
+         WHEN h.pjw_cab = 'P02' THEN IFNULL((
+           SELECT SUM(sd.sjd_jumlah)
+           FROM tsj_dtl sd
+           INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
+           WHERE sd.sjd_spk_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+             AND sh.sj_approve <> 2
+             AND LEFT(sd.sjd_spk_nomor, 2) = MID(sh.sj_nomor, 4, 2)
+             AND sh.sj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
+         ), 0)
          ELSE IFNULL((
            SELECT SUM(td.stbjd_jumlah)
            FROM tstbj_dtl td
@@ -246,6 +255,56 @@ const savePencapaian = async (
   }
 };
 
+// ── Notifikasi MAP baru masuk Komitmen Kirim — dipanggil saat Browse
+// dibuka (non-MARKETING). Dikelompokkan per periode supaya user lihat
+// konteks lengkap (nomor KK + rentang tanggal), bukan daftar MAP lepas.
+const getUnnotifiedMap = async () => {
+  const [rows] = await db.query(
+    `SELECT
+       d.pjwd_id AS PjwdId,
+       d.pjwd_map_nomor AS MapNomor,
+       h.pjw_nomor AS PjwNomor,
+       DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS PjwTgl1,
+       DATE_FORMAT(h.pjw_tgl2, '%Y-%m-%d') AS PjwTgl2,
+       h.pjw_cab AS Cab,
+       m.mspk_nama AS Nama
+     FROM tpenjadwalan_ppic_dtl d
+     INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+     LEFT JOIN tmemospk m ON m.mspk_nomor = d.pjwd_map_nomor
+     WHERE d.pjwd_tipe = 'MAP' AND d.pjwd_notified = 0
+     ORDER BY h.pjw_nomor, d.pjwd_id`,
+  );
+
+  // Kelompokkan per pjw_nomor
+  const byPeriode = {};
+  for (const r of rows) {
+    if (!byPeriode[r.PjwNomor]) {
+      byPeriode[r.PjwNomor] = {
+        pjwNomor: r.PjwNomor,
+        tgl1: r.PjwTgl1,
+        tgl2: r.PjwTgl2,
+        cab: r.Cab,
+        items: [],
+      };
+    }
+    byPeriode[r.PjwNomor].items.push({
+      pjwdId: r.PjwdId,
+      mapNomor: r.MapNomor,
+      nama: r.Nama,
+    });
+  }
+  return Object.values(byPeriode);
+};
+
+// ── Tandai sudah dilihat — dipanggil setelah popup ditampilkan ──
+const markMapNotified = async (pjwdIds) => {
+  if (!Array.isArray(pjwdIds) || pjwdIds.length === 0) return;
+  await db.query(
+    `UPDATE tpenjadwalan_ppic_dtl SET pjwd_notified = 1 WHERE pjwd_id IN (?)`,
+    [pjwdIds],
+  );
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -253,4 +312,6 @@ module.exports = {
   deleteData,
   getPencapaian,
   savePencapaian,
+  getUnnotifiedMap,
+  markMapNotified,
 };

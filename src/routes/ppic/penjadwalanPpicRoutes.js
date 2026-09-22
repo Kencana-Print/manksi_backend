@@ -16,6 +16,18 @@ router.get(
   controller.getBrowse,
 );
 router.get(
+  "/notif-map",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getUnnotifiedMap,
+);
+router.post(
+  "/notif-map/mark-read",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.markMapNotified,
+);
+router.get(
   "/:nomor/pencapaian",
   verifyToken,
   checkPermission(menuId, "view"),
