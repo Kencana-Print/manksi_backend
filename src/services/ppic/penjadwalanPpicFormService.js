@@ -753,7 +753,10 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
     throw new Error("Baris manual harus punya Nama.");
   }
 
-  const rencanaVal = tipe === "MAP" ? 0 : Number(Rencana) || 0;
+  // Untuk tab MAP: Rencana otomatis = Pesan (qty penuh), bukan diisi
+  // manual — beda dari keputusan awal ("qty sampel manual"), diganti
+  // sesuai arahan terbaru: Rencana=Pesan berarti Close otomatis.
+  const rencanaVal = tipe === "MAP" ? Number(Pesan) || 0 : Number(Rencana) || 0;
   const realisasiVal =
     tipe === "MAP" && !isManual ? Number(Realisasi) || 0 : null;
   // Pesan/Kirim untuk MAP: snapshot mspk_jumlah/qty kirim SJ dari
@@ -1127,8 +1130,14 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
          (pjwd_pjw_nomor, pjwd_tipe, pjwd_map_nomor, pjwd_rencana,
           pjwd_status_permintaan, pjwd_user_create,
           pjwd_pesan_manual, pjwd_kirim_manual)
-       VALUES (?, 'MAP', ?, 0, 'CLOSE', ?, ?, 0)`,
-      [pjwNomor, mapNomor, userKode, Number(map.mspk_jumlah) || 0],
+       VALUES (?, 'MAP', ?, ?, 'CLOSE', ?, ?, 0)`,
+      [
+        pjwNomor,
+        mapNomor,
+        Number(map.mspk_jumlah) || 0,
+        userKode,
+        Number(map.mspk_jumlah) || 0,
+      ],
     );
   } catch (e) {
     console.error(`Gagal auto-push MAP ${mapNomor} ke Komitmen Kirim:`, e);
