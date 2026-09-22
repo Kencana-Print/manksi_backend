@@ -78,9 +78,12 @@ const getDetail = async (nomor) => {
            SELECT SUM(sd.sjd_jumlah)
            FROM tsj_dtl sd
            INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
-           WHERE sd.sjd_spk_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+           WHERE sd.sjd_spk_nomor = COALESCE(
+             (SELECT so.so_spk_ref FROM tsalesorder so
+             WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+             COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+           )
              AND sh.sj_approve <> 2
-             AND LEFT(sd.sjd_spk_nomor, 2) = MID(sh.sj_nomor, 4, 2)
              AND sh.sj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
          ), 0)
          ELSE IFNULL((
