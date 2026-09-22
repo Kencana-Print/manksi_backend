@@ -305,6 +305,7 @@ const save = async (data, userKode, isNewMode) => {
     }
 
     let nomorMap = data.Nomor;
+    let mspkAktif;
 
     // --- INSERT / UPDATE HEADER ---
     if (isNewMode) {
@@ -325,7 +326,7 @@ const save = async (data, userKode, isNewMode) => {
         data,
         userKode,
       );
-      const mspkAktif = noPoPendingCreate ? "N" : "Y";
+      mspkAktif = noPoPendingCreate ? "N" : "Y";
 
       const insertQ = `
         INSERT INTO tmemospk (
@@ -438,7 +439,7 @@ const save = async (data, userKode, isNewMode) => {
         data,
         userKode,
       );
-      const mspkAktif = noPoPendingEdit ? "N" : "Y";
+      mspkAktif = noPoPendingEdit ? "N" : "Y";
 
       const updateQ = `
         UPDATE tmemospk SET 
