@@ -17,7 +17,15 @@ const getBrowse = async (filterKorporasi) => {
       cus_telp AS Telp, 
       cus_cp AS Contact, 
       cus_email AS Email, 
-      cus_piutang AS Piutang,
+      IFNULL((
+        SELECT SUM(p.debet) - SUM(IFNULL((
+          SELECT SUM(d.kredit) FROM piutang_kredit_detail d
+          INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+          WHERE d.nota = p.nota
+        ), 0))
+        FROM piutang_debet p
+        WHERE p.customer = tcustomer.cus_kode AND p.flag = 0 AND p.is_writeoff = 0
+      ), 0) AS Piutang,
       IF(cus_korporasi = 'Y', 'KORPORASI', 'PERORANGAN') AS Status, 
       cus_jenisusaha AS JenisUsaha,
       cus_npwp AS NPWP, 
@@ -39,7 +47,16 @@ const getById = async (kode) => {
     SELECT a.*, 
            b.Cus_nama AS namai, 
            b.Cus_alamat AS alamati, 
-           b.Cus_kota AS kotai
+           b.Cus_kota AS kotai,
+           IFNULL((
+             SELECT SUM(p.debet) - SUM(IFNULL((
+               SELECT SUM(d.kredit) FROM piutang_kredit_detail d
+               INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+               WHERE d.nota = p.nota
+             ), 0))
+             FROM piutang_debet p
+             WHERE p.customer = a.cus_kode AND p.flag = 0 AND p.is_writeoff = 0
+           ), 0) AS cus_piutang_live
     FROM tcustomer a
     LEFT JOIN tcustomer b ON b.cus_kode = a.Cus_kodei
     WHERE a.cus_kode = ?
