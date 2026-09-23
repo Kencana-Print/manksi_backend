@@ -78,7 +78,7 @@ const getAlokasi = async (nomor) => {
   if (!hdr) throw new Error("Sales Order tidak ditemukan.");
 
   const [alokasi] = await db.query(
-    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
+    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_toko AS toko, soa_kota AS kota,
             soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
      FROM tsalesorder_alokasi WHERE soa_so_nomor = ? ORDER BY soa_urut`,
     [nomor],
@@ -127,12 +127,13 @@ const saveAlokasi = async (nomor, rows, userKode) => {
       const item = validRows[i];
       await conn.query(
         `INSERT INTO tsalesorder_alokasi
-           (soa_so_nomor, soa_urut, soa_alamat, soa_kota, soa_person, soa_hp, soa_jumlah)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+           (soa_so_nomor, soa_urut, soa_alamat, soa_toko, soa_kota, soa_person, soa_hp, soa_jumlah)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           i + 1,
           item.alamat || "",
+          item.toko || "", // ⬅ BARU
           item.kota || "",
           item.person || "",
           item.hp || "",
@@ -141,9 +142,6 @@ const saveAlokasi = async (nomor, rows, userKode) => {
       );
     }
 
-    // Sync ke SPK turunan (jika SO ini sudah dibuatkan SPK PPIC) —
-    // ⚠️ ASUMSI struktur tspk_alokasi mengikuti pola prefix yang sama
-    // dengan tsalesorder_alokasi (soa_* -> spka_*). Perlu dikonfirmasi.
     const [[turunan]] = await conn.query(
       `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
       [nomor],
@@ -156,12 +154,13 @@ const saveAlokasi = async (nomor, rows, userKode) => {
         const item = validRows[i];
         await conn.query(
           `INSERT INTO tspk_alokasi
-             (spka_spk_nomor, spka_urut, spka_alamat, spka_kota, spka_person, spka_hp, spka_jumlah)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (spka_spk_nomor, spka_urut, spka_alamat, spka_toko, spka_kota, spka_person, spka_hp, spka_jumlah)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             turunan.spk_nomor,
             i + 1,
             item.alamat || "",
+            item.toko || "", // ⬅ BARU
             item.kota || "",
             item.person || "",
             item.hp || "",

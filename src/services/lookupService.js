@@ -1670,17 +1670,25 @@ const getHistoryAlokasi = async (cusKode, page = 1, limit = 20) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
 
+  // ⬅ DIUBAH: COUNT(DISTINCT a.alamat, a.kota) itu sebenarnya bug lama
+  // (MySQL DISTINCT dengan banyak kolom di dalam COUNT() menghitung
+  // kombinasi unik dari alamat DAN kota bersama — tapi biar konsisten
+  // dengan SELECT DISTINCT Alamat, Kota, Toko di bawah, hitungannya
+  // saya samakan lewat subquery supaya total selalu match jumlah baris
+  // yang benar-benar dikembalikan.
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(DISTINCT a.alamat, a.kota) AS total
-     FROM talokasi a
-     INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
-     INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
-     WHERE a.alamat <> '' AND c.cus_kode = ?`,
+    `SELECT COUNT(*) AS total FROM (
+       SELECT DISTINCT a.alamat, a.kota, a.toko
+       FROM talokasi a
+       INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
+       INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+       WHERE a.alamat <> '' AND c.cus_kode = ?
+     ) x`,
     [cusKode],
   );
 
   const [rows] = await db.query(
-    `SELECT DISTINCT a.Alamat AS Alamat, a.kota AS Kota
+    `SELECT DISTINCT a.Alamat AS Alamat, a.toko AS Toko, a.kota AS Kota
      FROM talokasi a
      INNER JOIN tspk s ON s.spk_nomor = a.spk_nomor
      INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
