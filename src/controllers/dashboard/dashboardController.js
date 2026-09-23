@@ -164,6 +164,21 @@ const getTargetCollectionSales = async (req, res) => {
   }
 };
 
+const getTargetCollectionDetail = async (req, res) => {
+  try {
+    const { salKode, bulan, tahun } = req.query;
+    const data = await service.getTargetCollectionDetail(
+      req.user,
+      salKode || null,
+      bulan,
+      tahun,
+    );
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPotensiSourceOptions = async (req, res) => {
   try {
     const { namaCustomer, sumber, limit = 20, offset = 0 } = req.query;
@@ -1104,6 +1119,7 @@ module.exports = {
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
   getTargetCollectionSales,
+  getTargetCollectionDetail,
   getPotensiSourceOptions,
   setPotensi,
   setPotensiBulk,

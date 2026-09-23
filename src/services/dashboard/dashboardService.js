@@ -978,6 +978,18 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   const rangeEnd = toLocalDateStr(rangeEndDate);
   const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
 
+  // ⬅ BARU: cutoff = akhir bulan sebelum bulan yang dipilih user (bln/thn),
+  // bukan bulan target invoice. "Piutang Saat Ini" harus mencerminkan
+  // posisi outstanding per akhir bulan lalu, bukan real-time hari ini.
+  let cutoffBln = bln - 1;
+  let cutoffThn = thn;
+  if (cutoffBln <= 0) {
+    cutoffBln += 12;
+    cutoffThn -= 1;
+  }
+  const cutoffDate = new Date(cutoffThn, cutoffBln, 0);
+  const cutoff = toLocalDateStr(cutoffDate);
+
   const INV_SALES_SUBQUERY = `
     SELECT d.invd_inv_nomor AS nota,
            MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
@@ -1023,7 +1035,10 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   const [piutangRows] = await db.query(
     `SELECT inv.sal_kode,
             SUM(p.debet - IFNULL((
-              SELECT SUM(kd.kredit) FROM piutang_kredit_detail kd WHERE kd.nota = p.nota
+              SELECT SUM(kd.kredit)
+              FROM piutang_kredit_detail kd
+              INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+              WHERE kd.nota = p.nota AND kh.tanggal <= ?
             ), 0)) AS Sisa
      FROM piutang_debet p
      INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
@@ -1033,7 +1048,7 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
        AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
        ${NOT_DIKIRIM_FILTER}
      GROUP BY inv.sal_kode`,
-    [targetBulanKey],
+    [cutoff, targetBulanKey],
   );
   const piutangBySales = {};
   for (const r of piutangRows) piutangBySales[r.sal_kode] = Number(r.Sisa) || 0;
@@ -1142,6 +1157,100 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
           ? (grandTotal.collectionYtd / targetYtdGrand) * 100
           : null,
     },
+  };
+};
+
+// ── Drill-down Target Collection per Sales — daftar invoice yang jadi
+// penyusun Target Bulan Ini (dan Piutang Saat Ini) untuk 1 sales
+// tertentu, buat crosscheck manual. Scope & atribusi PERSIS sama
+// dengan getTargetCollectionSales (invoice terbit di bulan M-2,
+// fallback sales dari cus_sales, exclude EXCLUDED_SALES) — supaya
+// SUM(rows.Debet) di sini selalu sama dengan targetMtd di summary.
+const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
+  if (!canViewPotensi(user) && !isSuperViewer(user)) return null; // sesuaikan guard akses kalau beda dari canViewPotensi
+
+  const now = new Date();
+  const bln = bulan ? Number(bulan) : now.getMonth() + 1;
+  const thn = tahun ? Number(tahun) : now.getFullYear();
+
+  let targetBln = bln - 2;
+  let targetThn = thn;
+  if (targetBln <= 0) {
+    targetBln += 12;
+    targetThn -= 1;
+  }
+  const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
+
+  // ⬅ BARU: cutoff sama persis dengan getTargetCollectionSales
+  let cutoffBln = bln - 1;
+  let cutoffThn = thn;
+  if (cutoffBln <= 0) {
+    cutoffBln += 12;
+    cutoffThn -= 1;
+  }
+  const cutoffDate = new Date(cutoffThn, cutoffBln, 0);
+  const cutoff = toLocalDateStr(cutoffDate);
+
+  const ATTR_SUBQUERY = `
+    SELECT p.nota,
+      IFNULL(inv.sal_kode, c.cus_sales) AS sal_kode
+    FROM piutang_debet p
+    LEFT JOIN (
+      SELECT d.invd_inv_nomor AS nota,
+             MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
+      FROM tinv_dtl d
+      LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+      LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+      GROUP BY d.invd_inv_nomor
+    ) inv ON inv.nota = p.nota
+    LEFT JOIN tcustomer c ON c.cus_kode = p.customer
+  `;
+
+  const NOT_DIKIRIM_FILTER = `
+    AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
+  `;
+
+  // salKode null/kosong = baris "(TANPA SALES)" di summary
+  const salKodeFilter = salKode ? `attr.sal_kode = ?` : `attr.sal_kode IS NULL`;
+  const params = salKode
+    ? [cutoff, targetBulanKey, salKode]
+    : [cutoff, targetBulanKey];
+
+  const [rows] = await db.query(
+    `SELECT
+       p.nota AS Nota,
+       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+       p.customer AS CusKode,
+       IFNULL(c.cus_nama, '') AS CusNama,
+       p.debet AS Debet,
+       (p.debet - IFNULL((
+         SELECT SUM(kd.kredit)
+         FROM piutang_kredit_detail kd
+         INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+         WHERE kd.nota = p.nota AND kh.tanggal <= ?
+       ), 0)) AS Sisa
+     FROM piutang_debet p
+     INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
+     LEFT JOIN tcustomer c ON c.cus_kode = p.customer
+     WHERE p.flag = 0
+       AND p.is_writeoff = 0
+       AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
+       AND ${salKodeFilter}
+       ${NOT_DIKIRIM_FILTER}
+     ORDER BY p.tanggal, p.nota`,
+    params,
+  );
+
+  return {
+    targetBulanLabel: `${String(targetBln).padStart(2, "0")}/${targetThn}`,
+    items: rows.map((r) => ({
+      nota: r.Nota,
+      tanggal: r.Tanggal,
+      cusKode: r.CusKode,
+      cusNama: r.CusNama,
+      debet: Number(r.Debet) || 0,
+      sisa: Number(r.Sisa) || 0,
+    })),
   };
 };
 
@@ -5006,6 +5115,7 @@ module.exports = {
   getKunjunganSalesSummary,
   getEffectiveCallingDetail,
   getTargetCollectionSales,
+  getTargetCollectionDetail,
   getPotensiSourceOptions,
   setPotensi,
   setPotensiBulk,

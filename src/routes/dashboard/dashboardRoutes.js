@@ -57,6 +57,11 @@ router.get(
   controller.getTargetCollectionSales,
 );
 router.get(
+  "/target-collection/detail",
+  verifyToken,
+  controller.getTargetCollectionDetail,
+);
+router.get(
   "/potensi-source-options",
   verifyToken,
   controller.getPotensiSourceOptions,
