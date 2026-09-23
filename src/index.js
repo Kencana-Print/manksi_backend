@@ -332,6 +332,7 @@ app.use(
 app.use(express.json());
 app.use("/file-gambar", express.static("/mnt/image"));
 app.use("/images", express.static(path.join(process.cwd(), "public/images")));
+app.use("/uploads", express.static(path.join(process.cwd(), "public/uploads")));
 let mtlsAgent = null;
 const CERT_PATH = "/home/kencana/sertifikat_retail/client.crt";
 const KEY_PATH = "/home/kencana/sertifikat_retail/client.key";
