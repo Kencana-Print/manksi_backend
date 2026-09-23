@@ -286,13 +286,25 @@ const convertToMintaHarga = async (nomor, userKode) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    // ⬅ DIUBAH: tambah JOIN tdivisi buat tahu nama divisi
     const [[hdr]] = await conn.query(
-      `SELECT * FROM tpraorder_hdr WHERE pro_nomor = ? FOR UPDATE`,
+      `SELECT h.*, v.Divisi AS DivisiNama
+       FROM tpraorder_hdr h
+       LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
+       WHERE h.pro_nomor = ? FOR UPDATE`,
       [nomor],
     );
     if (!hdr) throw new Error("Data tidak ditemukan.");
     if (hdr.pro_status === "CLOSE") throw new Error("Sudah pernah dikonversi.");
-    if (hdr.pro_status_ppic !== "SANGGUP")
+
+    // ⬅ BARU: Divisi Spanduk & MMT tidak punya alur cek bahan
+    // alternatif/PPIC (bahan alternatif memang cuma relevan untuk
+    // Garmen) — jadi boleh langsung dikonversi tanpa syarat
+    // pro_status_ppic = SANGGUP.
+    const isDivisiTanpaCekPpic = ["SPANDUK", "MMT"].includes(
+      (hdr.DivisiNama || "").toUpperCase(),
+    );
+    if (!isDivisiTanpaCekPpic && hdr.pro_status_ppic !== "SANGGUP")
       throw new Error("PPIC belum menyatakan sanggup.");
 
     const [ukuranRows] = await conn.query(

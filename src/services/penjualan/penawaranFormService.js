@@ -303,8 +303,8 @@ const save = async (data, user, isNewMode) => {
           INSERT INTO tpenawaran_dtl (
             pend_urutan, pend_pen_nomor, pend_minta, pend_nama_barang, pend_bahan, pend_ukuran,
             pend_panjang, pend_lebar, pend_satuan, pend_qty, pend_harga, pend_gambar, 
-            pend_status, pend_batal, pend_confirm, pend_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            pend_status, pend_batal, pend_confirm, pend_optional, pend_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             pend_minta = VALUES(pend_minta),
             pend_nama_barang = VALUES(pend_nama_barang),
@@ -318,7 +318,8 @@ const save = async (data, user, isNewMode) => {
             pend_gambar = VALUES(pend_gambar),
             pend_status = VALUES(pend_status),
             pend_batal = VALUES(pend_batal),
-            pend_confirm = VALUES(pend_confirm)
+            pend_confirm = VALUES(pend_confirm),
+            pend_optional = VALUES(pend_optional)
         `;
         await conn.query(upsertDtl, [
           i + 1,
@@ -336,6 +337,7 @@ const save = async (data, user, isNewMode) => {
           d.Status || "",
           d.Batal || "",
           d.Confirm || "",
+          d.Optional ? 1 : 0,
           pendId,
         ]);
       } else if (d.NamaBarang && d.Spk) {
@@ -359,7 +361,7 @@ const save = async (data, user, isNewMode) => {
 const getMintaHargaDetail = async (nomorMintaHarga) => {
   const query = `
     SELECT m.mh_nomor, m.mh_nama, m.mh_kain, m.mh_ukuran, m.mh_panjang, m.mh_lebar, 
-           m.mh_harga_kalkulasi, m.mh_jmlorder, m.mh_status,
+           m.mh_harga_kalkulasi, m.mh_jmlorder, m.mh_status, m.mh_ket_kalkulasi,
            m.mh_cus_kode, c.cus_nama, c.cus_aktif
     FROM tmintaharga m
     LEFT JOIN tcustomer c ON c.cus_kode = m.mh_cus_kode
@@ -372,10 +374,16 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
   if (mh.mh_status === "CANCEL")
     throw new Error("No. Permintaan tsb telah dicancel.");
 
-  // ⬅ BARU: belum ada kalkulasi harga bukan lagi alasan blokir (throw).
-  // Cukup dikasih flag ke FE supaya ditampilkan sebagai warning, harga
-  // dikirim 0 dan user tetap bisa lanjut memakai No. Permintaan ini.
   const belumKalkulasi = Number(mh.mh_harga_kalkulasi) === 0;
+
+  // ⬅ DIUBAH: pattern tanpa spasi ("INCPPN"/"EXCPPN"), sesuai format
+  // asli di database (mis. mh_ket_kalkulasi = "INCPPN")
+  const ketKalkulasi = (mh.mh_ket_kalkulasi || "")
+    .toUpperCase()
+    .replace(/\s+/g, ""); // buang semua spasi juga, jaga-jaga kalau ada variasi "INC PPN" dengan spasi di data lain
+  let statusHarga = null;
+  if (ketKalkulasi.includes("INCPPN")) statusHarga = 1;
+  else if (ketKalkulasi.includes("EXCPPN")) statusHarga = 0;
 
   return {
     minta: mh.mh_nomor,
@@ -389,6 +397,7 @@ const getMintaHargaDetail = async (nomorMintaHarga) => {
     custKode: mh.mh_cus_kode || "",
     custNama: mh.cus_nama || "",
     belumKalkulasi,
+    statusHarga, // ⬅ BARU: 0 | 1 | null
   };
 };
 
