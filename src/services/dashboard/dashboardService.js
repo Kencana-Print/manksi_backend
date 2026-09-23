@@ -904,12 +904,15 @@ const getEffectiveCallingDetail = async (user, namaSales) => {
 // ── Target Collection per Sales — untuk card Marketing & Finance/Piutang ──
 // Target bulan berjalan = omzet (nilai invoice) sales tsb pada BULAN M-2
 // (misal bulan berjalan September → target diambil dari omzet Juli).
-// Piutang Saat Ini = seluruh piutang outstanding aktif (flag=0, belum
-// writeoff) milik customer yang invoice-nya terhubung ke sales tsb —
-// TIDAK dibatasi bulan (kondisi piutang hari ini, apa adanya).
+// Piutang Saat Ini = HANYA piutang outstanding dari invoice yang TERBIT
+// di bulan target (targetBulanKey) itu sendiri — bukan seluruh piutang
+// all-time. Ini supaya angkanya konsisten sebagai "berapa dari target
+// bulan ini yang masih harus dilunasi", bukan piutang historis lain.
 // Collection = pembayaran (piutang_kredit_detail.kredit) yang masuk pada
 // periode berjalan (MTD) dan sejak awal tahun (YTD), untuk invoice yang
 // terhubung ke sales tsb — terlepas dari kapan invoice itu terbit.
+// Sisa Target Bulan Ini = Target Bulan Ini - Collection Bulan Ini aktual
+// (berapa lagi yang harus ditagih supaya target bulan ini tercapai).
 // ⚠️ ASUMSI: sales suatu invoice ditentukan dari SPK/SO yang menaungi
 // baris detailnya (spk_sal_kode / so_sal_kode via invd_spk_nomor) —
 // kalau 1 invoice punya baris dari SPK/SO beda sales (jarang terjadi),
@@ -925,6 +928,20 @@ const EXCLUDED_SALES = [
   "AYU WULANDARI",
   "UMI KARUNIATI",
 ];
+
+// ⬅ BARU: format Date ke YYYY-MM-DD pakai komponen tanggal LOKAL
+// (getFullYear/getMonth/getDate), BUKAN toISOString(). toISOString()
+// selalu convert ke UTC dulu — kalau timezone server bukan UTC (server
+// kita WIB, UTC+7), tengah malam lokal bisa jatuh ke HARI SEBELUMNYA
+// dalam UTC, jadi tanggal mundur 1 hari tanpa disadari. Ini yang bikin
+// invoice tanggal 31 kepotong dari rangeEnd/cutoff yang seharusnya
+// mencakup tanggal itu.
+const toLocalDateStr = (d) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 const getTargetCollectionSales = async (user, bulan, tahun) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -958,7 +975,8 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   }
   const rangeStart = `${rangeStartThn}-${String(rangeStartBln).padStart(2, "0")}-01`;
   const rangeEndDate = new Date(targetThn, targetBln, 0);
-  const rangeEnd = rangeEndDate.toISOString().substring(0, 10);
+  const rangeEnd = toLocalDateStr(rangeEndDate);
+  const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
 
   const INV_SALES_SUBQUERY = `
     SELECT d.invd_inv_nomor AS nota,
@@ -988,7 +1006,6 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
     [rangeStart, rangeEnd],
   );
 
-  const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
   const targetMtdBySales = {};
   const targetYtdBySales = {};
   for (const r of targetRows) {
@@ -1000,6 +1017,9 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
     }
   }
 
+  // ⬅ DIUBAH: scope ke invoice yang TERBIT di bulan target saja
+  // (DATE_FORMAT(p.tanggal, '%Y-%m') = targetBulanKey) — sebelumnya
+  // tanpa filter tanggal sama sekali (all-time).
   const [piutangRows] = await db.query(
     `SELECT inv.sal_kode,
             SUM(p.debet - IFNULL((
@@ -1010,16 +1030,17 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
      WHERE inv.sal_kode IS NOT NULL
        AND p.flag = 0
        AND p.is_writeoff = 0
+       AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
        ${NOT_DIKIRIM_FILTER}
-     GROUP BY inv.sal_kode
-     HAVING Sisa > 0`,
+     GROUP BY inv.sal_kode`,
+    [targetBulanKey],
   );
   const piutangBySales = {};
   for (const r of piutangRows) piutangBySales[r.sal_kode] = Number(r.Sisa) || 0;
 
   const mtdEndDate = new Date(thn, bln, 0);
-  const todayStr = now.toISOString().substring(0, 10);
-  const mtdEndCandidate = mtdEndDate.toISOString().substring(0, 10);
+  const todayStr = toLocalDateStr(now); // ⬅ FIX timezone
+  const mtdEndCandidate = toLocalDateStr(mtdEndDate); // ⬅ FIX timezone
   const mtdEnd = mtdEndCandidate < todayStr ? mtdEndCandidate : todayStr;
   const ytdStart = `${thn}-01-01`;
 
@@ -1028,14 +1049,7 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
      FROM piutang_kredit_detail d
      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
      INNER JOIN piutang_debet p ON p.nota = d.nota
-     INNER JOIN (
-       SELECT dd.invd_inv_nomor AS nota,
-              MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
-       FROM tinv_dtl dd
-       LEFT JOIN tspk s ON s.spk_nomor = dd.invd_spk_nomor
-       LEFT JOIN tsalesorder so ON so.so_nomor = dd.invd_spk_nomor
-       GROUP BY dd.invd_inv_nomor
-     ) inv ON inv.nota = d.nota
+     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = d.nota
      WHERE inv.sal_kode IS NOT NULL
        AND h.tanggal >= ? AND h.tanggal <= ?
        ${NOT_DIKIRIM_FILTER}
@@ -1080,6 +1094,9 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
         piutangSaatIni: piutang,
         collectionMtd,
         collectionYtd,
+        // ⬅ BARU: sisa yang masih harus ditagih bulan ini = Target - Collection aktual.
+        // Bisa negatif kalau collection sudah melampaui target (target sudah tercapai/lewat).
+        sisaCollectionMtd: targetMtd - collectionMtd,
         pctCollectionMtd:
           targetMtd > 0 ? (collectionMtd / targetMtd) * 100 : null,
         pctCollectionYtd:
@@ -1094,12 +1111,14 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
       piutangSaatIni: acc.piutangSaatIni + r.piutangSaatIni,
       collectionMtd: acc.collectionMtd + r.collectionMtd,
       collectionYtd: acc.collectionYtd + r.collectionYtd,
+      sisaCollectionMtd: acc.sisaCollectionMtd + r.sisaCollectionMtd, // ⬅ BARU
     }),
     {
       targetBulanIni: 0,
       piutangSaatIni: 0,
       collectionMtd: 0,
       collectionYtd: 0,
+      sisaCollectionMtd: 0, // ⬅ BARU
     },
   );
   const targetYtdGrand = Object.values(targetYtdBySales).reduce(
