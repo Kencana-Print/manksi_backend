@@ -36,7 +36,18 @@ const getBrowse = async (startDate, endDate, userKode) => {
       IF(IFNULL(h.pmt_approval, 0) = 0, 'Belum', 'Sudah') AS Approval,
       IF(IFNULL(h.pmt_buyed, 0) = 0, 'Belum', 'Sudah') AS Beli,
       IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed,
-      h.pmt_status_finance AS StatusFinance,
+      (
+        SELECT
+          CASE
+            WHEN SUM(CASE WHEN d.pmd_status_finance = 'BELUM_DIPENUHI' THEN 1 ELSE 0 END) > 0 THEN 'BELUM_DIPENUHI'
+            WHEN SUM(CASE WHEN d.pmd_status_finance = 'PENDING' THEN 1 ELSE 0 END) > 0 THEN 'PENDING'
+            WHEN SUM(CASE WHEN d.pmd_status_finance = 'MENUNGGU_PEMBELIAN' THEN 1 ELSE 0 END) > 0 THEN 'MENUNGGU_PEMBELIAN'
+            WHEN SUM(CASE WHEN d.pmd_status_finance = 'SUDAH_DIPENUHI' THEN 1 ELSE 0 END) = COUNT(*) AND COUNT(*) > 0 THEN 'SUDAH_DIPENUHI'
+            ELSE NULL
+          END
+        FROM ga2.tpermintaan_dtl d
+        WHERE d.pmd_pmt_nomor = h.pmt_nomor
+      ) AS StatusFinance,
       a.pjh_user_kode AS UserKode
     FROM ga2.tpengajuan2_hdr a
     LEFT JOIN ga2.peminta b ON a.pjh_nik = b.nik

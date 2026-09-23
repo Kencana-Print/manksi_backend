@@ -942,6 +942,264 @@ const searchAvailableForSpk = async (
   return { items: rows, total: Number(total) };
 };
 
+// ============================================================
+// REVISI SO — edit terbatas (PO, Tgl PO, Dateline PO, Harga Jual/
+// Riil/Fee) untuk SO yang SUDAH punya SPK PPIC turunan, TANPA lewat
+// gate "SPK PPIC harus di-close dulu + Pengajuan Perubahan Data" yang
+// ada di salesOrderFormService.saveData(). Field ini dianggap tidak
+// berkaitan dengan produksi, jadi boleh diubah kapan pun turunannya
+// masih open ATAU sudah close — satu-satunya gate yang tetap berlaku
+// di sini adalah TUTUP BUKU (pakai pin_jenis "TUTUPBUKU" yang sama
+// dengan yang dipakai alur edit penuh, supaya approval yang sudah
+// di-ACC di satu jalur juga otomatis berlaku di jalur lainnya).
+// ============================================================
+
+const getApprovedTutupBukuPinSO = async (nomor) => {
+  const [rows] = await db.query(
+    `SELECT pin_urut FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=?
+       AND pin_acc="Y" AND pin_dipakai=""
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  return rows.length > 0 ? rows[0].pin_urut : null;
+};
+
+// --- GET DETAIL UNTUK DIALOG REVISI ---
+const getRevisiDetail = async (nomor) => {
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) throw new Error("Data SO tidak ditemukan.");
+
+  const [rows] =
+    loc === "new"
+      ? await db.query(
+          `SELECT so_nomor_po AS nomorPo,
+                  DATE_FORMAT(so_tgl_po,'%Y-%m-%d') AS tglPo,
+                  DATE_FORMAT(so_datelinepo,'%Y-%m-%d') AS datelinePo,
+                  so_harga AS hargaJual, so_hargariil AS hargaRiil, so_hargafee AS hargaFee,
+                  so_tanggal AS tanggal
+           FROM tsalesorder WHERE so_nomor = ?`,
+          [nomor],
+        )
+      : await db.query(
+          `SELECT spk_nomor_po AS nomorPo,
+                  DATE_FORMAT(spk_tgl_po,'%Y-%m-%d') AS tglPo,
+                  DATE_FORMAT(spk_datelinepo,'%Y-%m-%d') AS datelinePo,
+                  spk_harga AS hargaJual, spk_hargariil AS hargaRiil, spk_hargafee AS hargaFee,
+                  spk_tanggal AS tanggal
+           FROM tspk WHERE spk_nomor = ?`,
+          [nomor],
+        );
+  if (!rows[0]) throw new Error("Data SO tidak ditemukan.");
+
+  const [[ppic]] = await db.query(
+    `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
+    [nomor],
+  );
+  if (!ppic) {
+    throw new Error(
+      "SO ini belum memiliki SPK PPIC turunan — gunakan form Ubah SO biasa.",
+    );
+  }
+
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const isTutupBuku = !!(zdtClose && new Date(rows[0].tanggal) < zdtClose);
+  const approvedUrut = isTutupBuku
+    ? await getApprovedTutupBukuPinSO(nomor)
+    : null;
+
+  return {
+    nomorPo: rows[0].nomorPo || "",
+    tglPo: rows[0].tglPo,
+    datelinePo: rows[0].datelinePo,
+    hargaJual: Number(rows[0].hargaJual) || 0,
+    hargaRiil: Number(rows[0].hargaRiil) || 0,
+    hargaFee: Number(rows[0].hargaFee) || 0,
+    spkPpic: ppic.spk_nomor,
+    isTutupBuku,
+    // true kalau boleh langsung Simpan Revisi sekarang juga
+    canSaveNow: !isTutupBuku || !!approvedUrut,
+  };
+};
+
+// --- AJUKAN PIN KHUSUS TUTUP BUKU UNTUK REVISI SO ---
+// Beda dari requestPin() yang sudah ada — fungsi itu juga mengecek
+// kondisi "SPK PPIC turunan closed" (pin_jenis "UBAH"), yang TIDAK
+// relevan untuk alur Revisi ini (Revisi memang sengaja bypass itu).
+// Fungsi ini HANYA peduli status tutup buku.
+const requestRevisiPin = async (nomor, alasan, userKode) => {
+  if (!alasan || !alasan.trim()) throw new Error("Alasan wajib diisi.");
+
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) throw new Error("SO tidak ditemukan.");
+
+  const [spk] =
+    loc === "new"
+      ? await db.query(
+          `SELECT so_nama AS nama, so_tanggal AS tanggal FROM tsalesorder WHERE so_nomor=?`,
+          [nomor],
+        )
+      : await db.query(
+          `SELECT spk_nama AS nama, spk_tanggal AS tanggal FROM tspk WHERE spk_nomor=?`,
+          [nomor],
+        );
+  if (!spk[0]) throw new Error("Data SO tidak ditemukan.");
+
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const needsTutupBukuApproval = !!(
+    zdtClose && new Date(spk[0].tanggal) < zdtClose
+  );
+  if (!needsTutupBukuApproval) {
+    throw new Error(
+      "SO ini tidak berada pada periode yang sudah ditutup buku. Revisi bisa langsung disimpan tanpa pengajuan.",
+    );
+  }
+
+  const existingApproved = await getApprovedTutupBukuPinSO(nomor);
+  if (existingApproved) {
+    return { alreadyApproved: true };
+  }
+
+  const [lastPin] = await db.query(
+    `SELECT pin_urut, pin_dipakai FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=?
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  let urut = 1;
+  if (lastPin.length > 0) {
+    urut =
+      lastPin[0].pin_dipakai === ""
+        ? lastPin[0].pin_urut
+        : lastPin[0].pin_urut + 1;
+  }
+
+  await db.query(
+    `INSERT INTO tspk_pin5
+       (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
+     VALUES ("SO", ?, ?, "TUTUPBUKU", ?, ?, NOW(), ?, ?)
+     ON DUPLICATE KEY UPDATE
+       pin_acc="", pin_tgl_minta=NOW(),
+       pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)`,
+    [nomor, urut, spk[0].tanggal, spk[0].nama, userKode, alasan],
+  );
+
+  return { alreadyApproved: false, urut };
+};
+
+// --- SIMPAN REVISI SO — update tsalesorder/tspk (mana yang jadi
+// lokasi fisik SO ini) DAN sinkron ke SPK PPIC turunannya ---
+const saveRevisi = async (nomor, payload, user) => {
+  const { nomorPo, tglPo, datelinePo, hargaJual, hargaRiil, hargaFee } =
+    payload;
+
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) throw new Error("Data SO tidak ditemukan.");
+
+  const [[ppic]] = await db.query(
+    `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
+    [nomor],
+  );
+  if (!ppic) {
+    throw new Error(
+      "SO ini belum memiliki SPK PPIC turunan — gunakan form Ubah SO biasa.",
+    );
+  }
+
+  const table = loc === "new" ? "tsalesorder" : "tspk";
+  const prefix = loc === "new" ? "so_" : "spk_";
+  const nomorCol = loc === "new" ? "so_nomor" : "spk_nomor";
+
+  const [[hdr]] = await db.query(
+    `SELECT ${prefix}tanggal AS tanggal FROM ${table} WHERE ${nomorCol} = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Data SO tidak ditemukan.");
+
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const isTutupBuku = !!(zdtClose && new Date(hdr.tanggal) < zdtClose);
+  let approvedUrut = null;
+  if (isTutupBuku) {
+    approvedUrut = await getApprovedTutupBukuPinSO(nomor);
+    if (!approvedUrut) {
+      throw new Error(
+        "Periode SO ini sudah ditutup buku. Ajukan Pengajuan Perubahan Data terlebih dahulu dan tunggu ACC sebelum menyimpan Revisi.",
+      );
+    }
+  }
+
+  const nomorPoClean =
+    nomorPo && String(nomorPo).trim() !== "" ? String(nomorPo).trim() : "";
+  const tglPoFinal = nomorPoClean ? tglPo || null : null;
+  const datelinePoFinal = nomorPoClean ? datelinePo || null : null;
+  if (
+    datelinePoFinal &&
+    tglPoFinal &&
+    new Date(datelinePoFinal) < new Date(tglPoFinal)
+  ) {
+    throw new Error(
+      "Tanggal Dateline PO harus lebih besar atau sama dengan Tanggal PO.",
+    );
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    await conn.query(
+      `UPDATE ${table} SET
+         ${prefix}nomor_po = ?, ${prefix}tgl_po = ?, ${prefix}datelinepo = ?,
+         ${prefix}harga = ?, ${prefix}hargariil = ?, ${prefix}hargafee = ?,
+         user_modified = ?, date_modified = NOW()
+       WHERE ${nomorCol} = ?`,
+      [
+        nomorPoClean,
+        tglPoFinal,
+        datelinePoFinal,
+        Number(hargaJual) || 0,
+        Number(hargaRiil) || 0,
+        Number(hargaFee) || 0,
+        user.kode,
+        nomor,
+      ],
+    );
+
+    // Sync ke SPK PPIC turunan — field yang sama persis
+    await conn.query(
+      `UPDATE tspk SET
+         spk_nomor_po = ?, spk_tgl_po = ?, spk_datelinepo = ?,
+         spk_harga = ?, spk_hargariil = ?, spk_hargafee = ?,
+         user_modified = ?, date_modified = NOW()
+       WHERE spk_nomor = ?`,
+      [
+        nomorPoClean,
+        tglPoFinal,
+        datelinePoFinal,
+        Number(hargaJual) || 0,
+        Number(hargaRiil) || 0,
+        Number(hargaFee) || 0,
+        user.kode,
+        ppic.spk_nomor,
+      ],
+    );
+
+    if (approvedUrut) {
+      await conn.query(
+        `UPDATE tspk_pin5 SET pin_dipakai="Y"
+         WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=? AND pin_urut=?`,
+        [nomor, approvedUrut],
+      );
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowseList,
   getSizes,
@@ -957,4 +1215,7 @@ module.exports = {
   getGantiQtyKainStatus,
   ajukanGantiQtyKain,
   searchAvailableForSpk,
+  getRevisiDetail,
+  saveRevisi,
+  requestRevisiPin,
 };

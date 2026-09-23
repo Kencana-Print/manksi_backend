@@ -568,20 +568,35 @@ const saveData = async (payload, user) => {
 
       if (d.ga === 1) {
         if (!v) {
+          // ⬅ DIUBAH: tambah pmd_status_finance = NULL — item ditolak/
+          // tidak diverifikasi di Penyelesaian, bersihkan status yang
+          // sebelumnya MENUNGGU_PEMBELIAN.
           let sql = `UPDATE ga2new.tpermintaan_dtl SET
-            pmd_qty_buyed=0, pmd_nilai_buyed=0, pmd_verified_buyed=0, pmd_bon=?`;
+            pmd_qty_buyed=0, pmd_nilai_buyed=0, pmd_verified_buyed=0, pmd_bon=?,
+            pmd_status_finance=NULL`;
           if (d.gabrg === 0)
             sql += `, pmd_tanggal_closed=CURDATE(), pmd_user_closed='${user.kode}'`;
           sql += ` WHERE pmd_pmt_nomor=? AND pmd_nourut=?`;
           await conn.query(sql, [nomor, d.pmt, d.no]);
         } else {
+          // ⬅ DIUBAH: tambah pmd_status_finance dihitung dari perbandingan
+          // qty yang BARU SAJA disimpan (d.qty, jadi pmd_qty_buyed) vs
+          // pmd_qty_riil (qty minta) yang SUDAH ADA di baris itu —
+          // dibaca langsung di dalam SQL, bukan dipercaya dari payload
+          // frontend, supaya selalu konsisten dengan nilai qty minta asli
+          // di database. qty_riil <= 0 dianggap belum dipenuhi (jaga-jaga
+          // data korup/kosong, bukan dianggap "otomatis penuh").
           let sql = `UPDATE ga2new.tpermintaan_dtl SET
             pmd_qty_buyed=?, pmd_nilai_buyed=?, pmd_verified_buyed=?,
             pmd_rek_kode=?, pmd_cc_kode=?, pmd_dcnama=?, pmd_bon=?,
             pmd_tanggal_approved=CURDATE(), pmd_user_approved=?,
             pmd_dana_approved=?, pmd_tanggal_reject=NULL,
             pmd_kode_reject=0, pmd_user_reject='',
-            pmd_tanggal_buyed=CURDATE(), pmd_user_buyed=?`;
+            pmd_tanggal_buyed=CURDATE(), pmd_user_buyed=?,
+            pmd_status_finance = CASE
+              WHEN pmd_qty_riil > 0 AND ? >= pmd_qty_riil THEN 'SUDAH_DIPENUHI'
+              ELSE 'BELUM_DIPENUHI'
+            END`;
           if (d.gabrg === 0)
             sql += `, pmd_tanggal_closed=CURDATE(), pmd_user_closed='${user.kode}'`;
           sql += ` WHERE pmd_pmt_nomor=? AND pmd_nourut=?`;
@@ -596,6 +611,7 @@ const saveData = async (payload, user) => {
             user.kode,
             d.harga,
             penerima,
+            d.qty,
             d.pmt,
             d.no,
           ]);

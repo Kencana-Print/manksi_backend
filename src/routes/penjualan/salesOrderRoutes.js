@@ -92,4 +92,23 @@ router.get(
   controller.searchAvailableForSpk,
 );
 
+router.get(
+  "/:nomor/revisi-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.getRevisiDetail,
+);
+router.put(
+  "/:nomor/revisi",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.saveRevisi,
+);
+router.post(
+  "/:nomor/request-revisi-pin",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.requestRevisiPin,
+);
+
 module.exports = router;

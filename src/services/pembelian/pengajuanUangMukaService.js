@@ -130,6 +130,16 @@ const createPengajuan = async (
           [nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
+
+        // ⬅ BARU: tandai item ini PENDING — sedang diajukan ke Finance,
+        // menunggu Realisasi. itemNourut di sini sama persis dengan
+        // pmd_nourut (lihat ensurePermintaanDana: insert pakai
+        // item.pjd_nourut apa adanya), jadi bisa langsung dipakai.
+        await conn.query(
+          `UPDATE ga2new.tpermintaan_dtl SET pmd_status_finance = 'PENDING'
+           WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
+          [pmtNomor, it.itemNourut],
+        );
       } else if (it.sumber === "PERMINTAAN_PEMBELIAN") {
         const [[jml]] = await conn.query(
           `SELECT IFNULL(mbd_jumlah * mbd_harga, 0) AS total
@@ -141,10 +151,6 @@ const createPengajuan = async (
         throw new Error(`Sumber tidak dikenali: ${it.sumber}`);
       }
 
-      // Nominal per-baris tidak lagi diedit manual — baris hanya menyimpan
-      // nilai sumber sebagai referensi/audit trail. Angka yang benar-benar
-      // diajukan ke Finance adalah total di header (totalDiajukan),
-      // diisi Purchasing sebagai satu nilai gabungan.
       rowsToInsert.push({
         ...it,
         nomorSumber,

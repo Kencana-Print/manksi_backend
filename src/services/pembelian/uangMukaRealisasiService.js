@@ -199,10 +199,14 @@ const saveRealisasi = async (pumNomor, payload, user) => {
             `UPDATE ga2new.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
+          // ⬅ DIUBAH: tambah pmd_status_finance = 'MENUNGGU_PEMBELIAN' —
+          // sudah dicairkan Finance, tinggal menunggu Purchasing belanja
+          // di tahap Penyelesaian.
           await conn.query(
             `UPDATE ga2new.tpermintaan_dtl SET
                pmd_tanggal_approved = CURDATE(), pmd_user_approved = ?, pmd_dana_approved = ?,
-               pmd_tanggal_reject = NULL, pmd_kode_reject = 0, pmd_user_reject = '', pmd_bon = ?
+               pmd_tanggal_reject = NULL, pmd_kode_reject = 0, pmd_user_reject = '', pmd_bon = ?,
+               pmd_status_finance = 'MENUNGGU_PEMBELIAN'
              WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
             [
               user.kode,
@@ -213,10 +217,13 @@ const saveRealisasi = async (pumNomor, payload, user) => {
             ],
           );
         } else {
+          // ⬅ DIUBAH: item ditolak Finance — bersihkan status finance,
+          // jangan biarkan label PENDING nyangkut padahal sudah ditolak.
           await conn.query(
             `UPDATE ga2new.tpermintaan_dtl SET
                pmd_tanggal_reject = CURDATE(), pmd_kode_reject = 2, pmd_user_reject = ?,
-               pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0, pmd_bon = ?
+               pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0, pmd_bon = ?,
+               pmd_status_finance = NULL
              WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
             [user.kode, bonNomor, d.pmt_nomor, d.item_nourut],
           );

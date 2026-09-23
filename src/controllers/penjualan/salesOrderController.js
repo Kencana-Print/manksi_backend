@@ -237,6 +237,44 @@ const searchAvailableForSpk = async (req, res) => {
   }
 };
 
+const getRevisiDetail = async (req, res) => {
+  try {
+    const data = await service.getRevisiDetail(req.params.nomor);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const saveRevisi = async (req, res) => {
+  try {
+    await service.saveRevisi(req.params.nomor, req.body, req.user);
+    res.json({ success: true, message: "Revisi SO berhasil disimpan." });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const requestRevisiPin = async (req, res) => {
+  try {
+    const { alasan } = req.body;
+    const result = await service.requestRevisiPin(
+      req.params.nomor,
+      alasan,
+      req.user.kode,
+    );
+    res.json({
+      success: true,
+      data: result,
+      message: result.alreadyApproved
+        ? "Pengajuan sebelumnya sudah di-ACC — silakan simpan revisi."
+        : "Pengajuan berhasil dikirim. Menunggu ACC.",
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getSizes,
@@ -251,4 +289,7 @@ module.exports = {
   getGantiQtyKainStatus,
   ajukanGantiQtyKain,
   searchAvailableForSpk,
+  getRevisiDetail,
+  saveRevisi,
+  requestRevisiPin,
 };
