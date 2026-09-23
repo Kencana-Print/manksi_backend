@@ -1208,7 +1208,17 @@ const getPotensiSourceOptions = async (
         h.pen_sal_kode AS sal_kode,
         s.sal_nama,
         c.cus_nama,
-        h.pen_keterangan AS NamaItem,
+        -- ⬅ DIUBAH: NamaItem sekarang dari GROUP_CONCAT nama barang di
+        -- detail (tpenawaran_dtl.pend_nama_barang), bukan lagi dari
+        -- pen_keterangan header (yang sering kosong). Fallback ke
+        -- nomor penawaran sendiri kalau ternyata detailnya juga
+        -- tidak punya nama barang sama sekali.
+        IFNULL(
+          (SELECT GROUP_CONCAT(DISTINCT dd.pend_nama_barang SEPARATOR ', ')
+           FROM tpenawaran_dtl dd
+           WHERE dd.pend_pen_nomor = h.pen_nomor AND dd.pend_nama_barang <> ''),
+          h.pen_nomor
+        ) AS NamaItem,
         IFNULL(SUM(d.pend_qty * d.pend_harga), 0) AS Nominal
       FROM tpenawaran_hdr h
       INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
@@ -1220,7 +1230,7 @@ const getPotensiSourceOptions = async (
           SELECT 1 FROM tpotensi p
           WHERE p.pot_pen_nomor = h.pen_nomor AND p.pot_status <> 'BATAL'
         )
-      GROUP BY h.pen_nomor, h.pen_tanggal, h.pen_sal_kode, s.sal_nama, c.cus_nama, h.pen_keterangan
+      GROUP BY h.pen_nomor, h.pen_tanggal, h.pen_sal_kode, s.sal_nama, c.cus_nama
 
       UNION ALL
 
