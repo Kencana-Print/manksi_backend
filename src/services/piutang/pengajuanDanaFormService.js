@@ -66,14 +66,11 @@ const getFormDetail = async (nomor) => {
             a.pjh_keterangan AS Keterangan,
             a.pjh_nik AS Nik, c.nama AS Nama, c.lokasi AS Lokasi, c.bagian AS Bagian,
             a.pjh_jenis_permintaan AS Jenis, a.pjh_user_kode AS UserKode,
-            a.pjh_cc_kode AS CcKode, a.pjh_cc_dcnama AS CcDcNama,
-            cc.cc_nama AS CcNama,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
      FROM ga2.tpengajuan2_hdr a
      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
      LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
-     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
      WHERE a.pjh_nomor = ?`,
     [nomor],
   );
@@ -85,10 +82,13 @@ const getFormDetail = async (nomor) => {
             pjd_qty AS Qty, pjd_nilai AS Nilai, (pjd_qty * pjd_nilai) AS Total,
             pjd_satuan AS Satuan, pjd_kegunaan AS Kegunaan,
             DATE_FORMAT(pjd_deadline, '%Y-%m-%d') AS Deadline,
-            pjd_jobkp AS Nomor, pjd_kode AS Kode
-     FROM ga2.tpengajuan2_dtl
-     WHERE pjd_pjh_nomor = ? AND pjd_nama <> ''
-     ORDER BY pjd_nourut`,
+            pjd_jobkp AS Nomor, pjd_kode AS Kode,
+            d.pjd_cc_kode AS CcKode, d.pjd_cc_dcnama AS CcDcNama,
+            cc.cc_nama AS CcNama
+     FROM ga2.tpengajuan2_dtl d
+     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.pjd_cc_kode
+     WHERE d.pjd_pjh_nomor = ? AND d.pjd_nama <> ''
+     ORDER BY d.pjd_nourut`,
     [nomor],
   );
 
@@ -126,18 +126,20 @@ const validateItems = (items) => {
     if (!item.Deadline) throw new Error("Deadline harus diisi.");
     const dl = new Date(item.Deadline);
     if (dl < today) throw new Error("Isi Deadline yang benar.");
+    // ⬅ BARU: Cost Center sekarang wajib per baris, bukan lagi di header
+    if (!item.CcKode || !String(item.CcKode).trim())
+      throw new Error("Cost Center wajib diisi di setiap baris.");
   }
 };
 
-// --- SAVE DATA (create / update — replikasi simpandata) ---
 const saveData = async (payload, userKode, userCabang) => {
   const { isEdit, nomor, header, items } = payload;
 
   if (!header.Nik || !String(header.Nik).trim())
     throw new Error("Nik harus diisi.");
 
-  if (!header.CcKode || !String(header.CcKode).trim())
-    throw new Error("Cost Center harus diisi.");
+  // ⬅ DIHAPUS: validasi "Cost Center harus diisi" di level header —
+  // sekarang divalidasi per baris di dalam validateItems().
 
   const validItems = (items || []).filter(
     (r) => r.Nama && String(r.Nama).trim() !== "",
@@ -150,12 +152,17 @@ const saveData = async (payload, userKode, userCabang) => {
 
     let nomorFinal = nomor;
 
+    // ⬅ BARU: CC header (kolom lama pjh_cc_kode/pjh_cc_dcnama) sekarang
+    // diisi otomatis dari baris item PERTAMA — murni untuk menjaga
+    // kompatibilitas laporan/query lain yang mungkin masih JOIN ke
+    // kolom header ini. Kalau ternyata tidak ada yang gantung ke situ,
+    // dua baris ini aman dihapus dan kolomnya boleh dikosongkan.
+    const headerCcKode = validItems[0]?.CcKode || null;
+    const headerCcDcNama = validItems[0]?.CcDcNama || null;
+
     if (isEdit) {
       await assertCanEdit(nomorFinal, userKode);
 
-      // ⬅ Priority & Ke TIDAK disentuh — pertahankan nilai lama persis
-      // seperti Delphi (yang selalu menulis balik nilai combobox hasil
-      // load, bukan menimpa dengan default baru).
       await conn.query(
         `UPDATE ga2.tpengajuan2_hdr SET
             pjh_tanggal = ?, pjh_nik = ?, pjh_keterangan = ?,
@@ -165,8 +172,8 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Tanggal,
           header.Nik,
           header.Keterangan || "",
-          header.CcKode || null,
-          header.CcDcNama || null,
+          headerCcKode,
+          headerCcDcNama,
           nomorFinal,
         ],
       );
@@ -185,10 +192,10 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Keterangan || "",
           JENIS_PENGAJUAN,
           DEFAULT_PRIORITY,
-          DEFAULT_PJH_KE, // ⬅ selalu 'P01', parameter userCabang tidak dipakai lagi di sini
+          DEFAULT_PJH_KE,
           userKode,
-          header.CcKode || null,
-          header.CcDcNama || null,
+          headerCcKode,
+          headerCcDcNama,
         ],
       );
     }
@@ -203,8 +210,9 @@ const saveData = async (payload, userKode, userCabang) => {
       await conn.query(
         `INSERT INTO ga2.tpengajuan2_dtl
            (pjd_pjh_nomor, pjd_nourut, pjd_nama, pjd_spesifikasi, pjd_kegunaan,
-            pjd_qty, pjd_satuan, pjd_nilai, pjd_deadline, pjd_jobkp, pjd_kode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            pjd_qty, pjd_satuan, pjd_nilai, pjd_deadline, pjd_jobkp, pjd_kode,
+            pjd_cc_kode, pjd_cc_dcnama)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomorFinal,
           nourut,
@@ -217,6 +225,8 @@ const saveData = async (payload, userKode, userCabang) => {
           item.Deadline,
           item.Nomor || "",
           item.Kode || "",
+          item.CcKode || null, // ⬅ BARU
+          item.CcDcNama || null, // ⬅ BARU
         ],
       );
       nourut++;

@@ -80,8 +80,14 @@ const getDetail = async (nomor) => {
        a.TglBeli AS TglBeli,
        a.TglClose AS TglClose,
        a.pjd_kegunaan AS Kegunaan,
-       a.Keterangan AS Keterangan
+       a.Keterangan AS Keterangan,
+       d.pjd_cc_kode AS CcKode,
+       d.pjd_cc_dcnama AS CcDcNama,
+       cc.cc_nama AS CcNama
      FROM ga2.viewpengajuan a
+     LEFT JOIN ga2.tpengajuan2_dtl d
+       ON d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nourut = a.pjd_nourut
+     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.pjd_cc_kode
      WHERE a.pjh_nomor = ?
      ORDER BY a.pjd_nourut`,
     [nomor],

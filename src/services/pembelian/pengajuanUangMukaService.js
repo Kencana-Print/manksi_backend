@@ -36,9 +36,10 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
   );
   if (existing) return existing.pmt_nomor;
 
+  // ⬅ DIUBAH: header sekarang cuma dipakai buat pjh_tanggal — pjh_cc_kode/
+  // pjh_cc_dcnama TIDAK lagi diambil dari sini, karena CC sudah per item.
   const [[header]] = await c.query(
-    `SELECT pjh_tanggal, pjh_cc_kode, pjh_cc_dcnama
-     FROM ga2new.tpengajuan2_hdr WHERE pjh_nomor = ?`,
+    `SELECT pjh_tanggal FROM ga2new.tpengajuan2_hdr WHERE pjh_nomor = ?`,
     [pjhNomor],
   );
   if (!header) throw new Error("Pengajuan tidak ditemukan.");
@@ -50,9 +51,10 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
     [pmtNomor, pjhNomor],
   );
 
+  // ⬅ DIUBAH: tarik pjd_cc_kode/pjd_cc_dcnama per baris juga
   const [items] = await c.query(
     `SELECT pjd_nourut, pjd_nama, pjd_spesifikasi, pjd_qty, pjd_nilai, pjd_satuan,
-            pjd_kegunaan, pjd_jobkp, pjd_kode
+            pjd_kegunaan, pjd_jobkp, pjd_kode, pjd_cc_kode, pjd_cc_dcnama
      FROM ga2new.tpengajuan2_dtl
      WHERE pjd_pjh_nomor = ? AND pjd_nama <> ''`,
     [pjhNomor],
@@ -76,8 +78,8 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
         item.pjd_kegunaan || "",
         item.pjd_jobkp || "",
         item.pjd_kode || "",
-        header.pjh_cc_kode || 0,
-        header.pjh_cc_dcnama || "",
+        item.pjd_cc_kode || 0, // ⬅ per item, bukan header
+        item.pjd_cc_dcnama || "", // ⬅ per item, bukan header
       ],
     );
   }
