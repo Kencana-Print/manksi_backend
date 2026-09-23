@@ -1201,42 +1201,40 @@ const getPotensiSourceOptions = async (
 
   const sql = `
     SELECT * FROM (
+      -- ⬅ DIUBAH: sekarang per BARIS DETAIL (pend_id), bukan lagi
+      -- di-GROUP_CONCAT jadi satu baris per penawaran — karena satu
+      -- penawaran bisa punya beberapa item dengan harga beda-beda,
+      -- tiap item ditandai potensial secara terpisah.
       SELECT
         'PENAWARAN' AS Sumber,
         h.pen_nomor AS Nomor,
+        d.pend_id AS PendId,
         h.pen_tanggal AS Tanggal,
         h.pen_sal_kode AS sal_kode,
         s.sal_nama,
         c.cus_nama,
-        -- ⬅ DIUBAH: NamaItem sekarang dari GROUP_CONCAT nama barang di
-        -- detail (tpenawaran_dtl.pend_nama_barang), bukan lagi dari
-        -- pen_keterangan header (yang sering kosong). Fallback ke
-        -- nomor penawaran sendiri kalau ternyata detailnya juga
-        -- tidak punya nama barang sama sekali.
-        IFNULL(
-          (SELECT GROUP_CONCAT(DISTINCT dd.pend_nama_barang SEPARATOR ', ')
-           FROM tpenawaran_dtl dd
-           WHERE dd.pend_pen_nomor = h.pen_nomor AND dd.pend_nama_barang <> ''),
-          h.pen_nomor
-        ) AS NamaItem,
-        IFNULL(SUM(d.pend_qty * d.pend_harga), 0) AS Nominal
+        d.pend_nama_barang AS NamaItem,
+        (d.pend_qty * d.pend_harga) AS Nominal
       FROM tpenawaran_hdr h
       INNER JOIN tpenawaran_dtl d ON d.pend_pen_nomor = h.pen_nomor
       INNER JOIN tcustomer c ON c.cus_kode = h.pen_cus_kode
       LEFT JOIN tsales s ON s.sal_kode = h.pen_sal_kode
       LEFT JOIN (${SELESAI_SUBQUERY}) sel ON sel.pen_nomor = h.pen_nomor
       WHERE sel.pen_nomor IS NULL
+        AND d.pend_nama_barang <> ''
         AND NOT EXISTS (
           SELECT 1 FROM tpotensi p
-          WHERE p.pot_pen_nomor = h.pen_nomor AND p.pot_status <> 'BATAL'
+          WHERE p.pot_pen_nomor = h.pen_nomor
+            AND p.pot_pend_id = d.pend_id
+            AND p.pot_status <> 'BATAL'
         )
-      GROUP BY h.pen_nomor, h.pen_tanggal, h.pen_sal_kode, s.sal_nama, c.cus_nama
 
       UNION ALL
 
       SELECT
         'MAP' AS Sumber,
         m.mspk_nomor AS Nomor,
+        NULL AS PendId,
         m.mspk_tanggal AS Tanggal,
         m.mspk_sal_kode AS sal_kode,
         s.sal_nama,
@@ -1299,9 +1297,9 @@ const setPotensi = async (payload, user) => {
     throw new Error("Anda tidak memiliki akses untuk menandai potensi.");
   }
 
-  const { sumber, nomorSumber, namaItem, harga } = payload;
+  const { sumber, nomorSumber, pendId, namaItem, harga } = payload;
   if (!sumber || !nomorSumber) throw new Error("Sumber & nomor wajib diisi.");
-  if (!namaItem) throw new Error("Nama item wajib diisi.");
+  const namaItemFinal = namaItem || nomorSumber; // ⬅ fallback, bukan reject total
 
   let salKode, cusKode, perushKode, joKode;
   if (sumber === "PENAWARAN") {
@@ -1313,7 +1311,7 @@ const setPotensi = async (payload, user) => {
     salKode = h.pen_sal_kode;
     cusKode = h.pen_cus_kode;
     perushKode = h.pen_perush_kode;
-    joKode = "LL"; // Penawaran tidak punya kolom JO — placeholder tetap
+    joKode = "LL";
   } else if (sumber === "MAP") {
     const [[m]] = await db.query(
       `SELECT mspk_sal_kode, mspk_cus_kode, mspk_perush_kode, mspk_jo_kode FROM tmemospk WHERE mspk_nomor = ?`,
@@ -1332,28 +1330,41 @@ const setPotensi = async (payload, user) => {
   try {
     await conn.beginTransaction();
 
-    const [[dup]] = await conn.query(
-      `SELECT pot_nomor FROM tpotensi
-       WHERE ${sumber === "PENAWARAN" ? "pot_pen_nomor" : "pot_mspk_nomor"} = ?
-         AND pot_status <> 'BATAL' FOR UPDATE`,
-      [nomorSumber],
-    );
+    // ⬅ DIUBAH: duplicate check untuk PENAWARAN sekarang ikut cek
+    // pot_pend_id (per-item), bukan cuma pot_pen_nomor — item lain
+    // dari penawaran yang sama tetap boleh ditandai terpisah.
+    const dupSql =
+      sumber === "PENAWARAN"
+        ? `SELECT pot_nomor FROM tpotensi
+           WHERE pot_pen_nomor = ? AND pot_pend_id ${pendId ? "= ?" : "IS NULL"}
+             AND pot_status <> 'BATAL' FOR UPDATE`
+        : `SELECT pot_nomor FROM tpotensi
+           WHERE pot_mspk_nomor = ? AND pot_status <> 'BATAL' FOR UPDATE`;
+    const dupParams =
+      sumber === "PENAWARAN"
+        ? pendId
+          ? [nomorSumber, pendId]
+          : [nomorSumber]
+        : [nomorSumber];
+
+    const [[dup]] = await conn.query(dupSql, dupParams);
     if (dup)
       throw new Error("Transaksi ini sudah ditandai potensial sebelumnya.");
 
     const nomor = await generatePotensiNomor(conn, perushKode, joKode);
     await conn.query(
       `INSERT INTO tpotensi
-         (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_mspk_nomor,
+         (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_pend_id, pot_mspk_nomor,
           pot_nama_item, pot_harga, pot_status, user_create, date_create)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
       [
         nomor,
         salKode,
         cusKode || "",
         sumber === "PENAWARAN" ? nomorSumber : null,
+        sumber === "PENAWARAN" ? pendId || null : null, // ⬅ BARU
         sumber === "MAP" ? nomorSumber : null,
-        namaItem,
+        namaItemFinal,
         Number(harga) || 0,
         user.kode,
       ],
@@ -1387,10 +1398,11 @@ const setPotensiBulk = async (items, user) => {
     const created = [];
 
     for (const it of items) {
-      const { sumber, nomorSumber, namaItem, harga } = it;
-      if (!sumber || !nomorSumber || !namaItem) {
+      const { sumber, nomorSumber, pendId, namaItem, harga } = it;
+      if (!sumber || !nomorSumber) {
         throw new Error(`Data tidak lengkap untuk ${nomorSumber || "-"}.`);
       }
+      const namaItemFinal = namaItem || nomorSumber;
 
       let salKode, cusKode, perushKode, joKode;
       if (sumber === "PENAWARAN") {
@@ -1417,28 +1429,39 @@ const setPotensiBulk = async (items, user) => {
         throw new Error("Sumber tidak dikenali.");
       }
 
-      const [[dup]] = await conn.query(
-        `SELECT pot_nomor FROM tpotensi
-         WHERE ${sumber === "PENAWARAN" ? "pot_pen_nomor" : "pot_mspk_nomor"} = ?
-           AND pot_status <> 'BATAL' FOR UPDATE`,
-        [nomorSumber],
-      );
+      // ⬅ DIUBAH: sama seperti setPotensi, ikut cek pot_pend_id
+      const dupSql =
+        sumber === "PENAWARAN"
+          ? `SELECT pot_nomor FROM tpotensi
+             WHERE pot_pen_nomor = ? AND pot_pend_id ${pendId ? "= ?" : "IS NULL"}
+               AND pot_status <> 'BATAL' FOR UPDATE`
+          : `SELECT pot_nomor FROM tpotensi
+             WHERE pot_mspk_nomor = ? AND pot_status <> 'BATAL' FOR UPDATE`;
+      const dupParams =
+        sumber === "PENAWARAN"
+          ? pendId
+            ? [nomorSumber, pendId]
+            : [nomorSumber]
+          : [nomorSumber];
+
+      const [[dup]] = await conn.query(dupSql, dupParams);
       if (dup)
         throw new Error(`${nomorSumber} sudah ditandai potensial sebelumnya.`);
 
       const nomor = await generatePotensiNomor(conn, perushKode, joKode);
       await conn.query(
         `INSERT INTO tpotensi
-           (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_mspk_nomor,
+           (pot_nomor, pot_sal_kode, pot_cus_kode, pot_pen_nomor, pot_pend_id, pot_mspk_nomor,
             pot_nama_item, pot_harga, pot_status, user_create, date_create)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
         [
           nomor,
           salKode,
           cusKode || "",
           sumber === "PENAWARAN" ? nomorSumber : null,
+          sumber === "PENAWARAN" ? pendId || null : null, // ⬅ BARU
           sumber === "MAP" ? nomorSumber : null,
-          namaItem,
+          namaItemFinal,
           Number(harga) || 0,
           user.kode,
         ],
