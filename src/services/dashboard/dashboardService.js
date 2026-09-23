@@ -4422,7 +4422,22 @@ const getSpkVsSjList = async (
   return rows;
 };
 
-// ── SPK Terkirim Belum Ditagih (SPK vs SJ vs Invoice) — Finance ──
+// ── SPK/SO Terkirim Belum Ditagih (SPK/SO vs SJ vs Invoice) — Finance ──
+// UNION tspk + tsalesorder karena alur produksi sekarang bisa lewat SO
+// langsung (so_nomor) tanpa selalu bikin baris tspk terpisah — sama
+// seperti pola REALISASI_SUBQUERY_DEF. sjd_spk_nomor/invd_spk_nomor
+// tetap dipakai sebagai kolom referensi nomor order generik (bisa isi
+// spk_nomor ATAU so_nomor), konsisten dengan MKB_SPK_NOMOR di getSoBelumMkb.
+const ORDER_SPK_SO_SUBQUERY = `
+  SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_cus_kode AS CusKode, spk_tanggal AS Tanggal
+  FROM tspk
+  WHERE spk_aktif = 'Y'
+  UNION ALL
+  SELECT so_nomor AS Nomor, so_nama AS Nama, so_cus_kode AS CusKode, so_tanggal AS Tanggal
+  FROM tsalesorder
+  WHERE so_aktif = 'Y'
+`;
+
 const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
@@ -4439,19 +4454,19 @@ const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
 
   const sql = `
     SELECT
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN s.spk_nomor END) AS TotalTerkirim,
+      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN o.Nomor END) AS TotalTerkirim,
       COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) = 0
-            THEN s.spk_nomor END) AS BelumInvoice,
+            THEN o.Nomor END) AS BelumInvoice,
       COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) > 0
             AND IFNULL(inv.TotalInvoice, 0) < kirim.TotalKirim
-            THEN s.spk_nomor END) AS SebagianInvoice,
+            THEN o.Nomor END) AS SebagianInvoice,
       COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0
             AND IFNULL(inv.TotalInvoice, 0) >= kirim.TotalKirim
-            THEN s.spk_nomor END) AS FullInvoice,
+            THEN o.Nomor END) AS FullInvoice,
       IFNULL(SUM(CASE WHEN kirim.TotalKirim > 0
             THEN GREATEST(kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0), 0)
             ELSE 0 END), 0) AS TotalQtyBelumDitagih
-    FROM tspk s
+    FROM (${ORDER_SPK_SO_SUBQUERY}) o
     INNER JOIN (
       SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
       FROM tsj_dtl d
@@ -4459,16 +4474,15 @@ const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
       WHERE h.sj_approve <> 2
         AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
-    ) kirim ON kirim.Nomor = s.spk_nomor
+    ) kirim ON kirim.Nomor = o.Nomor
     LEFT JOIN (
       SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
       FROM tinv_dtl d
       INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
       WHERE h.inv_status_otomatis = 0
       GROUP BY d.invd_spk_nomor
-    ) inv ON inv.Nomor = s.spk_nomor
-    WHERE s.spk_aktif = 'Y'
-      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+    ) inv ON inv.Nomor = o.Nomor
+    WHERE o.Tanggal >= ? AND o.Tanggal <= ?
   `;
 
   const [rows] = await db.query(sql, params);
@@ -4497,16 +4511,16 @@ const getSpkTerkirimBelumTagihList = async (
 
   const sql = `
     SELECT
-      s.spk_nomor AS Nomor,
-      s.spk_nama AS Nama,
+      o.Nomor AS Nomor,
+      o.Nama AS Nama,
       c.cus_nama AS NamaCustomer,
       kirim.TotalKirim AS QtyKirim,
       IFNULL(inv.TotalInvoice, 0) AS QtyInvoice,
       (kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0)) AS QtyBelumDitagih,
       DATE_FORMAT(kirim.TglKirimTerakhir, '%d-%m-%Y') AS TglKirimTerakhir,
       DATEDIFF(CURDATE(), kirim.TglKirimTerakhir) AS UmurHari
-    FROM tspk s
-    INNER JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+    FROM (${ORDER_SPK_SO_SUBQUERY}) o
+    INNER JOIN tcustomer c ON c.cus_kode = o.CusKode
     INNER JOIN (
       SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim,
              MAX(h.sj_tanggal) AS TglKirimTerakhir
@@ -4515,16 +4529,15 @@ const getSpkTerkirimBelumTagihList = async (
       WHERE h.sj_approve <> 2
         AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
-    ) kirim ON kirim.Nomor = s.spk_nomor
+    ) kirim ON kirim.Nomor = o.Nomor
     LEFT JOIN (
       SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
       FROM tinv_dtl d
       INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
       WHERE h.inv_status_otomatis = 0
       GROUP BY d.invd_spk_nomor
-    ) inv ON inv.Nomor = s.spk_nomor
-    WHERE s.spk_aktif = 'Y'
-      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+    ) inv ON inv.Nomor = o.Nomor
+    WHERE o.Tanggal >= ? AND o.Tanggal <= ?
       AND kirim.TotalKirim > IFNULL(inv.TotalInvoice, 0)
     ORDER BY UmurHari DESC
     LIMIT ? OFFSET ?

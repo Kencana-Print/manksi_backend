@@ -13,6 +13,7 @@ router.post(
   "/save",
   verifyToken,
   checkPermission(MENU_ID, "save"),
+  upload.array("images", 50), // ⬅ BARU: /save sekarang multipart (header+details JSON + file gambar mentah)
   controller.save,
 );
 router.post(

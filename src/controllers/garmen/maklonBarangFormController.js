@@ -14,13 +14,34 @@ const getCabangOptions = async (req, res) => {
 
 const save = async (req, res) => {
   try {
-    const result = await service.saveData(req.body, req.user);
+    // ⬅ DIUBAH: sekarang multipart — header & details datang sebagai JSON
+    // string di req.body (dari FormData), file mentah di req.files, dan
+    // pendingKeys (urutan yang sama persis dengan urutan file di-append
+    // di frontend) untuk mapping file → slot gambar mana.
+    const header = JSON.parse(req.body.header || "{}");
+    const details = JSON.parse(req.body.details || "[]");
+    const pendingKeys = JSON.parse(req.body.pendingKeys || "[]");
+
+    const result = await service.saveData(
+      { header, details },
+      req.user,
+      req.files || [],
+      pendingKeys,
+    );
     res.status(200).json({
       success: true,
       message: "Maklon Barang berhasil disimpan.",
       data: result,
     });
   } catch (error) {
+    // Bersihkan file temp yang sudah ke-upload tapi transaksi DB gagal —
+    // sama seperti pola cleanup di uploadGambar, supaya folder temp
+    // tidak numpuk file orphan.
+    if (req.files) {
+      for (const f of req.files) {
+        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      }
+    }
     res.status(400).json({ success: false, message: error.message });
   }
 };

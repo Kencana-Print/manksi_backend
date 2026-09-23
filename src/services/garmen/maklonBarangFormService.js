@@ -118,12 +118,26 @@ const assertStokCukup = async (conn, cabAsal, kodePolos, qtyKirim) => {
   }
 };
 
+// ⬅ BARU: extract logic pindah file temp→permanen jadi helper terpisah,
+// supaya bisa dipanggil dari saveData (alur baru) maupun uploadGambar
+// (alur lama, tetap dipertahankan untuk backward-compat).
+const moveTempToPermanent = (tempFile) => {
+  const finalName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(tempFile.originalname)}`;
+  const finalPath = path.join(UPLOAD_DIR, finalName);
+  fs.renameSync(tempFile.path, finalPath);
+  return `/uploads/maklon/${finalName}`;
+};
+
 // ─────────────────────────────────────────────────────────
-// SAVE — create baru atau update (full-replace baris detail,
-// aman karena checkEditGate menjamin belum ada progress apa pun,
-// jadi hapus+insert ulang tidak kehilangan data penerimaan).
+// SAVE — create baru atau update. DIUBAH: sekarang terima `files`
+// (req.files dari multer) dan `pendingKeys` (array string, urutan-nya
+// PERSIS sama dengan urutan file di-append di FormData frontend —
+// files[i] berpasangan dengan pendingKeys[i]). Gambar yang baru dipilih
+// user (preview blob, belum ada di server) dikirim dengan field
+// `pendingKey` alih-alih `file_path`; di sini baru benar-benar
+// dipindah ke folder permanen dan dapat file_path final-nya.
 // ─────────────────────────────────────────────────────────
-const saveData = async (payload, user) => {
+const saveData = async (payload, user, files = [], pendingKeys = []) => {
   const { header, details } = payload;
   if (!header.mkl_cab_asal || !header.mkl_cab_tujuan) {
     throw new Error("Cabang Asal dan Cabang Tujuan wajib diisi.");
@@ -137,6 +151,12 @@ const saveData = async (payload, user) => {
   if (!details || !details.length) {
     throw new Error("Detail barang wajib diisi minimal 1 baris.");
   }
+
+  // ⬅ BARU: map pendingKey -> file mentah, dari dua array sejajar
+  const fileByPendingKey = {};
+  pendingKeys.forEach((key, idx) => {
+    if (files[idx]) fileByPendingKey[key] = files[idx];
+  });
 
   const conn = await db.getConnection();
   try {
@@ -204,7 +224,7 @@ const saveData = async (payload, user) => {
     const totalQtyPerPolos = {};
     for (const d of details) {
       if (!d.kode_polos || !d.qty_kirim) continue;
-      if (d.is_freetext) continue; // ⬅ free-text tidak divalidasi & tidak dipotong stok
+      if (d.is_freetext) continue;
       totalQtyPerPolos[d.kode_polos] =
         (totalQtyPerPolos[d.kode_polos] || 0) + Number(d.qty_kirim);
     }
@@ -267,21 +287,37 @@ const saveData = async (payload, user) => {
 
         if (t.gambar && t.gambar.length) {
           for (const g of t.gambar) {
+            // ⬅ BARU: resolve file_path final — kalau gambar ini punya
+            // pendingKey, berarti baru dipilih user & belum ada di server,
+            // pindahkan dulu dari temp ke folder permanen. Kalau tidak
+            // punya pendingKey (edit mode, gambar lama), file_path yang
+            // dikirim sudah path server valid, pakai apa adanya.
+            let finalFilePath = g.file_path;
+            if (g.pendingKey) {
+              const tempFile = fileByPendingKey[g.pendingKey];
+              if (!tempFile) {
+                throw new Error(
+                  `File untuk gambar pending "${g.pendingKey}" tidak ditemukan di request.`,
+                );
+              }
+              finalFilePath = moveTempToPermanent(tempFile);
+            }
+
             await conn.query(
               `INSERT INTO tmaklon_gambar (mklg_mkldj_id, mklg_file_path, mklg_keterangan, mklg_user_upload, mklg_date_upload)
                VALUES (?, ?, ?, ?, NOW())`,
-              [jadiResult.insertId, g.file_path, g.keterangan || "", user.kode],
+              [
+                jadiResult.insertId,
+                finalFilePath,
+                g.keterangan || "",
+                user.kode,
+              ],
             );
           }
         }
       }
     }
 
-    // ⬅ BARU: auto-buat SJ Keluar full qty — sesuai keputusan bahwa
-    // Maklon langsung dikirim penuh saat disimpan, bukan menunggu aksi
-    // "Buat SJ Keluar" manual terpisah. Trigger tmaklon_sj_keluar_dtl_
-    // after_insert yang sudah ada otomatis menangani pengurangan/
-    // penambahan stok dan update status header ke DIKIRIM.
     let sjkNomor = null;
     if (sjItems.length) {
       sjkNomor = await generateSjNomor(conn);
