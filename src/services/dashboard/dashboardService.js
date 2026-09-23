@@ -4864,42 +4864,6 @@ const getPiutangByCustomer = async ({
   const like = `%${namaCustomer}%`;
   const cabangFilter = kodePerush ? "AND p.cabang = ?" : "";
 
-  // Step 1: cari kode customer yang match nama & SALDO-nya POSITIF —
-  // sama seperti logic Top 10 dashboard (GROUP BY per kode, HAVING Saldo > 0).
-  // Ini wajib karena 1 nama customer bisa punya beberapa cus_kode berbeda,
-  // dan salah satunya bisa saldo NEGATIF (kelebihan bayar) — kalau langsung
-  // di-SUM semua baris tanpa GROUP BY per kode dulu, saldo negatif itu ikut
-  // mengurangi total yang seharusnya cuma dihitung dari kode yang piutangnya
-  // benar-benar outstanding.
-  const sqlKodeAktif = `
-    SELECT p.customer AS Kode, c.cus_nama AS Nama,
-      SUM(p.debet) - SUM(IFNULL((
-        SELECT SUM(kredit) FROM piutang_kredit_detail d
-        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE d.nota = p.nota
-      ), 0)) AS Saldo
-    FROM piutang_debet p
-    INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag = 0 AND p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
-    GROUP BY p.customer, c.cus_nama
-    HAVING Saldo > 0
-  `;
-  const kodeParams = kodePerush ? [kodePerush, like] : [like];
-  const [kodeAktifRows] = await db.query(sqlKodeAktif, kodeParams);
-
-  if (kodeAktifRows.length === 0) {
-    return {
-      customerDicari: namaCustomer,
-      perusahaanDicari: kodePerush || "SEMUA",
-      ringkasan: { JmlInvoiceOutstanding: 0, TotalOutstanding: 0 },
-      invoiceOutstanding: [],
-    };
-  }
-
-  const kodeList = kodeAktifRows.map((r) => r.Kode);
-  const inPlaceholders = kodeList.map(() => "?").join(",");
-
-  // Step 2: total & detail invoice HANYA dari kode-kode bersaldo positif tadi
   const sqlSummary = `
     SELECT
       COUNT(DISTINCT p.nota) AS JmlInvoiceOutstanding,
@@ -4911,7 +4875,8 @@ const getPiutangByCustomer = async ({
         ), 0)
       ), 0) AS TotalOutstanding
     FROM piutang_debet p
-    WHERE p.flag = 0 AND p.is_writeoff = 0 AND p.customer IN (${inPlaceholders})
+    INNER JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.flag = 0 AND p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
   `;
 
   const sqlDetail = `
@@ -4929,24 +4894,25 @@ const getPiutangByCustomer = async ({
       ), 0)) AS SisaTagihan
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag = 0 AND p.is_writeoff = 0 AND p.customer IN (${inPlaceholders})
+    WHERE p.flag = 0 AND p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
     HAVING SisaTagihan > 0
     ORDER BY TerlambatHari DESC
     LIMIT ? OFFSET ?
   `;
 
+  const summaryParams = kodePerush ? [kodePerush, like] : [like];
+  const detailParams = kodePerush
+    ? [kodePerush, like, limit, offset]
+    : [like, limit, offset];
+
   const [[summaryRows], [detailRows]] = await Promise.all([
-    db.query(sqlSummary, kodeList),
-    db.query(sqlDetail, [...kodeList, limit, offset]),
+    db.query(sqlSummary, summaryParams),
+    db.query(sqlDetail, detailParams),
   ]);
 
   return {
     customerDicari: namaCustomer,
     perusahaanDicari: kodePerush || "SEMUA",
-    catatan:
-      kodeAktifRows.length > 1
-        ? `Nama ini cocok dengan ${kodeAktifRows.length} kode customer berbeda: ${kodeAktifRows.map((r) => r.Kode).join(", ")}. Total sudah digabung dari semua kode yang saldonya masih outstanding.`
-        : undefined,
     ringkasan: summaryRows[0] || {
       JmlInvoiceOutstanding: 0,
       TotalOutstanding: 0,
