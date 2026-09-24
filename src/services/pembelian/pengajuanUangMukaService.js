@@ -90,7 +90,7 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
 // items: [{ sumber: 'PENGAJUAN_DANA'|'PERMINTAAN_PEMBELIAN', nomorSumber, keterangan? }]
 // Nominal dihitung ulang server-side dari tabel sumber — TIDAK percaya nominal dari frontend.
 const createPengajuan = async (
-  { tanggal, keterangan, nota, nominalDiajukan, items },
+  { tanggal, keterangan, nominalDiajukan, items },
   user,
 ) => {
   if (!items || !items.length) throw new Error("Minimal pilih 1 transaksi.");
@@ -115,11 +115,13 @@ const createPengajuan = async (
         `SELECT 1 FROM tpengajuan_uang_muka_dtl d
          JOIN tpengajuan_uang_muka_hdr h ON h.pum_nomor = d.pumd_pum_nomor
          WHERE d.pumd_sumber = ? AND d.pumd_nomor_sumber = ?
-           AND h.pum_status NOT IN ('DITOLAK','BATAL')`,
-        [it.sumber, nomorSumber],
+           AND d.pumd_item_nourut = ? AND h.pum_status = 'DIAJUKAN'`,
+        [it.sumber, nomorSumber, it.itemNourut],
       );
       if (dup) {
-        throw new Error(`${nomorSumber} sudah masuk pengajuan uang muka lain.`);
+        throw new Error(
+          `${nomorSumber} item ini masih menunggu approval Finance pada pengajuan lain.`,
+        );
       }
 
       if (it.sumber === "PENGAJUAN_DANA") {
@@ -131,10 +133,6 @@ const createPengajuan = async (
         );
         nominalSumber = Number(jml.total);
 
-        // ⬅ BARU: tandai item ini PENDING — sedang diajukan ke Finance,
-        // menunggu Realisasi. itemNourut di sini sama persis dengan
-        // pmd_nourut (lihat ensurePermintaanDana: insert pakai
-        // item.pjd_nourut apa adanya), jadi bisa langsung dipakai.
         await conn.query(
           `UPDATE ga2new.tpermintaan_dtl SET pmd_status_finance = 'PENDING'
            WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
@@ -162,17 +160,9 @@ const createPengajuan = async (
 
     await conn.query(
       `INSERT INTO tpengajuan_uang_muka_hdr
-        (pum_nomor, pum_tanggal, pum_keterangan, pum_nota, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_total_nominal)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?)`,
-      [
-        nomor,
-        tanggal,
-        keterangan || "",
-        nota || "",
-        user.cabang,
-        user.kode,
-        totalDiajukan,
-      ],
+        (pum_nomor, pum_tanggal, pum_keterangan, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_total_nominal)
+       VALUES (?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?)`,
+      [nomor, tanggal, keterangan || "", user.cabang, user.kode, totalDiajukan],
     );
 
     for (const r of rowsToInsert) {
