@@ -89,24 +89,31 @@ const loginUser = async (username, password) => {
   }
 
   // 7. Data SPK Urgent
+  // ⬅ BARU: GA, TEKNISI, IT tidak butuh notifikasi SPK dateline — bukan
+  // bagian yang menangani produksi/deadline SPK sama sekali.
+  const EXCLUDED_SPK_URGENT_BAGIAN = ["GA", "TEKNISI", "IT"];
   const isMarketing = user.user_bagian.toUpperCase() === "MARKETING";
-  const spkQuery = `
-    SELECT s.spk_nomor AS Spk, s.spk_nama AS Nama, 
-           ${isMarketing ? "c.Cus_nama AS Customer," : ""}
-           DATE_FORMAT(s.spk_tanggal, "%d-%m-%Y") AS Tanggal, 
-           DATE_FORMAT(s.spk_dateline, "%d-%m-%Y") AS Dateline,
-           s.spk_jumlah AS QtyOrder, s.spk_jumlah_jadi AS QtyJadi,
-           s.spk_jumlah_kirim AS QtyKirim, -- Tambahkan ini sesuai query Delphi
-           s.spk_divisi AS Divisi, s.spk_cab AS Cab, s.spk_workshop AS Workshop
-    FROM tspk s
-    LEFT JOIN tcustomer c ON c.Cus_kode = s.spk_cus_kode
-    WHERE s.spk_aktif = "Y" AND s.spk_close = 0 
-    AND s.spk_cus_kode IN (SELECT cus_kode FROM tcustomer WHERE cus_keramat = "Y")
-    AND s.spk_tanggal >= "2024-01-01"
-    AND DATEDIFF(s.spk_dateline, CURDATE()) <= 3
-    ORDER BY s.spk_tanggal DESC
-  `;
-  const [spkUrgent] = await pool.query(spkQuery);
+  let spkUrgent = [];
+  if (!EXCLUDED_SPK_URGENT_BAGIAN.includes(user.user_bagian.toUpperCase())) {
+    const spkQuery = `
+      SELECT s.spk_nomor AS Spk, s.spk_nama AS Nama, 
+             ${isMarketing ? "c.Cus_nama AS Customer," : ""}
+             DATE_FORMAT(s.spk_tanggal, "%d-%m-%Y") AS Tanggal, 
+             DATE_FORMAT(s.spk_dateline, "%d-%m-%Y") AS Dateline,
+             s.spk_jumlah AS QtyOrder, s.spk_jumlah_jadi AS QtyJadi,
+             s.spk_jumlah_kirim AS QtyKirim,
+             s.spk_divisi AS Divisi, s.spk_cab AS Cab, s.spk_workshop AS Workshop
+      FROM tspk s
+      LEFT JOIN tcustomer c ON c.Cus_kode = s.spk_cus_kode
+      WHERE s.spk_aktif = "Y" AND s.spk_close = 0 
+      AND s.spk_cus_kode IN (SELECT cus_kode FROM tcustomer WHERE cus_keramat = "Y")
+      AND s.spk_tanggal >= "2024-01-01"
+      AND DATEDIFF(s.spk_dateline, CURDATE()) <= 3
+      ORDER BY s.spk_tanggal DESC
+    `;
+    const [rows] = await pool.query(spkQuery);
+    spkUrgent = rows;
+  }
 
   // 7b. Data BAP baru untuk AUDIT (belum direview)
   let bapBaruAudit = [];
