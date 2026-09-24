@@ -155,6 +155,31 @@ const loginUser = async (username, password) => {
   );
   const bapReviewedNotif = bapReviewedRows;
 
+  // 7d. Data Pra Order PENDING konfirmasi PPIC (belum ditindaklanjuti)
+  // Exclude divisi SPANDUK/MMT — sama seperti getBrowse di
+  // konfirmasiPraOrderService.js, karena divisi itu bypass alur cek
+  // PPIC sama sekali (lihat isDivisiTanpaCekPpic di praOrderFormService).
+  let praOrderPendingPpic = [];
+  if (user.user_bagian.toUpperCase() === "PPIC") {
+    const [rows] = await pool.query(
+      `SELECT
+         h.pro_nomor AS Nomor,
+         h.pro_nama_pekerjaan AS NamaPekerjaan,
+         h.pro_cus_kode AS CusKode,
+         h.pro_cus_nama AS Customer,
+         DATE_FORMAT(h.pro_tanggal, "%d-%m-%Y") AS Tanggal,
+         DATE_FORMAT(h.pro_tgl_kirim, "%d-%m-%Y") AS TglKirim,
+         v.Divisi AS Divisi
+       FROM tpraorder_hdr h
+       LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
+       WHERE h.pro_status_ppic = 'PENDING'
+         AND UPPER(IFNULL(v.Divisi, '')) NOT IN ('SPANDUK', 'MMT')
+       ORDER BY h.pro_tanggal ASC, h.pro_nomor ASC
+       LIMIT 50`,
+    );
+    praOrderPendingPpic = rows;
+  }
+
   // 8. Update tuser_lastupdate
   await pool.query(
     `INSERT INTO pengaturan.tuser_lastupdate (computer, app, versi, usr, date_update) 
@@ -198,6 +223,7 @@ const loginUser = async (username, password) => {
     spkUrgent,
     bapBaruAudit,
     bapReviewedNotif,
+    praOrderPendingPpic,
     message: "Login Berhasil",
   };
 };

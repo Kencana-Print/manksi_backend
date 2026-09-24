@@ -58,6 +58,7 @@ const penjadwalanPpicRoutes = require("./routes/ppic/penjadwalanPpicRoutes");
 const penjadwalanPpicFormRoutes = require("./routes/ppic/penjadwalanPpicFormRoutes");
 const lhkMarkerRoutes = require("./routes/ppic/lhkMarkerRoutes");
 const lhkMarkerFormRoutes = require("./routes/ppic/lhkMarkerFormRoutes");
+const konfirmasiPraOrderRoutes = require("./routes/ppic/konfirmasiPraOrderRoutes");
 
 // Garmen Routes
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
@@ -445,6 +446,7 @@ app.use("/api/ppic/penjadwalan", penjadwalanPpicRoutes);
 app.use("/api/ppic/penjadwalan-form", penjadwalanPpicFormRoutes);
 app.use("/api/ppic/lhk-marker", lhkMarkerRoutes);
 app.use("/api/ppic/lhk-marker-form", lhkMarkerFormRoutes);
+app.use("/api/ppic/konfirmasi-pra-order", konfirmasiPraOrderRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
