@@ -271,7 +271,6 @@ const getById = async (nomor) => {
        h.bpj_status_inv, h.bpj_bayar_realisasi,
        h.user_create, h.user_modified,
        DATE_FORMAT(h.date_create, '%Y-%m-%d %H:%i') AS date_create,
-       -- dari PO
        ph.pojh_cab, ph.pojh_gdgp_kode AS gdgp_asal_kode,
        ph.pojh_keterangan, ph.pojh_jasa_kode, ph.pojh_spk_nomor,
        ph.pojh_jumlah AS pojh_jumlah, ph.pojh_tarif,
@@ -303,6 +302,31 @@ const getById = async (nomor) => {
     [nomor],
   );
   if (!hdr) return null;
+
+  // ⬅ BARU: panel "No. Realisasi Minta (Kain)" kosong saat edit karena
+  // getById tidak pernah query ulang info Realisasi Minta — sebelumnya
+  // itu cuma di-fetch sekali via getDataRealisasiMinta waktu user
+  // search No. Realisasi lewat F1 saat CREATE, tidak pernah dipanggil
+  // lagi saat form dibuka ulang untuk EDIT. Panggil ulang di sini,
+  // pakai bpj_nomaterial/bpj_bhn_kode yang sudah tersimpan.
+  let realisasiInfo = null;
+  if (hdr.bpj_nomaterial && hdr.bpj_bhn_kode) {
+    try {
+      realisasiInfo = await getDataRealisasiMinta(
+        hdr.bpj_nomaterial,
+        hdr.bpj_bhn_kode,
+      );
+    } catch {
+      realisasiInfo = null; // Data realisasi minta sudah tidak ada/berubah — biarkan kosong, bukan error fatal
+    }
+  }
+  hdr.tgl_minta = realisasiInfo?.promin_tanggal || "";
+  hdr.nama_kain = realisasiInfo?.nama_kain || "";
+  hdr.sat_kain = realisasiInfo?.sat_kain || "";
+  hdr.jml_kain = realisasiInfo?.jml_kain ?? 0;
+  hdr.sudah_kain = realisasiInfo?.lhk ?? 0;
+  hdr.kurang_kain = realisasiInfo?.kurang ?? 0;
+  hdr.sup_kode_kain = realisasiInfo?.sup_kode_kain || "";
 
   // Detail bahan
   const [dtl] = await db.query(
