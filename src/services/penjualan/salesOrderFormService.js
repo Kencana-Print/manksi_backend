@@ -268,7 +268,7 @@ const getDetailFromNew = async (nomor, headerRows) => {
   header[0].HasApprovedUbah = ppicInfo.HasApprovedUbah;
 
   const [alokasi] = await db.query(
-    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
+    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_toko AS toko, soa_kota AS kota,
             soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
      FROM tsalesorder_alokasi WHERE soa_so_nomor = ? ORDER BY soa_urut`,
     [nomor],
@@ -877,12 +877,13 @@ const saveData = async (payload, user) => {
         if (item.alamat || item.kota) {
           await conn.query(
             `INSERT INTO tsalesorder_alokasi
-               (soa_so_nomor, soa_urut, soa_alamat, soa_kota, soa_person, soa_hp, soa_jumlah)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+               (soa_so_nomor, soa_urut, soa_alamat, soa_toko, soa_kota, soa_person, soa_hp, soa_jumlah)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               nomor,
               i + 1,
               item.alamat,
+              item.toko || "",
               item.kota,
               item.person,
               item.hp,

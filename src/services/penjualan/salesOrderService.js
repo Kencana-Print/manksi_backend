@@ -973,24 +973,47 @@ const getRevisiDetail = async (nomor) => {
   const [rows] =
     loc === "new"
       ? await db.query(
-          `SELECT so_nomor_po AS nomorPo,
-                  DATE_FORMAT(so_tgl_po,'%Y-%m-%d') AS tglPo,
-                  DATE_FORMAT(so_datelinepo,'%Y-%m-%d') AS datelinePo,
-                  so_harga AS hargaJual, so_hargariil AS hargaRiil, so_hargafee AS hargaFee,
-                  so_tanggal AS tanggal
-           FROM tsalesorder WHERE so_nomor = ?`,
+          `SELECT s.so_nomor_po AS nomorPo,
+                  DATE_FORMAT(s.so_tgl_po,'%Y-%m-%d') AS tglPo,
+                  DATE_FORMAT(s.so_datelinepo,'%Y-%m-%d') AS datelinePo,
+                  s.so_harga AS hargaJual, s.so_hargariil AS hargaRiil, s.so_hargafee AS hargaFee,
+                  s.so_cus_kode AS cusKode, c.cus_nama AS cusNama,
+                  s.so_sal_kode AS salKode,
+                  s.so_pen_nomor AS penawaranNomor,
+                  s.so_invdc AS invoiceDc,
+                  s.so_nama2 AS namaExternal,
+                  s.so_tanggal AS tanggal
+           FROM tsalesorder s
+           LEFT JOIN tcustomer c ON c.cus_kode = s.so_cus_kode
+           WHERE s.so_nomor = ?`,
           [nomor],
         )
       : await db.query(
-          `SELECT spk_nomor_po AS nomorPo,
-                  DATE_FORMAT(spk_tgl_po,'%Y-%m-%d') AS tglPo,
-                  DATE_FORMAT(spk_datelinepo,'%Y-%m-%d') AS datelinePo,
-                  spk_harga AS hargaJual, spk_hargariil AS hargaRiil, spk_hargafee AS hargaFee,
-                  spk_tanggal AS tanggal
-           FROM tspk WHERE spk_nomor = ?`,
+          `SELECT s.spk_nomor_po AS nomorPo,
+                  DATE_FORMAT(s.spk_tgl_po,'%Y-%m-%d') AS tglPo,
+                  DATE_FORMAT(s.spk_datelinepo,'%Y-%m-%d') AS datelinePo,
+                  s.spk_harga AS hargaJual, s.spk_hargariil AS hargaRiil, s.spk_hargafee AS hargaFee,
+                  s.spk_cus_kode AS cusKode, c.cus_nama AS cusNama,
+                  s.spk_sal_kode AS salKode,
+                  s.spk_pen_nomor AS penawaranNomor,
+                  s.spk_invdc AS invoiceDc,
+                  s.spk_nama2 AS namaExternal,
+                  s.spk_tanggal AS tanggal
+           FROM tspk s
+           LEFT JOIN tcustomer c ON c.cus_kode = s.spk_cus_kode
+           WHERE s.spk_nomor = ?`,
           [nomor],
         );
   if (!rows[0]) throw new Error("Data SO tidak ditemukan.");
+
+  let salNama = "";
+  if (rows[0].salKode) {
+    const [[sal]] = await db.query(
+      `SELECT sal_nama FROM tsales WHERE sal_kode = ?`,
+      [rows[0].salKode],
+    );
+    salNama = sal?.sal_nama || "";
+  }
 
   const [[ppic]] = await db.query(
     `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
@@ -1015,9 +1038,15 @@ const getRevisiDetail = async (nomor) => {
     hargaJual: Number(rows[0].hargaJual) || 0,
     hargaRiil: Number(rows[0].hargaRiil) || 0,
     hargaFee: Number(rows[0].hargaFee) || 0,
+    cusKode: rows[0].cusKode || "",
+    cusNama: rows[0].cusNama || "",
+    salKode: rows[0].salKode || "",
+    salNama,
+    penawaranNomor: rows[0].penawaranNomor || "",
+    invoiceDc: rows[0].invoiceDc || "",
+    namaExternal: rows[0].namaExternal || "",
     spkPpic: ppic.spk_nomor,
     isTutupBuku,
-    // true kalau boleh langsung Simpan Revisi sekarang juga
     canSaveNow: !isTutupBuku || !!approvedUrut,
   };
 };
@@ -1090,8 +1119,19 @@ const requestRevisiPin = async (nomor, alasan, userKode) => {
 // --- SIMPAN REVISI SO — update tsalesorder/tspk (mana yang jadi
 // lokasi fisik SO ini) DAN sinkron ke SPK PPIC turunannya ---
 const saveRevisi = async (nomor, payload, user) => {
-  const { nomorPo, tglPo, datelinePo, hargaJual, hargaRiil, hargaFee } =
-    payload;
+  const {
+    nomorPo,
+    tglPo,
+    datelinePo,
+    hargaJual,
+    hargaRiil,
+    hargaFee,
+    cusKode,
+    salKode,
+    penawaranNomor,
+    invoiceDc,
+    namaExternal,
+  } = payload;
 
   const loc = await resolveSoLocation(nomor);
   if (!loc) throw new Error("Data SO tidak ditemukan.");
@@ -1142,6 +1182,50 @@ const saveRevisi = async (nomor, payload, user) => {
     );
   }
 
+  const cusKodeClean = cusKode ? String(cusKode).trim() : "";
+  const salKodeClean = salKode ? String(salKode).trim() : "";
+  const penawaranClean = penawaranNomor ? String(penawaranNomor).trim() : "";
+  const invoiceDcClean = invoiceDc ? String(invoiceDc).trim() : "";
+  const namaExternalClean = namaExternal ? String(namaExternal).trim() : "";
+
+  // ⬅ BARU: validasi, disamakan dengan validateField() di
+  // salesOrderFormService.js — Customer wajib aktif, Invoice DC (kalau
+  // diisi) harus benar-benar ada di retail dan belum dipakai SO lain.
+  if (cusKodeClean) {
+    const [[cus]] = await db.query(
+      `SELECT cus_aktif FROM tcustomer WHERE cus_kode = ?`,
+      [cusKodeClean],
+    );
+    if (!cus) throw new Error("Kode customer ini belum ada.");
+    if (cus.cus_aktif === 1) throw new Error("Status customer ini pasif.");
+  }
+
+  if (invoiceDcClean) {
+    const [[inv]] = await db.query(
+      `SELECT SUM(d.invd_jumlah) AS jml
+       FROM retail.tinv_hdr h
+       INNER JOIN retail.tinv_dtl d ON d.invd_inv_nomor = h.inv_nomor
+       WHERE h.inv_nomor = ?`,
+      [invoiceDcClean],
+    );
+    if (!inv?.jml) {
+      throw new Error("No.Invoice DC tersebut tidak ada atau jumlah kosong.");
+    }
+    const [used] = await db.query(
+      `SELECT Nomor FROM (
+         SELECT spk_nomor AS Nomor FROM tspk WHERE spk_invdc = ?
+         UNION ALL
+         SELECT so_nomor AS Nomor FROM tsalesorder WHERE so_invdc = ?
+       ) x LIMIT 1`,
+      [invoiceDcClean, invoiceDcClean],
+    );
+    if (used.length > 0 && used[0].Nomor !== nomor) {
+      throw new Error(
+        `No.Invoice DC tersebut sudah dibuatkan SO Nomor: ${used[0].Nomor}`,
+      );
+    }
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -1150,6 +1234,11 @@ const saveRevisi = async (nomor, payload, user) => {
       `UPDATE ${table} SET
          ${prefix}nomor_po = ?, ${prefix}tgl_po = ?, ${prefix}datelinepo = ?,
          ${prefix}harga = ?, ${prefix}hargariil = ?, ${prefix}hargafee = ?,
+         ${prefix}cus_kode = ?,
+         ${prefix}sal_kode = ?,
+         ${prefix}pen_nomor = ?,
+         ${prefix}invdc = ?,
+         ${prefix}nama2 = ?,
          user_modified = ?, date_modified = NOW()
        WHERE ${nomorCol} = ?`,
       [
@@ -1159,16 +1248,25 @@ const saveRevisi = async (nomor, payload, user) => {
         Number(hargaJual) || 0,
         Number(hargaRiil) || 0,
         Number(hargaFee) || 0,
+        cusKodeClean,
+        salKodeClean,
+        penawaranClean,
+        invoiceDcClean,
+        namaExternalClean,
         user.kode,
         nomor,
       ],
     );
 
-    // Sync ke SPK PPIC turunan — field yang sama persis
     await conn.query(
       `UPDATE tspk SET
          spk_nomor_po = ?, spk_tgl_po = ?, spk_datelinepo = ?,
          spk_harga = ?, spk_hargariil = ?, spk_hargafee = ?,
+         spk_cus_kode = ?,
+         spk_sal_kode = ?,
+         spk_pen_nomor = ?,
+         spk_invdc = ?,
+         spk_nama2 = ?,
          user_modified = ?, date_modified = NOW()
        WHERE spk_nomor = ?`,
       [
@@ -1178,6 +1276,11 @@ const saveRevisi = async (nomor, payload, user) => {
         Number(hargaJual) || 0,
         Number(hargaRiil) || 0,
         Number(hargaFee) || 0,
+        cusKodeClean,
+        salKodeClean,
+        penawaranClean,
+        invoiceDcClean,
+        namaExternalClean,
         user.kode,
         ppic.spk_nomor,
       ],
