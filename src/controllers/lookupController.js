@@ -128,7 +128,7 @@ const getJenisKainMintaHarga = async (req, res) => {
 
 const getKomponenKain = async (req, res) => {
   try {
-    const { model, jenisKain, warna } = req.query;
+    const { model, jenisKain, warna, qty } = req.query;
 
     if (!model || !jenisKain || !warna) {
       return res.status(400).json({
@@ -137,7 +137,7 @@ const getKomponenKain = async (req, res) => {
       });
     }
 
-    const data = await lookupService.getKomponenKain(model, jenisKain, warna);
+    const data = await lookupService.getKomponenKain(model, jenisKain, warna, qty);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

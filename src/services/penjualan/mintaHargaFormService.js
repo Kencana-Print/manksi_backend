@@ -52,22 +52,37 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
     `SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_biaya <> 0 AND mhb_jenis = "POTONG" LIMIT 1`,
   );
 
-  // 2. Ambil Biaya Jahit (Berdasarkan prefiks nama kain)
-  const [jahitRows] = await db.query(
-    `SELECT mhb_biaya FROM tmintaharga_biaya 
-     WHERE mhb_biaya <> 0 AND mhb_jenis = "JAHIT" 
-     AND ? LIKE CONCAT(mhb_ket, '%') 
-     ORDER BY CHAR_LENGTH(mhb_ket) DESC LIMIT 1`,
-    [jenisKain],
-  );
-
-  let biayaJahit = jahitRows.length > 0 ? jahitRows[0].mhb_biaya : 0;
-  if (biayaJahit === 0) {
-    const [defaultJahit] = await db.query(
-      `SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_jenis="JAHIT" AND mhb_ket="-" LIMIT 1`,
-    );
-    biayaJahit = defaultJahit[0]?.mhb_biaya || 0;
+  // 2. Ambil Biaya Jahit — sinkron mhk_ktg (COTTON/PE/LACOST) → mhb_ket, tanpa fallback '-' jika sudah ada baris per kategori
+  // Partai besar pakai kolom per model jika qty>=1000
+  const isPartaiBesarBiaya = Number(qty) >= 1000;
+  const biayaCol = isPartaiBesarBiaya ? (model === "KH-0002" ? "mhb_biaya_partaibesar_kh0002" : "mhb_biaya_partaibesar_kh0001") : null;
+  // Ambil ktg dari master kain untuk sinkron kategori (CARDED/COMBED/TC → COTTON)
+  const [ktgRows] = await db.query("SELECT mhk_ktg FROM tmintaharga_kain WHERE mhk_kode=? AND TRIM(mhk_jeniskain)=TRIM(?) LIMIT 1", [model, jenisKain]);
+  const ktg = (ktgRows[0]?.mhk_ktg || "COTTON").trim().toUpperCase();
+  let biayaJahit = 0;
+  try {
+    if (isPartaiBesarBiaya && biayaCol) {
+        const [jahitRowsBesar] = await db.query(
+            `SELECT COALESCE(${biayaCol}, mhb_biaya) AS mhb_biaya FROM tmintaharga_biaya 
+             WHERE mhb_jenis = "JAHIT" AND mhb_ket = ? LIMIT 1`,
+            [ktg],
+        );
+        biayaJahit = jahitRowsBesar.length > 0 ? jahitRowsBesar[0].mhb_biaya : 0;
+    }
+    if (!biayaJahit) {
+        const [jahitRows] = await db.query(
+            `SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_jenis = "JAHIT" AND mhb_ket = ? LIMIT 1`,
+            [ktg],
+        );
+        biayaJahit = jahitRows.length > 0 ? jahitRows[0].mhb_biaya : 0;
+    }
+  } catch (err) {
+    if (err.code === "ER_BAD_FIELD_ERROR" && String(err.sqlMessage).includes("mhb_biaya_partaibesar")) {
+        const [jahitRows] = await db.query(`SELECT mhb_biaya FROM tmintaharga_biaya WHERE mhb_jenis = "JAHIT" AND mhb_ket = ? LIMIT 1`, [ktg]);
+        biayaJahit = jahitRows.length > 0 ? jahitRows[0].mhb_biaya : 0;
+    } else throw err;
   }
+  // Tidak lagi fallback ke '-' — jika ktg tidak ditemukan, biaya 0 (kategori harus ada di tmintaharga_biaya)
 
   // ⬅ BARU: cek dulu apakah kombinasi kode+jeniskain ini BENAR-BENAR ADA
   // di master, sebelum lanjut ambil komponen. Kalau tidak ada sama
@@ -91,9 +106,29 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
     };
   }
 
-  // 3. Ambil Komponen Kain (yield/babaran & harga)
-  const [komponenRows] = await db.query(
-    `SELECT k.mhk_komponen AS komponen, k.mhk_lengan AS lengan, k.mhk_babaran AS babaran,
+  // 3. Ambil Komponen Kain (yield/babaran & harga + allowance) — pakai partai besar jika qty >=1000
+  const isPartaiBesar = Number(qty) >= 1000;
+  let komponenRows;
+  try {
+    const [rows] = await db.query(
+      `SELECT k.mhk_komponen AS komponen, k.mhk_lengan AS lengan, k.mhk_babaran AS babaran,
+     (SELECT ${isPartaiBesar ? "COALESCE(a.mhk_harga_partaibesar, a.mhk_harga)" : "a.mhk_harga"} FROM tmintaharga_kain a 
+      WHERE TRIM(a.mhk_warna) = TRIM(?) 
+      AND a.mhk_kode = k.mhk_kode 
+      AND TRIM(a.mhk_jeniskain) = TRIM(?) 
+      LIMIT 1) AS harga,
+     ${isPartaiBesar ? "COALESCE(k.mhk_allow_partaibesar, k.mhk_allow)" : "k.mhk_allow"} AS allowance
+     FROM tmintaharga_kain k
+     WHERE k.mhk_komponen <> "" 
+     AND k.mhk_kode = ? 
+     AND TRIM(k.mhk_jeniskain) = TRIM(?)`,
+      [warna, jenisKain, model, jenisKain],
+    );
+    komponenRows = rows;
+  } catch (err) {
+    if (err.code === "ER_BAD_FIELD_ERROR" && (String(err.sqlMessage).includes("mhk_harga_partaibesar") || String(err.sqlMessage).includes("mhk_allow_partaibesar"))) {
+        const [rows] = await db.query(
+            `SELECT k.mhk_komponen AS komponen, k.mhk_lengan AS lengan, k.mhk_babaran AS babaran,
      (SELECT a.mhk_harga FROM tmintaharga_kain a 
       WHERE TRIM(a.mhk_warna) = TRIM(?) 
       AND a.mhk_kode = k.mhk_kode 
@@ -104,16 +139,34 @@ const getKalkulasiMetadata = async (model, jenisKain, warna, qty) => {
      WHERE k.mhk_komponen <> "" 
      AND k.mhk_kode = ? 
      AND TRIM(k.mhk_jeniskain) = TRIM(?)`,
-    [warna, jenisKain, model, jenisKain],
-  );
+            [warna, jenisKain, model, jenisKain],
+        );
+        komponenRows = rows;
+    } else throw err;
+  }
 
-  // 4. Ambil Margin (Tangga Laba berdasarkan Qty)
-  const [marginRows] = await db.query(
-    `SELECT margin AS laba, persen FROM tmintaharga_margin 
-     WHERE ? <= qmax AND model = ? 
-     ORDER BY qmin LIMIT 1`,
-    [qty, model],
-  );
+  // 4. Ambil Margin (Tangga Laba berdasarkan Qty) — per ktg (COTTON 10 vs PE 5 untuk >1000)
+  let marginRows;
+  try {
+    const [ktgRows2] = await db.query("SELECT mhk_ktg FROM tmintaharga_kain WHERE mhk_kode=? AND TRIM(mhk_jeniskain)=TRIM(?) LIMIT 1", [model, jenisKain]);
+    const ktgVal = ktgRows2[0]?.mhk_ktg ? String(ktgRows2[0].mhk_ktg).trim().toUpperCase() : null;
+    if (ktgVal) {
+        const [rows] = await db.query("SELECT margin AS laba, persen FROM tmintaharga_margin WHERE ? <= qmax AND model = ? AND ktg = ? ORDER BY qmin LIMIT 1", [qty, model, ktgVal]);
+        if (rows.length) marginRows = rows;
+        else {
+            const [fallback] = await db.query("SELECT margin AS laba, persen FROM tmintaharga_margin WHERE ? <= qmax AND model = ? ORDER BY qmin LIMIT 1", [qty, model]);
+            marginRows = fallback;
+        }
+    } else {
+        const [rows] = await db.query("SELECT margin AS laba, persen FROM tmintaharga_margin WHERE ? <= qmax AND model = ? ORDER BY qmin LIMIT 1", [qty, model]);
+        marginRows = rows;
+    }
+  } catch (err) {
+    if (err.code === "ER_BAD_FIELD_ERROR" && String(err.sqlMessage).includes("ktg")) {
+        const [rows] = await db.query("SELECT margin AS laba, persen FROM tmintaharga_margin WHERE ? <= qmax AND model = ? ORDER BY qmin LIMIT 1", [qty, model]);
+        marginRows = rows;
+    } else throw err;
+  }
 
   return {
     rpPotong: potongRows[0]?.mhb_biaya || 0,
