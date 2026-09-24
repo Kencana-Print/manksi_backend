@@ -1054,13 +1054,13 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   for (const r of piutangRows) piutangBySales[r.sal_kode] = Number(r.Sisa) || 0;
 
   const mtdEndDate = new Date(thn, bln, 0);
-  const todayStr = toLocalDateStr(now); // ⬅ FIX timezone
-  const mtdEndCandidate = toLocalDateStr(mtdEndDate); // ⬅ FIX timezone
+  const todayStr = toLocalDateStr(now);
+  const mtdEndCandidate = toLocalDateStr(mtdEndDate);
   const mtdEnd = mtdEndCandidate < todayStr ? mtdEndCandidate : todayStr;
   const ytdStart = `${thn}-01-01`;
 
-  const [collectionRows] = await db.query(
-    `SELECT inv.sal_kode, DATE_FORMAT(h.tanggal, '%Y-%m') AS Bulan, SUM(d.kredit) AS Bayar
+  const [collectionYtdRows] = await db.query(
+    `SELECT inv.sal_kode, SUM(d.kredit) AS Bayar
      FROM piutang_kredit_detail d
      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
      INNER JOIN piutang_debet p ON p.nota = d.nota
@@ -1068,20 +1068,13 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
      WHERE inv.sal_kode IS NOT NULL
        AND h.tanggal >= ? AND h.tanggal <= ?
        ${NOT_DIKIRIM_FILTER}
-     GROUP BY inv.sal_kode, Bulan`,
+     GROUP BY inv.sal_kode`,
     [ytdStart, mtdEnd],
   );
-  const collectionMtdBySales = {};
+
   const collectionYtdBySales = {};
-  const mtdBulanKey = `${thn}-${String(bln).padStart(2, "0")}`;
-  for (const r of collectionRows) {
-    const bayar = Number(r.Bayar) || 0;
-    collectionYtdBySales[r.sal_kode] =
-      (collectionYtdBySales[r.sal_kode] || 0) + bayar;
-    if (r.Bulan === mtdBulanKey) {
-      collectionMtdBySales[r.sal_kode] =
-        (collectionMtdBySales[r.sal_kode] || 0) + bayar;
-    }
+  for (const r of collectionYtdRows) {
+    collectionYtdBySales[r.sal_kode] = Number(r.Bayar) || 0;
   }
 
   const [salesRows] = await db.query(
@@ -1100,7 +1093,10 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
       const targetMtd = targetMtdBySales[s.sal_kode] || 0;
       const targetYtd = targetYtdBySales[s.sal_kode] || 0;
       const piutang = piutangBySales[s.sal_kode] || 0;
-      const collectionMtd = collectionMtdBySales[s.sal_kode] || 0;
+      // ⬅ DIUBAH: collectionMtd = targetMtd - piutang (uang yang sudah
+      // terbayar dari invoice bulan target, per cutoff) — bukan lagi
+      // dari query kredit terpisah.
+      const collectionMtd = targetMtd - piutang;
       const collectionYtd = collectionYtdBySales[s.sal_kode] || 0;
       return {
         salKode: s.sal_kode,
@@ -1109,8 +1105,6 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
         piutangSaatIni: piutang,
         collectionMtd,
         collectionYtd,
-        // ⬅ BARU: sisa yang masih harus ditagih bulan ini = Target - Collection aktual.
-        // Bisa negatif kalau collection sudah melampaui target (target sudah tercapai/lewat).
         sisaCollectionMtd: targetMtd - collectionMtd,
         pctCollectionMtd:
           targetMtd > 0 ? (collectionMtd / targetMtd) * 100 : null,
@@ -1167,7 +1161,17 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
 // fallback sales dari cus_sales, exclude EXCLUDED_SALES) — supaya
 // SUM(rows.Debet) di sini selalu sama dengan targetMtd di summary.
 const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
-  if (!canViewPotensi(user) && !isSuperViewer(user)) return null; // sesuaikan guard akses kalau beda dari canViewPotensi
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = [
+    "MARKETING",
+    "FINANCE",
+    "EDP",
+    "DIREKSI",
+    "OWNER",
+    "IT",
+    "AUDIT",
+  ];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
 
   const now = new Date();
   const bln = bulan ? Number(bulan) : now.getMonth() + 1;
@@ -1181,7 +1185,6 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
   }
   const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
 
-  // ⬅ BARU: cutoff sama persis dengan getTargetCollectionSales
   let cutoffBln = bln - 1;
   let cutoffThn = thn;
   if (cutoffBln <= 0) {
@@ -1210,9 +1213,8 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
     AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
   `;
 
-  // salKode null/kosong = baris "(TANPA SALES)" di summary
   const salKodeFilter = salKode ? `attr.sal_kode = ?` : `attr.sal_kode IS NULL`;
-  const params = salKode
+  const invoiceParams = salKode
     ? [cutoff, targetBulanKey, salKode]
     : [cutoff, targetBulanKey];
 
@@ -1238,7 +1240,7 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
        AND ${salKodeFilter}
        ${NOT_DIKIRIM_FILTER}
      ORDER BY p.tanggal, p.nota`,
-    params,
+    invoiceParams,
   );
 
   return {
@@ -1250,6 +1252,7 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
       cusNama: r.CusNama,
       debet: Number(r.Debet) || 0,
       sisa: Number(r.Sisa) || 0,
+      terbayar: (Number(r.Debet) || 0) - (Number(r.Sisa) || 0),
     })),
   };
 };
