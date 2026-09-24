@@ -408,6 +408,54 @@ const convertToMintaHarga = async (nomor, userKode) => {
   }
 };
 
+// --- GET DATA UNTUK CETAK ---
+const getPrintData = async (nomor) => {
+  const [[hdr]] = await db.query(
+    `SELECT h.*, v.Divisi AS DivisiNama, s.sal_nama AS SalesNama,
+            DATE_FORMAT(h.pro_tanggal, '%Y-%m-%d') AS TanggalFormat,
+            DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirimFormat,
+            DATE_FORMAT(h.date_create, '%Y-%m-%d %H:%i') AS CreatedFormat
+     FROM tpraorder_hdr h
+     LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
+     LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
+     WHERE h.pro_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) return null;
+
+  const [ukuran] = await db.query(
+    `SELECT t.ukuran AS Nama, u.prou_qty AS Qty
+     FROM tpraorder_ukuran u
+     LEFT JOIN retail.tukuran t ON t.kode = u.prou_ukuran AND t.kategori = ""
+     WHERE u.prou_pro_nomor = ? AND u.prou_qty > 0
+     ORDER BY CAST(u.prou_ukuran AS UNSIGNED)`,
+    [nomor],
+  );
+
+  const [bahan] = await db.query(
+    `SELECT m.bj_nama AS Nama
+     FROM tpraorder_bahan b
+     LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
+     WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
+    [nomor],
+  );
+
+  // Marketing diasumsikan cuma upload 1 gambar — ambil yang urut
+  // terkecil sebagai satu-satunya gambar yang ditampilkan di print.
+  const [[gambarUtama]] = await db.query(
+    `SELECT prog_file_path FROM tpraorder_gambar
+     WHERE prog_pro_nomor = ? ORDER BY prog_urut ASC LIMIT 1`,
+    [nomor],
+  );
+
+  return {
+    ...hdr,
+    Ukuran: ukuran,
+    Bahan: bahan,
+    ImageUrl: gambarUtama ? gambarUtama.prog_file_path : null,
+  };
+};
+
 // --- GET KATALOG HISTORI PRA ORDER CUSTOMER (LAZY LOADING) ---
 const getKatalogCustomer = async (
   cusKode,
@@ -597,4 +645,5 @@ module.exports = {
   getLookupData,
   searchPraOrder,
   copyGambarPertamaKeMintaHarga,
+  getPrintData,
 };

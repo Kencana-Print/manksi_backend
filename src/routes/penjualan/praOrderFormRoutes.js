@@ -52,6 +52,12 @@ router.post(
   upload.array("files", 10),
   controller.uploadGambar,
 );
+router.get(
+  "/print/:nomor",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getPrintData,
+);
 
 // ── Aksi khusus PPIC ──
 router.patch(

@@ -112,6 +112,20 @@ const convertToMintaHarga = async (req, res) => {
   }
 };
 
+const getPrintData = async (req, res) => {
+  try {
+    const data = await praOrderFormService.getPrintData(req.params.nomor);
+    if (!data) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Data Pra Order tidak ditemukan." });
+    }
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 const getKatalogCustomer = async (req, res) => {
   try {
     const { custKode } = req.params;
@@ -179,6 +193,7 @@ module.exports = {
   setStatusBahan,
   setStatusPpic,
   convertToMintaHarga,
+  getPrintData,
   getKatalogCustomer,
   getLookupData,
   searchPraOrder,
