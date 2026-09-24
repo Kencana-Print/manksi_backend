@@ -1,6 +1,24 @@
 const db = require("../../config/database");
 const ExcelJS = require("exceljs");
 
+// ⬅ BARU: format kolom DATE (tanpa jam) ke string lokal YYYY-MM-DD —
+// JANGAN pernah biarkan objek Date mentah dari kolom DATE lolos ke
+// JSON.stringify/res.json apa adanya. Date.toJSON() otomatis manggil
+// toISOString(), yang convert ke UTC dulu — kalau nilai aslinya
+// tengah malam WIB (kolom DATE selalu begitu), UTC-nya jatuh ke jam
+// 17:00 HARI SEBELUMNYA, sehingga tanggal yang sampai ke frontend
+// mundur 1 hari. Ini pola bug yang sama seperti toLocalDateStr di
+// dashboardService.js — pakai komponen tanggal LOKAL, bukan toISOString().
+const toLocalDateStr = (d) => {
+  if (!d) return null;
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 // ============================================================
 // HELPER MAPPING — so_* (kolom fisik tsalesorder) -> spk_*
 // (bentuk yang dipakai seluruh logic di bawah, identik dengan
@@ -112,6 +130,14 @@ const getDetail = async (nomor) => {
   );
   if (header.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");
 
+  // ⬅ BARU: fix timezone — spk_dateline kolom DATE (tanpa jam), rawan
+  // mundur 1 hari lewat JSON serialization default. Kolom lain seperti
+  // spk_tanggal punya jam non-nol (waktu create) jadi tidak kena geser
+  // sampai lewat batas hari — aman dibiarkan apa adanya.
+  if (header[0].spk_dateline) {
+    header[0].spk_dateline = toLocalDateStr(header[0].spk_dateline);
+  }
+
   const isPremium = isPremiumWorkshop(header[0].spk_cab);
   const isKaosan = isDivisiTiga(header[0].spk_divisi);
 
@@ -177,6 +203,11 @@ const getSoSourceDetail = async (soNomor) => {
   if (!header) throw new Error("Sales Order tidak ditemukan.");
   if (header.spk_aktif !== "Y" || !header.spk_cmo) {
     throw new Error("SO ini belum aktif/approved, tidak bisa dibuatkan SPK.");
+  }
+
+  // ⬅ BARU: fix timezone sama seperti getDetail
+  if (header.spk_dateline) {
+    header.spk_dateline = toLocalDateStr(header.spk_dateline);
   }
 
   const [[joRow], [salRow], [perushRow], [cusRow]] = await Promise.all([
