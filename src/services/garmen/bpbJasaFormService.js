@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const spkFormService = require("./spkFormService");
 
 // ─────────────────────────────────────────────────────────
 // GENERATE NOMOR
@@ -160,15 +161,38 @@ const getKomponenList = async (spkNomor) => {
 // ─────────────────────────────────────────────────────────
 // GET BABARAN STD per komponen
 // Sesuai Delphi cbkomponenChange
+// ⬅ DIUBAH: tspk_babaran cuma diisi untuk SPK legacy (P01/P02/P05).
+// Untuk SPK premium (P04), babaran hidup di tmkb_dtl atau
+// tproofgarmen_dtl (lihat spkFormService.getBabaran, prioritas MKB
+// > Proof > manual). Sebelumnya fungsi ini cuma cek tspk_babaran
+// langsung — selalu 0 untuk SPK premium karena tabel itu memang
+// kosong buat mereka, bukan datanya hilang.
 // ─────────────────────────────────────────────────────────
 const getBabaranStd = async (spkNomor, komponen) => {
+  // 1. Coba tspk_babaran dulu (sumber untuk SPK legacy)
   const [[row]] = await db.query(
     `SELECT spkb_babaran AS babaran_std
      FROM tspk_babaran
      WHERE spkb_nomor = ? AND spkb_komponen = ?`,
     [spkNomor, komponen],
   );
-  return row?.babaran_std ?? 0;
+  if (row) return row.babaran_std;
+
+  // 2. Fallback ke sumber babaran SPK premium (MKB / Proof Garmen),
+  // dicocokkan berdasarkan nama komponen (case-insensitive, trim).
+  try {
+    const { rows } = await spkFormService.getBabaran(spkNomor);
+    const match = rows.find(
+      (r) =>
+        (r.komponen || "").trim().toUpperCase() ===
+        (komponen || "").trim().toUpperCase(),
+    );
+    if (match) return Number(match.babaran) || 0;
+  } catch {
+    // SPK tidak ditemukan atau memang belum ada babaran sama sekali
+  }
+
+  return 0;
 };
 
 // ─────────────────────────────────────────────────────────
