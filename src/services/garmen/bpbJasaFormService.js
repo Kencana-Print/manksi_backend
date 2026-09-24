@@ -1,6 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
-const spkFormService = require("./spkFormService");
+const spkFormService = require("../ppic/spkFormService");
 
 // ─────────────────────────────────────────────────────────
 // GENERATE NOMOR
