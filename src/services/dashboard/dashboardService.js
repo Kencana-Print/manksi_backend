@@ -1011,9 +1011,7 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
      FROM piutang_debet p
      INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
      WHERE inv.sal_kode IS NOT NULL
-       AND p.flag = 0
        AND p.tanggal >= ? AND p.tanggal <= ?
-       ${NOT_DIKIRIM_FILTER}
      GROUP BY inv.sal_kode, Bulan`,
     [rangeStart, rangeEnd],
   );
@@ -1038,15 +1036,17 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
               SELECT SUM(kd.kredit)
               FROM piutang_kredit_detail kd
               INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-              WHERE kd.nota = p.nota AND kh.tanggal <= ?
+              WHERE kd.nota = IFNULL(
+                (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+                p.nota
+              )
+              AND kh.tanggal <= ?
             ), 0)) AS Sisa
      FROM piutang_debet p
      INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
      WHERE inv.sal_kode IS NOT NULL
-       AND p.flag = 0
        AND p.is_writeoff = 0
        AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
-       ${NOT_DIKIRIM_FILTER}
      GROUP BY inv.sal_kode`,
     [cutoff, targetBulanKey],
   );
@@ -1229,16 +1229,18 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
          SELECT SUM(kd.kredit)
          FROM piutang_kredit_detail kd
          INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-         WHERE kd.nota = p.nota AND kh.tanggal <= ?
+         WHERE kd.nota = IFNULL(
+           (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+           p.nota
+         )
+         AND kh.tanggal <= ?
        ), 0)) AS Sisa
      FROM piutang_debet p
      INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
      LEFT JOIN tcustomer c ON c.cus_kode = p.customer
-     WHERE p.flag = 0
-       AND p.is_writeoff = 0
+     WHERE p.is_writeoff = 0
        AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
        AND ${salKodeFilter}
-       ${NOT_DIKIRIM_FILTER}
      ORDER BY p.tanggal, p.nota`,
     invoiceParams,
   );
@@ -2087,31 +2089,39 @@ const getPiutangDashboard = async (user) => {
   const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
   if (!allowed.includes(bagian)) return null;
 
+  // ⬅ BARU: subquery kredit "pintar" — kalau nota ini nyangkut sebagai
+  // invoice Normal yang di-link ke Invoice Tak Normal (tinv_flag),
+  // kreditnya dicari di nota Tak Normal-nya, bukan di nota sendiri
+  // (yang selalu 0 karena pembayaran tercatat di sana).
+  const KREDIT_LOOKUP = `
+    IFNULL((
+      SELECT SUM(kd.kredit)
+      FROM piutang_kredit_detail kd
+      INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+      WHERE kd.nota = IFNULL(
+        (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+        p.nota
+      )
+    ), 0)
+  `;
+
   const sqlSummary = `
     SELECT 
       (SELECT SUM(debet) 
       FROM piutang_debet 
-      WHERE flag = 0 AND is_writeoff = 0) AS TotalDebet,
-      
-      (SELECT SUM(d.kredit) 
-      FROM piutang_kredit_detail d
-      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-      INNER JOIN piutang_debet p ON p.nota = d.nota AND p.flag = 0 AND p.is_writeoff = 0
-      ) AS TotalKredit,
-      
-      (SELECT SUM(debet) - SUM(
-          IFNULL((
-            SELECT SUM(kredit) FROM piutang_kredit_detail d 
-            INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
-            WHERE d.nota = p.nota
-          ), 0)
-      ) FROM piutang_debet p WHERE p.flag = 0 AND p.is_writeoff = 0) AS TotalOutstanding,
-      
+      WHERE is_writeoff = 0) AS TotalDebet,
+
+      (SELECT SUM(${KREDIT_LOOKUP})
+      FROM piutang_debet p WHERE p.is_writeoff = 0) AS TotalKredit,
+
+      (SELECT SUM(debet) - SUM(${KREDIT_LOOKUP})
+      FROM piutang_debet p WHERE p.is_writeoff = 0) AS TotalOutstanding,
+
       (SELECT SUM(debet) FROM piutang_debet 
-      WHERE flag = 0 AND is_writeoff = 0
+      WHERE is_writeoff = 0
       AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
       ) AS InvoiceBulanIni,
-      
+
       (SELECT SUM(d.kredit) 
       FROM piutang_kredit_detail d 
       INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
@@ -2122,10 +2132,10 @@ const getPiutangDashboard = async (user) => {
   const sqlTop5 = `
     SELECT 
       c.cus_nama AS Customer,
-      SUM(p.debet) - SUM(IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail d INNER JOIN piutang_kredit_header h ON h.nomor=d.nomor WHERE d.nota=p.nota), 0)) AS Saldo
+      SUM(p.debet) - SUM(${KREDIT_LOOKUP}) AS Saldo
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag=0 AND p.is_writeoff = 0
+    WHERE p.is_writeoff = 0
     GROUP BY p.customer
     HAVING Saldo > 0
     ORDER BY Saldo DESC
@@ -2138,10 +2148,10 @@ const getPiutangDashboard = async (user) => {
       c.cus_nama AS Customer,
       DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
       DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
-      (p.debet - IFNULL((SELECT SUM(kredit) FROM piutang_kredit_detail d INNER JOIN piutang_kredit_header h ON h.nomor=d.nomor WHERE d.nota=p.nota), 0)) AS SisaTagihan
+      (p.debet - ${KREDIT_LOOKUP}) AS SisaTagihan
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag=0 AND p.is_writeoff = 0
+    WHERE p.is_writeoff = 0
       AND p.tanggal_tempo < CURDATE()
     HAVING SisaTagihan > 0
     ORDER BY TerlambatHari DESC
@@ -2152,13 +2162,9 @@ const getPiutangDashboard = async (user) => {
     SELECT COUNT(*) AS Total
     FROM (
       SELECT p.nota,
-        (p.debet - IFNULL((
-          SELECT SUM(kredit) FROM piutang_kredit_detail d 
-          INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
-          WHERE d.nota = p.nota
-        ), 0)) AS SisaTagihan
+        (p.debet - ${KREDIT_LOOKUP}) AS SisaTagihan
       FROM piutang_debet p
-      WHERE p.flag = 0 AND p.is_writeoff = 0 AND p.tanggal_tempo < CURDATE()
+      WHERE p.is_writeoff = 0 AND p.tanggal_tempo < CURDATE()
       HAVING SisaTagihan > 0
     ) x
   `;
@@ -2171,7 +2177,7 @@ const getPiutangDashboard = async (user) => {
     FROM (
       SELECT DATE_FORMAT(tanggal, '%Y-%m') AS Bulan, debet AS Debet, 0 AS Kredit
       FROM piutang_debet
-      WHERE flag = 0 AND is_writeoff = 0 AND tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+      WHERE is_writeoff = 0 AND tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
       UNION ALL
       SELECT DATE_FORMAT(h.tanggal, '%Y-%m') AS Bulan, 0 AS Debet, d.kredit AS Kredit
       FROM piutang_kredit_detail d
@@ -2211,13 +2217,17 @@ const getPiutangOverdue = async (user, limit = 20, offset = 0) => {
       DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
       DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
       (p.debet - IFNULL((
-        SELECT SUM(kredit) FROM piutang_kredit_detail d 
-        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
-        WHERE d.nota = p.nota
+        SELECT SUM(kd.kredit)
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        WHERE kd.nota = IFNULL(
+          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+          p.nota
+        )
       ), 0)) AS SisaTagihan
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag = 0 AND p.is_writeoff = 0
+    WHERE p.is_writeoff = 0
       AND p.tanggal_tempo < CURDATE()
     HAVING SisaTagihan > 0
     ORDER BY TerlambatHari DESC
@@ -4725,14 +4735,18 @@ const getCompanyPulseSummary = async (user) => {
     SELECT 
       (SELECT SUM(debet) - SUM(
           IFNULL((
-            SELECT SUM(kredit) FROM piutang_kredit_detail d 
-            INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
-            WHERE d.nota = p.nota
+            SELECT SUM(kd.kredit)
+            FROM piutang_kredit_detail kd
+            INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+            WHERE kd.nota = IFNULL(
+              (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+              p.nota
+            )
           ), 0)
-      ) FROM piutang_debet p WHERE p.flag = 0 AND p.is_writeoff = 0) AS TotalOutstanding,
+      ) FROM piutang_debet p WHERE p.is_writeoff = 0) AS TotalOutstanding,
       
       (SELECT SUM(debet) FROM piutang_debet 
-      WHERE flag = 0 AND is_writeoff = 0
+      WHERE is_writeoff = 0
       AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
       ) AS InvoiceBulanIni
   `;
@@ -5041,19 +5055,25 @@ const getPiutangByCustomer = async ({
   const like = `%${namaCustomer}%`;
   const cabangFilter = kodePerush ? "AND p.cabang = ?" : "";
 
+  const KREDIT_LOOKUP = `
+    IFNULL((
+      SELECT SUM(kd.kredit)
+      FROM piutang_kredit_detail kd
+      INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+      WHERE kd.nota = IFNULL(
+        (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+        p.nota
+      )
+    ), 0)
+  `;
+
   const sqlSummary = `
     SELECT
       COUNT(DISTINCT p.nota) AS JmlInvoiceOutstanding,
-      IFNULL(SUM(p.debet) - SUM(
-        IFNULL((
-          SELECT SUM(kredit) FROM piutang_kredit_detail d
-          INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-          WHERE d.nota = p.nota
-        ), 0)
-      ), 0) AS TotalOutstanding
+      IFNULL(SUM(p.debet) - SUM(${KREDIT_LOOKUP}), 0) AS TotalOutstanding
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag = 0 AND p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
+    WHERE p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
   `;
 
   const sqlDetail = `
@@ -5064,14 +5084,10 @@ const getPiutangByCustomer = async ({
       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
       DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
       DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
-      ROUND(p.debet - IFNULL((
-        SELECT SUM(kredit) FROM piutang_kredit_detail d
-        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE d.nota = p.nota
-      ), 0)) AS SisaTagihan
+      ROUND(p.debet - ${KREDIT_LOOKUP}) AS SisaTagihan
     FROM piutang_debet p
     INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.flag = 0 AND p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
+    WHERE p.is_writeoff = 0 ${cabangFilter} AND c.cus_nama LIKE ?
     HAVING SisaTagihan > 0
     ORDER BY TerlambatHari DESC
     LIMIT ? OFFSET ?
