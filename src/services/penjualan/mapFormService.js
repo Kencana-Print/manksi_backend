@@ -910,6 +910,52 @@ const getNoPoStatus = async (nomor) => {
   return "MINTA";
 };
 
+// ─────────────────────────────────────────────────────────
+// HAPUS LINK PENAWARAN DARI MAP
+// Marketing bisa lepas keterkaitan MAP ini dari Penawaran sumbernya —
+// mengosongkan mspk_pen_nomor/mspk_pen_id di header, dan mengembalikan
+// baris tpenawaran_dtl terkait jadi OPEN lagi (dibalik dari CLOSE yang
+// di-set save() saat MAP ini pertama dibuat/di-link ke Penawaran).
+// pend_minta juga dikosongkan — link ke Minta Harga itu ikut lepas
+// karena linkage-nya memang berasal dari sini (lihat blok update
+// tpenawaran_dtl di save()).
+// ─────────────────────────────────────────────────────────
+const clearPenawaran = async (nomor, userKode) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[row]] = await conn.query(
+      `SELECT mspk_pen_nomor, mspk_pen_id FROM tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!row) throw new Error("Data MAP tidak ditemukan.");
+    if (!row.mspk_pen_nomor) {
+      throw new Error("MAP ini tidak terkait dengan Penawaran manapun.");
+    }
+
+    await conn.query(
+      `UPDATE tmemospk SET mspk_pen_nomor = '', mspk_pen_id = '', user_modified = ?, date_modified = NOW()
+       WHERE mspk_nomor = ?`,
+      [userKode, nomor],
+    );
+
+    await conn.query(
+      `UPDATE tpenawaran_dtl SET pend_status = 'OPEN', pend_minta = ''
+       WHERE pend_pen_nomor = ? AND pend_id = ?`,
+      [row.mspk_pen_nomor, row.mspk_pen_id],
+    );
+
+    await conn.commit();
+    return true;
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   generateNomor,
   getInitGrids,
@@ -924,4 +970,5 @@ module.exports = {
   getKatalogCustomer,
   syncNoPoApproval,
   getNoPoStatus,
+  clearPenawaran,
 };

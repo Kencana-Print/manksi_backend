@@ -48,7 +48,7 @@ router.get("/check-duplikat", verifyToken, mapFormController.checkDuplikatNama);
 router.get(
   "/katalog/customer/:cusKode",
   verifyToken,
-  mapFormController.getKatalogCustomer
+  mapFormController.getKatalogCustomer,
 );
 
 // --- ROUTE LOAD DATA MAP (EDIT MODE) ---
@@ -57,6 +57,13 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   mapFormController.getById,
+);
+
+router.patch(
+  "/:nomor/clear-penawaran",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  mapFormController.clearPenawaran,
 );
 
 // --- ROUTE SAVE TRANSAKSI ---

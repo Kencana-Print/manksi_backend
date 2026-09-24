@@ -166,6 +166,19 @@ const getKatalogCustomer = async (req, res) => {
   }
 };
 
+const clearPenawaran = async (req, res) => {
+  try {
+    await mapFormService.clearPenawaran(req.params.nomor, req.user.kode);
+    res.json({
+      success: true,
+      message:
+        "Link Penawaran berhasil dihapus, status Penawaran dikembalikan ke OPEN.",
+    });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   getInitGrids,
   getSpkInformasi,
@@ -177,4 +190,5 @@ module.exports = {
   getNamaSuggestions,
   checkDuplikatNama,
   getKatalogCustomer,
+  clearPenawaran,
 };
