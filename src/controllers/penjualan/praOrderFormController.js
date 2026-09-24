@@ -158,6 +158,19 @@ const searchPraOrder = async (req, res) => {
   }
 };
 
+const copyImageToMintaHarga = async (req, res) => {
+  try {
+    const { proNomor, mhNomor } = req.params;
+    const copied = await praOrderFormService.copyGambarPertamaKeMintaHarga(
+      proNomor,
+      mhNomor,
+    );
+    res.json({ success: true, data: { copied } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   getInitGrids,
   getById,
@@ -169,4 +182,5 @@ module.exports = {
   getKatalogCustomer,
   getLookupData,
   searchPraOrder,
+  copyImageToMintaHarga,
 };

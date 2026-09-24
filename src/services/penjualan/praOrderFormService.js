@@ -281,6 +281,37 @@ const setStatusPpic = async (nomor, status, catatan, userKode) => {
   return true;
 };
 
+// --- COPY GAMBAR PERTAMA PRA ORDER KE FOLDER MINTA HARGA ---
+// Diekstrak dari convertToMintaHarga supaya bisa dipakai juga oleh
+// jalur "tarik Pra Order" manual di form Minta Harga (bukan cuma jalur
+// convert otomatis via approval PPIC). Best-effort: kegagalan copy
+// (file sumber tidak ketemu dsb) tidak melempar error ke caller.
+const copyGambarPertamaKeMintaHarga = async (proNomor, mhNomor) => {
+  const [[gambarPertama]] = await db.query(
+    `SELECT prog_file_path FROM tpraorder_gambar
+     WHERE prog_pro_nomor = ? ORDER BY prog_urut ASC LIMIT 1`,
+    [proNomor],
+  );
+  if (!gambarPertama) return false;
+
+  const sourceFileName = path.basename(gambarPertama.prog_file_path);
+  const sourcePath = path.join("/mnt", "image", "praorder", sourceFileName);
+  const destFolder = path.join("/mnt", "image", "mintaharga");
+  const destPath = path.join(destFolder, `${mhNomor}.jpg`);
+  try {
+    if (fs.existsSync(sourcePath)) {
+      if (!fs.existsSync(destFolder)) {
+        fs.mkdirSync(destFolder, { recursive: true });
+      }
+      fs.copyFileSync(sourcePath, destPath);
+      return true;
+    }
+  } catch (e) {
+    console.error("Gagal menyalin gambar Pra Order ke Minta Harga:", e);
+  }
+  return false;
+};
+
 // --- KONVERSI KE PERMINTAAN HARGA ---
 const convertToMintaHarga = async (nomor, userKode) => {
   const conn = await db.getConnection();
@@ -360,27 +391,7 @@ const convertToMintaHarga = async (nomor, userKode) => {
     // Minta Harga — mengikuti konvensi penyimpanan sentral yang sama dipakai
     // mintaHargaFormService.processImage(). Best-effort: kegagalan copy
     // (file tidak ketemu dsb) TIDAK membatalkan konversi.
-    const [[gambarPertama]] = await conn.query(
-      `SELECT prog_file_path FROM tpraorder_gambar
-       WHERE prog_pro_nomor = ? ORDER BY prog_urut ASC LIMIT 1`,
-      [nomor],
-    );
-    if (gambarPertama) {
-      const sourceFileName = path.basename(gambarPertama.prog_file_path);
-      const sourcePath = path.join("/mnt", "image", "praorder", sourceFileName);
-      const destFolder = path.join("/mnt", "image", "mintaharga");
-      const destPath = path.join(destFolder, `${mhNomor}.jpg`);
-      try {
-        if (fs.existsSync(sourcePath)) {
-          if (!fs.existsSync(destFolder)) {
-            fs.mkdirSync(destFolder, { recursive: true });
-          }
-          fs.copyFileSync(sourcePath, destPath);
-        }
-      } catch (e) {
-        console.error("Gagal menyalin gambar Pra Order ke Minta Harga:", e);
-      }
-    }
+    await copyGambarPertamaKeMintaHarga(nomor, mhNomor);
 
     await conn.query(
       `UPDATE tpraorder_hdr SET pro_status='CLOSE', pro_mh_nomor=?, user_modified=? WHERE pro_nomor=?`,
@@ -477,7 +488,8 @@ const getLookupData = async (nomor) => {
   const [[hdr]] = await db.query(
     `SELECT h.pro_nomor, h.pro_cus_kode, h.pro_cus_nama, h.pro_sal_kode,
             h.pro_nama_pekerjaan, h.pro_divisi, h.pro_finishing,
-            h.pro_qty_rencana, h.pro_mh_nomor, s.sal_nama AS SalesNama
+            h.pro_qty_rencana, h.pro_mh_nomor, h.pro_keterangan,
+            s.sal_nama AS SalesNama
      FROM tpraorder_hdr h
      LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
      WHERE h.pro_nomor = ?`,
@@ -507,6 +519,17 @@ const getLookupData = async (nomor) => {
     .map((u) => `${u.nama || "?"}:${u.prou_qty}`)
     .join(", ");
 
+  // ⬅ BARU: gambar pertama Pra Order (prog_urut terkecil), sama sumber
+  // yang dipakai convertToMintaHarga — dikembalikan sebagai referensi
+  // URL sementara buat preview di form MH. File FISIK-nya belum di-copy
+  // ke folder mintaharga di sini (baru terjadi saat form MH disimpan,
+  // lihat copyGambarPertamaKeMintaHarga di bawah).
+  const [[gambarPertama]] = await db.query(
+    `SELECT prog_file_path FROM tpraorder_gambar
+     WHERE prog_pro_nomor = ? ORDER BY prog_urut ASC LIMIT 1`,
+    [nomor],
+  );
+
   return {
     nomor: hdr.pro_nomor,
     cusKode: hdr.pro_cus_kode,
@@ -519,9 +542,8 @@ const getLookupData = async (nomor) => {
     rencanaOrder: Number(hdr.pro_qty_rencana) || 0,
     kain: kainStr,
     ukuran: ukuranStr,
-    // Beri tahu FE kalau Pra Order ini sudah pernah dipakai untuk MH lain,
-    // supaya bisa ditampilkan sebagai peringatan (bukan diblokir keras —
-    // relasinya opsional/informatif).
+    keterangan: hdr.pro_keterangan || "", // ⬅ BARU
+    imageUrl: gambarPertama ? gambarPertama.prog_file_path : null, // ⬅ BARU
     sudahDipakaiOleh:
       hdr.pro_mh_nomor && hdr.pro_mh_nomor.trim() !== ""
         ? hdr.pro_mh_nomor
@@ -574,4 +596,5 @@ module.exports = {
   getKatalogCustomer,
   getLookupData,
   searchPraOrder,
+  copyGambarPertamaKeMintaHarga,
 };
