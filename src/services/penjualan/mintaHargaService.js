@@ -33,6 +33,7 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       h.mh_jmlorder AS RencanaOrder, 
       h.mh_harga AS HargaLama, 
       h.mh_budget AS HargaBudget, 
+      IFNULL(h.mh_pro_nomor, "") AS PraOrder, 
       DATE_FORMAT(h.mh_dateorder, '%Y-%m-%d') AS OrderTerakhir, 
       h.mh_kain AS Kain, 
       h.mh_panjang AS Panjang, 
