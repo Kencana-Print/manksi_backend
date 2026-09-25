@@ -352,6 +352,8 @@ const update = async (nomor, payload, userKode) => {
       [tanggal, userKode, nomor],
     );
 
+    // Grid1 (tbahan_barcode_det) — tetap delete+insert, tabel ini
+    // gak disentuh trigger stok jadi aman.
     await conn.query(`DELETE FROM tbahan_barcode_det WHERE bart_nomor = ?`, [
       nomor,
     ]);
@@ -364,18 +366,62 @@ const update = async (nomor, payload, userKode) => {
       );
     }
 
-    await conn.query(`DELETE FROM tbahan_barcode_dtl WHERE bard_nomor = ?`, [
-      nomor,
-    ]);
+    // ⚠️ Grid2 (tbahan_barcode_dtl) — JANGAN blanket delete+insert.
+    // Trigger AFTER INSERT pakai INSERT...ON DUPLICATE KEY, yang akan
+    // MEMBUAT ULANG baris tmasterstok_barcode meski baris itu sudah
+    // sengaja dihapus/dikonsolidasi oleh proses cutoff saldo awal
+    // (mst_noreferensi = bard_nomor dokumen ini). Blanket delete+insert
+    // bikin baris "hantu" itu balik tiap kali form di-Ubah, dobel
+    // hitung sama saldo awal.
+    //
+    // Solusinya: diff terhadap data lama — INSERT baris yg benar2
+    // baru, UPDATE (bukan delete+insert) baris yg cuma qty-nya
+    // berubah (trigger AFTER UPDATE pakai UPDATE...WHERE, aman/no-op
+    // kalau baris tmasterstok_barcode sumbernya udah gak ada), dan
+    // DELETE cuma baris yg beneran dibuang user dari grid.
+    const [oldRows] = await conn.query(
+      `SELECT bard_barcode, bard_kode, bard_jumlah, bard_nourut
+       FROM tbahan_barcode_dtl WHERE bard_nomor = ?`,
+      [nomor],
+    );
+    const oldMap = new Map(oldRows.map((r) => [r.bard_barcode, r]));
+
     const g2Filled = (grid2 || []).filter((r) => r.nama);
+    const newBarcodes = new Set(g2Filled.map((r) => r.barcode));
+
+    // Hapus baris yg sudah gak ada di grid2 baru
+    for (const old of oldRows) {
+      if (!newBarcodes.has(old.bard_barcode)) {
+        await conn.query(
+          `DELETE FROM tbahan_barcode_dtl WHERE bard_nomor = ? AND bard_barcode = ?`,
+          [nomor, old.bard_barcode],
+        );
+      }
+    }
+
+    // Insert yg baru, update yg berubah, biarkan yg gak berubah
     let i = 1;
     for (const r of g2Filled) {
-      await conn.query(
-        `INSERT INTO tbahan_barcode_dtl
-          (bard_nomor, bard_kode, bard_barcode, bard_jumlah, bard_nourut)
-         VALUES (?, ?, ?, ?, ?)`,
-        [nomor, r.kode, r.barcode, r.jumlah || 0, i],
-      );
+      const old = oldMap.get(r.barcode);
+      if (!old) {
+        await conn.query(
+          `INSERT INTO tbahan_barcode_dtl
+            (bard_nomor, bard_kode, bard_barcode, bard_jumlah, bard_nourut)
+           VALUES (?, ?, ?, ?, ?)`,
+          [nomor, r.kode, r.barcode, r.jumlah || 0, i],
+        );
+      } else if (
+        Number(old.bard_jumlah) !== Number(r.jumlah || 0) ||
+        old.bard_kode !== r.kode ||
+        Number(old.bard_nourut) !== i
+      ) {
+        await conn.query(
+          `UPDATE tbahan_barcode_dtl
+           SET bard_kode = ?, bard_jumlah = ?, bard_nourut = ?
+           WHERE bard_nomor = ? AND bard_barcode = ?`,
+          [r.kode, r.jumlah || 0, i, nomor, r.barcode],
+        );
+      }
       i++;
     }
 
