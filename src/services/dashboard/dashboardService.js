@@ -943,6 +943,12 @@ const toLocalDateStr = (d) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const PILIH_NORMAL_FILTER = `
+  AND NOT EXISTS (
+    SELECT 1 FROM tinv_flag tf2 WHERE tf2.invf_taknormal = p.nota
+  )
+`;
+
 const getTargetCollectionSales = async (user, bulan, tahun) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = [
@@ -1005,16 +1011,17 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
 
   const [targetRows] = await db.query(
     `SELECT
-       inv.sal_kode,
-       DATE_FORMAT(p.tanggal, '%Y-%m') AS Bulan,
-       SUM(p.debet) AS Omzet
-     FROM piutang_debet p
-     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
-     WHERE inv.sal_kode IS NOT NULL
-       AND p.is_writeoff = 0
-       AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-       AND p.tanggal >= ? AND p.tanggal <= ?
-     GROUP BY inv.sal_kode, Bulan`,
+     inv.sal_kode,
+     DATE_FORMAT(p.tanggal, '%Y-%m') AS Bulan,
+     SUM(p.debet) AS Omzet
+   FROM piutang_debet p
+   INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
+   WHERE inv.sal_kode IS NOT NULL
+     AND p.is_writeoff = 0
+     AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+     ${PILIH_NORMAL_FILTER}
+     AND p.tanggal >= ? AND p.tanggal <= ?
+   GROUP BY inv.sal_kode, Bulan`,
     [rangeStart, rangeEnd],
   );
 
@@ -1044,13 +1051,14 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
               )
               AND kh.tanggal <= ?
             ), 0)) AS Sisa
-     FROM piutang_debet p
-     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
-     WHERE inv.sal_kode IS NOT NULL
-       AND p.is_writeoff = 0
-       AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-       AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
-     GROUP BY inv.sal_kode`,
+    FROM piutang_debet p
+    INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
+    WHERE inv.sal_kode IS NOT NULL
+      AND p.is_writeoff = 0
+      AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+      ${PILIH_NORMAL_FILTER}
+      AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
+    GROUP BY inv.sal_kode`,
     [cutoff, targetBulanKey],
   );
   const piutangBySales = {};
@@ -1223,29 +1231,30 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
 
   const [rows] = await db.query(
     `SELECT
-       p.nota AS Nota,
-       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
-       p.customer AS CusKode,
-       IFNULL(c.cus_nama, '') AS CusNama,
-       p.debet AS Debet,
-       (p.debet - IFNULL((
-         SELECT SUM(kd.kredit)
-         FROM piutang_kredit_detail kd
-         INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-         WHERE kd.nota = IFNULL(
-           (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
-           p.nota
-         )
-         AND kh.tanggal <= ?
-       ), 0)) AS Sisa
-     FROM piutang_debet p
-     INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
-     LEFT JOIN tcustomer c ON c.cus_kode = p.customer
-     WHERE p.is_writeoff = 0
-       AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-       AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
-       AND ${salKodeFilter}
-     ORDER BY p.tanggal, p.nota`,
+      p.nota AS Nota,
+      DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+      p.customer AS CusKode,
+      IFNULL(c.cus_nama, '') AS CusNama,
+      p.debet AS Debet,
+      (p.debet - IFNULL((
+        SELECT SUM(kd.kredit)
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        WHERE kd.nota = IFNULL(
+          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+          p.nota
+        )
+        AND kh.tanggal <= ?
+      ), 0)) AS Sisa
+    FROM piutang_debet p
+    INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
+    LEFT JOIN tcustomer c ON c.cus_kode = p.customer
+    WHERE p.is_writeoff = 0
+      AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+      ${PILIH_NORMAL_FILTER}
+      AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
+      AND ${salKodeFilter}
+    ORDER BY p.tanggal, p.nota`,
     invoiceParams,
   );
 
