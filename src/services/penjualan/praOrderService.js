@@ -35,7 +35,18 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirim,
       h.pro_status_bahan AS StatusBahan,
       h.pro_status_ppic AS StatusPpic,
-      h.pro_mh_nomor AS NomorMH,
+      DATE_FORMAT(h.pro_tgl_so_estimasi, '%Y-%m-%d') AS TglSoEstimasi,
+      DATE_FORMAT(h.pro_tgl_map, '%Y-%m-%d') AS TglMap,
+      IFNULL(
+        h.pro_mh_nomor,
+        (
+          SELECT m.mh_nomor
+          FROM tmintaharga m
+          WHERE m.mh_pro_nomor = h.pro_nomor
+          ORDER BY m.mh_nomor DESC
+          LIMIT 1
+        )
+      ) AS NomorMH,
       h.pro_status AS Status,
       h.user_create AS usr,
       DATE_FORMAT(h.date_create, '%Y-%m-%d %H:%i:%s') AS Created,

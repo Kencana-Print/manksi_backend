@@ -72,14 +72,28 @@ const getDetail = async (nomor) => {
 };
 
 // --- KONFIRMASI KESANGGUPAN ---
-const confirmKesanggupan = async (nomor, status, catatan, userKode) => {
+const confirmKesanggupan = async (
+  nomor,
+  status,
+  catatan,
+  userKode,
+  { tglSoEstimasi, tglMap } = {},
+) => {
   if (!["SANGGUP", "TIDAK SANGGUP"].includes(status)) {
     throw new Error("Status konfirmasi tidak valid.");
   }
   if (status === "TIDAK SANGGUP" && !catatan?.trim()) {
     throw new Error("Catatan wajib diisi untuk status Tidak Sanggup.");
   }
-  await praOrderFormService.setStatusPpic(nomor, status, catatan, userKode);
+  if (status === "SANGGUP" && (!tglSoEstimasi || !tglMap)) {
+    throw new Error(
+      "Tanggal Estimasi SO dan Estimasi MAP wajib diisi untuk status Sanggup.",
+    );
+  }
+  await praOrderFormService.setStatusPpic(nomor, status, catatan, userKode, {
+    tglSoEstimasi,
+    tglMap,
+  });
   return true;
 };
 

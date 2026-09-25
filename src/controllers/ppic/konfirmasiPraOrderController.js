@@ -26,12 +26,13 @@ const getDetail = async (req, res) => {
 
 const confirmKesanggupan = async (req, res) => {
   try {
-    const { status, catatan } = req.body;
+    const { status, catatan, tglSoEstimasi, tglMap } = req.body;
     await konfirmasiPraOrderService.confirmKesanggupan(
       req.params.nomor,
       status,
       catatan,
       req.user.kode,
+      { tglSoEstimasi, tglMap },
     );
     res.json({
       success: true,

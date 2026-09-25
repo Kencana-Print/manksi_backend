@@ -271,13 +271,29 @@ const setStatusBahan = async (prob_id, status) => {
   return true;
 };
 
-const setStatusPpic = async (nomor, status, catatan, userKode) => {
-  await db.query(
-    `UPDATE tpraorder_hdr
-     SET pro_status_ppic = ?, pro_catatan_ppic = ?, pro_user_ppic = ?, pro_tgl_ppic = NOW()
-     WHERE pro_nomor = ?`,
-    [status, catatan, userKode, nomor],
-  );
+const setStatusPpic = async (
+  nomor,
+  status,
+  catatan,
+  userKode,
+  { tglSoEstimasi, tglMap } = {},
+) => {
+  if (status === "SANGGUP") {
+    await db.query(
+      `UPDATE tpraorder_hdr
+       SET pro_status_ppic = ?, pro_catatan_ppic = ?, pro_user_ppic = ?, pro_tgl_ppic = NOW(),
+           pro_tgl_so_estimasi = ?, pro_tgl_map = ?
+       WHERE pro_nomor = ?`,
+      [status, catatan, userKode, tglSoEstimasi, tglMap, nomor],
+    );
+  } else {
+    await db.query(
+      `UPDATE tpraorder_hdr
+       SET pro_status_ppic = ?, pro_catatan_ppic = ?, pro_user_ppic = ?, pro_tgl_ppic = NOW()
+       WHERE pro_nomor = ?`,
+      [status, catatan, userKode, nomor],
+    );
+  }
   return true;
 };
 
@@ -602,7 +618,17 @@ const getLookupData = async (nomor) => {
 // --- SEARCH PRA ORDER UNTUK MODAL LOOKUP DI FORM MINTA HARGA ---
 const searchPraOrder = async (keyword = "", page = 1, limit = 20) => {
   const offset = (page - 1) * limit;
-  let where = "WHERE 1=1";
+  // ⬅ BARU: hanya tampilkan Pra Order yang sudah dikonfirmasi SANGGUP
+  // oleh PPIC. Kecuali divisi SPANDUK/MMT — divisi ini tidak melalui
+  // alur konfirmasi PPIC sama sekali (lihat isDivisiTanpaCekPpic di
+  // convertToMintaHarga/PraOrderView.vue), jadi pro_status_ppic mereka
+  // tetap PENDING selamanya dan harus tetap boleh muncul di sini.
+  let where = `
+    WHERE (
+      h.pro_status_ppic = "SANGGUP"
+      OR UPPER(IFNULL(v.Divisi, '')) IN ('SPANDUK', 'MMT')
+    )
+  `;
   const params = [];
   if (keyword) {
     where += ` AND (h.pro_nomor LIKE ? OR h.pro_nama_pekerjaan LIKE ? OR h.pro_cus_nama LIKE ?)`;
@@ -610,7 +636,10 @@ const searchPraOrder = async (keyword = "", page = 1, limit = 20) => {
   }
 
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tpraorder_hdr h ${where}`,
+    `SELECT COUNT(*) AS total
+     FROM tpraorder_hdr h
+     LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
+     ${where}`,
     params,
   );
 
@@ -622,6 +651,7 @@ const searchPraOrder = async (keyword = "", page = 1, limit = 20) => {
        DATE_FORMAT(h.pro_tanggal, '%Y-%m-%d') AS Tanggal,
        h.pro_status AS Status
      FROM tpraorder_hdr h
+     LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
      ${where}
      ORDER BY h.pro_tanggal DESC, h.pro_nomor DESC
      LIMIT ? OFFSET ?`,
