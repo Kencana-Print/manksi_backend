@@ -259,7 +259,7 @@ const deleteMmtTambahan = async (req, res) => {
 // --- GARMEN MARGIN TIER ---
 const getMarginGarmen = async (req, res) => {
     try {
-        const rows = await service.getMarginGarmen(req.query.model);
+        const rows = await service.getMarginGarmen(req.query.model, req.query.ktg);
         res.json({ success: true, data: rows });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
