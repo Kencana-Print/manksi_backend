@@ -7,12 +7,14 @@ const db = require("../../config/database");
 // (slow moving, reminder MAP, dst).
 // ─────────────────────────────────────────────────────────
 const searchBahan = async (keyword = "", onlyWithStok = true) => {
-  let where = `WHERE b.bhn_aktif = 0`;
+  let where = ``;
   const params = [];
 
   if (keyword) {
-    where += ` AND (b.bhn_name LIKE ? OR b.bhn_kode LIKE ?)`;
+    where += `WHERE (b.bhn_name LIKE ? OR b.bhn_kode LIKE ?)`;
     params.push(`%${keyword}%`, `%${keyword}%`);
+  } else {
+    where += `WHERE 1=1`;
   }
 
   const sql = `
@@ -21,9 +23,9 @@ const searchBahan = async (keyword = "", onlyWithStok = true) => {
       b.bhn_name      AS Nama,
       b.bhn_satuan    AS Satuan,
       b.bhn_gramasi   AS Gramasi,
-      b.bhn_hargabeli AS HargaBeli,
+      COALESCE(hpo.HargaTerakhir, hbpb.HargaTerakhir, b.bhn_hargabeli, 0) AS HargaBeli,
       IFNULL(stok.Stok, 0) AS Stok,
-      ROUND(IFNULL(stok.Stok, 0) * IFNULL(b.bhn_hargabeli, 0)) AS NilaiStok,
+      ROUND(IFNULL(stok.Stok, 0) * COALESCE(hpo.HargaTerakhir, hbpb.HargaTerakhir, b.bhn_hargabeli, 0)) AS NilaiStok,
       perm.LastPermintaan,
       rls.LastRealisasi,
       IF(perm.LastPermintaan IS NULL AND rls.LastRealisasi IS NULL, 0, 1) AS PernahBergerak,
@@ -49,6 +51,31 @@ const searchBahan = async (keyword = "", onlyWithStok = true) => {
       WHERE mst_aktif = 'Y'
       GROUP BY Kode
     ) stok ON stok.Kode = b.bhn_kode
+    LEFT JOIN (
+      SELECT x.pod_bhn_kode AS Kode, x.pod_hargabeli AS HargaTerakhir
+      FROM tpo_dtl x
+      INNER JOIN tpo_hdr y ON y.po_nomor = x.pod_po_nomor
+      WHERE y.po_jenis = 3
+        AND y.po_tanggal = (
+          SELECT MAX(y2.po_tanggal)
+          FROM tpo_dtl x2
+          INNER JOIN tpo_hdr y2 ON y2.po_nomor = x2.pod_po_nomor
+          WHERE y2.po_jenis = 3 AND x2.pod_bhn_kode = x.pod_bhn_kode
+        )
+    ) hpo ON hpo.Kode = b.bhn_kode
+    LEFT JOIN (
+      SELECT bd.bpbd_bhn_kode AS Kode, MAX(bd.bpbd_harga) AS HargaTerakhir
+      FROM tbpb_dtl bd
+      INNER JOIN tbpb_hdr bh ON bh.bpb_nomor = bd.bpbd_bpb_nomor
+      WHERE bd.bpbd_harga > 0
+        AND bh.bpb_tanggal = (
+          SELECT MAX(bh2.bpb_tanggal)
+          FROM tbpb_dtl bd2
+          INNER JOIN tbpb_hdr bh2 ON bh2.bpb_nomor = bd2.bpbd_bpb_nomor
+          WHERE bd2.bpbd_bhn_kode = bd.bpbd_bhn_kode AND bd2.bpbd_harga > 0
+        )
+      GROUP BY bd.bpbd_bhn_kode
+    ) hbpb ON hbpb.Kode = b.bhn_kode
     LEFT JOIN (
       SELECT d.promind_bhn_kode AS Kode, MAX(h.promin_tanggal) AS LastPermintaan
       FROM tproduksiminta_dtl d
@@ -158,11 +185,11 @@ const getKartuPergerakan = async (kode, startDate = null, endDate = null) => {
         DATE_FORMAT(m.mst_tanggal, '%Y-%m-%d') AS Tanggal,
         m.mst_stok_out AS Jumlah,
         hr.promin_spk_nomor AS SpkNomor,
-        m.mst_gdg_kode AS Gudang      
+        m.mst_gdg_kode AS Gudang
       FROM tmasterstok_bahan m
       LEFT JOIN tproduksiminta_hdr hr ON hr.promin_nomor = m.mst_noreferensi
       WHERE m.mst_aktif = 'Y'
-        AND LEFT(m.mst_noreferensi, 4) = 'PROG'  
+        AND LEFT(m.mst_noreferensi, 4) = 'PROG'
         AND m.mst_brg_kode = ? ${dateFilterReal}
     ) x
     ORDER BY x.Tanggal DESC, x.Jenis
