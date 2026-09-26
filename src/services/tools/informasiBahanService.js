@@ -157,12 +157,12 @@ const getKartuPergerakan = async (kode, startDate = null, endDate = null) => {
         m.mst_noreferensi AS Nomor,
         DATE_FORMAT(m.mst_tanggal, '%Y-%m-%d') AS Tanggal,
         m.mst_stok_out AS Jumlah,
-        hr.promin_spk_nomor AS SpkNomor,   
-        'GB001' AS Gudang
+        hr.promin_spk_nomor AS SpkNomor,
+        m.mst_gdg_kode AS Gudang      
       FROM tmasterstok_bahan m
-      LEFT JOIN tproduksiminta_hdr hr ON hr.promin_nomor = m.mst_noreferensi   
-      WHERE m.mst_aktif = 'Y' AND m.mst_gdg_kode = 'GB001'
-        AND LEFT(m.mst_noreferensi, 4) = 'PROG'
+      LEFT JOIN tproduksiminta_hdr hr ON hr.promin_nomor = m.mst_noreferensi
+      WHERE m.mst_aktif = 'Y'
+        AND LEFT(m.mst_noreferensi, 4) = 'PROG'  
         AND m.mst_brg_kode = ? ${dateFilterReal}
     ) x
     ORDER BY x.Tanggal DESC, x.Jenis
