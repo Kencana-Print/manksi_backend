@@ -119,10 +119,6 @@ const getOutstanding = async ({
               WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
                 AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
             )
-            AND NOT EXISTS (
-              SELECT 1 FROM finance.tkasbonitem2 ki2
-              WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
-            )
         ), 0) AS Nominal
       FROM tgarmenmintabeli_hdr h
       WHERE EXISTS (
@@ -143,10 +139,6 @@ const getOutstanding = async ({
             JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
             WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
               AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM finance.tkasbonitem2 ki2
-            WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
           )
       )
       ${startDate && endDate ? "AND h.mb_tanggal BETWEEN ? AND ?" : ""}
@@ -254,10 +246,6 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
            WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = ?
              AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM finance.tkasbonitem2 ki2
-           WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
          )
        ORDER BY d.mbd_nourut`,
       [nomorHeader, nomorHeader],
