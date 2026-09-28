@@ -453,7 +453,9 @@ const getKomponenKain = async (model, jenisKain, warna, qty = null) => {
   // Query ini mereplika persis query di prosedur loadKomponen Delphi
   // Jika qty >=1000 pakai mhk_harga_partaibesar
   const isPartaiBesar = qty !== null && Number(qty) >= 1000;
-  const hargaCol = isPartaiBesar ? "COALESCE(a.mhk_harga_partaibesar, a.mhk_harga)" : "a.mhk_harga";
+  const hargaCol = isPartaiBesar
+    ? "COALESCE(a.mhk_harga_partaibesar, a.mhk_harga)"
+    : "a.mhk_harga";
   const query = `
     SELECT 
       k.mhk_lengan AS lengan, 
@@ -474,8 +476,11 @@ const getKomponenKain = async (model, jenisKain, warna, qty = null) => {
     const [rows] = await db.query(query, [warna, model, jenisKain]);
     return rows;
   } catch (err) {
-    if (err.code === "ER_BAD_FIELD_ERROR" && String(err.sqlMessage).includes("mhk_harga_partaibesar")) {
-        const fallbackQuery = `
+    if (
+      err.code === "ER_BAD_FIELD_ERROR" &&
+      String(err.sqlMessage).includes("mhk_harga_partaibesar")
+    ) {
+      const fallbackQuery = `
     SELECT 
       k.mhk_lengan AS lengan, 
       k.mhk_komponen AS komponen, 
@@ -489,8 +494,8 @@ const getKomponenKain = async (model, jenisKain, warna, qty = null) => {
     FROM tmintaharga_kain k
     WHERE k.mhk_komponen <> "" AND k.mhk_kode = ? AND k.mhk_jeniskain = ?
   `;
-        const [rows] = await db.query(fallbackQuery, [warna, model, jenisKain]);
-        return rows;
+      const [rows] = await db.query(fallbackQuery, [warna, model, jenisKain]);
+      return rows;
     }
     throw err;
   }
@@ -2158,7 +2163,7 @@ const searchAccount = async (
   }
 
   const [countResult] = await db.query(
-    `SELECT COUNT(*) AS total FROM financenew.trekening ${whereClause}`,
+    `SELECT COUNT(*) AS total FROM finance.trekening ${whereClause}`,
     params,
   );
 
@@ -2167,7 +2172,7 @@ const searchAccount = async (
       rek_nama AS Nama,
       rek_kode AS Kode,
       rek_rekening AS Rekening
-    FROM financenew.trekening
+    FROM finance.trekening
     ${whereClause}
     ORDER BY rek_rekening ASC
     LIMIT ? OFFSET ?

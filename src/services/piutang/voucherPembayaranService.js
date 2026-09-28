@@ -7,7 +7,7 @@ const tutupBukuService = require("../tutupBukuService");
 // Ngedit dari tspk_pin5: WAIT/ACC/TOLAK/""
 // Bahan_tambahan: subquery tvoucher_dtl2 SUM(harga*jumlah)
 // Net = Total - Bahan_tambahan
-// Nomor Realisasi dari financenew.tpengajuan_transfer_dtl (link ptd_trs)
+// Nomor Realisasi dari finance.tpengajuan_transfer_dtl (link ptd_trs)
 const getBrowse = async (startDate, endDate) => {
   const [rows] = await db.query(
     `SELECT
@@ -52,11 +52,11 @@ const getBrowse = async (startDate, endDate) => {
      FROM tvoucher_hdr a
      LEFT JOIN tsupplier b
             ON b.sup_kode = a.vou_sup_kode
-     LEFT JOIN financenew.tpengajuan_transfer_dtl pt
+     LEFT JOIN finance.tpengajuan_transfer_dtl pt
             ON pt.ptd_trs = a.vou_nomor
-     LEFT JOIN financenew.trekening rek
+     LEFT JOIN finance.trekening rek
             ON rek.rek_kode = pt.ptd_akun
-     LEFT JOIN financenew.tcostcenter cc
+     LEFT JOIN finance.tcostcenter cc
             ON cc.cc_kode = pt.ptd_cc_kode
      WHERE a.vou_tanggal >= ? AND a.vou_tanggal <= ?
      ORDER BY MID(a.vou_nomor, 5, 5)`,
@@ -364,7 +364,7 @@ const getBrowsePendingAll = async () => {
      LEFT JOIN tsupplier b
             ON b.sup_kode = a.vou_sup_kode
      WHERE NOT EXISTS (
-       SELECT 1 FROM financenew.tpengajuan_transfer_dtl pt
+       SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = a.vou_nomor
      )
      ORDER BY a.vou_tanggal`,
@@ -396,7 +396,7 @@ const getBrowseDetailPendingAll = async () => {
      LEFT JOIN tspk s
             ON s.spk_nomor = p.pojh_spk_nomor
      WHERE NOT EXISTS (
-       SELECT 1 FROM financenew.tpengajuan_transfer_dtl pt
+       SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = h.vou_nomor
      )
      ORDER BY d.voud_vou_nomor`,
