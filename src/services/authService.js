@@ -91,7 +91,13 @@ const loginUser = async (username, password) => {
   // 7. Data SPK Urgent
   // ⬅ BARU: GA, TEKNISI, IT tidak butuh notifikasi SPK dateline — bukan
   // bagian yang menangani produksi/deadline SPK sama sekali.
-  const EXCLUDED_SPK_URGENT_BAGIAN = ["GA", "TEKNISI", "IT"];
+  const EXCLUDED_SPK_URGENT_BAGIAN = [
+    "GA",
+    "TEKNISI",
+    "IT",
+    "FINANCE",
+    "PEMBELIAN",
+  ];
   const isMarketing = user.user_bagian.toUpperCase() === "MARKETING";
   let spkUrgent = [];
   if (!EXCLUDED_SPK_URGENT_BAGIAN.includes(user.user_bagian.toUpperCase())) {
