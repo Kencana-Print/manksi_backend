@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.11",
+    date: "2026-09-28",
+    changes: [
+      {
+        type: "added",
+        text: "Pemindahan sistem Finance ke web based Manksi.",
+      },
+    ],
+  },
+  {
     version: "1.0.10",
     date: "2026-09-21",
     changes: [

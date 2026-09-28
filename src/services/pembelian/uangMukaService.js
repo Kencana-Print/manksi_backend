@@ -22,11 +22,11 @@ const getOutstanding = async ({
         c.lokasi AS Cabang,
         IFNULL((
           SELECT SUM(d.pjd_qty * d.pjd_nilai)
-          FROM ga2new.tpengajuan2_dtl d
+          FROM ga2.tpengajuan2_dtl d
           WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
             AND NOT EXISTS (
-              SELECT 1 FROM ga2new.tpermintaan_dtl td
-              JOIN ga2new.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+              SELECT 1 FROM ga2.tpermintaan_dtl td
+              JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
               WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = d.pjd_nourut
                 AND td.pmd_bon <> ''
             )
@@ -37,14 +37,14 @@ const getOutstanding = async ({
                 AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
             )
         ), 0) AS Nominal
-      FROM ga2new.tpengajuan2_hdr a
-      LEFT JOIN ga2new.peminta c ON c.nik = a.pjh_nik
+      FROM ga2.tpengajuan2_hdr a
+      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
       WHERE EXISTS (
-        SELECT 1 FROM ga2new.tpengajuan2_dtl d
+        SELECT 1 FROM ga2.tpengajuan2_dtl d
         WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
           AND NOT EXISTS (
-            SELECT 1 FROM ga2new.tpermintaan_dtl td
-            JOIN ga2new.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+            SELECT 1 FROM ga2.tpermintaan_dtl td
+            JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
             WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = d.pjd_nourut
               AND td.pmd_bon <> ''
           )
@@ -72,7 +72,7 @@ const getOutstanding = async ({
           SELECT SUM(
             (d.mbd_jumlah - IFNULL((
               SELECT SUM(ki.bond_qty_realisasi)
-              FROM financenew.tkasbonitem ki
+              FROM finance.tkasbonitem ki
               WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                 AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
             ), 0)) * d.mbd_harga
@@ -81,7 +81,7 @@ const getOutstanding = async ({
           WHERE d.mbd_nomor = h.mb_nomor
             AND (d.mbd_jumlah - IFNULL((
               SELECT SUM(ki.bond_qty_realisasi)
-              FROM financenew.tkasbonitem ki
+              FROM finance.tkasbonitem ki
               WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                 AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
             ), 0)) > IFNULL((
@@ -95,7 +95,7 @@ const getOutstanding = async ({
                 AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status = 'DIAJUKAN'
             )
             AND NOT EXISTS (
-              SELECT 1 FROM financenew.tkasbonitem2 ki2
+              SELECT 1 FROM finance.tkasbonitem2 ki2
               WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
             )
         ), 0) AS Nominal
@@ -105,7 +105,7 @@ const getOutstanding = async ({
         WHERE d.mbd_nomor = h.mb_nomor
           AND (d.mbd_jumlah - IFNULL((
             SELECT SUM(ki.bond_qty_realisasi)
-            FROM financenew.tkasbonitem ki
+            FROM finance.tkasbonitem ki
             WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
               AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
           ), 0)) > IFNULL((
@@ -119,7 +119,7 @@ const getOutstanding = async ({
               AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status = 'DIAJUKAN'
           )
           AND NOT EXISTS (
-            SELECT 1 FROM financenew.tkasbonitem2 ki2
+            SELECT 1 FROM finance.tkasbonitem2 ki2
             WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
           )
       )
@@ -166,11 +166,11 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
          a.Deadline AS Deadline,
          a.NameApproved AS NameApproved,
          a.Keterangan AS Keterangan
-       FROM ga2new.viewpengajuan a
+       FROM ga2.viewpengajuan a
        WHERE a.pjh_nomor = ?
          AND NOT EXISTS (
-           SELECT 1 FROM ga2new.tpermintaan_dtl td
-           JOIN ga2new.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+           SELECT 1 FROM ga2.tpermintaan_dtl td
+           JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
            WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = a.pjd_nourut
            AND td.pmd_bon <> ''
          )
@@ -194,13 +194,13 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
               b.brg_satuan AS Satuan, d.mbd_jumlah AS Qty, (d.mbd_jumlah * d.mbd_harga) AS Nominal,
               IFNULL((
                 SELECT SUM(ki.bond_qty_realisasi)
-                FROM financenew.tkasbonitem ki
+                FROM finance.tkasbonitem ki
                 WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                   AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
               ), 0) AS QtyRealisasi,
               IFNULL((
                 SELECT SUM(ki.bond_qty_realisasi * ki.bond_nominal_realisasi)
-                FROM financenew.tkasbonitem ki
+                FROM finance.tkasbonitem ki
                 WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                   AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
               ), 0) AS NominalRealisasi
@@ -209,7 +209,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
        WHERE d.mbd_nomor = ?
          AND (d.mbd_jumlah - IFNULL((
            SELECT SUM(ki.bond_qty_realisasi)
-           FROM financenew.tkasbonitem ki
+           FROM finance.tkasbonitem ki
            WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
              AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
          ), 0)) > IFNULL((
@@ -223,7 +223,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
              AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status = 'DIAJUKAN'
          )
          AND NOT EXISTS (
-           SELECT 1 FROM financenew.tkasbonitem2 ki2
+           SELECT 1 FROM finance.tkasbonitem2 ki2
            WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
          )
        ORDER BY d.mbd_nourut`,
@@ -248,17 +248,17 @@ const getHistory = async ({ startDate, endDate, cabang }) => {
       b.bon_penerima     AS Penerima,
       b.bon_nominal      AS Nominal,
       IF(b.bon_jur_no='', 0,
-        IFNULL((SELECT SUM(d.jurd_kredit) FROM financenew.tjurnalitem d WHERE d.jurd_jur_no = b.bon_jur_no), 0)
+        IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = b.bon_jur_no), 0)
       ) AS Terpakai,
       (b.bon_nominal - IF(b.bon_jur_no='', 0,
-        IFNULL((SELECT SUM(d.jurd_kredit) FROM financenew.tjurnalitem d WHERE d.jurd_jur_no = b.bon_jur_no), 0)
+        IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = b.bon_jur_no), 0)
       )) AS Sisa,
       b.bon_keterangan   AS Keterangan,
       IF(b.bon_selesai=0,'Belum','Sudah') AS Selesai,
       DATE_FORMAT(b.date_create, '%Y-%m-%d %H:%i:%s') AS TanggalDibuat,
       b.user_create      AS UserDibuat
-    FROM financenew.tkasbon b
-    LEFT JOIN financenew.trekening r ON r.rek_kode = b.bon_rek_kode
+    FROM finance.tkasbon b
+    LEFT JOIN finance.trekening r ON r.rek_kode = b.bon_rek_kode
     WHERE 1=1
   `;
   const params = [];
@@ -280,7 +280,7 @@ const getHistory = async ({ startDate, endDate, cabang }) => {
 // ── HISTORY DELETE ──
 const deleteHistory = async (nomor) => {
   const [[bon]] = await db.query(
-    `SELECT bon_selesai, bon_pjh_nomor FROM financenew.tkasbon WHERE bon_nomor = ?`,
+    `SELECT bon_selesai, bon_pjh_nomor FROM finance.tkasbon WHERE bon_nomor = ?`,
     [nomor],
   );
   if (!bon) throw new Error("Data tidak ditemukan.");
@@ -292,11 +292,11 @@ const deleteHistory = async (nomor) => {
   try {
     if (bon.bon_pjh_nomor) {
       await conn.query(
-        `UPDATE ga2new.tpermintaan_hdr SET pmt_approval = 0 WHERE pmt_pjh_nomor = ?`,
+        `UPDATE ga2.tpermintaan_hdr SET pmt_approval = 0 WHERE pmt_pjh_nomor = ?`,
         [bon.bon_pjh_nomor],
       );
       await conn.query(
-        `UPDATE ga2new.tpermintaan_dtl SET
+        `UPDATE ga2.tpermintaan_dtl SET
            pmd_tanggal_approved = NULL, pmd_user_approved = '',
            pmd_bon = '', pmd_dana_approved = 0,
            pmd_user_reject = '', pmd_tanggal_reject = NULL,
@@ -305,7 +305,7 @@ const deleteHistory = async (nomor) => {
         [nomor],
       );
     }
-    await conn.query(`DELETE FROM financenew.tkasbon WHERE bon_nomor = ?`, [
+    await conn.query(`DELETE FROM finance.tkasbon WHERE bon_nomor = ?`, [
       nomor,
     ]);
     await conn.commit();

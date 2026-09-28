@@ -15,9 +15,9 @@ const getFormData = async (nomor) => {
         DATE_FORMAT(t.jur_tanggal, '%Y-%m-%d') AS jur_tanggal_fmt,
         h.pum_user_create AS pum_user_create,
         h.pum_user_realisasi AS pum_user_realisasi
-      FROM financenew.tkasbon k
-      LEFT JOIN financenew.tjurnal t ON t.jur_no = k.bon_jur_no
-      LEFT JOIN financenew.trekening r ON r.rek_kode = k.bon_rek_kode
+      FROM finance.tkasbon k
+      LEFT JOIN finance.tjurnal t ON t.jur_no = k.bon_jur_no
+      LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
       LEFT JOIN tpengajuan_uang_muka_hdr h ON h.pum_bon_nomor = k.bon_nomor
       WHERE k.bon_nomor = ?
     `,
@@ -56,9 +56,9 @@ const getFormData = async (nomor) => {
       IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mb.mb_jenis, NULL) AS mb_jenis_item,
       IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mb.mb_cab, NULL) AS mb_cab_item,
       IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mbd.mbd_brg_kode, NULL) AS mb_kdbrg
-    FROM financenew.tkasbonitem k
-    LEFT JOIN financenew.trekening r ON r.rek_kode = k.bond_rek_kode
-    LEFT JOIN financenew.tcostcenter c ON c.cc_kode = k.bond_cc_kode
+    FROM finance.tkasbonitem k
+    LEFT JOIN finance.trekening r ON r.rek_kode = k.bond_rek_kode
+    LEFT JOIN finance.tcostcenter c ON c.cc_kode = k.bond_cc_kode
     LEFT JOIN tgarmenmintabeli_hdr mb
       ON k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN' AND mb.mb_nomor = k.bond_ref_nomor
     LEFT JOIN tgarmenmintabeli_dtl mbd
@@ -115,7 +115,7 @@ const getFormData = async (nomor) => {
     };
   });
 
-  // ── Detail GA dari ga2new.tpermintaan_dtl (diisi otomatis oleh
+  // ── Detail GA dari ga2.tpermintaan_dtl (diisi otomatis oleh
   // saveRealisasi PUM, atau via F1 manual di sini) ──
   const [gaRows] = await db.query(
     `
@@ -135,14 +135,14 @@ const getFormData = async (nomor) => {
       d.pmd_tanggal_buyed, d.pmd_rek_kode, d.pmd_status_finance,
       r.rek_nama, d.pmd_cc_kode, c.cc_nama, d.pmd_dcnama,
       j.pjh_cc_kode, j.pjh_cc_dcnama, pcc.cc_nama AS pjh_cc_nama
-    FROM financenew.tkasbon k
-    INNER JOIN ga2new.tpermintaan_dtl d ON d.pmd_bon = k.bon_nomor
-    INNER JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
-    INNER JOIN ga2new.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
-    INNER JOIN ga2new.peminta p ON p.nik = j.pjh_nik
-    LEFT JOIN financenew.trekening r ON r.rek_kode = d.pmd_rek_kode
-    LEFT JOIN financenew.tcostcenter c ON c.cc_kode = d.pmd_cc_kode
-    LEFT JOIN financenew.tcostcenter pcc ON pcc.cc_kode = j.pjh_cc_kode
+    FROM finance.tkasbon k
+    INNER JOIN ga2.tpermintaan_dtl d ON d.pmd_bon = k.bon_nomor
+    INNER JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
+    INNER JOIN ga2.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
+    INNER JOIN ga2.peminta p ON p.nik = j.pjh_nik
+    LEFT JOIN finance.trekening r ON r.rek_kode = d.pmd_rek_kode
+    LEFT JOIN finance.tcostcenter c ON c.cc_kode = d.pmd_cc_kode
+    LEFT JOIN finance.tcostcenter pcc ON pcc.cc_kode = j.pjh_cc_kode
     WHERE h.pmt_approval = 1 AND d.pmd_tanggal_approved IS NOT NULL
       AND k.bon_nomor = ?
     ORDER BY d.pmd_nourut
@@ -241,9 +241,9 @@ const getFormData = async (nomor) => {
         IFNULL(m.mb_cab, v.iv_cab)) AS cab_item,
       IF(k.bond2_link='','',
         IFNULL(m.mb_nomor,'')) AS mb
-    FROM financenew.tkasbonitem2 k
-    LEFT JOIN financenew.trekening r ON r.rek_kode = k.bond2_rek_kode
-    LEFT JOIN financenew.tcostcenter c ON c.cc_kode = k.bond2_cc_kode
+    FROM finance.tkasbonitem2 k
+    LEFT JOIN finance.trekening r ON r.rek_kode = k.bond2_rek_kode
+    LEFT JOIN finance.tcostcenter c ON c.cc_kode = k.bond2_cc_kode
     LEFT JOIN tgarmenmintabeli_hdr m ON m.mb_nomor = k.bond2_link
     LEFT JOIN tgarmeniv_hdr v ON v.iv_nomor = k.bond2_link
     WHERE k.bond2_nomor = ?
@@ -319,7 +319,7 @@ const getAccountOptions = async (jenis, cabang) => {
 
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM financenew.trekening WHERE ${where} ORDER BY rek_kode`,
+     FROM finance.trekening WHERE ${where} ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -328,7 +328,7 @@ const getAccountOptions = async (jenis, cabang) => {
 const getAllAccounts = async () => {
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM financenew.trekening ORDER BY rek_kode`,
+     FROM finance.trekening ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -336,7 +336,7 @@ const getAllAccounts = async () => {
 const getAccountByKode = async (kode) => {
   const [[row]] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM financenew.trekening WHERE rek_kode = ? AND rek_isaktif = 0`,
+     FROM finance.trekening WHERE rek_kode = ? AND rek_isaktif = 0`,
     [kode],
   );
   return row || null;
@@ -344,14 +344,14 @@ const getAccountByKode = async (kode) => {
 
 const getCostCenterOptions = async () => {
   const [rows] = await db.query(
-    `SELECT cc_kode AS kode, cc_nama AS nama FROM financenew.tcostcenter ORDER BY cc_nama`,
+    `SELECT cc_kode AS kode, cc_nama AS nama FROM finance.tcostcenter ORDER BY cc_nama`,
   );
   return rows;
 };
 
 const getDcOptions = async (cckode) => {
   const [rows] = await db.query(
-    `SELECT dc_kode AS kode, dc_nama AS nama FROM financenew.tcostcenteritem WHERE dc_kode=? ORDER BY dc_nama`,
+    `SELECT dc_kode AS kode, dc_nama AS nama FROM finance.tcostcenteritem WHERE dc_kode=? ORDER BY dc_nama`,
     [cckode],
   );
   return rows;
@@ -374,7 +374,7 @@ const getMaxNomorBkk = async (cabang, nomerator, conn) => {
   const prefix = `${cabang}-${nomerator}.${new Date().getFullYear()}.`;
   const [[row]] = await (conn || db).query(
     `SELECT IFNULL(MAX(CAST(RIGHT(jur_no,5) AS UNSIGNED)),0) AS max_val
-     FROM financenew.tjurnal WHERE jur_no LIKE ?`,
+     FROM finance.tjurnal WHERE jur_no LIKE ?`,
     [`${prefix}%`],
   );
   return `${prefix}${String(Number(row.max_val) + 1).padStart(5, "0")}`;
@@ -426,7 +426,7 @@ const saveData = async (payload, user) => {
       if (is_edit && noBkk) {
         await conn.query(
           `
-          UPDATE financenew.tjurnal SET
+          UPDATE finance.tjurnal SET
             jur_tanggal    = ?, jur_rek_kode   = ?, jur_nota       = ?,
             jur_penerima   = ?, jur_keterangan = ?, jur_otomatis   = 0,
             date_modified  = NOW(), user_modified  = ?
@@ -446,7 +446,7 @@ const saveData = async (payload, user) => {
         noBkk = await getMaxNomorBkk(cabang, nomerator, conn);
         await conn.query(
           `
-          INSERT INTO financenew.tjurnal
+          INSERT INTO finance.tjurnal
             (jur_no, jur_tanggal, jur_tipetransaksi, jur_keterangan,
              jur_nota, jur_penerima, jur_cabang, jur_rek_kode,
              jur_otomatis, date_create, user_create)
@@ -467,30 +467,28 @@ const saveData = async (payload, user) => {
       }
 
       await conn.query(
-        `UPDATE financenew.tkasbon SET bon_selesai=1, bon_jur_no=?, bon_rek_kode=? WHERE bon_nomor=?`,
+        `UPDATE finance.tkasbon SET bon_selesai=1, bon_jur_no=?, bon_rek_kode=? WHERE bon_nomor=?`,
         [noBkk, rek_kode, nomor],
       );
     } else {
       await conn.query(
-        `UPDATE financenew.tkasbon SET bon_selesai=1, bon_rek_kode=? WHERE bon_nomor=?`,
+        `UPDATE finance.tkasbon SET bon_selesai=1, bon_rek_kode=? WHERE bon_nomor=?`,
         [rek_kode, nomor],
       );
     }
 
     await conn.query(
-      `DELETE FROM financenew.tjurnal WHERE jur_otomatis=1 AND MID(jur_no,3,18)=?`,
+      `DELETE FROM finance.tjurnal WHERE jur_otomatis=1 AND MID(jur_no,3,18)=?`,
       [nomor],
     );
     if (noBkk) {
-      await conn.query(
-        `DELETE FROM financenew.tjurnalitem WHERE jurd_jur_no=?`,
-        [noBkk],
-      );
+      await conn.query(`DELETE FROM finance.tjurnalitem WHERE jurd_jur_no=?`, [
+        noBkk,
+      ]);
     }
-    await conn.query(
-      `DELETE FROM financenew.tkasbonitem2 WHERE bond2_nomor=?`,
-      [nomor],
-    );
+    await conn.query(`DELETE FROM finance.tkasbonitem2 WHERE bond2_nomor=?`, [
+      nomor,
+    ]);
     await conn.query(`DELETE FROM tpoexternal_dtl2 WHERE poed2_link=?`, [
       nomor,
     ]);
@@ -502,7 +500,7 @@ const saveData = async (payload, user) => {
       const firstVerified = detail.find((d) => d.verified && d.total > 0);
       await conn.query(
         `
-        INSERT INTO financenew.tjurnalitem
+        INSERT INTO finance.tjurnalitem
           (jurd_jur_no, jurd_rek_kode, jurd_kredit, jurd_uraian,
            jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening, jurd_atasnama)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -526,11 +524,11 @@ const saveData = async (payload, user) => {
       const [[maxPjh]] = await conn.query(
         `
         SELECT IFNULL(MAX(x.nomer),0) AS max_val FROM (
-          SELECT d.pmd_nourut AS nomer FROM ga2new.tpermintaan_dtl d
-          LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor=d.pmd_pmt_nomor
+          SELECT d.pmd_nourut AS nomer FROM ga2.tpermintaan_dtl d
+          LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor=d.pmd_pmt_nomor
           WHERE h.pmt_pjh_nomor=?
           UNION
-          SELECT bond_nourut AS nomer FROM financenew.tkasbonitem WHERE bond_nomor=?
+          SELECT bond_nourut AS nomer FROM finance.tkasbonitem WHERE bond_nomor=?
         ) x
       `,
         [pjh_nomor, nomor],
@@ -553,7 +551,7 @@ const saveData = async (payload, user) => {
 
       if (d.pmt && d.pmt !== cpmt) {
         await conn.query(
-          `UPDATE ga2new.tpermintaan_hdr SET pmt_approval=1, pmt_buyed=1 WHERE pmt_nomor=?`,
+          `UPDATE ga2.tpermintaan_hdr SET pmt_approval=1, pmt_buyed=1 WHERE pmt_nomor=?`,
           [d.pmt],
         );
         cpmt = d.pmt;
@@ -561,7 +559,7 @@ const saveData = async (payload, user) => {
 
       if (d.pjh) {
         await conn.query(
-          `UPDATE financenew.tkasbon SET bon_pjh_nomor = ? WHERE bon_nomor = ? AND (bon_pjh_nomor = '' OR bon_pjh_nomor IS NULL)`,
+          `UPDATE finance.tkasbon SET bon_pjh_nomor = ? WHERE bon_nomor = ? AND (bon_pjh_nomor = '' OR bon_pjh_nomor IS NULL)`,
           [d.pjh, nomor],
         );
       }
@@ -571,7 +569,7 @@ const saveData = async (payload, user) => {
           // ⬅ DIUBAH: tambah pmd_status_finance = NULL — item ditolak/
           // tidak diverifikasi di Penyelesaian, bersihkan status yang
           // sebelumnya MENUNGGU_PEMBELIAN.
-          let sql = `UPDATE ga2new.tpermintaan_dtl SET
+          let sql = `UPDATE ga2.tpermintaan_dtl SET
             pmd_qty_buyed=0, pmd_nilai_buyed=0, pmd_verified_buyed=0, pmd_bon=?,
             pmd_status_finance=NULL`;
           if (d.gabrg === 0)
@@ -586,7 +584,7 @@ const saveData = async (payload, user) => {
           // frontend, supaya selalu konsisten dengan nilai qty minta asli
           // di database. qty_riil <= 0 dianggap belum dipenuhi (jaga-jaga
           // data korup/kosong, bukan dianggap "otomatis penuh").
-          let sql = `UPDATE ga2new.tpermintaan_dtl SET
+          let sql = `UPDATE ga2.tpermintaan_dtl SET
             pmd_qty_buyed=?, pmd_nilai_buyed=?, pmd_verified_buyed=?,
             pmd_rek_kode=?, pmd_cc_kode=?, pmd_dcnama=?, pmd_bon=?,
             pmd_tanggal_approved=CURDATE(), pmd_user_approved=?,
@@ -621,7 +619,7 @@ const saveData = async (payload, user) => {
       if (d.ga === 2) {
         await conn.query(
           `
-          UPDATE financenew.tkasbonitem SET
+          UPDATE finance.tkasbonitem SET
             bond_qty_realisasi=?, bond_nominal_realisasi=?,
             bond_rek_kode=?, bond_cc_kode=?, bond_dcnama=?,
             bond_verified=?,
@@ -657,7 +655,7 @@ const saveData = async (payload, user) => {
 
         await conn.query(
           `
-            INSERT INTO financenew.tkasbonitem2
+            INSERT INTO finance.tkasbonitem2
               (bond2_nomor, bond2_nourut,
               ${hasPjhLink ? "bond2_link, bond2_brg_kode," : ""}
               bond2_nama, bond2_spesifikasi, bond2_satuan,
@@ -702,7 +700,7 @@ const saveData = async (payload, user) => {
                 conn,
               );
               await conn.query(
-                `UPDATE financenew.tkasbon SET bon_byrvoucher=? WHERE bon_nomor=?`,
+                `UPDATE finance.tkasbon SET bon_byrvoucher=? WHERE bon_nomor=?`,
                 [currentByrVoucher, nomor],
               );
             }
@@ -748,7 +746,7 @@ const saveData = async (payload, user) => {
 
         await conn.query(
           `
-          INSERT INTO financenew.tjurnalitem
+          INSERT INTO finance.tjurnalitem
             (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
              jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
              jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening, jurd_atasnama)
@@ -776,7 +774,7 @@ const saveData = async (payload, user) => {
           const noBkm = `${String(autoCounter).padStart(2, "0")}${nomor}`;
           await conn.query(
             `
-            INSERT INTO financenew.tjurnal
+            INSERT INTO finance.tjurnal
               (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang,
                jur_penerima, jur_keterangan, jur_rek_kode,
                jur_otomatis, date_create, user_create)
@@ -793,12 +791,12 @@ const saveData = async (payload, user) => {
             ],
           );
           await conn.query(
-            `INSERT INTO financenew.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
+            `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
             VALUES (?, ?, ?, ?)`,
             [noBkm, d.rekkode, d.harga, d.uraian],
           );
           await conn.query(
-            `INSERT INTO financenew.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
+            `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
             VALUES (?, 'BKM', 1, ?, ?, ?)`,
             [noBkm, keterangan || "", d.harga, rek_kode],
           );
@@ -812,7 +810,7 @@ const saveData = async (payload, user) => {
           const noBbm = `${String(autoCounter).padStart(2, "0")}${nomor}`;
           await conn.query(
             `
-            INSERT INTO financenew.tjurnal
+            INSERT INTO finance.tjurnal
               (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang,
                jur_penerima, jur_keterangan, jur_rek_kode,
                jur_otomatis, date_create, user_create)
@@ -829,12 +827,12 @@ const saveData = async (payload, user) => {
             ],
           );
           await conn.query(
-            `INSERT INTO financenew.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
+            `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
             VALUES (?, ?, ?, ?)`,
             [noBbm, d.rekkode, d.harga, d.uraian],
           );
           await conn.query(
-            `INSERT INTO financenew.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
+            `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
             VALUES (?, 'BBM', 1, ?, ?, ?)`,
             [noBbm, keterangan || "", d.harga, rek_kode],
           );
@@ -847,13 +845,13 @@ const saveData = async (payload, user) => {
     );
     for (const pmt of affectedPmt) {
       const [[sisa]] = await conn.query(
-        `SELECT COUNT(*) AS cnt FROM ga2new.tpermintaan_dtl
+        `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
      WHERE pmd_pmt_nomor = ? AND pmd_bon = '' AND pmd_tanggal_reject IS NULL`,
         [pmt],
       );
       if (Number(sisa.cnt) === 0) {
         await conn.query(
-          `UPDATE ga2new.tpermintaan_hdr SET pmt_close = 1 WHERE pmt_nomor = ?`,
+          `UPDATE ga2.tpermintaan_hdr SET pmt_close = 1 WHERE pmt_nomor = ?`,
           [pmt],
         );
       }
@@ -873,8 +871,8 @@ const getListPengajuanGA = async (cabang) => {
   let sql = `
     SELECT j.pjh_nomor AS nomor, DATE_FORMAT(j.pjh_tanggal,"%d-%m-%Y") AS tanggal,
       j.pjh_ke, j.pjh_user_kode AS nama, j.pjh_keterangan AS keterangan
-    FROM ga2new.tpengajuan2_hdr j
-    LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = j.pjh_nomor
+    FROM ga2.tpengajuan2_hdr j
+    LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = j.pjh_nomor
     WHERE (
         j.pjh_nonga = 0
         OR UPPER(j.pjh_jenis_permintaan) = 'PERMINTAAN BARANG'
@@ -884,7 +882,7 @@ const getListPengajuanGA = async (cabang) => {
         OR (
           h.pmt_close = 0
           AND EXISTS (
-            SELECT 1 FROM ga2new.tpermintaan_dtl d
+            SELECT 1 FROM ga2.tpermintaan_dtl d
             WHERE d.pmd_pmt_nomor = h.pmt_nomor AND d.pmd_bon = ''
           )
         )
@@ -912,10 +910,10 @@ const getDetailPengajuanGA = async (pjhNomor) => {
       d.pmd_status_finance,
       j.pjh_jenis_permintaan, j.pjh_nonga,
       d.pmd_cc_kode, d.pmd_dcnama, cc.cc_nama
-    FROM ga2new.tpermintaan_dtl d
-    INNER JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
-    LEFT JOIN ga2new.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
-    LEFT JOIN financenew.tcostcenter cc ON cc.cc_kode = d.pmd_cc_kode
+    FROM ga2.tpermintaan_dtl d
+    INNER JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
+    LEFT JOIN ga2.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
+    LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.pmd_cc_kode
     WHERE h.pmt_pjh_nomor = ?
       AND d.pmd_bon = ''
     ORDER BY d.pmd_nourut`,
@@ -972,7 +970,7 @@ const updateStatusFinance = async (pmtNomor, nourut, status) => {
   if (!validStatus.includes(status)) throw new Error("Status tidak valid.");
 
   const [result] = await db.query(
-    `UPDATE ga2new.tpermintaan_dtl SET pmd_status_finance = ?
+    `UPDATE ga2.tpermintaan_dtl SET pmd_status_finance = ?
      WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
     [status, pmtNomor, nourut],
   );

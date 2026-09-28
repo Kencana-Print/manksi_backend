@@ -1,6 +1,6 @@
 const db = require("../../config/database");
 
-// ── Lookup account (KAS/BANK) — ported, prefix financenew. ──
+// ── Lookup account (KAS/BANK) — ported, prefix finance. ──
 const getAccountOptions = async (jenis, cabang) => {
   const effectiveCabang = cabang === "HO-" ? "P01" : cabang;
   let whereClause;
@@ -14,7 +14,7 @@ const getAccountOptions = async (jenis, cabang) => {
   }
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM financenew.trekening WHERE ${whereClause} ORDER BY rek_kode`,
+     FROM finance.trekening WHERE ${whereClause} ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -129,12 +129,12 @@ const getDetailForRealisasi = async (pumNomor) => {
   return { ...hdr, detail };
 };
 
-// ── Generate nomor bon — ported, prefix financenew. ──
+// ── Generate nomor bon — ported, prefix finance. ──
 const getMaxNomor = async (cabang, conn) => {
   const prefix = `${cabang}-BON.${new Date().getFullYear()}.`;
   const [[row]] = await (conn || db).query(
     `SELECT IFNULL(MAX(CAST(RIGHT(bon_nomor,5) AS UNSIGNED)),0) AS max_val
-     FROM financenew.tkasbon WHERE bon_nomor LIKE ?`,
+     FROM finance.tkasbon WHERE bon_nomor LIKE ?`,
     [`${prefix}%`],
   );
   return `${prefix}${String(Number(row.max_val) + 1).padStart(5, "0")}`;
@@ -171,7 +171,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
     const bonNomor = await getMaxNomor(hdr.pum_cabang, conn);
 
     await conn.query(
-      `INSERT INTO financenew.tkasbon
+      `INSERT INTO finance.tkasbon
         (bon_nomor, bon_tanggal, bon_pjh_nomor, bon_jenis, bon_nota, bon_nominal,
          bon_penerima, bon_cabang, bon_rek_kode, bon_keterangan, date_create, user_create)
        VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
@@ -196,14 +196,14 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       if (d.sumber === "PENGAJUAN_DANA" && d.pmt_nomor) {
         if (isAcc) {
           await conn.query(
-            `UPDATE ga2new.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
+            `UPDATE ga2.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
           // ⬅ DIUBAH: tambah pmd_status_finance = 'MENUNGGU_PEMBELIAN' —
           // sudah dicairkan Finance, tinggal menunggu Purchasing belanja
           // di tahap Penyelesaian.
           await conn.query(
-            `UPDATE ga2new.tpermintaan_dtl SET
+            `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_approved = CURDATE(), pmd_user_approved = ?, pmd_dana_approved = ?,
                pmd_tanggal_reject = NULL, pmd_kode_reject = 0, pmd_user_reject = '', pmd_bon = ?,
                pmd_status_finance = 'MENUNGGU_PEMBELIAN'
@@ -220,7 +220,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           // ⬅ DIUBAH: item ditolak Finance — bersihkan status finance,
           // jangan biarkan label PENDING nyangkut padahal sudah ditolak.
           await conn.query(
-            `UPDATE ga2new.tpermintaan_dtl SET
+            `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_reject = CURDATE(), pmd_kode_reject = 2, pmd_user_reject = ?,
                pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0, pmd_bon = ?,
                pmd_status_finance = NULL
@@ -231,13 +231,13 @@ const saveRealisasi = async (pumNomor, payload, user) => {
 
         // Close header hanya kalau SEMUA item di permintaan ini sudah dispositioned
         const [[remaining]] = await conn.query(
-          `SELECT COUNT(*) AS cnt FROM ga2new.tpermintaan_dtl
+          `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
            WHERE pmd_pmt_nomor = ? AND pmd_tanggal_approved IS NULL AND pmd_tanggal_reject IS NULL`,
           [d.pmt_nomor],
         );
         if (Number(remaining.cnt) === 0) {
           await conn.query(
-            `UPDATE ga2new.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
+            `UPDATE ga2.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
         }
@@ -249,7 +249,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
         // bond_ref_tipe/bond_ref_nomor menyimpan nomor sumber supaya
         // form Penyelesaian tahu No.Pengajuan-nya tanpa input ulang.
         await conn.query(
-          `INSERT INTO financenew.tkasbonitem
+          `INSERT INTO finance.tkasbonitem
             (bond_nomor, bond_nourut, bond_nama, bond_spesifikasi, bond_satuan,
              bond_qty, bond_nominal, bond_verified, bond_ref_tipe, bond_ref_nomor, bond_ref_nourut)
            VALUES (?, ?, ?, '', ?, ?, 0, 0, ?, ?, ?)`,
@@ -301,7 +301,7 @@ const getPrintData = async (pumNomor) => {
             k.bon_tanggal, DATE_FORMAT(k.bon_tanggal, '%d-%m-%Y') AS bon_tanggal_fmt,
             k.bon_nota, k.bon_penerima, k.bon_keterangan, k.bon_pjh_nomor
      FROM tpengajuan_uang_muka_hdr h
-     LEFT JOIN financenew.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+     LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
      WHERE h.pum_nomor = ?`,
     [pumNomor],
   );

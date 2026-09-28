@@ -21,7 +21,7 @@ const generateMntNomor = async (tanggal, conn) => {
   const yyyymm = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
   const [[row]] = await (conn || db).query(
     `SELECT IFNULL(MAX(CAST(RIGHT(pmt_nomor, 4) AS UNSIGNED)), 0) AS maxVal
-     FROM ga2new.tpermintaan_hdr WHERE pmt_nomor LIKE ?`,
+     FROM ga2.tpermintaan_hdr WHERE pmt_nomor LIKE ?`,
     [`MNT.${yyyymm}.%`],
   );
   const next = Number(row.maxVal) + 1;
@@ -31,7 +31,7 @@ const generateMntNomor = async (tanggal, conn) => {
 const ensurePermintaanDana = async (pjhNomor, conn) => {
   const c = conn || db;
   const [[existing]] = await c.query(
-    `SELECT pmt_nomor FROM ga2new.tpermintaan_hdr WHERE pmt_pjh_nomor = ?`,
+    `SELECT pmt_nomor FROM ga2.tpermintaan_hdr WHERE pmt_pjh_nomor = ?`,
     [pjhNomor],
   );
   if (existing) return existing.pmt_nomor;
@@ -39,14 +39,14 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
   // ⬅ DIUBAH: header sekarang cuma dipakai buat pjh_tanggal — pjh_cc_kode/
   // pjh_cc_dcnama TIDAK lagi diambil dari sini, karena CC sudah per item.
   const [[header]] = await c.query(
-    `SELECT pjh_tanggal FROM ga2new.tpengajuan2_hdr WHERE pjh_nomor = ?`,
+    `SELECT pjh_tanggal FROM ga2.tpengajuan2_hdr WHERE pjh_nomor = ?`,
     [pjhNomor],
   );
   if (!header) throw new Error("Pengajuan tidak ditemukan.");
 
   const pmtNomor = await generateMntNomor(header.pjh_tanggal, c);
   await c.query(
-    `INSERT INTO ga2new.tpermintaan_hdr (pmt_nomor, pmt_tanggal, pmt_pjh_nomor, pmt_keterangan)
+    `INSERT INTO ga2.tpermintaan_hdr (pmt_nomor, pmt_tanggal, pmt_pjh_nomor, pmt_keterangan)
      VALUES (?, CURDATE(), ?, '')`,
     [pmtNomor, pjhNomor],
   );
@@ -55,13 +55,13 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
   const [items] = await c.query(
     `SELECT pjd_nourut, pjd_nama, pjd_spesifikasi, pjd_qty, pjd_nilai, pjd_satuan,
             pjd_kegunaan, pjd_jobkp, pjd_kode, pjd_cc_kode, pjd_cc_dcnama
-     FROM ga2new.tpengajuan2_dtl
+     FROM ga2.tpengajuan2_dtl
      WHERE pjd_pjh_nomor = ? AND pjd_nama <> ''`,
     [pjhNomor],
   );
   for (const item of items) {
     await c.query(
-      `INSERT INTO ga2new.tpermintaan_dtl
+      `INSERT INTO ga2.tpermintaan_dtl
          (pmd_pmt_nomor, pmd_nourut, pmd_nama, pmd_spesifikasi, pmd_qty, pmd_qty_riil,
           pmd_satuan, pmd_nilai, pmd_kegunaan, pmd_jobkp, pmd_kode,
           pmd_cc_kode, pmd_dcnama)
@@ -128,13 +128,13 @@ const createPengajuan = async (
         pmtNomor = await ensurePermintaanDana(nomorSumber, conn);
         const [[jml]] = await conn.query(
           `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total
-           FROM ga2new.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
+           FROM ga2.tpengajuan2_dtl WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
           [nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
 
         await conn.query(
-          `UPDATE ga2new.tpermintaan_dtl SET pmd_status_finance = 'PENDING'
+          `UPDATE ga2.tpermintaan_dtl SET pmd_status_finance = 'PENDING'
            WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
           [pmtNomor, it.itemNourut],
         );
@@ -220,13 +220,13 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
       k.bon_jur_no AS NoBukti,
       k.bon_tanggal AS BonTanggal,
       IF(k.bon_jur_no='', 0,
-        IFNULL((SELECT SUM(d.jurd_kredit) FROM financenew.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
+        IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
       ) AS Terpakai,
       DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
       k.user_create AS DibuatOleh
     FROM tpengajuan_uang_muka_hdr h
-    LEFT JOIN financenew.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
-    LEFT JOIN financenew.trekening r ON r.rek_kode = k.bon_rek_kode
+    LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+    LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
     WHERE 1=1
   `;
   const params = [];

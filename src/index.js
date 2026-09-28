@@ -162,6 +162,8 @@ const uangMukaRoutes = require("./routes/pembelian/uangMukaRoutes");
 const pengajuanUangMukaRoutes = require("./routes/pembelian/pengajuanUangMukaRoutes");
 const uangMukaRealisasiRoutes = require("./routes/pembelian/uangMukaRealisasiRoutes");
 const uangMukaPenyelesaianRoutes = require("./routes/pembelian/uangMukaPenyelesaianRoutes");
+const pengajuanTransferRoutes = require("./routes/pembelian/pengajuanTransferRoutes");
+const pengajuanTransferFormRoutes = require("./routes/pembelian/pengajuanTransferFormRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -215,6 +217,21 @@ const pelunasanFormRoutes = require("./routes/piutang/pelunasanFormRoutes");
 const pengajuanDanaRoutes = require("./routes/piutang/pengajuanDanaRoutes");
 const pengajuanDanaFormRoutes = require("./routes/piutang/pengajuanDanaFormRoutes");
 const costCenterRoutes = require("./routes/piutang/costCenterRoutes");
+const bkmRoutes = require("./routes/piutang/bkmRoutes");
+const bkmFormRoutes = require("./routes/piutang/bkmFormRoutes");
+const bkkRoutes = require("./routes/piutang/bkkRoutes");
+const bkkFormRoutes = require("./routes/piutang/bkkFormRoutes");
+const bbmRoutes = require("./routes/piutang/bbmRoutes");
+const bbmFormRoutes = require("./routes/piutang/bbmFormRoutes");
+const bbkRoutes = require("./routes/piutang/bbkRoutes");
+const bbkFormRoutes = require("./routes/piutang/bbkFormRoutes");
+const jurnalUmumRoutes = require("./routes/piutang/jurnalUmumRoutes");
+const jurnalUmumFormRoutes = require("./routes/piutang/jurnalUmumFormRoutes");
+const rekonsiliasiBankRoutes = require("./routes/piutang/rekonsiliasiBankRoutes");
+const terimaSetoranRoutes = require("./routes/piutang/terimaSetoranRoutes");
+const terimaSetoranFormRoutes = require("./routes/piutang/terimaSetoranFormRoutes");
+const voucherPembayaranRoutes = require("./routes/piutang/voucherPembayaranRoutes");
+const voucherPembayaranFormRoutes = require("./routes/piutang/voucherPembayaranFormRoutes");
 
 //Laporan Routes
 //Laporan Gudang Garmen
@@ -301,6 +318,15 @@ const rekapPiutangRoutes = require("./routes/laporan/piutang/rekapPiutangRoutes"
 const kartuPiutangRoutes = require("./routes/laporan/piutang/kartuPiutangRoutes");
 const daftarPenerimaanRoutes = require("./routes/laporan/piutang/daftarPenerimaanRoutes");
 const cekGagalLinkRoutes = require("./routes/laporan/piutang/cekGagalLinkRoutes");
+
+// Laporan Finance
+const listJurnalRoutes = require("./routes/laporan/finance/listJurnalRoutes");
+const bukuBesarRoutes = require("./routes/laporan/finance/bukuBesarRoutes");
+const kasbonBelumSelesaiRoutes = require("./routes/laporan/finance/kasbonBelumSelesaiRoutes");
+const rekonsiliasiBankLaporanRoutes = require("./routes/laporan/finance/rekonsiliasiBankRoutes");
+const stokFinanceRoutes = require("./routes/laporan/finance/stokFinanceRoutes");
+const daftarHutangRoutes = require("./routes/laporan/finance/daftarHutangRoutes");
+const biayaPerDivisiRoutes = require("./routes/laporan/finance/biayaPerDivisiRoutes");
 
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
@@ -434,6 +460,8 @@ app.use("/api/pembelian/uang-muka", uangMukaRoutes);
 app.use("/api/pembelian/pengajuan-uang-muka", pengajuanUangMukaRoutes);
 app.use("/api/pembelian/uang-muka-realisasi", uangMukaRealisasiRoutes);
 app.use("/api/pembelian/uang-muka-penyelesaian", uangMukaPenyelesaianRoutes);
+app.use("/api/pembelian/pengajuan-transfer", pengajuanTransferRoutes);
+app.use("/api/pembelian/pengajuan-transfer-form", pengajuanTransferFormRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
@@ -633,6 +661,21 @@ app.use("/api/piutang/pelunasan-form", pelunasanFormRoutes);
 app.use("/api/piutang/pengajuan-dana", pengajuanDanaRoutes);
 app.use("/api/piutang/pengajuan-dana-form", pengajuanDanaFormRoutes);
 app.use("/api/piutang/cost-center", costCenterRoutes);
+app.use("/api/piutang/bkm", bkmRoutes);
+app.use("/api/piutang/bkm-form", bkmFormRoutes);
+app.use("/api/piutang/bkk", bkkRoutes);
+app.use("/api/piutang/bkk-form", bkkFormRoutes);
+app.use("/api/piutang/bbm", bbmRoutes);
+app.use("/api/piutang/bbm-form", bbmFormRoutes);
+app.use("/api/piutang/bbk", bbkRoutes);
+app.use("/api/piutang/bbk-form", bbkFormRoutes);
+app.use("/api/piutang/jurnal-umum", jurnalUmumRoutes);
+app.use("/api/piutang/jurnal-umum-form", jurnalUmumFormRoutes);
+app.use("/api/piutang/rekonsiliasi-bank", rekonsiliasiBankRoutes);
+app.use("/api/piutang/terima-setoran", terimaSetoranRoutes);
+app.use("/api/piutang/terima-setoran-form", terimaSetoranFormRoutes);
+app.use("/api/piutang/voucher-pembayaran", voucherPembayaranRoutes);
+app.use("/api/piutang/voucher-pembayaran-form", voucherPembayaranFormRoutes);
 
 app.use(
   "/api/laporan/gudang-garmen/stok-bahan-barcode",
@@ -797,6 +840,17 @@ app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);
 app.use("/api/laporan/piutang/kartu-piutang", kartuPiutangRoutes);
 app.use("/api/laporan/piutang/daftar-penerimaan", daftarPenerimaanRoutes);
 app.use("/api/laporan/piutang/cek-gagal-link", cekGagalLinkRoutes);
+
+app.use("/api/laporan/finance/list-jurnal", listJurnalRoutes);
+app.use("/api/laporan/finance/buku-besar", bukuBesarRoutes);
+app.use("/api/laporan/finance/kasbon-belum-selesai", kasbonBelumSelesaiRoutes);
+app.use(
+  "/api/laporan/finance/rekonsiliasi-bank",
+  rekonsiliasiBankLaporanRoutes,
+);
+app.use("/api/laporan/finance/stok-finance", stokFinanceRoutes);
+app.use("/api/laporan/finance/daftar-hutang", daftarHutangRoutes);
+app.use("/api/laporan/finance/biaya-per-divisi", biayaPerDivisiRoutes);
 
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
