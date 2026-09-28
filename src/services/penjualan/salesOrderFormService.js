@@ -59,7 +59,7 @@ const getPpicTurunanInfo = async (conn, nomor) => {
 
   const [ubahPinRows] = await runner.query(
     `SELECT pin_urut FROM tspk_pin5
-     WHERE pin_trs="SO" AND pin_jenis="UBAH" AND pin_nomor=?
+     WHERE pin_trs="SO" AND pin_jenis IN ("UBAH", "GANTI") AND pin_nomor=?
        AND pin_acc="Y" AND pin_dipakai=""
      ORDER BY pin_urut DESC LIMIT 1`,
     [nomor],
