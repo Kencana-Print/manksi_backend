@@ -127,6 +127,34 @@ const getPettyCashOptions = async (search = "") => {
   return rows;
 };
 
+// ── BKK (F1) — cari nomor BKK yang mau dipanggil ke Pengajuan Transfer.
+// Exclude BKK yang sudah pernah dipakai sebagai No. Transaksi di
+// Pengajuan Transfer manapun (pola exclude sama dengan Petty Cash di atas).
+const getBkkOptions = async (search = "") => {
+  const [rows] = await db.query(
+    `
+    SELECT h.jur_no AS nomor,
+      DATE_FORMAT(h.jur_tanggal,'%Y-%m-%d') AS tanggal,
+      h.jur_penerima AS penerima,
+      h.jur_keterangan AS keterangan,
+      IFNULL((
+        SELECT SUM(jurd_kredit) FROM finance.tjurnalitem
+        WHERE jurd_jur_no = h.jur_no
+      ), 0) AS nominal
+    FROM finance.tjurnal h
+    WHERE h.jur_tipetransaksi = 'BKK'
+      AND h.jur_no NOT IN (
+        SELECT d.ptd_trs FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_trs <> ''
+      )
+      AND (h.jur_no LIKE ? OR h.jur_penerima LIKE ? OR h.jur_keterangan LIKE ?)
+    ORDER BY h.jur_no DESC
+  `,
+    [`%${search}%`, `%${search}%`, `%${search}%`],
+  );
+  return rows.map((r) => ({ ...r, nominal: Number(r.nominal) }));
+};
+
 const getAccountAll = async (search = "") => {
   const [rows] = await db.query(
     `
@@ -844,6 +872,7 @@ module.exports = {
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,
+  getBkkOptions,
   getDetailForm,
   saveData,
   getPrintData,

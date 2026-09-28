@@ -89,6 +89,16 @@ const getPettyCashOptions = async (req, res) => {
   }
 };
 
+const getBkkOptions = async (req, res) => {
+  try {
+    const { search } = req.query;
+    const data = await svc.getBkkOptions(search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getDetailForm = async (req, res) => {
   try {
     const data = await svc.getDetailForm(req.query.nomor);
@@ -160,6 +170,7 @@ module.exports = {
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,
+  getBkkOptions,
   getDetailForm,
   save,
   update,

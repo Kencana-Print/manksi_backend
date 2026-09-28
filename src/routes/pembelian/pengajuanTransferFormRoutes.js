@@ -63,6 +63,12 @@ router.get(
   ctrl.getPettyCashOptions,
 );
 router.get(
+  "/bkk-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getBkkOptions,
+);
+router.get(
   "/detail",
   verifyToken,
   checkPermission(MENU_ID, "view"),

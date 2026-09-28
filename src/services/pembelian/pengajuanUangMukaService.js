@@ -302,11 +302,14 @@ const getDetail = async (nomor) => {
 };
 
 // ── Data cetak Bukti Pengajuan Uang Muka — dari PUM sebelum Realisasi ──
-const getPrintData = async (nomor, user) => {
+const getPrintData = async (nomor) => {
   const [[hdr]] = await db.query(
-    `SELECT pum_nomor, DATE_FORMAT(pum_tanggal,'%d-%m-%Y') AS tanggal_fmt,
-            pum_keterangan, pum_cabang, pum_total_nominal, pum_user_create
-     FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ?`,
+    `SELECT h.pum_nomor, DATE_FORMAT(h.pum_tanggal,'%d-%m-%Y') AS tanggal_fmt,
+            h.pum_keterangan, h.pum_cabang, h.pum_total_nominal, h.pum_user_create,
+            IFNULL(u.user_nama, h.pum_user_create) AS pemohon
+     FROM tpengajuan_uang_muka_hdr h
+     LEFT JOIN tuser u ON u.user_kode = h.pum_user_create
+     WHERE h.pum_nomor = ?`,
     [nomor],
   );
   if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
@@ -331,7 +334,7 @@ const getPrintData = async (nomor, user) => {
     tanggal_fmt: hdr.tanggal_fmt,
     keterangan: hdr.pum_keterangan || "",
     cabang: hdr.pum_cabang,
-    pemohon: user?.nama || user?.kode || hdr.pum_user_create,
+    pemohon: hdr.pemohon,
     detail,
     totalDiajukan: Number(hdr.pum_total_nominal) || 0,
   };

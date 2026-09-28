@@ -3,12 +3,14 @@ const uangMukaService = require("../../services/pembelian/uangMukaService");
 const getOutstanding = async (req, res) => {
   try {
     const { search = "", startDate, endDate, page = 1, limit = 25 } = req.query;
+    const cabang = req.user?.cabang || "";
     const result = await uangMukaService.getOutstanding({
       search,
       startDate,
       endDate,
       page: Number(page),
       limit: Number(limit),
+      cabang,
     });
     res.json(result);
   } catch (err) {
