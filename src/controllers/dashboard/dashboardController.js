@@ -9,6 +9,18 @@ const getSpkUrgent = async (req, res) => {
   }
 };
 
+const getSaldoKas = async (req, res) => {
+  try {
+    const data = await service.getSaldoKas(req.user);
+    res.status(200).json({
+      success: true,
+      data: data ?? { Cabang: null, Saldo: 0, JumlahRekening: 0, Rekening: [] },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPenawaranSummary = async (req, res) => {
   try {
     const data = await service.getPenawaranSummary(req.user);
@@ -1105,6 +1117,7 @@ const getBufferKaosanList = async (req, res) => {
 
 module.exports = {
   getSpkUrgent,
+  getSaldoKas,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,

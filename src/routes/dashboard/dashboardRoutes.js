@@ -6,6 +6,7 @@ const { verifyToken } = require("../../middleware/authMiddleware");
 // Semua route dashboard hanya butuh verifyToken
 // (tidak perlu checkPermission — dashboard bukan menu ERP)
 router.get("/spk-urgent", verifyToken, controller.getSpkUrgent);
+router.get("/saldo-kas", verifyToken, controller.getSaldoKas);
 router.get("/penawaran-summary", verifyToken, controller.getPenawaranSummary);
 router.get(
   "/penawaran-belum-spk",

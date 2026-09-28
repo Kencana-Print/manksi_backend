@@ -82,6 +82,49 @@ const getSpkUrgent = async (user) => {
   return rows;
 };
 
+const getSaldoKas = async (user) => {
+  const bagian = user?.bagian;
+  const allowed = ["FINANCE", "PEMBELIAN"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  let cabang = user?.cabang;
+  if (!cabang || cabang === "HO-") cabang = "P01";
+
+  const [rekRows] = await db.query(
+    `SELECT rek_kode, rek_nama
+     FROM finance.trekening
+     WHERE rek_isaktif = 0
+       AND rek_cabang = ?
+       AND rek_nama LIKE '%KAS%'
+     ORDER BY rek_kode`,
+    [cabang],
+  );
+
+  if (!rekRows.length) {
+    return { Cabang: cabang, Saldo: 0, JumlahRekening: 0, Rekening: [] };
+  }
+
+  const rekKodes = rekRows.map((r) => r.rek_kode);
+  const placeholders = rekKodes.map(() => "?").join(",");
+
+  const [[row]] = await db.query(
+    `SELECT IFNULL(SUM(b.jurd_debet - b.jurd_kredit), 0) AS Saldo
+     FROM finance.tjurnalitem b
+     LEFT JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
+     WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
+       AND b.jurd_rek_kode IN (${placeholders})
+       AND a.jur_tanggal <= CURDATE()`,
+    rekKodes,
+  );
+
+  return {
+    Cabang: cabang,
+    Saldo: Number(row.Saldo) || 0,
+    JumlahRekening: rekKodes.length,
+    Rekening: rekRows,
+  };
+};
+
 // ──────────────────────────────────────────────
 // 2. Ringkasan Penawaran vs SPK (bulan berjalan)
 // ──────────────────────────────────────────────
@@ -5145,6 +5188,7 @@ const getPiutangByCustomer = async ({
 
 module.exports = {
   getSpkUrgent,
+  getSaldoKas,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
