@@ -200,57 +200,98 @@ const createPengajuan = async (
 
 // ── Browse PUM (tab "Pengajuan Uang Muka") ──
 const getBrowse = async ({ startDate, endDate, cabang, status }) => {
-  let sql = `
-    SELECT
-      h.pum_nomor AS Nomor,
-      DATE_FORMAT(h.pum_tanggal, '%Y-%m-%d') AS Tanggal,
-      h.pum_keterangan AS Keterangan,
-      h.pum_cabang AS Cabang,
-      h.pum_status AS Status,
-      h.pum_total_nominal AS TotalNominal,
-      h.pum_bon_nomor AS BonNomor,
-      h.pum_user_create AS UserCreate,
-      h.pum_user_realisasi AS UserRealisasi,
-      k.bon_selesai AS BonSelesai,
-      IF(k.bon_jenis=0,'KAS','BANK') AS Jenis,
-      r.rek_nama AS Account,
-      k.bon_pjh_nomor AS Pjh,
-      k.bon_nota AS Nota,
-      k.bon_penerima AS Penerima,
-      k.bon_jur_no AS NoBukti,
-      k.bon_tanggal AS BonTanggal,
-      IF(k.bon_jur_no='', 0,
-        IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
-      ) AS Terpakai,
-      DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
-      k.user_create AS DibuatOleh
-    FROM tpengajuan_uang_muka_hdr h
-    LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
-    LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
-    WHERE 1=1
+  const unionSql = `
+    (
+      SELECT
+        h.pum_nomor AS Nomor,
+        DATE_FORMAT(h.pum_tanggal, '%Y-%m-%d') AS Tanggal,
+        h.pum_keterangan AS Keterangan,
+        h.pum_cabang AS Cabang,
+        h.pum_status AS Status,
+        h.pum_total_nominal AS TotalNominal,
+        h.pum_bon_nomor AS BonNomor,
+        h.pum_user_create AS UserCreate,
+        h.pum_user_realisasi AS UserRealisasi,
+        k.bon_selesai AS BonSelesai,
+        IF(k.bon_jenis=0,'KAS','BANK') AS Jenis,
+        r.rek_nama AS Account,
+        k.bon_pjh_nomor AS Pjh,
+        k.bon_nota AS Nota,
+        k.bon_penerima AS Penerima,
+        k.bon_jur_no AS NoBukti,
+        k.bon_tanggal AS BonTanggal,
+        IF(k.bon_jur_no='', 0,
+          IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
+        ) AS Terpakai,
+        DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
+        k.user_create AS DibuatOleh
+      FROM tpengajuan_uang_muka_hdr h
+      LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+      LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
+      WHERE 1=1
+      ${startDate && endDate ? "AND h.pum_tanggal BETWEEN ? AND ?" : ""}
+      ${cabang ? "AND h.pum_cabang = ?" : ""}
+    )
+    UNION ALL
+    (
+      -- Kasbon dari sistem lama: dibuat langsung atas Pengajuan Dana
+      -- tanpa pernah lewat tahap Pengajuan Uang Muka baru. Ditampilkan
+      -- dengan Nomor (PUM) kosong; Status dianggap REALISASI karena
+      -- kasbonnya memang sudah ada/cair, statusnya tinggal soal sudah
+      -- diselesaikan (BonSelesai) atau belum.
+      SELECT
+        NULL AS Nomor,
+        DATE_FORMAT(k.bon_tanggal, '%Y-%m-%d') AS Tanggal,
+        k.bon_keterangan AS Keterangan,
+        k.bon_cabang AS Cabang,
+        'REALISASI' AS Status,
+        k.bon_nominal AS TotalNominal,
+        k.bon_nomor AS BonNomor,
+        '' AS UserCreate,
+        '' AS UserRealisasi,
+        k.bon_selesai AS BonSelesai,
+        IF(k.bon_jenis=0,'KAS','BANK') AS Jenis,
+        r.rek_nama AS Account,
+        k.bon_pjh_nomor AS Pjh,
+        k.bon_nota AS Nota,
+        k.bon_penerima AS Penerima,
+        k.bon_jur_no AS NoBukti,
+        k.bon_tanggal AS BonTanggal,
+        IF(k.bon_jur_no='', 0,
+          IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
+        ) AS Terpakai,
+        DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
+        k.user_create AS DibuatOleh
+      FROM finance.tkasbon k
+      LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
+      WHERE k.bon_pjh_nomor <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM tpengajuan_uang_muka_hdr h2 WHERE h2.pum_bon_nomor = k.bon_nomor
+        )
+      ${startDate && endDate ? "AND k.bon_tanggal BETWEEN ? AND ?" : ""}
+      ${cabang ? "AND k.bon_cabang = ?" : ""}
+    )
   `;
-  const params = [];
-  if (startDate && endDate) {
-    sql += ` AND h.pum_tanggal BETWEEN ? AND ?`;
-    params.push(startDate, endDate);
-  }
-  if (cabang) {
-    sql += ` AND h.pum_cabang = ?`;
-    params.push(cabang);
-  }
+
+  const dateParams = startDate && endDate ? [startDate, endDate] : [];
+  const cabangParams = cabang ? [cabang] : [];
+  const params = [
+    ...dateParams,
+    ...cabangParams,
+    ...dateParams,
+    ...cabangParams,
+  ];
+
+  let sql = `SELECT * FROM (${unionSql}) x WHERE 1=1`;
   if (status === "OUTSTANDING") {
-    sql += ` AND h.pum_status = 'DIAJUKAN'`;
+    sql += ` AND x.Status = 'DIAJUKAN'`;
   } else if (status === "HISTORY") {
-    sql += ` AND h.pum_status IN ('REALISASI', 'DITOLAK', 'BATAL')`;
+    sql += ` AND x.Status IN ('REALISASI', 'DITOLAK', 'BATAL')`;
   }
-  sql += ` ORDER BY h.pum_tanggal DESC, h.pum_nomor DESC`;
+  sql += ` ORDER BY x.Tanggal DESC, x.Nomor DESC`;
 
   const [rows] = await db.query(sql, params);
 
-  // Sisa & Closed dihitung di JS — Sisa perlu Nominal (bon_nominal,
-  // bukan pum_total_nominal, karena nominal terpakai dihitung dari jurnal
-  // atas bon, bukan atas PUM) dan Closed perlu cek periode tutup buku
-  // per baris (tidak murah sebagai subquery per-row di SQL).
   for (const row of rows) {
     row.Sisa = Number(row.TotalNominal) - Number(row.Terpakai || 0);
     if (row.BonTanggal) {
