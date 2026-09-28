@@ -66,6 +66,7 @@ const getFormDetail = async (nomor) => {
             a.pjh_keterangan AS Keterangan,
             a.pjh_nik AS Nik, c.nama AS Nama, c.lokasi AS Lokasi, c.bagian AS Bagian,
             a.pjh_jenis_permintaan AS Jenis, a.pjh_user_kode AS UserKode,
+            a.pjh_ke AS PjhKe,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
      FROM ga2.tpengajuan2_hdr a
@@ -132,11 +133,18 @@ const validateItems = (items) => {
   }
 };
 
+const VALID_PJH_KE = ["P01", "P04"];
+
 const saveData = async (payload, userKode, userCabang) => {
   const { isEdit, nomor, header, items } = payload;
 
   if (!header.Nik || !String(header.Nik).trim())
     throw new Error("Nik harus diisi.");
+
+  const pjhKe = header.PjhKe || DEFAULT_PJH_KE;
+  if (!VALID_PJH_KE.includes(pjhKe)) {
+    throw new Error("Pengajuan Ke harus P01 atau P04.");
+  }
 
   // ⬅ DIHAPUS: validasi "Cost Center harus diisi" di level header —
   // sekarang divalidasi per baris di dalam validateItems().
@@ -165,13 +173,14 @@ const saveData = async (payload, userKode, userCabang) => {
 
       await conn.query(
         `UPDATE ga2.tpengajuan2_hdr SET
-            pjh_tanggal = ?, pjh_nik = ?, pjh_keterangan = ?,
+            pjh_tanggal = ?, pjh_nik = ?, pjh_keterangan = ?, pjh_ke = ?,
             pjh_cc_kode = ?, pjh_cc_dcnama = ?
           WHERE pjh_nomor = ?`,
         [
           header.Tanggal,
           header.Nik,
           header.Keterangan || "",
+          pjhKe,
           headerCcKode,
           headerCcDcNama,
           nomorFinal,
@@ -192,7 +201,7 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Keterangan || "",
           JENIS_PENGAJUAN,
           DEFAULT_PRIORITY,
-          DEFAULT_PJH_KE,
+          pjhKe,
           userKode,
           headerCcKode,
           headerCcDcNama,

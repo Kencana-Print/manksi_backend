@@ -18,8 +18,8 @@ const getOutstanding = async ({
     if (cabang === "HO-") return ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`;
     return ` AND ${kolom} = ?`;
   };
-  const cabangClauseGA = buildCabangClause("c.lokasi");
-  const cabangClauseMB = buildCabangClause("h.mb_cab");
+  const cabangClauseGA = buildCabangClause("a.pjh_ke");
+  const cabangClauseMB = buildCabangClause("h.mb_mintake");
   const cabangParams = cabang && cabang !== "HO-" ? [cabang] : [];
 
   const unionSql = `
