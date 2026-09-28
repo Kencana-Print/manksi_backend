@@ -109,6 +109,11 @@ const getOutstanding = async ({
               WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                 AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
                 AND ki.bond_verified <> 0
+            ), 0) - IFNULL((
+              SELECT SUM(ki2.bond2_qty_realisasi)
+              FROM finance.tkasbonitem2 ki2
+              WHERE ki2.bond2_link = h.mb_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
+                AND ki2.bond2_verified <> 0
             ), 0)) > IFNULL((
               SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
               WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
@@ -130,6 +135,11 @@ const getOutstanding = async ({
             WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
               AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
               AND ki.bond_verified <> 0
+          ), 0) - IFNULL((
+            SELECT SUM(ki2.bond2_qty_realisasi)
+            FROM finance.tkasbonitem2 ki2
+            WHERE ki2.bond2_link = h.mb_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
+              AND ki2.bond2_verified <> 0
           ), 0)) > IFNULL((
             SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
             WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
@@ -214,20 +224,30 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
               d.mbd_brg_kode AS Kode,
               IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
               b.brg_satuan AS Satuan, d.mbd_jumlah AS Qty, (d.mbd_jumlah * d.mbd_harga) AS Nominal,
-              IFNULL((
+              (IFNULL((
                 SELECT SUM(ki.bond_qty_realisasi)
                 FROM finance.tkasbonitem ki
                 WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                   AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
                   AND ki.bond_verified <> 0
-              ), 0) AS QtyRealisasi,
-              IFNULL((
+              ), 0) + IFNULL((
+                SELECT SUM(ki2.bond2_qty_realisasi)
+                FROM finance.tkasbonitem2 ki2
+                WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
+                  AND ki2.bond2_verified <> 0
+              ), 0)) AS QtyRealisasi,
+              (IFNULL((
                 SELECT SUM(ki.bond_qty_realisasi * ki.bond_nominal_realisasi)
                 FROM finance.tkasbonitem ki
                 WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                   AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
                   AND ki.bond_verified <> 0
-              ), 0) AS NominalRealisasi
+              ), 0) + IFNULL((
+                SELECT SUM(ki2.bond2_nominal_realisasi)
+                FROM finance.tkasbonitem2 ki2
+                WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
+                  AND ki2.bond2_verified <> 0
+              ), 0)) AS NominalRealisasi
        FROM tgarmenmintabeli_dtl d
        LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
        WHERE d.mbd_nomor = ?
@@ -237,6 +257,11 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
              AND ki.bond_ref_nomor = d.mbd_nomor AND ki.bond_ref_nourut = d.mbd_nourut
              AND ki.bond_verified <> 0
+         ), 0) - IFNULL((
+           SELECT SUM(ki2.bond2_qty_realisasi)
+           FROM finance.tkasbonitem2 ki2
+           WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
+             AND ki2.bond2_verified <> 0
          ), 0)) > IFNULL((
            SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
            WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
