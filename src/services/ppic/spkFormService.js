@@ -907,9 +907,9 @@ const saveSizeList = async (conn, nomor, list) => {
     nomor,
     item.size,
     item.qty,
-    item.ld || 0, // spks_a — backward compat
-    item.pb || 0, // spks_b — backward compat
-    item.ld || 0,
+    item.ld || 0, // spks_a — dari SO (sos_ld)
+    item.pb || 0, // spks_b — dari SO (sos_pb)
+    0, // spks_ld — TIDAK diisi dari SO, biarkan terpisah
     item.pl_pendek || 0,
     item.pl_panjang || 0,
     item.p_bahu || 0,
