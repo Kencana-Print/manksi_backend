@@ -40,6 +40,7 @@ const exportCsv = async (req, res) => {
       cusKode = "",
       perushKode = "",
       nomor = "",
+      nomorList = [],
     } = req.body;
     const csv = await svc.generateCsv(
       tglAwal,
@@ -47,6 +48,7 @@ const exportCsv = async (req, res) => {
       cusKode,
       perushKode,
       nomor,
+      nomorList,
     );
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader(
@@ -67,6 +69,7 @@ const exportXlsx = async (req, res) => {
       cusKode = "",
       perushKode = "",
       nomor = "",
+      nomorList = [],
     } = req.body;
     const buffer = await svc.generateXlsxBuffer(
       tglAwal,
@@ -74,6 +77,7 @@ const exportXlsx = async (req, res) => {
       cusKode,
       perushKode,
       nomor,
+      nomorList,
     );
     res.setHeader(
       "Content-Type",

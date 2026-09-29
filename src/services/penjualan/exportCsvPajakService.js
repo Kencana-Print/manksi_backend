@@ -92,7 +92,27 @@ const getExportInvoices = async (
   cusKode = "",
   perushKode = "",
   nomor = "",
+  nomorList = [],
 ) => {
+  let where = `
+    WHERE a.inv_cus_kode LIKE ?
+      AND a.inv_tanggal >= ? AND a.inv_tanggal <= ?
+      AND a.inv_perush_kode LIKE ?
+      AND a.inv_nomor LIKE ?
+      AND a.inv_no_fp <> ''`;
+  const params = [
+    `${cusKode}%`,
+    tglAwal,
+    tglAkhir,
+    `${perushKode}%`,
+    `%${nomor}%`,
+  ];
+
+  if (Array.isArray(nomorList) && nomorList.length > 0) {
+    where += ` AND a.inv_nomor IN (?)`;
+    params.push(nomorList);
+  }
+
   const [invoices] = await db.query(
     `SELECT
       a.inv_nomor, DATE_FORMAT(a.inv_tanggal, '%Y-%m-%d') AS inv_tanggal, a.inv_ppn, a.inv_cus_alamat,
@@ -103,38 +123,30 @@ const getExportInvoices = async (
      FROM tinv_hdr a
      INNER JOIN tcustomer c ON c.cus_kode = a.inv_cus_kode
      INNER JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
-     WHERE a.inv_cus_kode LIKE ?
-       AND a.inv_tanggal >= ? AND a.inv_tanggal <= ?
-       AND a.inv_perush_kode LIKE ?
-       AND a.inv_nomor LIKE ?
-       AND a.inv_no_fp <> ''
+     ${where}
      ORDER BY a.inv_nomor`,
-    [`${cusKode}%`, tglAwal, tglAkhir, `${perushKode}%`, `%${nomor}%`],
+    params,
   );
-
   if (!invoices.length) return [];
+  const nomorListResult = invoices.map((i) => i.inv_nomor);
 
-  const nomorList = invoices.map((i) => i.inv_nomor);
-  const placeholders = nomorList.map(() => "?").join(",");
-  // Prioritas nama barang/jasa: nama eksternal dulu — so_nama2 (SO)
-  // lalu spk_nama2 (SPK) — baru fallback ke nama internal brg_name.
   const [details] = await db.query(
     `SELECT
-       d.invd_inv_nomor, d.invd_spk_nomor, d.invd_harga, d.invd_jumlah,
-       COALESCE(so.so_nama2, s.spk_nama2, b.brg_name) AS nama_barang
-     FROM tinv_dtl d
-     LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
-     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-     LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
-     WHERE d.invd_inv_nomor IN (${placeholders})`,
-    nomorList,
+      d.invd_inv_nomor, d.invd_spk_nomor, d.invd_harga, d.invd_jumlah,
+      COALESCE(NULLIF(so.so_nama2,''), NULLIF(s.spk_nama2,''), b.brg_name) AS nama_barang
+    FROM tinv_dtl d
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
+    WHERE d.invd_inv_nomor IN (?)`,
+    [nomorListResult],
   );
 
   const detailMap = {};
-  for (const d of details) {
+  details.forEach((d) => {
     if (!detailMap[d.invd_inv_nomor]) detailMap[d.invd_inv_nomor] = [];
     detailMap[d.invd_inv_nomor].push(d);
-  }
+  });
 
   return invoices.map((inv) => ({
     ...inv,
@@ -178,13 +190,21 @@ const fmtDateSlash = (v) => {
   return `${d}/${m}/${y}`;
 };
 
-const generateCsv = async (tglAwal, tglAkhir, cusKode, perushKode, nomor) => {
+const generateCsv = async (
+  tglAwal,
+  tglAkhir,
+  cusKode,
+  perushKode,
+  nomor,
+  nomorList = [],
+) => {
   const invoices = await getExportInvoices(
     tglAwal,
     tglAkhir,
     cusKode,
     perushKode,
     nomor,
+    nomorList,
   );
 
   const lines = [];
@@ -306,6 +326,7 @@ const generateXlsxBuffer = async (
   cusKode,
   perushKode,
   nomor,
+  nomorList = [],
 ) => {
   const invoices = await getExportInvoices(
     tglAwal,
@@ -313,6 +334,7 @@ const generateXlsxBuffer = async (
     cusKode,
     perushKode,
     nomor,
+    nomorList,
   );
 
   const wb = new ExcelJS.Workbook();
