@@ -160,34 +160,41 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       throw new Error(`Pengajuan ini sudah berstatus ${hdr.pum_status}.`);
 
     const accRows = detail.filter((d) => d.status_acc === "ACC");
-    if (!accRows.length)
-      throw new Error("Minimal 1 baris harus ACC untuk realisasi.");
+    const isFullTolak = accRows.length === 0;
 
-    const totalNominal = accRows.reduce(
-      (s, d) => s + Number(d.nominal_acc || 0),
-      0,
-    );
-    const jenisInt = jenis === "KAS" ? 0 : 1;
-    const bonNomor = await getMaxNomor(hdr.pum_cabang, conn);
+    let bonNomor = null;
+    let totalNominal = 0;
 
-    await conn.query(
-      `INSERT INTO finance.tkasbon
-        (bon_nomor, bon_tanggal, bon_pjh_nomor, bon_jenis, bon_nota, bon_nominal,
-         bon_penerima, bon_cabang, bon_rek_kode, bon_keterangan, date_create, user_create)
-       VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
-      [
-        bonNomor,
-        tanggal,
-        jenisInt,
-        nota || "",
-        totalNominal,
-        penerima || "",
-        hdr.pum_cabang,
-        rek_kode,
-        keterangan || "",
-        user.kode,
-      ],
-    );
+    if (!isFullTolak) {
+      if (!rek_kode)
+        throw new Error("Rekening/Kas wajib diisi untuk realisasi.");
+
+      totalNominal = accRows.reduce(
+        (s, d) => s + Number(d.nominal_acc || 0),
+        0,
+      );
+      const jenisInt = jenis === "KAS" ? 0 : 1;
+      bonNomor = await getMaxNomor(hdr.pum_cabang, conn);
+
+      await conn.query(
+        `INSERT INTO finance.tkasbon
+          (bon_nomor, bon_tanggal, bon_pjh_nomor, bon_jenis, bon_nota, bon_nominal,
+           bon_penerima, bon_cabang, bon_rek_kode, bon_keterangan, date_create, user_create)
+         VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+        [
+          bonNomor,
+          tanggal,
+          jenisInt,
+          nota || "",
+          totalNominal,
+          penerima || "",
+          hdr.pum_cabang,
+          rek_kode,
+          keterangan || "",
+          user.kode,
+        ],
+      );
+    }
 
     let nourut = 1;
     for (const d of detail) {
@@ -199,9 +206,6 @@ const saveRealisasi = async (pumNomor, payload, user) => {
             `UPDATE ga2.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
-          // ⬅ DIUBAH: tambah pmd_status_finance = 'MENUNGGU_PEMBELIAN' —
-          // sudah dicairkan Finance, tinggal menunggu Purchasing belanja
-          // di tahap Penyelesaian.
           await conn.query(
             `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_approved = CURDATE(), pmd_user_approved = ?, pmd_dana_approved = ?,
@@ -217,8 +221,6 @@ const saveRealisasi = async (pumNomor, payload, user) => {
             ],
           );
         } else {
-          // ⬅ DIUBAH: item ditolak Finance — bersihkan status finance,
-          // jangan biarkan label PENDING nyangkut padahal sudah ditolak.
           await conn.query(
             `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_reject = CURDATE(), pmd_kode_reject = 2, pmd_user_reject = ?,
@@ -229,7 +231,6 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           );
         }
 
-        // Close header hanya kalau SEMUA item di permintaan ini sudah dispositioned
         const [[remaining]] = await conn.query(
           `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
            WHERE pmd_pmt_nomor = ? AND pmd_tanggal_approved IS NULL AND pmd_tanggal_reject IS NULL`,
@@ -244,10 +245,6 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       }
 
       if (d.sumber === "PERMINTAAN_PEMBELIAN" && isAcc) {
-        // Snapshot item ke tkasbonitem — nominal/qty sengaja 0 karena
-        // nilai aktual baru diisi Purchasing nanti di Penyelesaian.
-        // bond_ref_tipe/bond_ref_nomor menyimpan nomor sumber supaya
-        // form Penyelesaian tahu No.Pengajuan-nya tanpa input ulang.
         await conn.query(
           `INSERT INTO finance.tkasbonitem
             (bond_nomor, bond_nourut, bond_nama, bond_spesifikasi, bond_satuan,
@@ -273,16 +270,29 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       );
     }
 
-    await conn.query(
-      `UPDATE tpengajuan_uang_muka_hdr SET
-         pum_status = 'REALISASI', pum_bon_nomor = ?, pum_total_nominal = ?,
-         pum_user_realisasi = ?, pum_date_realisasi = NOW()
-       WHERE pum_nomor = ?`,
-      [bonNomor, totalNominal, user.kode, pumNomor],
-    );
+    if (isFullTolak) {
+      await conn.query(
+        `UPDATE tpengajuan_uang_muka_hdr SET
+           pum_status = 'DITOLAK', pum_user_realisasi = ?, pum_date_realisasi = NOW()
+         WHERE pum_nomor = ?`,
+        [user.kode, pumNomor],
+      );
+    } else {
+      await conn.query(
+        `UPDATE tpengajuan_uang_muka_hdr SET
+           pum_status = 'REALISASI', pum_bon_nomor = ?, pum_total_nominal = ?,
+           pum_user_realisasi = ?, pum_date_realisasi = NOW()
+         WHERE pum_nomor = ?`,
+        [bonNomor, totalNominal, user.kode, pumNomor],
+      );
+    }
 
     await conn.commit();
-    return { bonNomor, totalNominal };
+    return {
+      bonNomor,
+      totalNominal,
+      status: isFullTolak ? "DITOLAK" : "REALISASI",
+    };
   } catch (e) {
     await conn.rollback();
     throw e;
