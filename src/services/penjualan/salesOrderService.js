@@ -85,7 +85,14 @@ const getBrowseList = async (filters) => {
     params.push(customer);
   }
 
-  if (
+  const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
+
+  if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
+    // Bisa lihat SO cabangnya sendiri, DITAMBAH SO workshop manapun
+    // yang statusnya sublim (spk_sublim = 'Y'), lepas dari cabang.
+    whereClause += ` AND (y.spk_cab = ? OR y.spk_sublim = 'Y')`;
+    params.push(userCabang || "");
+  } else if (
     userCabang &&
     userCabang !== "HO-" &&
     userCabang !== "ADMIN" &&
@@ -173,7 +180,7 @@ const getBrowseList = async (filters) => {
           spk_nomor_po, spk_ketpo, spk_tgl_po, spk_DatelinePO, spk_close, spk_close_alasan,
           spk_pen_nomor, spk_memo, spk_repeat, spk_aktif, spk_pinjo, spk_accpending,
           spk_mppb, spk_newdesign, spk_designdone, spk_keterangan, spk_invdc, spk_is_so,
-          spk_ketbatal
+          spk_ketbatal, spk_sublim
         FROM tspk
         WHERE spk_tanggal >= CONCAT(?, ' 00:00:00') AND spk_tanggal <= CONCAT(?, ' 23:59:59')
           AND (
@@ -203,7 +210,7 @@ const getBrowseList = async (filters) => {
           so_aktif AS spk_aktif, so_pinjo AS spk_pinjo, so_accpending AS spk_accpending,
           so_mppb AS spk_mppb, so_newdesign AS spk_newdesign, so_designdone AS spk_designdone,
           so_keterangan AS spk_keterangan, so_invdc AS spk_invdc, 1 AS spk_is_so,
-          so_ketbatal AS spk_ketbatal
+          so_ketbatal AS spk_ketbatal, so_sublim AS spk_sublim
         FROM tsalesorder
         WHERE so_tanggal >= CONCAT(?, ' 00:00:00') AND so_tanggal <= CONCAT(?, ' 23:59:59')
       ) y

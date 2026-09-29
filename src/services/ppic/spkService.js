@@ -26,8 +26,14 @@ const getBrowseList = async (filters) => {
     params.push(customer);
   }
   const isFinance = (userBagian || "").toUpperCase() === "FINANCE";
+  const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
 
-  if (
+  if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
+    // Bisa lihat SPK cabangnya sendiri, DITAMBAH SPK workshop manapun
+    // yang statusnya sublim (spk_sublim = 'Y'), lepas dari cabang.
+    whereClause += ` AND (x.Cab = ? OR x.Sublim = 'Y')`;
+    params.push(userCabang || "");
+  } else if (
     userCabang &&
     userCabang !== "HO-" &&
     userCabang !== "ADMIN" &&
@@ -81,6 +87,7 @@ const getBrowseList = async (filters) => {
         s.spk_cus_kode AS KodeCustomer, ${custNameCol}
         s.spk_nama AS Nama, s.spk_ukuran AS Ukuran,
         s.spk_cab AS Cab, TRIM(s.spk_workshop) AS Workshop,
+        s.spk_sublim AS Sublim,
         s.spk_pending AS Pending, s.spk_ketpending AS KetPending,
         s.spk_tipe AS Tipe, s.spk_panjang AS Panjang,
         s.spk_lebar AS Lebar, s.spk_gramasi AS Gramasi,
