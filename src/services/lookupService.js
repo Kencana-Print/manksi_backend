@@ -1509,7 +1509,16 @@ const searchCustKaosan = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- GET SO KAOSAN (Sesuai F1 di edtpesanan Delphi) ---
-const searchSoKaosan = async (keyword, cabKaos, page = 1, limit = 50) => {
+const searchSoKaosan = async (
+  keyword,
+  cabKaos,
+  page = 1,
+  limit = 50,
+  joKode = "",
+) => {
+  if (String(joKode).toUpperCase().includes("BR")) {
+    return searchSoBordirKaosan(keyword, page, limit);
+  }
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
   let params = [cabKaos]; // Filter dari frmMenu.CABKAOS
@@ -1587,6 +1596,51 @@ const searchInvDc = async (keyword, page = 1, limit = 50) => {
 
   const [rows] = await db.query(query, params);
   return { items: rows, total, page: Number(page), limit: limitNum };
+};
+
+// SO Bordir Kaosan (SO DTF, format KPR.BR.xxxx) — khusus Jenis Order BR
+const searchSoBordirKaosan = async (keyword, page = 1, limit = 50) => {
+  const limitNum = Number(limit);
+  const offset = (Number(page) - 1) * limitNum;
+  const params = [];
+
+  // Nomor .BR. yang belum dipakai SO manapun
+  let whereClause = `WHERE h.sd_nomor LIKE '%.BR.%' AND IFNULL(h.sd_spk_nomor, '') = ''`;
+
+  if (keyword && keyword.trim() !== "") {
+    whereClause += ` AND (h.sd_nomor LIKE ? OR h.sd_customer LIKE ? OR c.cus_nama LIKE ?)`;
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const [countResult] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM retail.tsodtf_hdr h
+     LEFT JOIN retail.tcustomer c ON c.cus_kode = h.sd_cus_kode
+     ${whereClause}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       h.sd_nomor AS Nomor,
+       DATE_FORMAT(h.sd_tanggal, "%d-%m-%Y") AS Tanggal,
+       h.sd_cus_kode AS KdCus,
+       IFNULL(NULLIF(c.cus_nama, ''), h.sd_customer) AS Customer,
+       IFNULL(c.cus_alamat, '') AS Alamat
+     FROM retail.tsodtf_hdr h
+     LEFT JOIN retail.tcustomer c ON c.cus_kode = h.sd_cus_kode
+     ${whereClause}
+     ORDER BY h.sd_nomor DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limitNum, offset],
+  );
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: Number(page),
+    limit: limitNum,
+  };
 };
 
 // --- GET SJ MEMO ---
@@ -2854,6 +2908,7 @@ module.exports = {
   searchCustKaosan,
   searchSoKaosan,
   searchInvDc,
+  searchSoBordirKaosan,
   searchSjMemo,
   searchMemo,
   searchSpg,

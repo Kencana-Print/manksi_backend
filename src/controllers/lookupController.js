@@ -137,7 +137,12 @@ const getKomponenKain = async (req, res) => {
       });
     }
 
-    const data = await lookupService.getKomponenKain(model, jenisKain, warna, qty);
+    const data = await lookupService.getKomponenKain(
+      model,
+      jenisKain,
+      warna,
+      qty,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -556,8 +561,7 @@ const searchCustKaosan = async (req, res) => {
 
 const searchSoKaosan = async (req, res) => {
   try {
-    const { q, page, limit } = req.query;
-    // Mengambil cabang kaosan user dari token JWT (req.user)
+    const { q, page, limit, joKode = "" } = req.query;
     const cabKaos = req.user.cabangKaos;
 
     if (!cabKaos) {
@@ -567,7 +571,13 @@ const searchSoKaosan = async (req, res) => {
       });
     }
 
-    const data = await lookupService.searchSoKaosan(q, cabKaos, page, limit);
+    const data = await lookupService.searchSoKaosan(
+      q,
+      cabKaos,
+      page,
+      limit,
+      joKode,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
