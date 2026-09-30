@@ -252,7 +252,8 @@ const getSizeList = async (nomor) => {
   const [rows] = await db.query(
     `SELECT spks_size AS size, spks_qty AS qty,
             spks_a AS lb, spks_b AS pb,
-            spks_ld AS ld, spks_pl_pendek AS pl_pendek,
+            IF(spks_a <> 0, spks_a, spks_ld) AS ld,
+            spks_pl_pendek AS pl_pendek,
             spks_pl_panjang AS pl_panjang, spks_p_bahu AS p_bahu,
             spks_l_lengan AS l_lengan, spks_l_manset AS l_manset,
             spks_l_pinggang AS l_pinggang, spks_p_celana AS p_celana,
@@ -907,8 +908,8 @@ const saveSizeList = async (conn, nomor, list) => {
     nomor,
     item.size,
     item.qty,
-    item.ld || 0, // spks_a — dari SO (sos_ld)
-    item.pb || 0, // spks_b — dari SO (sos_pb)
+    Number(item.lb) || Number(item.ld) || 0, // spks_a — lebar dada (sos_ld)
+    item.pb || 0, // spks_b
     0, // spks_ld — TIDAK diisi dari SO, biarkan terpisah
     item.pl_pendek || 0,
     item.pl_panjang || 0,
