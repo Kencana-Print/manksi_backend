@@ -783,19 +783,30 @@ const saveData = async (payload, user) => {
       }
       header.user_modified = user.kode;
       header.date_modified = new Date();
-      if (piutang > 100) header.spk_aktif = "N";
-      if (
-        header.kepentingan_acc === "MINTA ACC" ||
-        header.kepentingan_acc === "TOLAK"
-      ) {
-        header.spk_aktif = "N";
+      // Kandidat pasif: ada approval yang masih pending/ditolak
+      let pasif = false;
+
+      if (piutang > 100) {
+        const [cp] = await conn.query(
+          `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
+          [nomor],
+        );
+        if (!cp.length || cp[0].cusp_acc !== "Y") pasif = true;
       }
-      if (header.ketpo_acc === "MINTA ACC" || header.ketpo_acc === "TOLAK") {
-        header.spk_aktif = "N";
+      if (["MINTA ACC", "TOLAK"].includes(header.kepentingan_acc)) pasif = true;
+      if (["MINTA ACC", "TOLAK"].includes(header.ketpo_acc)) pasif = true;
+      if (["MINTA ACC", "TOLAK"].includes(header.spk_pinjo)) pasif = true;
+      if (divisiStr !== "3") {
+        const noPoPendingEdit = await syncNoPoApproval(
+          conn,
+          nomor,
+          header,
+          user,
+        );
+        if (noPoPendingEdit) pasif = true;
       }
-      if (header.spk_pinjo === "MINTA ACC" || header.spk_pinjo === "TOLAK") {
-        header.spk_aktif = "N";
-      }
+
+      header.spk_aktif = pasif ? "N" : "Y";
       // Divisi 3 (Kaosan): sama seperti mode create, Nomor PO opsional
       if (divisiStr !== "3") {
         const noPoPendingEdit = await syncNoPoApproval(
@@ -1092,7 +1103,9 @@ const saveData = async (payload, user) => {
     // ==========================================
     if (approvedUbahPin) {
       await conn.query(
-        `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_nomor=? AND pin_urut=?`,
+        `UPDATE tspk_pin5 SET pin_dipakai="Y"
+         WHERE pin_trs="SO" AND pin_jenis IN ("UBAH","GANTI")
+          AND pin_nomor=? AND pin_urut=?`,
         [nomor, approvedUbahPin.urut],
       );
 

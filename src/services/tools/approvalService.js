@@ -2,6 +2,83 @@ const db = require("../../config/database");
 const { resolveSoLocation } = require("../penjualan/salesOrderService");
 const realisasiBahanFormService = require("../garmen/realisasiBahanFormService");
 
+// =========================================================================
+// HELPER: HITUNG ULANG STATUS AKTIF SO/SPK SETELAH ADA APPROVAL
+// Satu sumber kebenaran untuk semua fungsi otorisasi di bawah. SO/SPK
+// dianggap PASIF ("N") selama masih ada approval yang pending/ditolak:
+//   - tcustomer_pin      (piutang customer)
+//   - tspk_pin           (harga 0 / Ket.PO)
+//   - tspk_pin_prioritas (klien prioritas / TOP URGENT)
+//   - tspk_pin5 NOPO     (SO tanpa Nomor PO, hanya SO baru)
+//   - kolom pinjo        (MINTA ACC / MINTA / TOLAK)
+// Kalau semuanya bersih -> "Y". Harus dipanggil di dalam transaksi,
+// SETELAH baris approval yang bersangkutan sudah di-UPDATE.
+// Mengembalikan "Y" / "N", atau null kalau nomor tidak ditemukan.
+// =========================================================================
+const refreshSoAktif = async (conn, nomor) => {
+  const loc = await resolveSoLocation(nomor);
+  if (!loc) return null;
+
+  const isNew = loc === "new";
+  const table = isNew ? "tsalesorder" : "tspk";
+  const keyCol = isNew ? "so_nomor" : "spk_nomor";
+  const activeCol = isNew ? "so_aktif" : "spk_aktif";
+  const pinjoCol = isNew ? "so_pinjo" : "spk_pinjo";
+
+  const ketbatalCol = isNew ? "so_ketbatal" : "spk_ketbatal";
+
+  const [[row]] = await conn.query(
+    `SELECT ${pinjoCol} AS pinjo, ${ketbatalCol} AS ketbatal
+     FROM ${table} WHERE ${keyCol} = ?`,
+    [nomor],
+  );
+  if (!row) return null;
+
+  let pasif = false;
+
+  // Pengajuan pembatalan yang masih menunggu: SO sengaja dipasifkan
+  // oleh ajukanPembatalan, jangan diaktifkan lagi oleh approval lain.
+  if (row.ketbatal === "PENGAJUAN") pasif = true;
+
+  const [cust] = await conn.query(
+    `SELECT cusp_acc FROM tcustomer_pin
+     WHERE cusp_nomor = ? ORDER BY cusp_tgl_minta DESC LIMIT 1`,
+    [nomor],
+  );
+  if (cust.length && cust[0].cusp_acc !== "Y") pasif = true;
+
+  const [harga] = await conn.query(
+    `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ? LIMIT 1`,
+    [nomor],
+  );
+  if (harga.length && harga[0].pin_acc !== "Y") pasif = true;
+
+  const [prio] = await conn.query(
+    `SELECT pin_acc FROM tspk_pin_prioritas WHERE pin_nomor = ? LIMIT 1`,
+    [nomor],
+  );
+  if (prio.length && prio[0].pin_acc !== "Y") pasif = true;
+
+  if (isNew) {
+    const [nopo] = await conn.query(
+      `SELECT pin_acc FROM tspk_pin5
+       WHERE pin_trs = "SO" AND pin_jenis = "NOPO" AND pin_nomor = ?
+       ORDER BY pin_urut DESC LIMIT 1`,
+      [nomor],
+    );
+    if (nopo.length && nopo[0].pin_acc !== "Y") pasif = true;
+  }
+
+  if (["MINTA ACC", "MINTA", "TOLAK"].includes(row.pinjo)) pasif = true;
+
+  const aktif = pasif ? "N" : "Y";
+  await conn.query(`UPDATE ${table} SET ${activeCol} = ? WHERE ${keyCol} = ?`, [
+    aktif,
+    nomor,
+  ]);
+  return aktif;
+};
+
 // --- 1. GET DATA MASTER (CUSTOMER YANG MINTA ACC) ---
 const getApprovalPiutangMaster = async (query) => {
   const { startDate, endDate, belumAccSaja } = query;
@@ -147,51 +224,9 @@ const setOtorisasi = async (nomorSpk, statusAcc, userKode) => {
       [userKode, statusAcc, nomorSpk],
     );
 
-    // ⚠️ FIX: sinkronisasi aktif harus target tabel yang benar
-    // (tspk vs tsalesorder), termasuk kolom pinjo yang beda nama
-    // (spk_pinjo vs so_pinjo).
-    const loc = await resolveSoLocation(nomorSpk);
-    if (loc) {
-      const targetTable = loc === "new" ? "tsalesorder" : "tspk";
-      const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
-      const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
-      const pinjoCol = loc === "new" ? "so_pinjo" : "spk_pinjo";
-
-      if (statusAcc === "Y") {
-        const [cekPinHarga] = await conn.query(
-          `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
-          [nomorSpk],
-        );
-        let amanUntukAktif = false;
-        if (cekPinHarga.length > 0) {
-          if (cekPinHarga[0].pin_acc === "Y") amanUntukAktif = true;
-        } else {
-          const [cekPinJo] = await conn.query(
-            `SELECT ${pinjoCol} AS pinjo FROM ${targetTable} WHERE ${targetCol} = ?`,
-            [nomorSpk],
-          );
-          if (
-            cekPinJo.length > 0 &&
-            (cekPinJo[0].pinjo === "MINTA" || cekPinJo[0].pinjo === "TOLAK")
-          ) {
-            amanUntukAktif = false;
-          } else {
-            amanUntukAktif = true;
-          }
-        }
-        if (amanUntukAktif) {
-          await conn.query(
-            `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
-            [nomorSpk],
-          );
-        }
-      } else if (statusAcc === "N") {
-        await conn.query(
-          `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
-          [nomorSpk],
-        );
-      }
-    }
+    // ⬅ UBAH: status aktif dihitung ulang dari SEMUA approval terkait
+    // (bukan cuma cek harga/pinjo seperti sebelumnya).
+    await refreshSoAktif(conn, nomorSpk);
 
     const [userMinta] = await conn.query(
       `SELECT cusp_user_minta FROM tcustomer_pin WHERE cusp_nomor = ? LIMIT 1`,
@@ -326,33 +361,9 @@ const submitHargaNolOtorisasi = async (nomor, statusAcc, userKode) => {
 
     const loc = await resolveSoLocation(nomor);
     if (!loc) throw new Error("SPK/SO terkait tidak ditemukan.");
-    const targetTable = loc === "new" ? "tsalesorder" : "tspk";
-    const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
-    const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
 
-    if (statusAcc === "Y") {
-      const [cekPinCus] = await conn.query(
-        `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
-        [nomor],
-      );
-      let amanUntukAktif = false;
-      if (cekPinCus.length > 0) {
-        if (cekPinCus[0].cusp_acc === "Y") amanUntukAktif = true;
-      } else {
-        amanUntukAktif = true;
-      }
-      if (amanUntukAktif) {
-        await conn.query(
-          `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
-          [nomor],
-        );
-      }
-    } else if (statusAcc === "N") {
-      await conn.query(
-        `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
-        [nomor],
-      );
-    }
+    // ⬅ UBAH: hitung ulang dari semua approval terkait
+    await refreshSoAktif(conn, nomor);
 
     const [userMinta] = await conn.query(
       `SELECT pin_user_minta FROM tspk_pin WHERE pin_nomor = ? LIMIT 1`,
@@ -437,36 +448,13 @@ const submitPrioritasOtorisasi = async (nomor, statusAcc, userKode) => {
     `;
     await conn.query(updatePinSql, [userKode, statusAcc, nomor]);
 
-    // ⚠️ FIX: SPK/SO bisa tersimpan di tspk (legacy) ATAU tsalesorder
-    // (baru) — tentukan tabel target yang benar sebelum UPDATE aktif,
-    // sama pola dgn submitPembatalanSpkOtorisasi/submitNoPoOtorisasi.
     const loc = await resolveSoLocation(nomor);
     if (!loc) throw new Error("SPK/SO terkait tidak ditemukan.");
-    const targetTable = loc === "new" ? "tsalesorder" : "tspk";
-    const targetCol = loc === "new" ? "so_nomor" : "spk_nomor";
-    const activeCol = loc === "new" ? "so_aktif" : "spk_aktif";
 
-    if (statusAcc === "Y") {
-      const [cekPinCus] = await conn.query(
-        `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ?`,
-        [nomor],
-      );
-      let amanUntukAktif = true;
-      if (cekPinCus.length > 0 && cekPinCus[0].cusp_acc !== "Y") {
-        amanUntukAktif = false;
-      }
-      if (amanUntukAktif) {
-        await conn.query(
-          `UPDATE ${targetTable} SET ${activeCol} = "Y" WHERE ${targetCol} = ?`,
-          [nomor],
-        );
-      }
-    } else if (statusAcc === "N") {
-      await conn.query(
-        `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
-        [nomor],
-      );
-    }
+    // ⬅ UBAH: hitung ulang dari semua approval terkait (sebelumnya
+    // hanya cek tcustomer_pin, sehingga harga/NOPO pending bisa
+    // ikut teraktifkan tanpa sengaja).
+    await refreshSoAktif(conn, nomor);
 
     const [userMinta] = await conn.query(
       `SELECT pin_user_minta FROM tspk_pin_prioritas WHERE pin_nomor = ? LIMIT 1`,
@@ -667,6 +655,13 @@ const submitPerubahanDataOtorisasi = async (
       urut,
       jenis,
     ]);
+
+    // ⬅ BARU: setelah Perubahan Data (UBAH) di-ACC, SO/SPK dihitung
+    // ulang -> aktif kembali kalau tidak ada approval lain yang pending.
+    // Hanya saat ACC; kalau ditolak, status aktif dibiarkan apa adanya.
+    if (jenis === "UBAH" && statusAcc === "Y") {
+      await refreshSoAktif(conn, nomor);
+    }
 
     const [userMinta] = await conn.query(
       `SELECT pin_user_minta FROM tspk_pin5 WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = ? LIMIT 1`,
@@ -1171,9 +1166,10 @@ const getGantiQtyKainList = async (query) => {
   return rows;
 };
 
-// EKSEKUSI OTORISASI — sesuai Delphi cxButton5Click ✅
-// Hanya update tspk_pin5, tidak menyentuh tspk/tsalesorder sama sekali
-// (perubahan qty/kain aktual dilakukan manual terpisah setelah ACC).
+// EKSEKUSI OTORISASI — sesuai Delphi cxButton5Click.
+// ⬅ UBAH: sekarang dalam transaksi, dan saat ACC status aktif SO/SPK
+// dihitung ulang (refreshSoAktif). Perubahan qty/kain aktual tetap
+// dilakukan manual terpisah setelah ACC.
 const submitGantiQtyKainOtorisasi = async (
   nomor,
   transaksi,
@@ -1185,23 +1181,39 @@ const submitGantiQtyKainOtorisasi = async (
     throw new Error("Status ACC harus Y atau N.");
   }
 
-  const [[pin]] = await db.query(
-    `SELECT pin_user_minta FROM tspk_pin5
-     WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"`,
-    [transaksi, nomor, urut],
-  );
-  if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
 
-  await db.query(
-    `UPDATE tspk_pin5 SET
-       pin_tgl_pin = NOW(),
-       pin_user_pin = ?,
-       pin_acc = ?
-     WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"`,
-    [userKode, statusAcc, transaksi, nomor, urut],
-  );
+    const [[pin]] = await conn.query(
+      `SELECT pin_user_minta FROM tspk_pin5
+       WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"
+       FOR UPDATE`,
+      [transaksi, nomor, urut],
+    );
+    if (!pin) throw new Error("Data pengajuan tidak ditemukan.");
 
-  return { nomor, transaksi, urut, peminta: pin.pin_user_minta };
+    await conn.query(
+      `UPDATE tspk_pin5 SET
+         pin_tgl_pin = NOW(),
+         pin_user_pin = ?,
+         pin_acc = ?
+       WHERE pin_trs = ? AND pin_nomor = ? AND pin_urut = ? AND pin_jenis = "GANTI"`,
+      [userKode, statusAcc, transaksi, nomor, urut],
+    );
+
+    if (statusAcc === "Y") {
+      await refreshSoAktif(conn, nomor);
+    }
+
+    await conn.commit();
+    return { nomor, transaksi, urut, peminta: pin.pin_user_minta };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 };
 
 // =========================================================================
@@ -1277,10 +1289,8 @@ const getNoPoList = async (query) => {
   return rows;
 };
 
-// ⚠️ Safety check tambahan (bukan replikasi — desain baru): saat ACC,
-// jangan aktifkan SO kalau masih ada blocking-pin lain yg pending
-// (piutang, harga 0, prioritas, pinjo), supaya tidak override approval
-// lain yang belum selesai.
+// ⬅ UBAH: cabang SO memakai refreshSoAktif (semua blocking-pin dicek
+// lewat satu helper), bukan lagi daftar cek manual di sini.
 const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
   if (!["Y", "N"].includes(statusAcc)) {
     throw new Error("Status ACC harus Y atau N.");
@@ -1304,56 +1314,20 @@ const submitNoPoOtorisasi = async (nomor, statusAcc, userKode) => {
       [userKode, statusAcc, jenis, nomor, pin.pin_urut],
     );
 
-    if (statusAcc === "Y") {
-      if (jenis === "SO") {
-        const [[so]] = await conn.query(
-          `SELECT so_pinjo FROM tsalesorder WHERE so_nomor = ?`,
-          [nomor],
-        );
-        const [[custPin]] = await conn.query(
-          `SELECT cusp_acc FROM tcustomer_pin WHERE cusp_nomor = ? ORDER BY cusp_tgl_minta DESC LIMIT 1`,
-          [nomor],
-        );
-        const [[hargaPin]] = await conn.query(
-          `SELECT pin_acc FROM tspk_pin WHERE pin_nomor = ?`,
-          [nomor],
-        );
-        const [[prioPin]] = await conn.query(
-          `SELECT pin_acc FROM tspk_pin_prioritas WHERE pin_nomor = ?`,
-          [nomor],
-        );
-        const blocked =
-          (custPin && custPin.cusp_acc !== "Y") ||
-          (hargaPin && hargaPin.pin_acc !== "Y") ||
-          (prioPin && prioPin.pin_acc !== "Y") ||
-          (so && ["MINTA", "TOLAK"].includes(so.so_pinjo));
-        if (!blocked) {
-          await conn.query(
-            `UPDATE tsalesorder SET so_aktif = "Y" WHERE so_nomor = ?`,
-            [nomor],
-          );
-        }
-      } else {
-        await conn.query(
-          `UPDATE tmemospk SET mspk_aktif = "Y" WHERE mspk_nomor = ?`,
-          [nomor],
-        );
-      }
-      // ⚠️ FIX: pin_dipakai SENGAJA TIDAK di-set "Y" di sini.
-      // Approval NOPO berbeda dari pola generik Perubahan Data/Hapus
-      // Data — di sini "dipakai" berarti "approval ini sudah dikonsumsi
-      // oleh siklus edit berikutnya yang butuh approval baru lagi",
-      // BUKAN "baru saja di-ACC". Kalau di-set "Y" di sini, edit SO
-      // berikutnya (PO masih kosong) akan salah mendeteksi approval
-      // sebagai basi dan meminta approval ulang padahal SO belum
-      // berubah kondisi — itulah bug yang dilaporkan.
+    if (jenis === "SO") {
+      // Baris NOPO sudah di-UPDATE di atas, jadi helper langsung
+      // membaca status terbarunya (ACC -> bersih, TOLAK -> pasif).
+      await refreshSoAktif(conn, nomor);
+      // ⚠️ pin_dipakai SENGAJA TIDAK di-set "Y" di sini. Approval NOPO
+      // berbeda dari pola generik Perubahan Data/Hapus Data — "dipakai"
+      // berarti "sudah dikonsumsi siklus edit berikutnya", BUKAN "baru
+      // saja di-ACC". Kalau di-set "Y" di sini, edit SO berikutnya
+      // (PO masih kosong) salah mendeteksi approval sebagai basi.
     } else {
-      const targetTable = jenis === "SO" ? "tsalesorder" : "tmemospk";
-      const targetCol = jenis === "SO" ? "so_nomor" : "mspk_nomor";
-      const activeCol = jenis === "SO" ? "so_aktif" : "mspk_aktif";
+      const activeValue = statusAcc === "Y" ? "Y" : "N";
       await conn.query(
-        `UPDATE ${targetTable} SET ${activeCol} = "N" WHERE ${targetCol} = ?`,
-        [nomor],
+        `UPDATE tmemospk SET mspk_aktif = ? WHERE mspk_nomor = ?`,
+        [activeValue, nomor],
       );
     }
 
@@ -1539,6 +1513,7 @@ const submitRealisasiBedaBahanOtorisasi = async (
 };
 
 module.exports = {
+  refreshSoAktif,
   getApprovalPiutangMaster,
   getPengajuanByCustomer,
   getInvoiceNunggak,
