@@ -27,6 +27,16 @@ const getBrowseList = async (filters) => {
   }
   const isFinance = (userBagian || "").toUpperCase() === "FINANCE";
   const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
+  // User yang, selain cabangnya sendiri, juga boleh melihat SPK dari
+  // workshop tertentu. Tambah user lain di sini kalau perlu.
+  const EXTRA_WORKSHOP_USERS = {
+    MDI: ["P01"],
+  };
+  const extraCabs =
+    EXTRA_WORKSHOP_USERS[String(userKode || "").toUpperCase()] || [];
+  const extraCabClause = extraCabs.length
+    ? ` OR x.Cab IN (${extraCabs.map(() => "?").join(",")})`
+    : "";
 
   if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
     // Bisa lihat SPK cabangnya sendiri, DITAMBAH SPK workshop manapun
@@ -42,11 +52,11 @@ const getBrowseList = async (filters) => {
   ) {
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     if (isGudang) {
-      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ? OR x.Cab IN ('P01','P04'))`;
+      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ? OR x.Cab IN ('P01','P04')${extraCabClause})`;
     } else {
-      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?)`;
+      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?${extraCabClause})`;
     }
-    params.push(userCabang, userKode || "");
+    params.push(userCabang, userKode || "", ...extraCabs);
   }
 
   // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus), dan

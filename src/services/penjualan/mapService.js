@@ -8,18 +8,25 @@ const getBrowseList = async (
   canLihatCus = false,
   canLihatHarga = false,
 ) => {
-  const { startDate, endDate, cabang, isKaosan } = filters;
+  const { startDate, endDate, cabang, isKaosan, userKode } = filters;
 
   let params = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   let whereClause = `WHERE x.mspk_tanggal >= ? AND x.mspk_tanggal <= ?`;
 
+  let restrictClause = "";
   if (cabang === "P02") {
-    whereClause += ` AND x.mspk_divisi IN (1,5)`;
+    restrictClause = ` AND x.mspk_divisi IN (1,5)`;
   }
   if (isKaosan && isKaosan !== "KDC") {
-    whereClause += ` AND x.mspk_divisi = 3`;
+    restrictClause = ` AND x.mspk_divisi = 3`;
   } else if (cabang === "P03" && isKaosan === "KDC") {
-    whereClause += ` AND x.mspk_divisi IN (3,6)`;
+    restrictClause = ` AND x.mspk_divisi IN (3,6)`;
+  }
+
+  if (restrictClause && userKode === "MDI") {
+    whereClause += ` AND (1=1${restrictClause} OR x.mspk_workshop = 'P01')`;
+  } else {
+    whereClause += restrictClause;
   }
 
   const custCol = canLihatCus ? "c.cus_nama AS Customer," : `"" AS Customer,`;
