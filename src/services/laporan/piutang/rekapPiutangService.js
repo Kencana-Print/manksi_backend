@@ -78,6 +78,51 @@ const getRekapPiutang = async (query) => {
   return rows;
 };
 
+const getDetailPiutang = async (query) => {
+  const { customer, endDate, perusahaan } = query;
+
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+
+  let filterPerusahaan = "";
+  const params = [dEnd, dEnd];
+
+  if (perusahaan) {
+    filterPerusahaan = " AND p.cabang = ? ";
+    params.push(perusahaan);
+  }
+
+  params.push(customer);
+
+  const sql = `
+    SELECT
+      p.nota AS Nota,
+      p.tanggal AS Tanggal,
+      p.debet AS Debet,
+      IFNULL(b.bayar, 0) AS Bayar,
+      (p.debet - IFNULL(b.bayar, 0)) AS Sisa
+    FROM piutang_debet p
+    LEFT JOIN (
+        SELECT d.nota, SUM(d.kredit) AS bayar
+        FROM piutang_kredit_detail d
+        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+        WHERE h.tanggal <= ?
+        GROUP BY d.nota
+    ) b ON b.nota = p.nota
+    WHERE p.flag = 0
+      AND p.is_writeoff = 0
+      AND p.tanggal <= ?
+      AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
+      ${filterPerusahaan}
+      AND p.customer = ?
+    HAVING Sisa <> 0
+    ORDER BY p.tanggal ASC
+  `;
+
+  const [rows] = await db.query(sql, params);
+  return rows;
+};
+
 module.exports = {
   getRekapPiutang,
+  getDetailPiutang,
 };

@@ -14,4 +14,11 @@ router.get(
   controller.getRekapPiutang,
 );
 
+router.get(
+  "/detail",
+  verifyToken,
+  checkPermission(968, "view"),
+  controller.getDetailPiutang,
+);
+
 module.exports = router;
