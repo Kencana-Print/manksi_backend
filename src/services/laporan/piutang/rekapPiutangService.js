@@ -28,8 +28,8 @@ const getRekapPiutang = async (query) => {
     year,
     year,
     year, // 12 Parameter Tahun
-    dEnd, // Tgl limit untuk Subquery Bayar
-    dEnd, // Tgl limit untuk Main query Debet
+    dEnd, // Tgl limit untuk subquery Bayar (tak-normal aware)
+    dEnd, // Tgl limit untuk filter tanggal di base
   ];
 
   if (perusahaan) {
@@ -39,37 +39,52 @@ const getRekapPiutang = async (query) => {
 
   const sql = `
     SELECT 
-      p.customer AS Kode,
+      base.customer AS Kode,
       c.Cus_nama AS Customer,
-      SUM(CASE WHEN p.tanggal < ? THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS TahunLalu,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 1 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Jan,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 2 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Feb,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 3 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Mar,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 4 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Apr,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 5 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Mei,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 6 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Jun,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 7 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Jul,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 8 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Agu,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 9 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Sep,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 10 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Okt,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 11 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Nov,
-      SUM(CASE WHEN YEAR(p.tanggal) = ? AND MONTH(p.tanggal) = 12 THEN p.debet - IFNULL(b.bayar, 0) ELSE 0 END) AS Des,
-      SUM(p.debet - IFNULL(b.bayar, 0)) AS GrandTotal
-    FROM piutang_debet p
-    LEFT JOIN tcustomer c ON c.Cus_kode = p.customer
-    LEFT JOIN (
-        SELECT d.nota, SUM(d.kredit) AS bayar
-        FROM piutang_kredit_detail d
-        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE h.tanggal <= ?
-        GROUP BY d.nota
-    ) b ON b.nota = p.nota
-    WHERE p.flag = 0 
-      AND p.is_writeoff = 0
-      AND p.tanggal <= ?
-      AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
-      ${filterPerusahaan}
-    GROUP BY p.customer, c.Cus_nama
+      SUM(CASE WHEN base.tanggal < ? THEN base.Sisa ELSE 0 END) AS TahunLalu,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 1 THEN base.Sisa ELSE 0 END) AS Jan,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 2 THEN base.Sisa ELSE 0 END) AS Feb,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 3 THEN base.Sisa ELSE 0 END) AS Mar,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 4 THEN base.Sisa ELSE 0 END) AS Apr,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 5 THEN base.Sisa ELSE 0 END) AS Mei,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 6 THEN base.Sisa ELSE 0 END) AS Jun,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 7 THEN base.Sisa ELSE 0 END) AS Jul,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 8 THEN base.Sisa ELSE 0 END) AS Agu,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 9 THEN base.Sisa ELSE 0 END) AS Sep,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 10 THEN base.Sisa ELSE 0 END) AS Okt,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 11 THEN base.Sisa ELSE 0 END) AS Nov,
+      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 12 THEN base.Sisa ELSE 0 END) AS Des,
+      SUM(base.Sisa) AS GrandTotal
+    FROM (
+      SELECT
+        p.customer,
+        p.nota,
+        p.tanggal,
+        (IFNULL((
+            SELECT pd2.debet
+            FROM piutang_debet pd2
+            WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+              AND pd2.is_writeoff = 0
+            LIMIT 1
+          ), p.debet) - IFNULL((
+          SELECT SUM(kd.kredit)
+          FROM piutang_kredit_detail kd
+          INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+          WHERE kd.nota = IFNULL(
+            (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+            p.nota
+          )
+          AND kh.tanggal <= ?
+        ), 0)) AS Sisa
+      FROM piutang_debet p
+      WHERE p.flag = 0
+        AND p.is_writeoff = 0
+        AND p.tanggal <= ?
+        AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
+        ${filterPerusahaan}
+    ) base
+    LEFT JOIN tcustomer c ON c.Cus_kode = base.customer
+    GROUP BY base.customer, c.Cus_nama
     HAVING GrandTotal <> 0 OR TahunLalu <> 0
     ORDER BY TahunLalu DESC, Jan DESC, Feb DESC, Mar DESC, Apr DESC, Mei DESC, Jun DESC, Jul DESC, Agu DESC, Sep DESC, Okt DESC, Nov DESC, Des DESC
   `;
@@ -84,7 +99,7 @@ const getDetailPiutang = async (query) => {
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
   let filterPerusahaan = "";
-  const params = [dEnd, dEnd];
+  const params = [dEnd, dEnd, dEnd];
 
   if (perusahaan) {
     filterPerusahaan = " AND p.cabang = ? ";
@@ -97,17 +112,40 @@ const getDetailPiutang = async (query) => {
     SELECT
       p.nota AS Nota,
       p.tanggal AS Tanggal,
-      p.debet AS Debet,
-      IFNULL(b.bayar, 0) AS Bayar,
-      (p.debet - IFNULL(b.bayar, 0)) AS Sisa
+      IFNULL((
+        SELECT pd2.debet
+        FROM piutang_debet pd2
+        WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+          AND pd2.is_writeoff = 0
+        LIMIT 1
+      ), p.debet) AS Debet,
+      IFNULL((
+        SELECT SUM(kd.kredit)
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        WHERE kd.nota = IFNULL(
+          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+          p.nota
+        )
+        AND kh.tanggal <= ?
+      ), 0) AS Bayar,
+      (IFNULL((
+          SELECT pd2.debet
+          FROM piutang_debet pd2
+          WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+            AND pd2.is_writeoff = 0
+          LIMIT 1
+        ), p.debet) - IFNULL((
+        SELECT SUM(kd.kredit)
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        WHERE kd.nota = IFNULL(
+          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+          p.nota
+        )
+        AND kh.tanggal <= ?
+      ), 0)) AS Sisa
     FROM piutang_debet p
-    LEFT JOIN (
-        SELECT d.nota, SUM(d.kredit) AS bayar
-        FROM piutang_kredit_detail d
-        INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
-        WHERE h.tanggal <= ?
-        GROUP BY d.nota
-    ) b ON b.nota = p.nota
     WHERE p.flag = 0
       AND p.is_writeoff = 0
       AND p.tanggal <= ?
