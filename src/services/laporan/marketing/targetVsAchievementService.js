@@ -84,7 +84,7 @@ const getBySales = async (tahun, bulanAwal, bulanAkhir) => {
         CONCAT(?, ' s.d ', ?) AS Bulan,
         group_sales COLLATE utf8mb4_general_ci AS GroupSales,
         '' COLLATE utf8mb4_general_ci AS SalKode,
-        'SUB TOTAL' COLLATE utf8mb4_general_ci AS SalNama,
+        CONCAT('SUB TOTAL ', group_sales) COLLATE utf8mb4_general_ci AS SalNama,
         SUM(target) AS Target,
         SUM(realisasi) AS Realisasi,
         ROUND(SUM(realisasi) / NULLIF(SUM(target), 0) * 100, 2) AS Ach,
