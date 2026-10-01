@@ -122,8 +122,8 @@ const save = async (data, userKode, isNewMode) => {
           pro_nomor, pro_tanggal, pro_cus_kode, pro_cus_nama, pro_sal_kode,
           pro_nama_pekerjaan, pro_divisi, pro_cabang, pro_cabkaos, pro_finishing,
           pro_spesifikasi, pro_sampel, pro_qty_rencana, pro_tgl_kirim,
-          pro_catatan_deadline, pro_keterangan, user_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          pro_catatan_deadline, pro_keterangan, pro_ukuran_bebas, user_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           data.tanggal,
@@ -141,6 +141,7 @@ const save = async (data, userKode, isNewMode) => {
           data.tglKirim,
           data.catatanDeadline || "",
           data.keterangan || "",
+          data.ukuranBebas || "",
           userKode,
         ],
       );
@@ -157,7 +158,7 @@ const save = async (data, userKode, isNewMode) => {
         `UPDATE tpraorder_hdr SET
           pro_tanggal=?, pro_cus_kode=?, pro_cus_nama=?, pro_sal_kode=?, pro_nama_pekerjaan=?,
           pro_divisi=?, pro_finishing=?, pro_spesifikasi=?, pro_sampel=?, pro_qty_rencana=?,
-          pro_tgl_kirim=?, pro_catatan_deadline=?, pro_keterangan=?, user_modified=?, date_modified=NOW()
+          pro_tgl_kirim=?, pro_catatan_deadline=?, pro_keterangan=?, pro_ukuran_bebas=?, user_modified=?, date_modified=NOW()
         WHERE pro_nomor=?`,
         [
           data.tanggal,
@@ -173,6 +174,7 @@ const save = async (data, userKode, isNewMode) => {
           data.tglKirim,
           data.catatanDeadline || "",
           data.keterangan || "",
+          data.ukuranBebas || "",
           userKode,
           nomor,
         ],
