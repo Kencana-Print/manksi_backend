@@ -196,7 +196,8 @@ const getDetail = async (
           SELECT SUM(dd.mkbd_jumlah)
           FROM tmkb_hdr hh
           LEFT JOIN tmkb_dtl dd ON dd.mkbd_mkb_nomor = hh.MKB_NOMOR
-          WHERE hh.MKB_SPK_NOMOR = h.mph_spk_nomor AND dd.mkbd_komponen = h.mph_komponen
+          INNER JOIN tspk sp ON sp.spk_nomor = h.mph_spk_nomor
+          WHERE hh.MKB_SPK_NOMOR = sp.spk_so_ref AND dd.mkbd_komponen = h.mph_komponen
           GROUP BY hh.MKB_SPK_NOMOR, dd.mkbd_komponen
         ), 0) AS JumlahMKB,
         SUM(h.mph_jumlah) AS JumlahLHK,
@@ -204,8 +205,9 @@ const getDetail = async (
         h.mph_sat_berat AS sat,
         h.mph_alasan AS Alasan
       FROM tmutasiproduksi_hdr h
+      LEFT JOIN tspk sp2 ON sp2.spk_nomor = h.mph_spk_nomor
       LEFT JOIN tspk_babaran b
-        ON b.spkb_nomor = h.mph_spk_nomor AND b.spkb_komponen = h.mph_komponen
+        ON b.spkb_nomor = sp2.spk_so_ref AND b.spkb_komponen = h.mph_komponen
       WHERE h.mph_gdgasal IN (?)
         ${tglLhkFilter}
         AND h.mph_spk_nomor IN (
