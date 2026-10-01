@@ -1278,8 +1278,20 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
       p.customer AS CusKode,
       IFNULL(c.cus_nama, '') AS CusNama,
-      p.debet AS Debet,
-      (p.debet - IFNULL((
+      IFNULL((
+        SELECT pd2.debet
+        FROM piutang_debet pd2
+        WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+          AND pd2.is_writeoff = 0
+        LIMIT 1
+      ), p.debet) AS Debet,
+      (IFNULL((
+          SELECT pd2.debet
+          FROM piutang_debet pd2
+          WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+            AND pd2.is_writeoff = 0
+          LIMIT 1
+        ), p.debet) - IFNULL((
         SELECT SUM(kd.kredit)
         FROM piutang_kredit_detail kd
         INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
