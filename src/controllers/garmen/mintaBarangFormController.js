@@ -15,9 +15,11 @@ const validateSpk = async (req, res) => {
 
 const getDetail = async (req, res) => {
   try {
+    const forPrint = req.query.print === "1";
     const data = await formService.getDetailForm(
       req.params.nomor,
       req.user.cabang,
+      { forPrint },
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

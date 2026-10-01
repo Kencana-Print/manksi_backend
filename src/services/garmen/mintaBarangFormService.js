@@ -170,7 +170,7 @@ const validateSpkAndMka = async (spkNomor, userCabang, userId) => {
   };
 };
 
-const getDetailForm = async (nomor, userCabang) => {
+const getDetailForm = async (nomor, userCabang, { forPrint = false } = {}) => {
   const qHdr = `
     SELECT 
       h.*, 
@@ -195,6 +195,7 @@ const getDetailForm = async (nomor, userCabang) => {
   const header = hdrRows[0];
 
   if (
+    !forPrint &&
     userCabang &&
     header.min_cab !== userCabang &&
     userCabang !== "ALL" &&
