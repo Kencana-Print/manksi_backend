@@ -35,6 +35,7 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirim,
       h.pro_status_bahan AS StatusBahan,
       h.pro_status_ppic AS StatusPpic,
+      h.pro_catatan_ppic AS CatatanPpic,
       DATE_FORMAT(h.pro_tgl_so_estimasi, '%Y-%m-%d') AS TglSoEstimasi,
       DATE_FORMAT(h.pro_tgl_map, '%Y-%m-%d') AS TglMap,
       IFNULL(
