@@ -47,6 +47,8 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
         WHERE b.prob_pro_nomor = h.pro_nomor) AS Bahan,
        h.pro_qty_rencana AS QtyRencana,
        DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirim,
+       DATE_FORMAT(h.pro_tgl_so_estimasi, '%Y-%m-%d') AS TglEstimasiSO,
+       DATE_FORMAT(h.pro_tgl_map, '%Y-%m-%d') AS TglEstimasiMAP,
        h.pro_status_ppic AS StatusPpic,
        h.pro_catatan_ppic AS CatatanPpic,
        h.pro_status AS Status,
