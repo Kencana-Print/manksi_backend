@@ -3206,6 +3206,7 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
       FROM tsalesorder WHERE so_aktif = 'Y'
     ) so ON so.so_memo = m.mspk_nomor
     WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+      AND m.mspk_aktif = 'Y'
     ${whereExtra}
   `;
   const sqlDivisi = `
@@ -3235,6 +3236,7 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
         FROM tsalesorder WHERE so_aktif = 'Y'
       ) so ON so.so_memo = m.mspk_nomor
       WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+        AND m.mspk_aktif = 'Y'
       ${whereExtra}
       GROUP BY DivisiGroup
     ) x
@@ -3288,6 +3290,7 @@ const getMapBelumSo = async (
     INNER JOIN tcustomer c  ON c.cus_kode = m.mspk_cus_kode
     LEFT  JOIN tdivisi dv   ON dv.kode = m.mspk_divisi
     WHERE m.mspk_tanggal >= ? AND m.mspk_tanggal <= ?
+      AND m.mspk_aktif = 'Y'
     ${whereExtra}
       AND NOT EXISTS (
         SELECT 1 FROM tspk s
