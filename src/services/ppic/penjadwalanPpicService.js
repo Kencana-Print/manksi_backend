@@ -86,21 +86,50 @@ const getDetail = async (nomor) => {
              AND sh.sj_approve <> 2
              AND sh.sj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
          ), 0)
-         ELSE IFNULL((
-           SELECT SUM(td.stbjd_jumlah)
-           FROM tstbj_dtl td
-           INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
-           WHERE td.stbjd_spk_nomor = COALESCE(
-             (SELECT so.so_spk_ref FROM tsalesorder so
-             WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-             COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-           )
-           AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-         ), 0)
+         ELSE (
+           IFNULL((
+             SELECT SUM(td.stbjd_jumlah)
+             FROM tstbj_dtl td
+             INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
+             WHERE td.stbjd_spk_nomor = COALESCE(
+               (SELECT so.so_spk_ref FROM tsalesorder so
+               WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+               COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+             )
+             AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
+           ), 0)
+           +
+           GREATEST(
+             IFNULL((
+               SELECT SUM(td2.stbjd_jumlah)
+               FROM tstbj_dtl td2
+               INNER JOIN tstbj_hdr th2 ON th2.stbj_nomor = td2.stbjd_stbj_nomor
+               WHERE td2.stbjd_spk_nomor = COALESCE(
+                 (SELECT so.so_spk_ref FROM tsalesorder so
+                 WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+                 COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+               )
+               AND NOT (th2.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2)
+             ), 0)
+             -
+             IFNULL((
+               SELECT SUM(sd2.sjd_jumlah)
+               FROM tsj_dtl sd2
+               INNER JOIN tsj_hdr sh2 ON sh2.sj_nomor = sd2.sjd_sj_nomor
+               WHERE sd2.sjd_spk_nomor = COALESCE(
+                 (SELECT so.so_spk_ref FROM tsalesorder so
+                 WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
+                 COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+               )
+               AND sh2.sj_approve <> 2
+             ), 0)
+           , 0)
+         )
        END AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
        DATE_FORMAT(d.pjwd_tgl_kesepakatan, '%Y-%m-%d') AS Kesepakatan,
+       d.pjwd_qty_kesepakatan AS QtyKesepakatan,
        d.pjwd_ket_kesepakatan AS KetKesepakatan,
        pro.pro_status_ppic AS StatusPpicPraOrder
      FROM tpenjadwalan_ppic_dtl d

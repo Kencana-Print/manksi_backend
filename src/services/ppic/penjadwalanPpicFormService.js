@@ -602,6 +602,7 @@ const FIELD_OWNERSHIP = {
   pjwd_tgl_permintaan_kirim: "MARKETING",
   pjwd_status_permintaan: "MARKETING",
   pjwd_tgl_kesepakatan: "NOT_MARKETING", // ⬅ diubah dari "PPIC"
+  pjwd_qty_kesepakatan: "NOT_MARKETING",
   pjwd_ket_kesepakatan: "NOT_MARKETING", // ⬅ diubah dari "PPIC"
   pjwd_nama_manual: "MARKETING",
   pjwd_pesan_manual: "MARKETING",
