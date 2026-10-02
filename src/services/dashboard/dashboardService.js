@@ -1718,8 +1718,8 @@ const getPotensiSummary = async (user, { startDate, endDate } = {}) => {
 
   const sql = `
     SELECT
-      COUNT(*) AS JmlItem,
-      SUM(p.pot_harga) AS TotalPotensi,
+      SUM(CASE WHEN (${POTENSI_REALISASI_CHECK}) = 0 THEN 1 ELSE 0 END) AS JmlItem,
+      SUM(CASE WHEN (${POTENSI_REALISASI_CHECK}) = 0 THEN p.pot_harga ELSE 0 END) AS TotalPotensi,
       SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 1 THEN p.pot_harga ELSE 0 END) AS TotalRealisasi,
       SUM(CASE WHEN p.pot_status = 'BATAL' THEN p.pot_harga ELSE 0 END) AS TotalBatal
     FROM tpotensi p
@@ -1738,7 +1738,7 @@ const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
   if (!canViewPotensi(user)) return { items: [], total: 0 };
 
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tpotensi`,
+    `SELECT COUNT(*) AS total FROM tpotensi p WHERE (${POTENSI_REALISASI_CHECK}) = 0`,
   );
 
   const [rows] = await db.query(
@@ -1751,6 +1751,7 @@ const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
      FROM tpotensi p
      LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
      LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
+     WHERE (${POTENSI_REALISASI_CHECK}) = 0
      ORDER BY p.date_create DESC
      LIMIT ? OFFSET ?`,
     [Number(limit), Number(offset)],
