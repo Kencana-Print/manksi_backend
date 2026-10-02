@@ -1027,17 +1027,21 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   const rangeEnd = toLocalDateStr(rangeEndDate);
   const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
 
-  // ⬅ BARU: cutoff = akhir bulan sebelum bulan yang dipilih user (bln/thn),
-  // bukan bulan target invoice. "Piutang Saat Ini" harus mencerminkan
-  // posisi outstanding per akhir bulan lalu, bukan real-time hari ini.
+  // cutoff = akhir bulan sebelum bulan yang dipilih (bln/thn) KHUSUS kalau
+  // bln/thn ini adalah bulan berjalan (bulan sekarang). Kalau yang dibuka
+  // laporan bulan yang sudah lewat, cutoff dilonggarkan ke hari ini supaya
+  // pembayaran yang telat dari akhir bulan tetap kehitung lunas.
   let cutoffBln = bln - 1;
   let cutoffThn = thn;
   if (cutoffBln <= 0) {
     cutoffBln += 12;
     cutoffThn -= 1;
   }
-  const cutoffDate = new Date(cutoffThn, cutoffBln, 0);
-  const cutoff = toLocalDateStr(cutoffDate);
+  const isBulanBerjalan =
+    thn === now.getFullYear() && bln === now.getMonth() + 1;
+  const cutoff = isBulanBerjalan
+    ? toLocalDateStr(new Date(cutoffThn, cutoffBln, 0))
+    : toLocalDateStr(now);
 
   const INV_SALES_SUBQUERY = `
     SELECT d.invd_inv_nomor AS nota,
@@ -1245,8 +1249,11 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
     cutoffBln += 12;
     cutoffThn -= 1;
   }
-  const cutoffDate = new Date(cutoffThn, cutoffBln, 0);
-  const cutoff = toLocalDateStr(cutoffDate);
+  const isBulanBerjalan =
+    thn === now.getFullYear() && bln === now.getMonth() + 1;
+  const cutoff = isBulanBerjalan
+    ? toLocalDateStr(new Date(cutoffThn, cutoffBln, 0))
+    : toLocalDateStr(now);
 
   const ATTR_SUBQUERY = `
     SELECT p.nota,
@@ -1274,7 +1281,7 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
 
   const [rows] = await db.query(
     `SELECT
-      p.nota AS Nota,
+      IFNULL((SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1), p.nota) AS Nota,
       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
       p.customer AS CusKode,
       IFNULL(c.cus_nama, '') AS CusNama,
