@@ -39,20 +39,22 @@ const getBrowseData = async (startDate, endDate, cab) => {
       DATE_FORMAT(dm.tanggal, '%Y-%m-%d') AS Tanggal,
       dm.cab AS Cab,
       dm.mkl_nomor AS SPK,
-      CONCAT('[MAKLON] ', IFNULL(bh.brg_nama, dm.kode_hasil)) AS NamaOrder,
+      CONCAT('[MAKLON] ', IFNULL(GROUP_CONCAT(DISTINCT IFNULL(bh.brg_nama, dh.dmh_kode_hasil) SEPARATOR ', '), '')) AS NamaOrder,
       dm.qty_masuk AS Depan,
       0 AS Belakang,
       0 AS Lengan,
-      dm.qty_hasil AS Variasi,
-      dm.bs_afval AS Saku,
+      IFNULL(SUM(dh.dmh_qty_hasil), 0) AS Variasi,
+      IFNULL(SUM(dh.dmh_bs_afval), 0) AS Saku,
       0 AS PanjangM,
       0 AS Buangan,
       CONCAT(dm.keterangan, ' (', dm.satuan, ')') AS Keterangan,
       'MAKLON' AS Tipe
     FROM tdtf_maklon dm
-    LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dm.kode_hasil
+    LEFT JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
+    LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
     WHERE dm.tanggal BETWEEN ? AND ?
     ${cab && cab !== "ALL" ? " AND dm.cab = ?" : ""}
+    GROUP BY dm.id
 
     ORDER BY Tanggal, SPK
   `;

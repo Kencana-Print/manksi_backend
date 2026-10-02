@@ -44,7 +44,8 @@ const getDetail = async (cab, tanggal) => {
   const [rows] = await db.query(q, [tanggal, cab]);
 
   const qMaklon = `
-    SELECT dm.mkl_nomor AS Kode,
+    SELECT dm.id AS DtfMaklonId,
+          dm.mkl_nomor AS Kode,
           IFNULL((
             SELECT GROUP_CONCAT(DISTINCT b.brg_nama SEPARATOR ', ')
             FROM tmaklon_dtl x
@@ -54,14 +55,18 @@ const getDetail = async (cab, tanggal) => {
           ), '') AS Nama,
           dm.kode_polos AS KodePolos,
           dm.qty_masuk AS QtyMasuk, dm.satuan AS Satuan,
-          dm.kode_hasil AS KodeHasil,
-          bh.brg_nama AS NamaHasil,
-          dm.qty_hasil AS QtyHasil, dm.bs_afval AS BsAfval,
           dm.keterangan AS Ket,
-          'MAKLON' AS Tipe
+          'MAKLON' AS Tipe,
+          dh.id AS HasilId,
+          dh.dmh_kode_hasil AS KodeHasil,
+          bh.brg_nama AS NamaHasil,
+          dh.dmh_qty_hasil AS QtyHasil,
+          dh.dmh_bs_afval AS BsAfval
     FROM tdtf_maklon dm
-    LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dm.kode_hasil
+    LEFT JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
+    LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
     WHERE dm.tanggal = ? AND dm.cab = ?
+    ORDER BY dm.id, dh.id
   `;
   const [maklonRows] = await db.query(qMaklon, [tanggal, cab]);
 
@@ -347,12 +352,17 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
   const spkRows = filled.filter((r) => r.Tipe !== "MAKLON");
 
   for (const r of maklonRows) {
-    if (!r.KodeHasil)
-      throw new Error("Item Hasil wajib diisi untuk baris Maklon.");
-    if (!Number(r.QtyHasil) && !Number(r.BsAfval))
-      throw new Error(
-        "Qty Hasil atau BS/Afval harus diisi untuk baris Maklon.",
-      );
+    const filledHasil = (r.HasilRows || []).filter(
+      (h) => h.KodeHasil && (Number(h.QtyHasil) > 0 || Number(h.BsAfval) > 0),
+    );
+    if (!filledHasil.length)
+      throw new Error(`Item Hasil wajib diisi untuk baris Maklon ${r.Kode}.`);
+    for (const h of filledHasil) {
+      if (!Number(h.QtyHasil) && !Number(h.BsAfval))
+        throw new Error(
+          `Qty Hasil atau BS/Afval harus diisi untuk Item Hasil ${h.KodeHasil} (${r.Kode}).`,
+        );
+    }
   }
 
   const conn = await db.getConnection();
@@ -386,6 +396,8 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
       );
     }
 
+    const touchedHasilIdsByMkl = {};
+
     for (const r of maklonRows) {
       const [[existing]] = await conn.query(
         `SELECT id, lhk_nomor FROM tdtf_maklon
@@ -394,26 +406,20 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
         [cab, tanggal, r.Kode, r.KodePolos],
       );
 
+      let dtfMaklonId;
       if (existing) {
+        dtfMaklonId = existing.id;
         await conn.query(
           `UPDATE tdtf_maklon
-           SET qty_masuk=?, satuan=?, kode_hasil=?, qty_hasil=?, bs_afval=?, keterangan=?
+           SET qty_masuk=?, satuan=?, keterangan=?
            WHERE id=?`,
-          [
-            Number(r.QtyMasuk) || 0,
-            r.Satuan || "",
-            r.KodeHasil,
-            Number(r.QtyHasil) || 0,
-            Number(r.BsAfval) || 0,
-            r.Ket || "",
-            existing.id,
-          ],
+          [Number(r.QtyMasuk) || 0, r.Satuan || "", r.Ket || "", dtfMaklonId],
         );
       } else {
         const lhkNomor = await generateLhkMaklonNomor(conn);
-        await conn.query(
-          `INSERT INTO tdtf_maklon (lhk_nomor, tanggal, cab, mkl_nomor, kode_polos, qty_masuk, satuan, kode_hasil, qty_hasil, bs_afval, keterangan, user_create, date_create)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        const [ins] = await conn.query(
+          `INSERT INTO tdtf_maklon (lhk_nomor, tanggal, cab, mkl_nomor, kode_polos, qty_masuk, satuan, keterangan, user_create, date_create)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
           [
             lhkNomor,
             tanggal,
@@ -422,14 +428,65 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
             r.KodePolos,
             Number(r.QtyMasuk) || 0,
             r.Satuan || "",
-            r.KodeHasil,
-            Number(r.QtyHasil) || 0,
-            Number(r.BsAfval) || 0,
             r.Ket || "",
             userKode,
           ],
         );
+        dtfMaklonId = ins.insertId;
       }
+
+      // ⬅ sinkronisasi item hasil (tdtf_maklon_hasil) — bisa banyak per baris
+      const filledHasil = (r.HasilRows || []).filter((h) => h.KodeHasil);
+      const [oldHasil] = await conn.query(
+        `SELECT id FROM tdtf_maklon_hasil WHERE dmh_dtf_maklon_id = ?`,
+        [dtfMaklonId],
+      );
+      const oldHasilIds = oldHasil.map((x) => x.id);
+      const keepIds = [];
+
+      for (const h of filledHasil) {
+        if (h.Id && oldHasilIds.includes(h.Id)) {
+          await conn.query(
+            `UPDATE tdtf_maklon_hasil SET dmh_kode_hasil=?, dmh_qty_hasil=?, dmh_bs_afval=? WHERE id=?`,
+            [
+              h.KodeHasil,
+              Number(h.QtyHasil) || 0,
+              Number(h.BsAfval) || 0,
+              h.Id,
+            ],
+          );
+          keepIds.push(h.Id);
+        } else {
+          const [insH] = await conn.query(
+            `INSERT INTO tdtf_maklon_hasil (dmh_dtf_maklon_id, dmh_kode_hasil, dmh_qty_hasil, dmh_bs_afval)
+             VALUES (?, ?, ?, ?)`,
+            [
+              dtfMaklonId,
+              h.KodeHasil,
+              Number(h.QtyHasil) || 0,
+              Number(h.BsAfval) || 0,
+            ],
+          );
+          keepIds.push(insH.insertId);
+        }
+      }
+
+      // hapus item hasil lama yg sudah dihapus user, kecuali sudah dipakai SJ
+      for (const oldId of oldHasilIds) {
+        if (keepIds.includes(oldId)) continue;
+        const [[usedInSj]] = await conn.query(
+          `SELECT 1 FROM tsj_maklon_dtl WHERE sjmd_dtf_maklon_hasil_id = ? LIMIT 1`,
+          [oldId],
+        );
+        if (!usedInSj) {
+          await conn.query(`DELETE FROM tdtf_maklon_hasil WHERE id = ?`, [
+            oldId,
+          ]);
+        }
+      }
+
+      if (!touchedHasilIdsByMkl[r.Kode]) touchedHasilIdsByMkl[r.Kode] = [];
+      touchedHasilIdsByMkl[r.Kode].push(...keepIds);
     }
 
     // Hapus baris Maklon LAMA yang sudah tidak ada lagi di form (dihapus
@@ -443,10 +500,16 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
       const key = `${old.mkl_nomor}|${old.kode_polos}`;
       if (!currentKeys.includes(key)) {
         const [[usedInSj]] = await conn.query(
-          `SELECT 1 FROM tsj_maklon_dtl WHERE sjmd_dtf_maklon_id = ? LIMIT 1`,
+          `SELECT 1 FROM tsj_maklon_dtl sd
+           INNER JOIN tdtf_maklon_hasil dh ON dh.id = sd.sjmd_dtf_maklon_hasil_id
+           WHERE dh.dmh_dtf_maklon_id = ? LIMIT 1`,
           [old.id],
         );
         if (!usedInSj) {
+          await conn.query(
+            `DELETE FROM tdtf_maklon_hasil WHERE dmh_dtf_maklon_id = ?`,
+            [old.id],
+          );
           await conn.query(`DELETE FROM tdtf_maklon WHERE id = ?`, [old.id]);
         }
       }
@@ -462,22 +525,11 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
     // Kumpulkan id tdtf_maklon yang disentuh save ini per mkl_nomor —
     // dipakai untuk auto-generate SJ Hasil Maklon (hanya id yang belum
     // punya SJ sama sekali, dicek ulang di dalam generateSjForIds).
-    const touchedIdsByMkl = {};
-    for (const r of maklonRows) {
-      const [[row]] = await conn.query(
-        `SELECT id FROM tdtf_maklon WHERE cab = ? AND tanggal = ? AND mkl_nomor = ? AND kode_polos = ? LIMIT 1`,
-        [cab, tanggal, r.Kode, r.KodePolos],
-      );
-      if (!row) continue;
-      if (!touchedIdsByMkl[r.Kode]) touchedIdsByMkl[r.Kode] = [];
-      touchedIdsByMkl[r.Kode].push(row.id);
-    }
-
-    for (const [mklNomor, ids] of Object.entries(touchedIdsByMkl)) {
+    for (const [mklNomor, hasilIds] of Object.entries(touchedHasilIdsByMkl)) {
       const result = await sjHasilMakloonService.generateSjForIds(
         conn,
         mklNomor,
-        ids,
+        hasilIds,
         tanggal,
         userKode,
       );
