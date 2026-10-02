@@ -170,6 +170,7 @@ const getBrowseList = async (filters) => {
         y.spk_newdesign AS Design_Baru, y.spk_designdone AS Design_Done,
         y.spk_keterangan AS Keterangan, y.spk_invdc AS 'Pesanan/Invoice',
         y.spk_ketbatal AS StsPembatalan,
+        y.spk_lhk_nomor AS LhkNomor,
         IF(ppic.spk_nomor IS NOT NULL, 1, 0) AS HasSpkPpic,
         IF(sjChk.sjd_spk_nomor IS NOT NULL OR stbjChk.stbjd_spk_nomor IS NOT NULL, 1, 0) AS HasSj,
 
@@ -187,7 +188,7 @@ const getBrowseList = async (filters) => {
           spk_nomor_po, spk_ketpo, spk_tgl_po, spk_DatelinePO, spk_close, spk_close_alasan,
           spk_pen_nomor, spk_memo, spk_repeat, spk_aktif, spk_pinjo, spk_accpending,
           spk_mppb, spk_newdesign, spk_designdone, spk_keterangan, spk_invdc, spk_is_so,
-          spk_ketbatal, spk_sublim
+          spk_ketbatal, spk_sublim, NULL AS spk_lhk_nomor
         FROM tspk
         WHERE spk_tanggal >= CONCAT(?, ' 00:00:00') AND spk_tanggal <= CONCAT(?, ' 23:59:59')
           AND (
@@ -217,7 +218,7 @@ const getBrowseList = async (filters) => {
           so_aktif AS spk_aktif, so_pinjo AS spk_pinjo, so_accpending AS spk_accpending,
           so_mppb AS spk_mppb, so_newdesign AS spk_newdesign, so_designdone AS spk_designdone,
           so_keterangan AS spk_keterangan, so_invdc AS spk_invdc, 1 AS spk_is_so,
-          so_ketbatal AS spk_ketbatal, so_sublim AS spk_sublim
+          so_ketbatal AS spk_ketbatal, so_sublim AS spk_sublim, so_lhk_nomor AS spk_lhk_nomor
         FROM tsalesorder
         WHERE so_tanggal >= CONCAT(?, ' 00:00:00') AND so_tanggal <= CONCAT(?, ' 23:59:59')
       ) y
@@ -1143,6 +1144,7 @@ const saveRevisi = async (nomor, payload, user) => {
     cusKode,
     salKode,
     penawaranNomor,
+    penawaranPendId,
     invoiceDc,
     namaExternal,
   } = payload;
@@ -1165,7 +1167,8 @@ const saveRevisi = async (nomor, payload, user) => {
   const nomorCol = loc === "new" ? "so_nomor" : "spk_nomor";
 
   const [[hdr]] = await db.query(
-    `SELECT ${prefix}tanggal AS tanggal FROM ${table} WHERE ${nomorCol} = ?`,
+    `SELECT ${prefix}tanggal AS tanggal, ${prefix}pen_nomor AS oldPenNomor, ${prefix}pen_id AS oldPenId
+     FROM ${table} WHERE ${nomorCol} = ?`,
     [nomor],
   );
   if (!hdr) throw new Error("Data SO tidak ditemukan.");
@@ -1199,6 +1202,9 @@ const saveRevisi = async (nomor, payload, user) => {
   const cusKodeClean = cusKode ? String(cusKode).trim() : "";
   const salKodeClean = salKode ? String(salKode).trim() : "";
   const penawaranClean = penawaranNomor ? String(penawaranNomor).trim() : "";
+  const penawaranPendIdClean = penawaranPendId
+    ? String(penawaranPendId).trim()
+    : "";
   const invoiceDcClean = invoiceDc ? String(invoiceDc).trim() : "";
   const namaExternalClean = namaExternal ? String(namaExternal).trim() : "";
 
@@ -1251,6 +1257,7 @@ const saveRevisi = async (nomor, payload, user) => {
          ${prefix}cus_kode = ?,
          ${prefix}sal_kode = ?,
          ${prefix}pen_nomor = ?,
+         ${prefix}pen_id = ?,
          ${prefix}invdc = ?,
          ${prefix}nama2 = ?,
          user_modified = ?, date_modified = NOW()
@@ -1265,6 +1272,7 @@ const saveRevisi = async (nomor, payload, user) => {
         cusKodeClean,
         salKodeClean,
         penawaranClean,
+        penawaranPendIdClean,
         invoiceDcClean,
         namaExternalClean,
         user.kode,
@@ -1279,6 +1287,7 @@ const saveRevisi = async (nomor, payload, user) => {
          spk_cus_kode = ?,
          spk_sal_kode = ?,
          spk_pen_nomor = ?,
+         spk_pen_id = ?,
          spk_invdc = ?,
          spk_nama2 = ?,
          user_modified = ?, date_modified = NOW()
@@ -1293,12 +1302,37 @@ const saveRevisi = async (nomor, payload, user) => {
         cusKodeClean,
         salKodeClean,
         penawaranClean,
+        penawaranPendIdClean,
         invoiceDcClean,
         namaExternalClean,
         user.kode,
         ppic.spk_nomor,
       ],
     );
+
+    // ⬅ BARU: sinkron status tpenawaran_dtl — sama seperti auto-close
+    // di salesOrderFormService.saveData() saat SO dibuat, tapi di
+    // Revisi ini penawaran lama bisa diganti dengan yang baru, jadi
+    // yang lama harus dibuka kembali juga.
+    const oldPenNomor = hdr.oldPenNomor || "";
+    const oldPenId = hdr.oldPenId || "";
+    const penawaranBerubah =
+      oldPenNomor !== penawaranClean || oldPenId !== penawaranPendIdClean;
+
+    if (penawaranBerubah) {
+      if (oldPenNomor) {
+        await conn.query(
+          `UPDATE tpenawaran_dtl SET pend_status="" WHERE pend_pen_nomor=? AND pend_id=?`,
+          [oldPenNomor, oldPenId],
+        );
+      }
+      if (penawaranClean) {
+        await conn.query(
+          `UPDATE tpenawaran_dtl SET pend_status="CLOSE" WHERE pend_pen_nomor=? AND pend_id=?`,
+          [penawaranClean, penawaranPendIdClean],
+        );
+      }
+    }
 
     if (approvedUrut) {
       await conn.query(
