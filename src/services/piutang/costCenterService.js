@@ -1,11 +1,14 @@
 const db = require("../../config/database");
 
+// Hanya tampilkan cost center dengan kode = 7, atau kode >= 10
+const CC_FILTER = `(CAST(cc_kode AS UNSIGNED) = 7 OR CAST(cc_kode AS UNSIGNED) >= 10)`;
+
 const getAll = async () => {
   const [headers] = await db.query(
-    `SELECT cc_kode, cc_nama, cc_cabang FROM finance.tcostcenter ORDER BY cc_nama`,
+    `SELECT cc_kode, cc_nama, cc_cabang FROM finance.tcostcenter WHERE ${CC_FILTER} ORDER BY cc_nama`,
   );
   const [details] = await db.query(
-    `SELECT dc_kode, dc_nama FROM finance.tcostcenteritem ORDER BY dc_kode, dc_nama`,
+    `SELECT dc_kode, dc_nama FROM finance.tcostcenteritem WHERE ${CC_FILTER.replace(/cc_kode/g, "dc_kode")} ORDER BY dc_kode, dc_nama`,
   );
   return headers.map((h) => ({
     ...h,
@@ -18,7 +21,7 @@ const search = async (query) => {
     SELECT cc.cc_kode, cc.cc_nama, cc.cc_cabang, dc.dc_nama
     FROM finance.tcostcenteritem dc
     INNER JOIN finance.tcostcenter cc ON cc.cc_kode = dc.dc_kode
-    WHERE CAST(cc.cc_kode AS UNSIGNED) >= 10
+    WHERE (CAST(cc.cc_kode AS UNSIGNED) = 7 OR CAST(cc.cc_kode AS UNSIGNED) >= 10)
   `;
   const params = [];
   if (query) {
