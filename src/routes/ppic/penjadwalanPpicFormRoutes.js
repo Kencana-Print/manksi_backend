@@ -20,6 +20,11 @@ router.get("/kandidat-map", verifyToken, controller.searchMapKandidat);
 router.get("/kandidat-so", verifyToken, controller.searchSoKandidat);
 router.get("/so-info/:soNomor", verifyToken, controller.getSoInfo);
 router.get("/map-info/:mapNomor", verifyToken, controller.getMapInfo);
+router.get(
+  "/pra-order-info/:proNomor",
+  verifyToken,
+  controller.getPraOrderInfo,
+);
 router.get("/mh-info/:mhNomor", verifyToken, controller.getMhInfo);
 router.get(
   "/penawaran-detail/:penNomor",

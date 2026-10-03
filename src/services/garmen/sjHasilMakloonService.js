@@ -16,6 +16,7 @@ const getOutstanding = async ({ startDate, endDate, cab }) => {
 
   const [rows] = await db.query(
     `SELECT
+       dh.id AS DtfMaklonHasilId,
        dm.id AS DtfMaklonId,
        dm.mkl_nomor AS MklNomor,
        dm.tanggal AS Tanggal,
@@ -26,25 +27,26 @@ const getOutstanding = async ({ startDate, endDate, cab }) => {
        gt.pab_nama AS NamaCabTujuan,
        dm.kode_polos AS KodePolos,
        bp.brg_nama AS NamaPolos,
-       dm.kode_hasil AS KodeHasil,
+       dh.dmh_kode_hasil AS KodeHasil,
        bh.brg_nama AS NamaHasil,
        dm.satuan AS Satuan,
        dm.qty_masuk AS QtyMasuk,
-       dm.qty_hasil AS QtyHasil,
-       dm.bs_afval AS BsAfval,
+       dh.dmh_qty_hasil AS QtyHasil,
+       dh.dmh_bs_afval AS BsAfval,
        dm.keterangan AS Keterangan
-     FROM tdtf_maklon dm
+     FROM tdtf_maklon_hasil dh
+     JOIN tdtf_maklon dm ON dm.id = dh.dmh_dtf_maklon_id
      JOIN tmaklon_hdr h ON h.mkl_nomor = dm.mkl_nomor
      LEFT JOIN tgarmen_brg bp ON bp.brg_kode = dm.kode_polos
-     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dm.kode_hasil
+     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
      LEFT JOIN tpabrik ga ON ga.pab_kode = h.mkl_cab_asal
      LEFT JOIN tpabrik gt ON gt.pab_kode = h.mkl_cab_tujuan
      WHERE dm.tanggal BETWEEN ? AND ?
        ${cabFilter}
        AND NOT EXISTS (
-         SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_id = dm.id
+         SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id
        )
-     ORDER BY dm.tanggal DESC, dm.id DESC`,
+     ORDER BY dm.tanggal DESC, dh.id DESC`,
     params,
   );
   return rows;
@@ -102,16 +104,17 @@ const getCreateData = async (ids) => {
   if (!ids || !ids.length) throw new Error("Tidak ada baris yang dipilih.");
 
   const [rows] = await db.query(
-    `SELECT dm.id AS DtfMaklonId, dm.mkl_nomor AS MklNomor, dm.tanggal AS Tanggal,
+    `SELECT dh.id AS DtfMaklonHasilId, dm.id AS DtfMaklonId, dm.mkl_nomor AS MklNomor, dm.tanggal AS Tanggal,
             dm.kode_polos AS KodePolos, bp.brg_nama AS NamaPolos,
-            dm.kode_hasil AS KodeHasil, bh.brg_nama AS NamaHasil,
-            dm.satuan AS Satuan, dm.qty_hasil AS QtyHasil, dm.bs_afval AS BsAfval,
+            dh.dmh_kode_hasil AS KodeHasil, bh.brg_nama AS NamaHasil,
+            dm.satuan AS Satuan, dh.dmh_qty_hasil AS QtyHasil, dh.dmh_bs_afval AS BsAfval,
             dm.lhk_nomor AS LhkNomor
-     FROM tdtf_maklon dm
+     FROM tdtf_maklon_hasil dh
+     JOIN tdtf_maklon dm ON dm.id = dh.dmh_dtf_maklon_id
      LEFT JOIN tgarmen_brg bp ON bp.brg_kode = dm.kode_polos
-     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dm.kode_hasil
-     WHERE dm.id IN (?)
-       AND NOT EXISTS (SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_id = dm.id)`,
+     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
+     WHERE dh.id IN (?)
+       AND NOT EXISTS (SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id)`,
     [ids],
   );
 
@@ -152,11 +155,13 @@ const getCreateData = async (ids) => {
 // save) MAUPUN dari createSjHasilMaklon publik (buka conn sendiri) ──
 const generateSjForIds = async (conn, mklNomor, ids, tanggal, userKode) => {
   const [rows] = await conn.query(
-    `SELECT dm.id AS DtfMaklonId, dm.mkl_nomor AS MklNomor, dm.kode_polos AS KodePolos,
-            dm.kode_hasil AS KodeHasil, dm.qty_hasil AS QtyHasil, dm.bs_afval AS BsAfval
-     FROM tdtf_maklon dm
-     WHERE dm.id IN (?)
-       AND NOT EXISTS (SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_id = dm.id)
+    `SELECT dh.id AS HasilId, dm.id AS DtfMaklonId, dm.mkl_nomor AS MklNomor, dm.kode_polos AS KodePolos,
+            dh.dmh_kode_hasil AS KodeHasil, dh.dmh_qty_hasil AS QtyHasil, dh.dmh_bs_afval AS BsAfval
+     FROM tdtf_maklon_hasil dh
+     INNER JOIN tdtf_maklon dm ON dm.id = dh.dmh_dtf_maklon_id
+     WHERE dh.id IN (?)
+       AND dh.dmh_kode_hasil IS NOT NULL AND dh.dmh_kode_hasil <> ''
+       AND NOT EXISTS (SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id)
      FOR UPDATE`,
     [ids],
   );
@@ -167,8 +172,6 @@ const generateSjForIds = async (conn, mklNomor, ids, tanggal, userKode) => {
   if (mklNomorSet.size > 1) {
     throw new Error("Semua baris harus berasal dari No. Maklon yang sama.");
   }
-  const validRows = rows.filter((r) => r.KodeHasil);
-  if (!validRows.length) return null;
 
   const [[mklHdr]] = await conn.query(
     `SELECT mkl_cab_asal FROM tmaklon_hdr WHERE mkl_nomor = ?`,
@@ -185,7 +188,7 @@ const generateSjForIds = async (conn, mklNomor, ids, tanggal, userKode) => {
     [nomor, mklNomor, tanggal, cabPenerima, userKode],
   );
 
-  for (const r of validRows) {
+  for (const r of rows) {
     const [[mkld]] = await conn.query(
       `SELECT mkld_id FROM tmaklon_dtl WHERE mkld_mkl_nomor = ? AND mkld_kode_polos = ? LIMIT 1`,
       [mklNomor, r.KodePolos],
@@ -197,12 +200,13 @@ const generateSjForIds = async (conn, mklNomor, ids, tanggal, userKode) => {
     }
 
     await conn.query(
-      `INSERT INTO tsj_maklon_dtl (sjmd_sjm_nomor, sjmd_mkld_id, sjmd_dtf_maklon_id, sjmd_kode_jadi, sjmd_qty_terima, sjmd_qty_bs)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO tsj_maklon_dtl (sjmd_sjm_nomor, sjmd_mkld_id, sjmd_dtf_maklon_id, sjmd_dtf_maklon_hasil_id, sjmd_kode_jadi, sjmd_qty_terima, sjmd_qty_bs)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         nomor,
         mkld.mkld_id,
         r.DtfMaklonId,
+        r.HasilId,
         r.KodeHasil,
         Number(r.QtyHasil) || 0,
         Number(r.BsAfval) || 0,
@@ -220,7 +224,10 @@ const createSjHasilMaklon = async (payload, user) => {
   if (!tanggal) throw new Error("Tanggal wajib diisi.");
 
   const [[first]] = await db.query(
-    `SELECT mkl_nomor FROM tdtf_maklon WHERE id = ?`,
+    `SELECT dm.mkl_nomor
+     FROM tdtf_maklon_hasil dh
+     JOIN tdtf_maklon dm ON dm.id = dh.dmh_dtf_maklon_id
+     WHERE dh.id = ?`,
     [ids[0]],
   );
   if (!first) throw new Error("Baris tidak ditemukan.");

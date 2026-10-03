@@ -102,6 +102,23 @@ const getSoInfo = async (req, res) => {
   }
 };
 
+const getPraOrderInfo = async (req, res) => {
+  try {
+    const { divisi } = req.query;
+    const data = await penjadwalanPpicFormService.getPraOrderInfo(
+      req.params.proNomor,
+      divisi || "",
+    );
+    if (!data)
+      return res
+        .status(404)
+        .json({ success: false, message: "Pra Order tidak ditemukan." });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 const getMhInfo = async (req, res) => {
   try {
     const { divisi, excludeNomor } = req.query;
@@ -337,6 +354,7 @@ module.exports = {
   searchMapKandidat,
   getSoInfo,
   getMapInfo,
+  getPraOrderInfo,
   getMhInfo,
   getPenawaranDetailList,
   getPenawaranItemInfo,

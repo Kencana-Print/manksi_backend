@@ -234,6 +234,65 @@ const getMapInfo = async (
   };
 };
 
+/**
+ * Lookup 1 Pra Order by nomor, untuk tombol "Tambah Baris Manual"
+ * saat user ngetik nomor PRA langsung.
+ * @param {string} proNomor
+ * @param {string} pjwDivisi - KODE divisi header Komitmen Kirim (mis. "4"),
+ *   sedangkan tpraorder_hdr.pro_divisi menyimpan NAMA divisi (mis. "GARMEN") —
+ *   makanya harus dikonversi dulu, nggak bisa dibandingkan langsung.
+ */
+const getPraOrderInfo = async (proNomor, pjwDivisi) => {
+  const [rows] = await db.query(
+    `SELECT pro_nomor, pro_status, pro_divisi, pro_nama_pekerjaan,
+            pro_tanggal, pro_tgl_kirim, pro_qty_rencana
+     FROM tpraorder_hdr
+     WHERE pro_nomor = ?`,
+    [proNomor],
+  );
+
+  if (rows.length === 0) {
+    throw new Error(`Pra Order ${proNomor} tidak ditemukan.`);
+  }
+
+  const pro = rows[0];
+
+  if (pro.pro_status !== "OPEN") {
+    throw new Error(
+      `Pra Order ${proNomor} statusnya ${pro.pro_status}, bukan OPEN.`,
+    );
+  }
+
+  if (String(pro.pro_divisi) !== String(pjwDivisi)) {
+    throw new Error(
+      `Pra Order ${proNomor} bukan divisi yang sesuai (divisi: ${pro.pro_divisi}).`,
+    );
+  }
+
+  const [existing] = await db.query(
+    `SELECT pjwd_pjw_nomor FROM tpenjadwalan_ppic_dtl WHERE pjwd_pro_nomor = ?`,
+    [proNomor],
+  );
+  if (existing.length > 0) {
+    throw new Error(
+      `Pra Order ${proNomor} sudah ada di Komitmen Kirim ${existing[0].pjwd_pjw_nomor}.`,
+    );
+  }
+
+  // Pesan = Total Rencana Order; belum ada yg dikirim karena belum jadi SO
+  const pesan = Number(pro.pro_qty_rencana) || 0;
+
+  return {
+    Nomor: pro.pro_nomor,
+    Nama: pro.pro_nama_pekerjaan,
+    Tanggal: pro.pro_tanggal,
+    Pesan: pesan,
+    Kirim: 0,
+    Kurang: pesan, // Kurang = Pesan - Kirim
+    DatelineAsli: pro.pro_tgl_kirim, // ⬅ Permintaan Kirim baca dari sini
+  };
+};
+
 // ── Info 1 MH (tambah manual) — dengan validasi Divisi & duplikasi ──
 const getMhInfo = async (mhNomor, divisi = "", excludeNomor = "") => {
   const [rows] = await db.query(
@@ -1173,6 +1232,7 @@ module.exports = {
   searchPraOrderKandidat,
   searchMapKandidat,
   getSoInfo,
+  getPraOrderInfo,
   getMapInfo,
   getMhInfo,
   getPenawaranDetailList,
