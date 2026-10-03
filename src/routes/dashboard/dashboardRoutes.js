@@ -72,6 +72,7 @@ router.post("/potensi-bulk", verifyToken, controller.setPotensiBulk);
 router.patch("/potensi/:nomor/batal", verifyToken, controller.batalPotensi);
 router.get("/potensi-summary", verifyToken, controller.getPotensiSummary);
 router.get("/potensi-list", verifyToken, controller.getPotensiList);
+router.get("/potensi-batal-list", verifyToken, controller.getPotensiBatalList);
 router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
 router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
 router.get("/penerimaan-summary", verifyToken, controller.getPenerimaanSummary);

@@ -1477,6 +1477,25 @@ const generatePotensiNomor = async (conn, perushKode, joKode) => {
   return `${prefix}${numStr}`;
 };
 
+// Telusuri mundur rantai revisi dari sebuah nomor MAP, kembalikan
+// array [nomorSendiri, ...leluhurnya] — dipakai buat cek duplikat
+// supaya revisi baru dari MAP yang sudah ditandai potensi nggak
+// kehitung dobel.
+const getMapAncestorChain = async (conn, mspkNomor) => {
+  const chain = [mspkNomor];
+  let current = mspkNomor;
+  for (let i = 0; i < 5; i++) {
+    const [[row]] = await conn.query(
+      `SELECT mspk_referensi FROM tmemospk WHERE mspk_nomor = ?`,
+      [current],
+    );
+    if (!row || !row.mspk_referensi) break;
+    chain.push(row.mspk_referensi);
+    current = row.mspk_referensi;
+  }
+  return chain;
+};
+
 // payload: { sumber: 'PENAWARAN'|'MAP', nomorSumber, namaItem, harga }
 // Tidak ada lagi pengecekan kepemilikan — siapapun MO/CMO boleh menandai
 // Penawaran/MAP siapapun; pot_sal_kode tetap dicatat dari sales pemilik ASLI transaksi,
@@ -1525,16 +1544,16 @@ const setPotensi = async (payload, user) => {
     const dupSql =
       sumber === "PENAWARAN"
         ? `SELECT pot_nomor FROM tpotensi
-           WHERE pot_pen_nomor = ? AND pot_pend_id ${pendId ? "= ?" : "IS NULL"}
-             AND pot_status <> 'BATAL' FOR UPDATE`
+       WHERE pot_pen_nomor = ? AND pot_pend_id ${pendId ? "= ?" : "IS NULL"}
+         AND pot_status <> 'BATAL' FOR UPDATE`
         : `SELECT pot_nomor FROM tpotensi
-           WHERE pot_mspk_nomor = ? AND pot_status <> 'BATAL' FOR UPDATE`;
+       WHERE pot_mspk_nomor IN (?) AND pot_status <> 'BATAL' FOR UPDATE`;
     const dupParams =
       sumber === "PENAWARAN"
         ? pendId
           ? [nomorSumber, pendId]
           : [nomorSumber]
-        : [nomorSumber];
+        : [await getMapAncestorChain(conn, nomorSumber)];
 
     const [[dup]] = await conn.query(dupSql, dupParams);
     if (dup)
@@ -1562,7 +1581,9 @@ const setPotensi = async (payload, user) => {
     await conn.commit();
     return { nomor };
   } catch (err) {
-    await conn.rollback();
+    if (err.code === "ER_DUP_ENTRY" && err.message.includes("uq_pot_dedupe")) {
+      throw new Error("Transaksi ini sudah ditandai potensial sebelumnya.");
+    }
     throw err;
   } finally {
     conn.release();
@@ -1661,7 +1682,9 @@ const setPotensiBulk = async (items, user) => {
     await conn.commit();
     return { created };
   } catch (err) {
-    await conn.rollback();
+    if (err.code === "ER_DUP_ENTRY" && err.message.includes("uq_pot_dedupe")) {
+      throw new Error("Transaksi ini sudah ditandai potensial sebelumnya.");
+    }
     throw err;
   } finally {
     conn.release();
@@ -1705,27 +1728,56 @@ const POTENSI_REALISASI_CHECK = `
   )
 `;
 
-// SEMUA data — tanpa filter sal_kode
-const getPotensiSummary = async (user, { startDate, endDate } = {}) => {
-  if (!canViewPotensi(user)) return null;
+// Resolve rantai: Penawaran → MAP (kalau sudah dikonversi) → MAP revisi
+// terbaru (sampai 5 level). Dipakai di getPotensiList & getPotensiSummary
+// supaya keduanya selalu konsisten nunjukin representasi TERKINI.
+const POTENSI_RESOLVE_JOIN = `
+  LEFT JOIN tmemospk map_from_pen
+    ON p.pot_pen_nomor IS NOT NULL
+    AND map_from_pen.mspk_pen_nomor = p.pot_pen_nomor
+    AND map_from_pen.mspk_pen_id = p.pot_pend_id
+    AND map_from_pen.mspk_aktif = 'Y'
+  LEFT JOIN tmemospk map_r1 ON map_r1.mspk_referensi = COALESCE(p.pot_mspk_nomor, map_from_pen.mspk_nomor)
+  LEFT JOIN tmemospk map_r2 ON map_r2.mspk_referensi = map_r1.mspk_nomor
+  LEFT JOIN tmemospk map_r3 ON map_r3.mspk_referensi = map_r2.mspk_nomor
+  LEFT JOIN tmemospk map_r4 ON map_r4.mspk_referensi = map_r3.mspk_nomor
+  LEFT JOIN tmemospk map_r5 ON map_r5.mspk_referensi = map_r4.mspk_nomor
+`;
 
-  const params = [];
-  let dateFilter = "";
-  if (startDate && endDate) {
-    dateFilter = "AND p.date_create >= ? AND p.date_create <= ?";
-    params.push(startDate, `${endDate} 23:59:59`);
-  }
+const POTENSI_RESOLVED_NOMOR = `
+  COALESCE(
+    map_r5.mspk_nomor, map_r4.mspk_nomor, map_r3.mspk_nomor,
+    map_r2.mspk_nomor, map_r1.mspk_nomor,
+    map_from_pen.mspk_nomor, p.pot_mspk_nomor, p.pot_pen_nomor
+  )
+`;
+
+const POTENSI_RESOLVED_HARGA = `
+  COALESCE(
+    map_r5.mspk_harga * map_r5.mspk_rencana_order,
+    map_r4.mspk_harga * map_r4.mspk_rencana_order,
+    map_r3.mspk_harga * map_r3.mspk_rencana_order,
+    map_r2.mspk_harga * map_r2.mspk_rencana_order,
+    map_r1.mspk_harga * map_r1.mspk_rencana_order,
+    map_from_pen.mspk_harga * map_from_pen.mspk_rencana_order,
+    p.pot_harga
+  )
+`;
+
+// SEMUA data — tanpa filter sal_kode
+const getPotensiSummary = async (user) => {
+  if (!canViewPotensi(user)) return null;
 
   const sql = `
     SELECT
-      SUM(CASE WHEN (${POTENSI_REALISASI_CHECK}) = 0 THEN 1 ELSE 0 END) AS JmlItem,
-      SUM(CASE WHEN (${POTENSI_REALISASI_CHECK}) = 0 THEN p.pot_harga ELSE 0 END) AS TotalPotensi,
-      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 1 THEN p.pot_harga ELSE 0 END) AS TotalRealisasi,
+      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0 THEN 1 ELSE 0 END) AS JmlItem,
+      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0 THEN (${POTENSI_RESOLVED_HARGA}) ELSE 0 END) AS TotalPotensi,
+      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 1 THEN (${POTENSI_RESOLVED_HARGA}) ELSE 0 END) AS TotalRealisasi,
       SUM(CASE WHEN p.pot_status = 'BATAL' THEN p.pot_harga ELSE 0 END) AS TotalBatal
     FROM tpotensi p
-    WHERE 1=1 ${dateFilter}
+    ${POTENSI_RESOLVE_JOIN}
   `;
-  const [[row]] = await db.query(sql, params);
+  const [[row]] = await db.query(sql);
   return {
     jmlItem: Number(row.JmlItem) || 0,
     totalPotensi: Number(row.TotalPotensi) || 0,
@@ -1738,23 +1790,65 @@ const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
   if (!canViewPotensi(user)) return { items: [], total: 0 };
 
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tpotensi p WHERE (${POTENSI_REALISASI_CHECK}) = 0`,
+    `SELECT COUNT(*) AS total FROM tpotensi p
+     WHERE p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0`,
   );
 
   const [rows] = await db.query(
     `SELECT
-       p.pot_nomor, p.pot_nama_item, p.pot_harga, p.pot_status, p.pot_alasan_batal,
-       p.date_create, p.user_create, s.sal_nama, c.cus_nama,
-       IFNULL(p.pot_pen_nomor, p.pot_mspk_nomor) AS NomorSumber,
-       IF(p.pot_pen_nomor IS NOT NULL, 'PENAWARAN', 'MAP') AS Sumber,
+       p.pot_nomor, p.pot_status, p.date_create, p.user_create,
+       s.sal_nama, c.cus_nama,
+       ${POTENSI_RESOLVED_NOMOR} AS NomorSumber,
+       COALESCE(map_r5.mspk_nama, map_r4.mspk_nama, map_r3.mspk_nama, map_r2.mspk_nama, map_r1.mspk_nama, map_from_pen.mspk_nama, p.pot_nama_item) AS pot_nama_item,
+       (${POTENSI_RESOLVED_HARGA}) AS pot_harga,
+       IF(p.pot_mspk_nomor IS NOT NULL OR map_from_pen.mspk_nomor IS NOT NULL, 'MAP', 'PENAWARAN') AS Sumber,
        (${POTENSI_REALISASI_CHECK}) AS IsRealisasi
      FROM tpotensi p
      LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
      LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
-     WHERE (${POTENSI_REALISASI_CHECK}) = 0
+     ${POTENSI_RESOLVE_JOIN}
+     WHERE p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0
      ORDER BY p.date_create DESC
      LIMIT ? OFFSET ?`,
     [Number(limit), Number(offset)],
+  );
+
+  return { items: rows, total: Number(total) };
+};
+
+const getPotensiBatalList = async (
+  user,
+  { startDate, endDate, limit = 20, offset = 0 } = {},
+) => {
+  if (!canViewPotensi(user)) return { items: [], total: 0 };
+
+  const params = [];
+  let dateFilter = "";
+  if (startDate && endDate) {
+    dateFilter = "AND p.date_modified >= ? AND p.date_modified <= ?";
+    params.push(startDate, `${endDate} 23:59:59`);
+  }
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tpotensi p WHERE p.pot_status = 'BATAL' ${dateFilter}`,
+    params,
+  );
+
+  const [rows] = await db.query(
+    `SELECT
+       p.pot_nomor, p.pot_nama_item, p.pot_harga, p.pot_alasan_batal,
+       p.date_create, p.date_modified AS TanggalBatal,
+       p.user_create, p.user_modified,
+       s.sal_nama, c.cus_nama,
+       IFNULL(p.pot_pen_nomor, p.pot_mspk_nomor) AS NomorSumber,
+       IF(p.pot_pen_nomor IS NOT NULL, 'PENAWARAN', 'MAP') AS Sumber
+     FROM tpotensi p
+     LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
+     WHERE p.pot_status = 'BATAL' ${dateFilter}
+     ORDER BY p.date_modified DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), Number(offset)],
   );
 
   return { items: rows, total: Number(total) };
@@ -5237,6 +5331,7 @@ module.exports = {
   batalPotensi,
   getPotensiSummary,
   getPotensiList,
+  getPotensiBatalList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,

@@ -278,6 +278,23 @@ const getPotensiList = async (req, res) => {
   }
 };
 
+const getPotensiBatalList = async (req, res) => {
+  try {
+    const { startDate, endDate, limit = 20, offset = 0 } = req.query;
+    const data = await service.getPotensiBatalList(req.user, {
+      startDate,
+      endDate,
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { items: [], total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPiutangDashboard = async (req, res) => {
   try {
     const data = await service.getPiutangDashboard(req.user);
@@ -1139,6 +1156,7 @@ module.exports = {
   batalPotensi,
   getPotensiSummary,
   getPotensiList,
+  getPotensiBatalList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,
