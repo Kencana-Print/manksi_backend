@@ -80,10 +80,76 @@ const getQtyPoJasa = async (req, res) => {
   }
 };
 
+const getSewingReferensi = async (req, res) => {
+  try {
+    const { tgl1, tgl2, lines, spkList } = req.body || {};
+
+    if (!tgl1 || !tgl2) {
+      return res
+        .status(400)
+        .json({ success: false, message: "tgl1 dan tgl2 wajib diisi" });
+    }
+    if (tgl1 > tgl2) {
+      return res
+        .status(400)
+        .json({ success: false, message: "tgl1 tidak boleh melewati tgl2" });
+    }
+    if (
+      (lines && !Array.isArray(lines)) ||
+      (spkList && !Array.isArray(spkList))
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "lines dan spkList harus array" });
+    }
+
+    const uniq = (arr) => [...new Set((arr || []).filter(Boolean))];
+    const lineList = uniq(lines);
+    const spks = uniq(spkList);
+
+    if (lineList.length > 50 || spks.length > 200) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Jumlah line/SPK terlalu banyak" });
+    }
+
+    const data = await svc.getSewingReferensi({
+      tgl1,
+      tgl2,
+      lines: lineList,
+      spkList: spks,
+      withActual: true,
+    });
+
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/ppic/planning-spk-form/kelompok?lini=POTONG&cab=P04
+const getKelompok = async (req, res) => {
+  try {
+    const lini = String(req.query.lini || "POTONG").toUpperCase();
+    const cab = String(req.query.cab || "P04").toUpperCase();
+    if (!["POTONG", "JAHIT"].includes(lini)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Lini tidak dikenali." });
+    }
+    const data = await svc.getKelompokList(lini, cab);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getFormDetail,
   getSpkInfo,
   getRiwayatSpk,
   saveData,
   getQtyPoJasa,
+  getSewingReferensi,
+  getKelompok,
 };

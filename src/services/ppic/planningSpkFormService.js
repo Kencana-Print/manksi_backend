@@ -19,6 +19,236 @@ const generateNomor = async (tahun) => {
   return `PL/PPIC/${String(nextVal).padStart(5, "0")}/${tahun}`;
 };
 
+// ═════════════════════════════════════════════
+// SEWING — referensi MP, SMV, actual output, actual jam kerja
+// ═════════════════════════════════════════════
+const SEWING_DEFAULT_HARI = 5;
+const SEWING_DEFAULT_JAM = 6.5;
+const JAM_MULAI_KERJA = "08:00:00";
+
+// 'LINE A' -> 'JAHIT A' (cocok dengan hrd2.tkaryawan.kar_bagian).
+// LINE EXTERNAL / nama lain -> null (tidak punya MP internal).
+const lineToBagian = (line) => {
+  const m = /^LINE\s+([A-Z])$/i.exec(String(line || "").trim());
+  return m ? `JAHIT ${m[1].toUpperCase()}` : null;
+};
+
+// MP = jumlah operator aktif per bagian jahit
+const getMpByBagian = async (bagianList) => {
+  if (!bagianList.length) return {};
+  const [rows] = await db.query(
+    `SELECT k.kar_bagian AS bagian, COUNT(*) AS mp
+     FROM hrd2.tkaryawan k
+     WHERE k.kar_status_aktif = 1
+       AND k.kar_pab_kode = 'P04'
+       AND k.kar_dep_kode = 'PRD2'
+       AND k.kar_jab_kode = 'OPR'
+       AND k.kar_bagian IN (?)
+     GROUP BY k.kar_bagian`,
+    [bagianList],
+  );
+  const map = {};
+  for (const r of rows) map[r.bagian] = Number(r.mp) || 0;
+  return map;
+};
+
+// SMV (menit) per SPK = total pfd_waktu proof garmen lini JAHIT (tanpa dikali jumlah).
+// Proof bisa tersimpan atas nomor SPK, SO ref, atau MAP (spk_memo): prioritas SPK > SO ref > MAP.
+// Hasil: { [spk]: { smv, sumber: 'PROOF' | 'MANUAL' } }
+const getSmvBySpk = async (spkList) => {
+  if (!spkList.length) return {};
+  const [spkRows] = await db.query(
+    `SELECT spk_nomor, spk_so_ref, spk_memo FROM tspk WHERE spk_nomor IN (?)`,
+    [spkList],
+  );
+  const keysBySpk = {};
+  const allKeys = new Set();
+  for (const r of spkRows) {
+    const keys = [r.spk_nomor, r.spk_so_ref, r.spk_memo].filter(Boolean);
+    keysBySpk[r.spk_nomor] = keys;
+    keys.forEach((k) => allKeys.add(k));
+  }
+  if (!allKeys.size) return {};
+
+  const [rows] = await db.query(
+    `SELECT h.pf_spk_nomor AS k, SUM(d.pfd_waktu) AS smv
+     FROM tproofgarmen_hdr h
+     INNER JOIN tproofgarmen_dtl d ON d.pfd_nomor = h.pf_nomor
+     WHERE h.pf_lini = 'JAHIT' AND h.pf_spk_nomor IN (?)
+     GROUP BY h.pf_spk_nomor`,
+    [[...allKeys]],
+  );
+  const smvByKey = {};
+  for (const r of rows) smvByKey[r.k] = Number(r.smv) || 0;
+
+  const map = {};
+  for (const [spk, keys] of Object.entries(keysBySpk)) {
+    const hit = keys.find((k) => smvByKey[k] > 0);
+    map[spk] = hit
+      ? { smv: smvByKey[hit], sumber: "PROOF" }
+      : { smv: 0, sumber: "MANUAL" };
+  }
+  return map;
+};
+
+// Actual output = LHK Sewing: mutasi produksi GP003 -> GP004 (Jahit ke Lipat).
+// Line = mph_kelompok, sama seperti yang dipakai getPlanningPpic.
+const getActualOutputBySpkLine = async (spkList, tgl1, tgl2) => {
+  if (!spkList.length) return {};
+  const [rows] = await db.query(
+    `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS line,
+            IFNULL(SUM(h.mph_jumlah), 0) AS qty
+     FROM tmutasiproduksi_hdr h
+     WHERE h.mph_spk_nomor IN (?)
+       AND h.mph_gdgasal = 'GP003'
+       AND h.mph_gdgtujuan = 'GP004'
+       AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok`,
+    [spkList, tgl1, tgl2],
+  );
+  const map = {};
+  for (const r of rows) map[`${r.spk}|${r.line}`] = Number(r.qty) || 0;
+  return map;
+};
+
+// Actual jam kerja per bagian: per hari = scan2 (pulang) TERAKHIR di antara
+// operator bagian itu dikurangi jam 08:00, lalu dijumlah sepanjang range.
+// ⚠️ cek nama kolom tanggal di hrd2.tabsensi (diasumsikan `tanggal`)
+const getActualJamByBagian = async (bagianList, tgl1, tgl2) => {
+  if (!bagianList.length) return {};
+  const [rows] = await db.query(
+    `SELECT x.bagian,
+            ROUND(SUM(GREATEST(TIME_TO_SEC(TIMEDIFF(x.pulang_terakhir, ?)), 0)) / 3600, 2) AS jam
+     FROM (
+       SELECT k.kar_bagian AS bagian,
+              DATE(a.tanggal) AS tgl,
+              MAX(TIME(a.scan2)) AS pulang_terakhir
+       FROM hrd2.tabsensi a
+       INNER JOIN hrd2.tkaryawan k ON k.kar_kode_absensi = a.nik
+       WHERE k.kar_status_aktif = 1
+         AND k.kar_pab_kode = 'P04'
+         AND k.kar_dep_kode = 'PRD2'
+         AND k.kar_jab_kode = 'OPR'
+         AND k.kar_bagian IN (?)
+         AND a.tanggal >= ? AND a.tanggal < DATE_ADD(?, INTERVAL 1 DAY)
+         AND a.scan2 IS NOT NULL
+         AND TIME(a.scan2) > ?
+       GROUP BY k.kar_bagian, DATE(a.tanggal)
+     ) x
+     GROUP BY x.bagian`,
+    [JAM_MULAI_KERJA, bagianList, tgl1, tgl2, JAM_MULAI_KERJA],
+  );
+  const map = {};
+  for (const r of rows) map[r.bagian] = Number(r.jam) || 0;
+  return map;
+};
+
+// Satu pintu untuk semua referensi sewing.
+// withActual=false dipakai saat simpan (tidak perlu query absensi/mutasi).
+const getSewingReferensi = async ({
+  tgl1,
+  tgl2,
+  lines = [],
+  spkList = [],
+  withActual = true,
+}) => {
+  const bagianByLine = {};
+  for (const l of [...new Set(lines.filter(Boolean))]) {
+    const b = lineToBagian(l);
+    if (b) bagianByLine[l] = b;
+  }
+  const bagianList = [...new Set(Object.values(bagianByLine))];
+  const spk = [...new Set(spkList.filter(Boolean))];
+
+  const [mpMap, smvMap, outMap, jamMap] = await Promise.all([
+    getMpByBagian(bagianList),
+    getSmvBySpk(spk),
+    withActual ? getActualOutputBySpkLine(spk, tgl1, tgl2) : {},
+    withActual ? getActualJamByBagian(bagianList, tgl1, tgl2) : {},
+  ]);
+
+  const mpByLine = {};
+  const actualJamByLine = {};
+  for (const [line, bagian] of Object.entries(bagianByLine)) {
+    mpByLine[line] = mpMap[bagian] || 0;
+    actualJamByLine[line] = jamMap[bagian] ?? 0;
+  }
+  return {
+    mpByLine,
+    actualJamByLine,
+    smvBySpk: smvMap,
+    actualOutputBySpkLine: outMap,
+  };
+};
+
+// waktu produksi = hari x jam x 60 ; resume = target x SMV / MP (menit per operator)
+const hitungSewing = ({ hari, jam, target, smv, mp }) => {
+  const waktuProduksi = (Number(hari) || 0) * (Number(jam) || 0) * 60;
+  const resume = mp > 0 && smv > 0 ? ((Number(target) || 0) * smv) / mp : null;
+  return { waktuProduksi, resume };
+};
+
+// Tambah kolom turunan (MP, SMV, waktu produksi, resume, actual) ke tiap baris sewing
+// Resume WAJIB dijumlah per line: 1 line bisa pegang beberapa SPK dengan
+// operator yang sama, jadi cek kelayakan = total resume vs waktu produksi line.
+const enrichSewing = async (rows, tgl1, tgl2) => {
+  if (!rows.length) return [];
+
+  const ref = await getSewingReferensi({
+    tgl1,
+    tgl2,
+    lines: rows.map((r) => r.plan_line_kelompok),
+    spkList: rows.map((r) => r.NomorSPK),
+  });
+
+  return rows.map((r) => {
+    const mp =
+      Number(r.plan_mp) > 0
+        ? Number(r.plan_mp)
+        : ref.mpByLine[r.plan_line_kelompok] || 0;
+
+    // SMV: pakai yang tersimpan; kalau belum ada, ambil dari proof (live)
+    const live = ref.smvBySpk[r.NomorSPK] || { smv: 0, sumber: "MANUAL" };
+    const snapSmv = Number(r.plan_smv) || 0;
+    let smv;
+    let smvSumber;
+    if (r.plan_smv_sumber === "PROOF" && snapSmv > 0) {
+      // sudah terkunci dari proof sejak disimpan
+      smv = snapSmv;
+      smvSumber = "PROOF";
+    } else if (live.sumber === "PROOF") {
+      // proof baru muncul setelah disimpan manual: ikut proof
+      smv = live.smv;
+      smvSumber = "PROOF";
+    } else {
+      smv = snapSmv;
+      smvSumber = "MANUAL";
+    }
+
+    const { waktuProduksi, resume } = hitungSewing({
+      hari: r.plan_hari,
+      jam: r.plan_jam,
+      target: r.plan_target_output,
+      smv,
+      mp,
+    });
+    return {
+      ...r,
+      plan_hari: Number(r.plan_hari),
+      plan_jam: Number(r.plan_jam),
+      plan_target_output: Number(r.plan_target_output) || 0,
+      mp,
+      smv,
+      smv_sumber: smvSumber, // 'PROOF' = terkunci, 'MANUAL' = boleh diedit
+      waktu_produksi: waktuProduksi,
+      resume,
+      actual_output:
+        ref.actualOutputBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] || 0,
+      actual_jam: ref.actualJamByLine[r.plan_line_kelompok] ?? null,
+    };
+  });
+};
+
 // ─────────────────────────────────────────────
 // getFormDetail — load untuk mode edit
 // ─────────────────────────────────────────────
@@ -52,7 +282,13 @@ const getFormDetail = async (nomor) => {
         d.plan_line_kelompok   AS plan_line_kelompok,
         d.plan_keterangan      AS plan_keterangan,
         d.plan_supplier_kode   AS supplierKode,
-        d.plan_supplier_nama   AS supplierNama
+        d.plan_supplier_nama   AS supplierNama,
+        d.plan_hari            AS plan_hari,
+        d.plan_jam             AS plan_jam,
+        d.plan_target_output   AS plan_target_output,
+        d.plan_mp              AS plan_mp,
+        d.plan_smv             AS plan_smv,
+        d.plan_smv_sumber      AS plan_smv_sumber
       FROM tplan_ppic_dtl2 d
       LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
@@ -77,13 +313,14 @@ const getFormDetail = async (nomor) => {
   ].filter(Boolean);
   const uniqueSpk = [...new Set(allSpk)];
 
-  const riwayat = uniqueSpk.length
-    ? await getRiwayatBySpkList(uniqueSpk, nomor)
-    : [];
+  const [riwayat, sewingItems] = await Promise.all([
+    uniqueSpk.length ? getRiwayatBySpkList(uniqueSpk, nomor) : [],
+    enrichSewing(sewing, hdr.pl_tgl1, hdr.pl_tgl2),
+  ]);
 
   return {
     header: hdr,
-    detail: { cutting, sewing, koli },
+    detail: { cutting, sewing: sewingItems, koli },
     riwayat,
   };
 };
@@ -154,7 +391,9 @@ const getSpkInfo = async (spkNomor) => {
 // saveData — create / edit, multi-SPK per baris
 // payload.detail = { cutting: [], sewing: [], koli: [] }
 // setiap row: { NomorSPK, plan_tgl_jadwal, plan_wip,
-//               plan_qty_po, plan_qty_jadwal, plan_line_kelompok }
+//               plan_qty_po, plan_qty_jadwal, plan_line_kelompok,
+//               (sewing) plan_hari, plan_jam, plan_target_output }
+// MP & SMV TIDAK dipercaya dari client — di-stamp server saat simpan.
 // ─────────────────────────────────────────────
 const saveData = async (payload, userKode) => {
   const {
@@ -168,7 +407,88 @@ const saveData = async (payload, userKode) => {
 
   if (!pl_tgl1 || !pl_tgl2) throw new Error("Periode planning wajib diisi.");
 
+  // ── Pra-proses sewing (read-only, di luar transaksi) ──
+  const sewingRows = (detail.sewing || []).filter((r) => r.NomorSPK);
+  const sewingRef = await getSewingReferensi({
+    tgl1: pl_tgl1,
+    tgl2: pl_tgl2,
+    lines: sewingRows.map((r) => r.plan_line_kelompok),
+    spkList: sewingRows.map((r) => r.NomorSPK),
+    withActual: false,
+  });
+
+  // Snapshot lama per (SPK, line) — dipertahankan saat simpan ulang
+  const oldSnap = {};
+  const oldMpByLine = {}; // MP lama per line: SPK baru di line yang sama ikut nilai ini
+  if (pl_nomor) {
+    const [oldRows] = await db.query(
+      `SELECT plan_spk, plan_line_kelompok, plan_mp, plan_smv, plan_smv_sumber
+       FROM tplan_ppic_dtl2
+       WHERE plan_pl_nomor = ? AND plan_divisi = 'SEWING'`,
+      [pl_nomor],
+    );
+    for (const o of oldRows) {
+      oldSnap[`${o.plan_spk}|${o.plan_line_kelompok}`] = {
+        mp: Number(o.plan_mp) || 0,
+        smv: Number(o.plan_smv) || 0,
+        sumber: o.plan_smv_sumber || "",
+      };
+      if (!oldMpByLine[o.plan_line_kelompok] && Number(o.plan_mp) > 0) {
+        oldMpByLine[o.plan_line_kelompok] = Number(o.plan_mp);
+      }
+    }
+  }
+
+  // MP & SMV per baris sewing. Aturan SMV:
+  //  1) baris lama yang sudah PROOF -> dipertahankan (terkunci)
+  //  2) SPK punya Proof Garmen JAHIT -> dari proof, client tidak bisa mengubah
+  //  3) selain itu -> manual dari client (wajib > 0 untuk line internal)
+  const sewingStamp = {};
+  for (const row of sewingRows) {
+    if (!row.plan_line_kelompok) {
+      throw new Error(`Line wajib dipilih untuk SPK ${row.NomorSPK}.`);
+    }
+    if (!(Number(row.plan_target_output) > 0)) {
+      throw new Error(
+        `Target output untuk SPK ${row.NomorSPK} wajib diisi (lebih dari 0).`,
+      );
+    }
+    const key = `${row.NomorSPK}|${row.plan_line_kelompok}`;
+    const old = oldSnap[key];
+    const proof = sewingRef.smvBySpk[row.NomorSPK] || {
+      smv: 0,
+      sumber: "MANUAL",
+    };
+
+    const mp =
+      old?.mp > 0
+        ? old.mp
+        : oldMpByLine[row.plan_line_kelompok] > 0
+          ? oldMpByLine[row.plan_line_kelompok]
+          : sewingRef.mpByLine[row.plan_line_kelompok] || 0;
+
+    let smv;
+    let sumber;
+    if (old?.sumber === "PROOF" && old.smv > 0) {
+      smv = old.smv;
+      sumber = "PROOF";
+    } else if (proof.sumber === "PROOF") {
+      smv = proof.smv;
+      sumber = "PROOF";
+    } else {
+      smv = Number(row.plan_smv) || 0;
+      sumber = "MANUAL";
+      if (smv <= 0 && lineToBagian(row.plan_line_kelompok)) {
+        throw new Error(
+          `SMV untuk SPK ${row.NomorSPK} wajib diisi (SPK ini tidak punya Proof Garmen lini Jahit).`,
+        );
+      }
+    }
+    sewingStamp[key] = { mp, smv, sumber };
+  }
+
   const conn = await db.getConnection();
+  let fase = "header";
   try {
     await conn.beginTransaction();
 
@@ -207,37 +527,65 @@ const saveData = async (payload, userKode) => {
     ]);
     await conn.query(`DELETE FROM tplan_ppic_dtl WHERE pld_nomor = ?`, [nomor]);
 
+    fase = "detail";
+
     const insertDivisi = async (rows, divisi) => {
+      const isSewing = divisi === "SEWING";
       for (const row of rows) {
-        // skip baris yang tidak punya SPK atau tanggal
-        if (!row.NomorSPK || !row.plan_tgl_jadwal) continue;
+        // Sewing tidak punya tanggal per baris (granularitas mingguan):
+        // tanggal jadwal = awal periode, supaya tetap terbaca getPlanningPpic
+        const tgl = isSewing
+          ? row.plan_tgl_jadwal || pl_tgl1
+          : row.plan_tgl_jadwal;
+        if (!row.NomorSPK || !tgl) continue;
 
         // Supplier cuma relevan buat Sewing dengan Line Eksternal
         const isExternal =
-          divisi === "SEWING" && row.plan_line_kelompok === "LINE EXTERNAL";
+          isSewing && row.plan_line_kelompok === "LINE EXTERNAL";
 
-        // Validasi duplikat SPK di divisi yang sama sudah di frontend
-        // tapi backend cek juga untuk safety
+        const stamp = isSewing
+          ? sewingStamp[`${row.NomorSPK}|${row.plan_line_kelompok}`]
+          : null;
+        const hari =
+          isSewing && Number(row.plan_hari) > 0
+            ? Number(row.plan_hari)
+            : SEWING_DEFAULT_HARI;
+        const jam =
+          isSewing && Number(row.plan_jam) > 0
+            ? Number(row.plan_jam)
+            : SEWING_DEFAULT_JAM;
+        const target = isSewing ? Number(row.plan_target_output) || 0 : 0;
+        // Sewing: qty jadwal = target output (dibaca modul Mutasi Produksi)
+        const qtyJadwal = isSewing ? target : Number(row.plan_qty_jadwal) || 0;
+
         await conn.query(
-          `INSERT IGNORE INTO tplan_ppic_dtl2
+          `INSERT INTO tplan_ppic_dtl2
             (plan_pl_nomor, plan_spk, plan_divisi, plan_tanggal,
               plan_tgl_jadwal, plan_wip, plan_qty_po,
               plan_qty_jadwal, plan_line_kelompok, plan_keterangan,
-              plan_supplier_kode, plan_supplier_nama)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              plan_supplier_kode, plan_supplier_nama,
+              plan_hari, plan_jam, plan_target_output,
+              plan_mp, plan_smv, plan_smv_sumber)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             nomor,
             row.NomorSPK,
             divisi,
-            row.plan_tgl_jadwal,
-            row.plan_tgl_jadwal,
+            tgl,
+            tgl,
             Number(row.plan_wip) || 0,
             Number(row.plan_qty_po) || 0,
-            Number(row.plan_qty_jadwal) || 0,
+            qtyJadwal,
             divisi === "KOLI" ? "" : row.plan_line_kelompok || "",
             row.plan_keterangan || "",
             isExternal ? row.supplierKode || "" : "",
             isExternal ? row.supplierNama || "" : "",
+            hari,
+            jam,
+            target,
+            stamp ? stamp.mp : 0,
+            stamp ? stamp.smv : 0,
+            stamp ? stamp.sumber : "",
           ],
         );
       }
@@ -251,6 +599,11 @@ const saveData = async (payload, userKode) => {
     return { nomor };
   } catch (err) {
     await conn.rollback();
+    if (err.code === "ER_DUP_ENTRY" && fase === "detail") {
+      throw new Error(
+        "Ada baris dobel dalam planning ini (SPK, divisi, line, dan tanggal yang sama).",
+      );
+    }
     throw err;
   } finally {
     conn.release();
@@ -280,6 +633,15 @@ const getQtyPoJasa = async (spkNomor) => {
   return result;
 };
 
+// Daftar kelompok per lini dari master tkelompok (default Potong P04)
+const getKelompokList = async (lini = "POTONG", cab = "P04") => {
+  const [rows] = await db.query(
+    `SELECT Kelompok FROM tkelompok WHERE lini = ? AND cab = ? ORDER BY Kelompok`,
+    [lini, cab],
+  );
+  return rows.map((r) => r.Kelompok);
+};
+
 module.exports = {
   generateNomor,
   getFormDetail,
@@ -287,4 +649,7 @@ module.exports = {
   getSpkInfo,
   saveData,
   getQtyPoJasa,
+  getSewingReferensi,
+  enrichSewing, // dipakai browse (planningSpkService) untuk tampilan sewing format baru
+  getKelompokList,
 };

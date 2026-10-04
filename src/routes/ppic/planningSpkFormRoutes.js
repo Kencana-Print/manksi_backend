@@ -17,6 +17,14 @@ router.get(
   ctrl.getSpkInfo,
 );
 
+// GET /api/ppic/planning-spk-form/kelompok?lini=POTONG&cab=P04
+router.get(
+  "/kelompok",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getKelompok,
+);
+
 // GET /api/ppic/planning-spk-form/qty-po?spkNomor=...
 // Harus di atas /:nomor agar tidak terambil sebagai param
 router.get(
@@ -39,6 +47,12 @@ router.post(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   ctrl.getRiwayatSpk,
+);
+router.post(
+  "/sewing-referensi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getSewingReferensi,
 );
 
 // GET /api/ppic/planning-spk-form/:nomor

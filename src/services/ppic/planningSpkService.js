@@ -1,5 +1,6 @@
 // services/ppic/planningSpkService.js
 const db = require("../../config/database");
+const { enrichSewing } = require("./planningSpkFormService");
 
 // ─────────────────────────────────────────────
 // Generate nomor
@@ -41,9 +42,10 @@ const getBrowse = async (startDate, endDate) => {
 
 // ─────────────────────────────────────────────
 // getDetail — expand per nomor, per divisi
+// Sewing: baris format baru (plan_smv_sumber terisi) diperkaya MP/SMV/actual;
+// baris format lama dikembalikan apa adanya (Format: "LAMA").
 // ─────────────────────────────────────────────
 const getDetail = async (nomor) => {
-  // Helper loadDivisi — query per divisi dengan JOIN tspk
   const loadDivisi = async (divisi) => {
     const [rows] = await db.query(
       `SELECT
@@ -64,9 +66,73 @@ const getDetail = async (nomor) => {
     return rows;
   };
 
+  const loadSewing = async () => {
+    const [[hdr]] = await db.query(
+      `SELECT DATE_FORMAT(pl_tgl1, '%Y-%m-%d') AS tgl1,
+              DATE_FORMAT(pl_tgl2, '%Y-%m-%d') AS tgl2
+       FROM tplan_ppic_hdr WHERE pl_nomor = ?`,
+      [nomor],
+    );
+    if (!hdr) return [];
+
+    const [rows] = await db.query(
+      `SELECT
+        d.plan_spk             AS NomorSPK,
+        s.spk_nama             AS NamaSPK,
+        DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
+        d.plan_wip             AS Wip,
+        d.plan_qty_po          AS QtyPo,
+        d.plan_qty_jadwal      AS QtyJadwal,
+        d.plan_line_kelompok   AS LineKelompok,
+        d.plan_keterangan      AS Keterangan,
+        d.plan_line_kelompok, d.plan_hari, d.plan_jam,
+        d.plan_target_output, d.plan_mp, d.plan_smv, d.plan_smv_sumber
+      FROM tplan_ppic_dtl2 d
+      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      WHERE d.plan_pl_nomor = ? AND d.plan_divisi = 'SEWING'
+      ORDER BY d.plan_line_kelompok ASC, d.plan_tgl_jadwal ASC, d.plan_spk ASC`,
+      [nomor],
+    );
+
+    const baru = rows.filter((r) => !!r.plan_smv_sumber);
+    const lama = rows.filter((r) => !r.plan_smv_sumber);
+    const enriched = baru.length
+      ? await enrichSewing(baru, hdr.tgl1, hdr.tgl2)
+      : [];
+
+    const base = (r) => ({
+      NomorSPK: r.NomorSPK,
+      NamaSPK: r.NamaSPK,
+      TglJadwal: r.TglJadwal,
+      Wip: r.Wip,
+      QtyPo: r.QtyPo,
+      QtyJadwal: r.QtyJadwal,
+      LineKelompok: r.LineKelompok,
+      Keterangan: r.Keterangan,
+    });
+
+    return [
+      ...lama.map((r) => ({ ...base(r), Format: "LAMA" })),
+      ...enriched.map((r) => ({
+        ...base(r),
+        Format: "BARU",
+        Mp: r.mp,
+        Smv: r.smv,
+        SmvSumber: r.smv_sumber,
+        Hari: r.plan_hari,
+        Jam: r.plan_jam,
+        Target: r.plan_target_output,
+        ActualOutput: r.actual_output,
+        ActualJam: r.actual_jam,
+        WaktuProduksi: r.waktu_produksi,
+        Resume: r.resume,
+      })),
+    ];
+  };
+
   const [cutting, sewing, koli] = await Promise.all([
     loadDivisi("CUTTING"),
-    loadDivisi("SEWING"),
+    loadSewing(),
     loadDivisi("KOLI"),
   ]);
 
@@ -295,12 +361,21 @@ const getExportDetail = async (startDate, endDate) => {
        d.plan_qty_po     AS QtyPO,
        d.plan_qty_jadwal AS QtyJadwal,
        d.plan_line_kelompok AS LineKelompok,
-       d.plan_keterangan AS Keterangan
+       d.plan_keterangan AS Keterangan,
+       -- Sewing format baru saja; selain itu NULL
+       IF(d.plan_smv_sumber <> '', d.plan_mp, NULL)   AS Mp,
+       IF(d.plan_smv_sumber <> '', d.plan_smv, NULL)  AS Smv,
+       IF(d.plan_smv_sumber <> '', d.plan_hari, NULL) AS Hari,
+       IF(d.plan_smv_sumber <> '', d.plan_jam, NULL)  AS Jam,
+       IF(d.plan_smv_sumber <> '', d.plan_hari * d.plan_jam * 60, NULL) AS WaktuProduksi,
+       IF(d.plan_smv_sumber <> '' AND d.plan_mp > 0 AND d.plan_smv > 0,
+          d.plan_target_output * d.plan_smv / d.plan_mp, NULL) AS Resume
      FROM tplan_ppic_dtl2 d
      INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
      WHERE h.pl_tgl1 BETWEEN ? AND ?
-     ORDER BY h.pl_nomor ASC, d.plan_divisi ASC, d.plan_tgl_jadwal ASC`,
+     ORDER BY h.pl_nomor ASC, d.plan_divisi ASC,
+              d.plan_line_kelompok ASC, d.plan_tgl_jadwal ASC`,
     [startDate, endDate],
   );
   return rows;
