@@ -26,11 +26,16 @@ const SEWING_DEFAULT_HARI = 5;
 const SEWING_DEFAULT_JAM = 6.5;
 const JAM_MULAI_KERJA = "08:00:00";
 
-// 'LINE A' -> 'JAHIT A' (cocok dengan hrd2.tkaryawan.kar_bagian).
+// 'LINE A' -> 'JAHIT A', 'LINE PREPARATION' -> 'PREPARATION'
+// (cocok dengan hrd2.tkaryawan.kar_bagian).
 // LINE EXTERNAL / nama lain -> null (tidak punya MP internal).
 const lineToBagian = (line) => {
-  const m = /^LINE\s+([A-Z])$/i.exec(String(line || "").trim());
-  return m ? `JAHIT ${m[1].toUpperCase()}` : null;
+  const s = String(line || "")
+    .trim()
+    .toUpperCase();
+  if (/^(LINE\s+)?PREPARATION$/.test(s)) return "PREPARATION";
+  const m = /^LINE\s+([A-Z])$/.exec(s);
+  return m ? `JAHIT ${m[1]}` : null;
 };
 
 // MP = jumlah operator aktif per bagian jahit
@@ -393,7 +398,7 @@ const getSpkInfo = async (spkNomor) => {
 // setiap row: { NomorSPK, plan_tgl_jadwal, plan_wip,
 //               plan_qty_po, plan_qty_jadwal, plan_line_kelompok,
 //               (sewing) plan_hari, plan_jam, plan_target_output }
-// MP & SMV TIDAK dipercaya dari client — di-stamp server saat simpan.
+// MP dari client (default dari DB, boleh diedit). SMV tetap di-stamp server
 // ─────────────────────────────────────────────
 const saveData = async (payload, userKode) => {
   const {
@@ -439,6 +444,15 @@ const saveData = async (payload, userKode) => {
     }
   }
 
+  // MP dari client (boleh diedit user): satu nilai per line, ambil yang pertama > 0
+  const clientMpByLine = {};
+  for (const r of sewingRows) {
+    const v = Math.floor(Number(r.plan_mp) || 0);
+    if (v > 0 && !clientMpByLine[r.plan_line_kelompok]) {
+      clientMpByLine[r.plan_line_kelompok] = v;
+    }
+  }
+
   // MP & SMV per baris sewing. Aturan SMV:
   //  1) baris lama yang sudah PROOF -> dipertahankan (terkunci)
   //  2) SPK punya Proof Garmen JAHIT -> dari proof, client tidak bisa mengubah
@@ -461,11 +475,11 @@ const saveData = async (payload, userKode) => {
     };
 
     const mp =
-      old?.mp > 0
-        ? old.mp
-        : oldMpByLine[row.plan_line_kelompok] > 0
-          ? oldMpByLine[row.plan_line_kelompok]
-          : sewingRef.mpByLine[row.plan_line_kelompok] || 0;
+      clientMpByLine[row.plan_line_kelompok] ||
+      old?.mp ||
+      oldMpByLine[row.plan_line_kelompok] ||
+      sewingRef.mpByLine[row.plan_line_kelompok] ||
+      0;
 
     let smv;
     let sumber;
