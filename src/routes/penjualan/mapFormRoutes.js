@@ -44,6 +44,12 @@ router.get(
 );
 router.get("/check-duplikat", verifyToken, mapFormController.checkDuplikatNama);
 
+router.get(
+  "/search-lhk-desain",
+  verifyToken,
+  mapFormController.searchLhkDesain,
+);
+
 // --- ROUTE KATALOG CUSTOMER ---
 router.get(
   "/katalog/customer/:cusKode",

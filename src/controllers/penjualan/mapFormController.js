@@ -166,6 +166,16 @@ const getKatalogCustomer = async (req, res) => {
   }
 };
 
+const searchLhkDesain = async (req, res) => {
+  try {
+    const { q = "" } = req.query;
+    const data = await mapFormService.searchLhkDesain(q.trim());
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const clearPenawaran = async (req, res) => {
   try {
     await mapFormService.clearPenawaran(req.params.nomor, req.user.kode);
@@ -191,4 +201,5 @@ module.exports = {
   checkDuplikatNama,
   getKatalogCustomer,
   clearPenawaran,
+  searchLhkDesain,
 };

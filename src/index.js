@@ -178,6 +178,10 @@ const mintaHargaRoutes = require("./routes/penjualan/mintaHargaRoutes");
 const mintaHargaFormRoutes = require("./routes/penjualan/mintaHargaFormRoutes");
 const penawaranRoutes = require("./routes/penjualan/penawaranRoutes");
 const penawaranFormRoutes = require("./routes/penjualan/penawaranFormRoutes");
+const permintaanDesainRoutes = require("./routes/penjualan/permintaanDesainRoutes");
+const permintaanDesainFormRoutes = require("./routes/penjualan/permintaanDesainFormRoutes");
+const permintaanDesainLampiranRoutes = require("./routes/penjualan/permintaanDesainLampiranRoutes");
+const lhkDesainRoutes = require("./routes/penjualan/lhkDesainRoutes");
 const salesOrderRoutes = require("./routes/penjualan/salesOrderRoutes");
 const salesOrderFormRoutes = require("./routes/penjualan/salesOrderFormRoutes");
 const alokasiSoRoutes = require("./routes/penjualan/alokasiSoRoutes");
@@ -299,6 +303,7 @@ const mapVsSjRoutes = require("./routes/laporan/penjualan/mapVsSjRoutes");
 const mapVsSpkRoutes = require("./routes/laporan/penjualan/mapVsSpkRoutes");
 
 // Laporan Marketing
+const laporanDesainMarketingRoutes = require("./routes/laporan/marketing/laporanDesainMarketingRoutes");
 const soBelumKomitmenRoutes = require("./routes/laporan/marketing/soBelumKomitmenRoutes");
 const penawaranVsMapRoutes = require("./routes/laporan/marketing/penawaranVsMapRoutes");
 const targetSpkRoutes = require("./routes/laporan/marketing/targetSpkRoutes");
@@ -322,6 +327,7 @@ const rekapPiutangRoutes = require("./routes/laporan/piutang/rekapPiutangRoutes"
 const kartuPiutangRoutes = require("./routes/laporan/piutang/kartuPiutangRoutes");
 const daftarPenerimaanRoutes = require("./routes/laporan/piutang/daftarPenerimaanRoutes");
 const cekGagalLinkRoutes = require("./routes/laporan/piutang/cekGagalLinkRoutes");
+const spkTerkirimBelumInvoiceRoutes = require("./routes/laporan/piutang/spkTerkirimBelumInvoiceRoutes");
 
 // Laporan Finance
 const listJurnalRoutes = require("./routes/laporan/finance/listJurnalRoutes");
@@ -627,6 +633,10 @@ app.use("/api/penjualan/minta-harga", mintaHargaRoutes);
 app.use("/api/penjualan/minta-harga-form", mintaHargaFormRoutes);
 app.use("/api/penjualan/penawaran", penawaranRoutes);
 app.use("/api/penjualan/penawaran-form", penawaranFormRoutes);
+app.use("/api/penjualan/permintaan-desain", permintaanDesainRoutes);
+app.use("/api/penjualan/permintaan-desain", permintaanDesainFormRoutes);
+app.use("/api/penjualan/permintaan-desain", permintaanDesainLampiranRoutes);
+app.use("/api/penjualan/lhk-desain", lhkDesainRoutes);
 app.use("/api/penjualan/sales-order", salesOrderRoutes);
 app.use("/api/penjualan/sales-order/form", salesOrderFormRoutes);
 app.use("/api/penjualan/alokasi-so", alokasiSoRoutes);
@@ -814,6 +824,10 @@ app.use("/api/laporan/penjualan/spk-vs-sj-vs-inv", spkVsSjVsInvRoutes);
 app.use("/api/laporan/penjualan/map-vs-sj", mapVsSjRoutes);
 app.use("/api/laporan/penjualan/map-vs-spk", mapVsSpkRoutes);
 
+app.use(
+  "/api/laporan/marketing/laporan-desain-marketing",
+  laporanDesainMarketingRoutes,
+);
 app.use("/api/laporan/marketing/so-belum-komitmen", soBelumKomitmenRoutes);
 app.use("/api/laporan/marketing/penawaran-vs-map", penawaranVsMapRoutes);
 app.use("/api/laporan/marketing/target-spk", targetSpkRoutes);
@@ -848,6 +862,10 @@ app.use("/api/laporan/piutang/rekap-piutang", rekapPiutangRoutes);
 app.use("/api/laporan/piutang/kartu-piutang", kartuPiutangRoutes);
 app.use("/api/laporan/piutang/daftar-penerimaan", daftarPenerimaanRoutes);
 app.use("/api/laporan/piutang/cek-gagal-link", cekGagalLinkRoutes);
+app.use(
+  "/api/laporan/piutang/spk-terkirim-belum-invoice",
+  spkTerkirimBelumInvoiceRoutes,
+);
 
 app.use("/api/laporan/finance/list-jurnal", listJurnalRoutes);
 app.use("/api/laporan/finance/buku-besar", bukuBesarRoutes);

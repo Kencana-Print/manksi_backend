@@ -5,6 +5,24 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.12",
+    date: "2026-10-05",
+    changes: [
+      {
+        type: "added",
+        text: "Modul baru Permintaan Desain dan LHK Desain Marketing untuk tim Marketing dan Desain Marketing.",
+      },
+      {
+        type: "added",
+        text: "Laporan SPK Terkirim Belum Invoice pada Laporan Piutang.",
+      },
+      {
+        type: "added",
+        text: "Update Tab Sewing pada Planning SPK PPIC.",
+      },
+    ],
+  },
+  {
     version: "1.0.11",
     date: "2026-09-28",
     changes: [

@@ -61,6 +61,7 @@ const getBrowseList = async (
       x.mspk_rencana_order AS Rencana, x.mspk_tipe AS Tipe, ${hargaCol}
       s.sal_nama AS Salesman, x.date_create AS Created, 
       x.mspk_revisi_no AS Revisi, x.mspk_referensi AS NoReferensi,
+      x.mspk_lhk_nomor AS LhkNomor,
       IF(x.mspk_estimasijadi="1899-12-30", "", x.mspk_estimasijadi) AS EstimasiJadi, 
       x.mspk_close AS CloseStatus,
       IFNULL(

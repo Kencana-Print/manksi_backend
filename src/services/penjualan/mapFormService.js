@@ -338,8 +338,8 @@ const save = async (data, userKode, isNewMode) => {
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
           mspk_tipe, mspk_cmo, mspk_tgl_cmo, mspk_newdesign, mspk_rencana_size,
-          mspk_acc_customer, mspk_acc_tanggal, mspk_aktif
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          mspk_acc_customer, mspk_acc_tanggal, mspk_aktif, mspk_lhk_nomor
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
       const insertParams = [
         nomorMap,
@@ -390,6 +390,7 @@ const save = async (data, userKode, isNewMode) => {
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,
+        data.LhkNomor || null,
       ];
 
       // ── DEBUG WRAP: insertQ ──
@@ -451,7 +452,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
           mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
           mspk_tipe_revisi=?, mspk_tipe=?, mspk_cmo=?, mspk_tgl_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
-          mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?
+          mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?, mspk_lhk_nomor=?
         WHERE mspk_nomor=?
       `;
       const updateParams = [
@@ -497,6 +498,7 @@ const save = async (data, userKode, isNewMode) => {
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,
+        data.LhkNomor || null,
         nomorMap,
       ];
       await conn.query(updateQ, updateParams);
@@ -830,6 +832,25 @@ const getKatalogCustomer = async (
 };
 
 // ─────────────────────────────────────────────────────────
+// CARI NOMOR LHK DESAIN — dipakai lookup di form MAP (mspk_lhk_nomor)
+// ─────────────────────────────────────────────────────────
+const searchLhkDesain = async (keyword = "") => {
+  const like = `%${keyword}%`;
+  const [rows] = await db.query(
+    `SELECT l.lhk_nomor AS Nomor, l.lhk_pd_nomor AS PdNomor,
+            h.pd_nama_project AS NamaProject, c.cus_nama AS Customer
+     FROM tlhk_desain l
+     LEFT JOIN tpermintaan_desain h ON h.pd_nomor = l.lhk_pd_nomor
+     LEFT JOIN tcustomer c ON c.cus_kode = h.pd_customer
+     WHERE l.lhk_nomor LIKE ? OR h.pd_nama_project LIKE ?
+     ORDER BY l.lhk_date_create DESC
+     LIMIT 20`,
+    [like, like],
+  );
+  return rows;
+};
+
+// ─────────────────────────────────────────────────────────
 // MENU_ID 269: Approve MAP Tanpa Nomor PO
 // ⚠️ FITUR BARU — pola identik dgn syncNoPoApproval milik SO
 // (tspk_pin5, pin_trs berbeda supaya tidak nabrak record SO).
@@ -971,4 +992,5 @@ module.exports = {
   syncNoPoApproval,
   getNoPoStatus,
   clearPenawaran,
+  searchLhkDesain,
 };
