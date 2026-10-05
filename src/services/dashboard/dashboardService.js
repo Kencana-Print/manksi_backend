@@ -4564,7 +4564,7 @@ const getPipelinePenyelesaianSpk = async (user, startDate, endDate) => {
       FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
       WHERE h.sj_approve <> 2
-        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
     ) kirim ON kirim.Nomor = s.spk_nomor
     LEFT JOIN (
@@ -4709,7 +4709,7 @@ const getSpkVsSjSummary = async (user, startDate, endDate) => {
       FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
       WHERE h.sj_approve <> 2
-        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
     ) kirim ON kirim.Nomor = s.spk_nomor
     WHERE s.spk_aktif = 'Y'
@@ -4762,7 +4762,7 @@ const getSpkVsSjList = async (
       FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
       WHERE h.sj_approve <> 2
-        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
     ) kirim ON kirim.Nomor = s.spk_nomor
     WHERE s.spk_aktif = 'Y'
@@ -4792,6 +4792,11 @@ const ORDER_SPK_SO_SUBQUERY = `
   FROM tsalesorder
   WHERE so_aktif = 'Y'
 `;
+
+// Kode perusahaan dari nomor order, untuk dicocokkan dengan kode di nomor SJ.
+// Format baru "SPK-MD-KO-000014" → MD ; format lama "KP-KO-002727" → KP.
+const KODE_PERUSH_ORDER = (col) =>
+  `IF(${col} REGEXP '^(SPK|SO)-', MID(${col}, INSTR(${col}, '-') + 1, 2), LEFT(${col}, 2))`;
 
 const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
   const bagian = (user.bagian || "").toUpperCase();
@@ -4827,7 +4832,7 @@ const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
       FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
       WHERE h.sj_approve <> 2
-        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
     ) kirim ON kirim.Nomor = o.Nomor
     LEFT JOIN (
@@ -4882,7 +4887,7 @@ const getSpkTerkirimBelumTagihList = async (
       FROM tsj_dtl d
       INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
       WHERE h.sj_approve <> 2
-        AND LEFT(d.sjd_spk_nomor, 2) = MID(h.sj_nomor, 4, 2)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
     ) kirim ON kirim.Nomor = o.Nomor
     LEFT JOIN (
