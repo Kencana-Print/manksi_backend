@@ -427,7 +427,7 @@ const getExportDetail = async (tglAwal, tglAkhir) => {
          ORDER BY pin_urut DESC LIMIT 1
        )                                                AS Alasan,
        d.invd_spk_nomor     AS Kode,
-       COALESCE(NULLIF(s.spk_nama, ''), b.brg_name, '') AS Nama
+       COALESCE(NULLIF(s.spk_nama, ''), b.brg_name, '') AS Nama,
        d.invd_ukuran        AS Ukuran,
        d.invd_jumlah        AS Jumlah,
        d.invd_harga         AS Harga,
