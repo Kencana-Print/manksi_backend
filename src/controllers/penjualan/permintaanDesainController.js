@@ -20,6 +20,7 @@ const getDetail = async (req, res) => {
 
 const updateProgress = async (req, res) => {
   try {
+    if (hanyaDesain(req, res)) return;
     const data = await service.updateProgress(
       req.params.nomor,
       req.body.jmlJadi,
@@ -32,6 +33,7 @@ const updateProgress = async (req, res) => {
 
 const updateDesainer = async (req, res) => {
   try {
+    if (hanyaDesain(req, res)) return;
     const data = await service.updateDesainer(
       req.params.nomor,
       req.body.desainerKode,
@@ -82,6 +84,32 @@ const getDesainerOptions = async (req, res) => {
   }
 };
 
+const updateHeader = async (req, res) => {
+  try {
+    const data = await service.updateHeader(
+      req.params.nomor,
+      req.body,
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const BAGIAN_DESAIN_OK = ["DESAIN", "EDP", "IT"];
+const hanyaDesain = (req, res) => {
+  const bagian = String(req.user?.user_bagian || "").toUpperCase();
+  if (!BAGIAN_DESAIN_OK.includes(bagian)) {
+    res.status(403).json({
+      success: false,
+      message: "Hanya bagian Desain yang dapat melakukan ini",
+    });
+    return true;
+  }
+  return false;
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -91,4 +119,5 @@ module.exports = {
   resumeStatus,
   searchReferensi,
   getDesainerOptions,
+  updateHeader,
 };

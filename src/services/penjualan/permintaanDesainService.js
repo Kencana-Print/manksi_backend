@@ -281,6 +281,159 @@ const getDesainerOptions = async () => {
   return rows;
 };
 
+const EDIT_SUPER_BAGIAN = ["EDP", "IT"];
+
+const hasLhk = async (conn, nomor) => {
+  // GANTI: copy query cek LHK yang sama persis dari setStatusManual
+  const [rows] = await conn.query(
+    "SELECT 1 AS x FROM tlhk_desain WHERE lhk_pd_nomor = ? LIMIT 1",
+    [nomor],
+  );
+  return rows.length > 0;
+};
+
+const updateHeader = async (nomor, payload, user) => {
+  const p = payload || {};
+  const bagian = String(user?.user_bagian || "").toUpperCase();
+  const userKode = String(user?.user_kode || "");
+  const isSuper = EDIT_SUPER_BAGIAN.includes(bagian);
+
+  if (bagian === "DESAIN" && !isSuper) {
+    throw new Error("Bagian Desain tidak dapat mengedit data permintaan");
+  }
+
+  const namaProject = String(p.namaProject ?? "").trim();
+  const customer = String(p.customer ?? "").trim();
+  const customerNama = String(p.customerNama ?? "").trim();
+  const jenisPekerjaan = String(p.jenisPekerjaan ?? "").trim();
+  const keterangan = p.keterangan == null ? null : String(p.keterangan).trim();
+  const dateline = p.dateline ? String(p.dateline).slice(0, 10) : null;
+
+  if (!namaProject) throw new Error("Nama project wajib diisi");
+  if (!jenisPekerjaan) throw new Error("Jenis pekerjaan wajib diisi");
+
+  // items opsional: undefined = detail & jumlah tidak diubah
+  let items = null;
+  if (Array.isArray(p.items)) {
+    items = p.items.map((it) => ({
+      id: it.id ? Number(it.id) : null,
+      desain: String(it.desain ?? "").trim(),
+      jml: Number(it.jml),
+    }));
+    if (items.length === 0) throw new Error("Detail minimal 1 baris");
+    for (const it of items) {
+      if (!it.desain) throw new Error("Nama desain pada detail wajib diisi");
+      if (!Number.isInteger(it.jml) || it.jml <= 0)
+        throw new Error("Jumlah detail harus bilangan bulat > 0");
+    }
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[pd]] = await conn.query(
+      "SELECT * FROM tpermintaan_desain WHERE pd_nomor = ? FOR UPDATE",
+      [nomor],
+    );
+    if (!pd) throw new Error("Permintaan desain tidak ditemukan");
+
+    if (!isSuper) {
+      const pemilik =
+        String(pd.pd_marketing || "") === userKode ||
+        String(pd.pd_user_create || "") === userKode;
+      if (!pemilik)
+        throw new Error("Hanya pembuat/marketing PD yang dapat mengedit");
+    }
+
+    if (MANUAL_STATUSES.includes(pd.pd_status))
+      throw new Error(
+        `PD berstatus ${pd.pd_status}, lakukan resume terlebih dahulu`,
+      );
+    if (pd.pd_status === "CLOSE")
+      throw new Error("PD yang sudah CLOSE tidak dapat diedit");
+    if (await hasLhk(conn, nomor))
+      throw new Error("PD sudah memiliki LHK, tidak dapat diedit");
+
+    let jmlBaru = Number(pd.pd_jml);
+    const jmlJadi = Number(pd.pd_jmljadi || 0);
+
+    if (items) {
+      jmlBaru = items.reduce((s, it) => s + it.jml, 0);
+      if (jmlBaru < jmlJadi)
+        throw new Error(
+          `Total jumlah (${jmlBaru}) tidak boleh kurang dari yang sudah jadi (${jmlJadi})`,
+        );
+
+      const [existing] = await conn.query(
+        "SELECT pd2_id FROM tpermintaan_desain_detail WHERE pd2_nomor = ?",
+        [nomor],
+      );
+      const existingIds = new Set(existing.map((r) => Number(r.pd2_id)));
+
+      for (const it of items) {
+        if (it.id && !existingIds.has(it.id))
+          throw new Error("Baris detail tidak valid untuk PD ini");
+      }
+
+      const keepIds = new Set(items.filter((it) => it.id).map((it) => it.id));
+      const hapus = [...existingIds].filter((id) => !keepIds.has(id));
+      if (hapus.length) {
+        await conn.query(
+          "DELETE FROM tpermintaan_desain_detail WHERE pd2_nomor = ? AND pd2_id IN (?)",
+          [nomor, hapus],
+        );
+      }
+      for (const it of items) {
+        if (it.id) {
+          await conn.query(
+            "UPDATE tpermintaan_desain_detail SET pd2_pd_desain = ?, pd2_pd_jml = ? WHERE pd2_id = ? AND pd2_nomor = ?",
+            [it.desain, it.jml, it.id, nomor],
+          );
+        } else {
+          await conn.query(
+            "INSERT INTO tpermintaan_desain_detail (pd2_nomor, pd2_pd_desain, pd2_pd_jml) VALUES (?, ?, ?)",
+            [nomor, it.desain, it.jml],
+          );
+        }
+      }
+    }
+
+    const statusBaru = resolveStatus(jmlBaru, jmlJadi);
+
+    await conn.query(
+      `UPDATE tpermintaan_desain SET
+         pd_nama_project = ?, pd_customer = ?, pd_customer_nama = ?,
+         pd_jenis_pekerjaan = ?, pd_dateline = ?, pd_keterangan = ?,
+         pd_jml = ?, pd_status = ?,
+         pd_tgl_close = CASE WHEN ? = 'CLOSE' THEN NOW() ELSE NULL END,
+         pd_user_modified = ?, pd_date_modified = NOW()
+       WHERE pd_nomor = ?`,
+      [
+        namaProject,
+        customer || null,
+        customerNama || null,
+        jenisPekerjaan,
+        dateline,
+        keterangan,
+        jmlBaru,
+        statusBaru,
+        statusBaru,
+        userKode,
+        nomor,
+      ],
+    );
+
+    await conn.commit();
+    return { nomor, jml: jmlBaru, status: statusBaru };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -290,4 +443,5 @@ module.exports = {
   resumeStatus,
   searchReferensi,
   getDesainerOptions,
+  updateHeader,
 };

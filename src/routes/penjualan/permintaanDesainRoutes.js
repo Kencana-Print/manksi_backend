@@ -56,5 +56,11 @@ router.put(
   checkPermission(MENU_ID, "edit"),
   controller.updateDesainer,
 );
+router.put(
+  "/:nomor",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  controller.updateHeader,
+);
 
 module.exports = router;
