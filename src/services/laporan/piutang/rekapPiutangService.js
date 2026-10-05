@@ -112,13 +112,22 @@ const getDetailPiutang = async (query) => {
     SELECT
       p.nota AS Nota,
       p.tanggal AS Tanggal,
+      CAST(h.inv_no_fp AS CHAR(60)) AS FakturPajak,
       IFNULL((
-        SELECT pd2.debet
-        FROM piutang_debet pd2
-        WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
-          AND pd2.is_writeoff = 0
-        LIMIT 1
-      ), p.debet) AS Debet,
+        SELECT GROUP_CONCAT(
+                 DISTINCT NULLIF(TRIM(COALESCE(
+                   NULLIF(s.spk_nomor_po, ''),
+                   NULLIF(so1.so_nomor_po, ''),
+                   so2.so_nomor_po
+                 )), '')
+                 SEPARATOR ', '
+               )
+        FROM tinv_dtl d
+        INNER JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+        LEFT JOIN tsalesorder so1 ON so1.so_nomor = s.spk_so_ref
+        LEFT JOIN tsalesorder so2 ON so2.so_nomormemo = s.spk_memo AND s.spk_memo <> ''
+        WHERE d.invd_inv_nomor = p.nota
+      ), '') AS NoPO,
       IFNULL((
         SELECT SUM(kd.kredit)
         FROM piutang_kredit_detail kd
@@ -146,6 +155,7 @@ const getDetailPiutang = async (query) => {
         AND kh.tanggal <= ?
       ), 0)) AS Sisa
     FROM piutang_debet p
+    LEFT JOIN tinv_hdr h ON h.inv_nomor = p.nota
     WHERE p.flag = 0
       AND p.is_writeoff = 0
       AND p.tanggal <= ?
