@@ -42,22 +42,24 @@ const getMasterStok = async (query, user) => {
 
   // FIX: Array parameter harus tepat 16 item untuk mengisi 16 placeholder (?)
   const subParams = [
-    dStart, // 1. Stok Awal (< dStart)
+    dStart, // 1. Stok Awal
     dStart,
-    dEnd, // 2, 3. BPBbahan
+    dEnd, // BPBbahan
     dStart,
-    dEnd, // 4, 5. BPB
+    dEnd, // BPB
     dStart,
-    dEnd, // 6, 7. Retur
+    dEnd, // Retur
     dStart,
-    dEnd, // 8, 9. Koreksi
+    dEnd, // Koreksi
     dStart,
-    dEnd, // 10, 11. MSI
+    dEnd, // MSI
     dStart,
-    dEnd, // 12, 13. Realisasi
+    dEnd, // Realisasi
     dStart,
-    dEnd, // 14, 15. MSO
-    fixCabang, // 16. mst_cab
+    dEnd, // MSO
+    dStart,
+    dEnd, // Terima Maklon  <-- baru
+    fixCabang,
   ];
 
   const sql = `
@@ -73,7 +75,10 @@ const getMasterStok = async (query, user) => {
       IFNULL(s.MSI, 0) AS MSI,
       IFNULL(s.RealisasiPermintaan, 0) AS RealisasiPermintaan,
       IFNULL(s.MSO, 0) AS MSO,
-      (IFNULL(s.StokAwal, 0) + IFNULL(s.BPBbahan, 0) + IFNULL(s.BPB, 0) + IFNULL(s.Retur, 0) + IFNULL(s.Koreksi, 0) + IFNULL(s.MSI, 0) - IFNULL(s.RealisasiPermintaan, 0) - IFNULL(s.MSO, 0)) AS StokAkhir
+      IFNULL(s.TerimaMaklon, 0) AS TerimaMaklon,
+      (IFNULL(s.StokAwal, 0) + IFNULL(s.BPBbahan, 0) + IFNULL(s.BPB, 0) + IFNULL(s.Retur, 0)
+      + IFNULL(s.Koreksi, 0) + IFNULL(s.MSI, 0) + IFNULL(s.TerimaMaklon, 0)
+      - IFNULL(s.RealisasiPermintaan, 0) - IFNULL(s.MSO, 0)) AS StokAkhir
     FROM tgarmen_brg b
     LEFT JOIN (
       SELECT 
@@ -85,7 +90,8 @@ const getMasterStok = async (query, user) => {
         SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 2)='KR' THEN mst_stok_in ELSE 0 END) AS Koreksi,
         SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 3)='MSI' THEN mst_stok_in ELSE 0 END) AS MSI,
         SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 2)='RE' THEN mst_stok_out ELSE 0 END) AS RealisasiPermintaan,
-        SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 3)='MSO' THEN mst_stok_out ELSE 0 END) AS MSO
+        SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 3)='MSO' THEN mst_stok_out ELSE 0 END) AS MSO,
+        SUM(CASE WHEN mst_tanggal >= ? AND mst_tanggal <= ? AND LEFT(mst_noreferensi, 7)='TRM-MKL' THEN mst_stok_in ELSE 0 END) AS TerimaMaklon
       FROM ${tableName}
       WHERE mst_aktif = "Y" AND mst_cab = ?
       GROUP BY mst_brg_kode
@@ -146,6 +152,7 @@ const getDetailKartuStok = async (query, brgKode, user) => {
         WHEN LEFT(mst_noreferensi, 3) = "MSI" THEN "Mutasi In"
         WHEN LEFT(mst_noreferensi, 2) = "RE" THEN "Realisasi Permintaan"
         WHEN LEFT(mst_noreferensi, 3) = "MSO" THEN "Mutasi Out"
+        WHEN LEFT(mst_noreferensi, 7) = "TRM-MKL" THEN "Terima Maklon"
         ELSE "Lainnya"
       END AS Transaksi
     FROM ${tableName}
