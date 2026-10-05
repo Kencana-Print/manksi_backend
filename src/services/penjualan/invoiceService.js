@@ -87,21 +87,20 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
   }
 
   const [rows] = await db.query(
-    `SELECT
-       a.inv_nomor          AS Nomor,
-       d.invd_spk_nomor     AS Kode,
-       b.brg_name           AS Nama,
-       d.invd_ukuran        AS Ukuran,
-       d.invd_jumlah        AS Jumlah,
-       d.invd_harga         AS Harga,
-       s.spk_hargariil      AS HargaRiil,
-       s.spk_hargaFEE       AS Fee
-     FROM tinv_dtl d
-     INNER JOIN tinv_hdr a ON a.inv_nomor = d.invd_inv_nomor
-     INNER JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
-     LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-     WHERE ${where}
-     ORDER BY a.inv_nomor`,
+    `SELECT a.inv_nomor AS Nomor,
+        d.invd_spk_nomor AS Kode,
+        COALESCE(NULLIF(s.spk_nama, ''), b.brg_name, '') AS Nama,
+        d.invd_ukuran AS Ukuran,
+        d.invd_jumlah AS Jumlah,
+        d.invd_harga AS Harga,
+        s.spk_hargariil AS HargaRiil,
+        s.spk_hargaFEE AS Fee
+    FROM tinv_dtl d
+    INNER JOIN tinv_hdr a ON a.inv_nomor = d.invd_inv_nomor
+    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
+    WHERE ${where}
+    ORDER BY a.inv_nomor, d.invd_nourut`,
     params,
   );
   return rows;
@@ -428,7 +427,7 @@ const getExportDetail = async (tglAwal, tglAkhir) => {
          ORDER BY pin_urut DESC LIMIT 1
        )                                                AS Alasan,
        d.invd_spk_nomor     AS Kode,
-       b.brg_name           AS Nama,
+       COALESCE(NULLIF(s.spk_nama, ''), b.brg_name, '') AS Nama
        d.invd_ukuran        AS Ukuran,
        d.invd_jumlah        AS Jumlah,
        d.invd_harga         AS Harga,
@@ -438,7 +437,7 @@ const getExportDetail = async (tglAwal, tglAkhir) => {
      INNER JOIN tinv_hdr a ON a.inv_nomor = d.invd_inv_nomor
      LEFT JOIN tcustomer c ON a.inv_cus_kode = c.cus_kode
      LEFT JOIN tdivisi v ON v.kode = a.inv_divisi
-     INNER JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
+     LEFT JOIN tbarang b ON b.brg_kode = d.invd_spk_nomor
      LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
      WHERE a.inv_tanggal >= ? AND a.inv_tanggal <= ?
      ORDER BY a.inv_nomor`,
