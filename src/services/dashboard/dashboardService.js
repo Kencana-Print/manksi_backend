@@ -4798,19 +4798,57 @@ const ORDER_SPK_SO_SUBQUERY = `
 const KODE_PERUSH_ORDER = (col) =>
   `IF(${col} REGEXP '^(SPK|SO)-', MID(${col}, INSTR(${col}, '-') + 1, 2), LEFT(${col}, 2))`;
 
+// Kirim (SJ) & invoice sama-sama dipetakan ke key SO (via tspk.spk_so_ref);
+// kalau tidak punya SO, key = nomor SPK itu sendiri.
+// Placeholder (urut): endDate, startDate, endDate, endDate
+const KIRIM_INV_SUBQUERY = `
+    INNER JOIN (
+      SELECT COALESCE(sox.so_nomor, d.sjd_spk_nomor) AS Nomor,
+             SUM(d.sjd_jumlah) AS TotalKirim,
+             MAX(h.sj_tanggal) AS TglKirimTerakhir
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      LEFT JOIN tspk sp ON sp.spk_nomor = d.sjd_spk_nomor
+      LEFT JOIN tsalesorder sox ON sox.so_nomor = sp.spk_so_ref AND sox.so_aktif = 'Y'
+      WHERE h.sj_approve <> 2
+        AND h.sj_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+        AND COALESCE(sox.so_nomor, d.sjd_spk_nomor) IN (
+          SELECT COALESCE(sox2.so_nomor, d2.sjd_spk_nomor)
+          FROM tsj_dtl d2
+          INNER JOIN tsj_hdr h2 ON h2.sj_nomor = d2.sjd_sj_nomor
+          LEFT JOIN tspk sp2 ON sp2.spk_nomor = d2.sjd_spk_nomor
+          LEFT JOIN tsalesorder sox2 ON sox2.so_nomor = sp2.spk_so_ref AND sox2.so_aktif = 'Y'
+          WHERE h2.sj_approve <> 2
+            AND h2.sj_tanggal >= ?
+            AND h2.sj_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
+        )
+      GROUP BY COALESCE(sox.so_nomor, d.sjd_spk_nomor)
+    ) kirim ON kirim.Nomor = o.Nomor
+    LEFT JOIN (
+      SELECT COALESCE(soi.so_nomor, d.invd_spk_nomor) AS Nomor,
+             SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      LEFT JOIN tspk spi ON spi.spk_nomor = d.invd_spk_nomor
+      LEFT JOIN tsalesorder soi ON soi.so_nomor = spi.spk_so_ref AND soi.so_aktif = 'Y'
+      WHERE h.inv_status_otomatis = 0
+        AND h.inv_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
+      GROUP BY COALESCE(soi.so_nomor, d.invd_spk_nomor)
+    ) inv ON inv.Nomor = o.Nomor`;
+
+const spkBelumTagihRange = (startDate, endDate) => {
+  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+  const dStart = startDate || `${dEnd.substring(0, 7)}-01`;
+  return { dStart, dEnd, base: [dEnd, dStart, dEnd, dEnd] };
+};
+
 const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
 
-  const dStart =
-    startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
-  const params = [dStart, dEnd];
+  const { base } = spkBelumTagihRange(startDate, endDate);
 
   const sql = `
     SELECT
@@ -4827,25 +4865,10 @@ const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
             THEN GREATEST(kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0), 0)
             ELSE 0 END), 0) AS TotalQtyBelumDitagih
     FROM (${ORDER_SPK_SO_SUBQUERY}) o
-    INNER JOIN (
-      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
-      FROM tsj_dtl d
-      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
-      WHERE h.sj_approve <> 2
-        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
-      GROUP BY d.sjd_spk_nomor
-    ) kirim ON kirim.Nomor = o.Nomor
-    LEFT JOIN (
-      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
-      FROM tinv_dtl d
-      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
-      WHERE h.inv_status_otomatis = 0
-      GROUP BY d.invd_spk_nomor
-    ) inv ON inv.Nomor = o.Nomor
-    WHERE o.Tanggal >= ? AND o.Tanggal <= ?
+    ${KIRIM_INV_SUBQUERY}
   `;
 
-  const [rows] = await db.query(sql, params);
+  const [rows] = await db.query(sql, base);
   return rows[0] || {};
 };
 
@@ -4860,46 +4883,24 @@ const getSpkTerkirimBelumTagihList = async (
   const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
 
-  const dStart =
-    startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
-
-  const params = [dStart, dEnd, limit, offset];
+  const { dEnd, base } = spkBelumTagihRange(startDate, endDate);
+  const params = [dEnd, ...base, limit, offset];
 
   const sql = `
     SELECT
       o.Nomor AS Nomor,
       o.Nama AS Nama,
-      c.cus_nama AS NamaCustomer,
+      IFNULL(c.cus_nama, o.CusKode) AS NamaCustomer,
       kirim.TotalKirim AS QtyKirim,
       IFNULL(inv.TotalInvoice, 0) AS QtyInvoice,
       (kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0)) AS QtyBelumDitagih,
       DATE_FORMAT(kirim.TglKirimTerakhir, '%d-%m-%Y') AS TglKirimTerakhir,
-      DATEDIFF(CURDATE(), kirim.TglKirimTerakhir) AS UmurHari
+      DATEDIFF(?, kirim.TglKirimTerakhir) AS UmurHari
     FROM (${ORDER_SPK_SO_SUBQUERY}) o
-    INNER JOIN tcustomer c ON c.cus_kode = o.CusKode
-    INNER JOIN (
-      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim,
-             MAX(h.sj_tanggal) AS TglKirimTerakhir
-      FROM tsj_dtl d
-      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
-      WHERE h.sj_approve <> 2
-        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
-      GROUP BY d.sjd_spk_nomor
-    ) kirim ON kirim.Nomor = o.Nomor
-    LEFT JOIN (
-      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
-      FROM tinv_dtl d
-      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
-      WHERE h.inv_status_otomatis = 0
-      GROUP BY d.invd_spk_nomor
-    ) inv ON inv.Nomor = o.Nomor
-    WHERE o.Tanggal >= ? AND o.Tanggal <= ?
-      AND kirim.TotalKirim > IFNULL(inv.TotalInvoice, 0)
-    ORDER BY UmurHari DESC
+    LEFT JOIN tcustomer c ON c.cus_kode = o.CusKode
+    ${KIRIM_INV_SUBQUERY}
+    WHERE kirim.TotalKirim > IFNULL(inv.TotalInvoice, 0)
+    ORDER BY UmurHari DESC, o.Nomor ASC
     LIMIT ? OFFSET ?
   `;
 
