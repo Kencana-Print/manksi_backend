@@ -4,7 +4,7 @@ const db = require("../../../config/database");
  * Monitoring Status & Stock Transaksi Maklon — 1 baris per rencana
  * Barang Jadi (tmaklon_dtl_jadi), dengan realisasi produksi (Qty
  * Hasil/BS/No. LHK) di-JOIN dari tdtf_maklon kalau sudah ada LHK
- * yang match (mkl_nomor + kode_polos + kode_hasil sama persis —
+ * yang match (mkl_nomor + kode_polos + dmh_kode_hasil sama persis —
  * bukan FK, karena kode hasil di LHK memang sengaja tidak dikunci
  * ke rencana). Kalau rencana ini belum diproses sama sekali,
  * Qty Hasil/BS/No.LHK tampil kosong (belum ada realisasi).
@@ -63,8 +63,8 @@ const getBrowse = async ({
       bj.brg_nama AS ItemJadiNama,
       j.mkldj_estimasi_qty AS EstimasiQty,
       j.mkldj_dateline AS Dateline,
-      dm.qty_hasil AS QtyHasil,
-      dm.bs_afval AS Bs,
+      dh.dmh_qty_hasil AS QtyHasil,
+      dh.dmh_bs_afval AS Bs,
       dm.lhk_nomor AS NoLhk,
       h.mkl_status AS Status,
       h.mkl_user_create AS UserInput
@@ -75,10 +75,13 @@ const getBrowse = async ({
     LEFT JOIN tgarmen_brg bj ON bj.brg_kode = j.mkldj_kode_jadi
     LEFT JOIN tpabrik ga ON ga.pab_kode = h.mkl_cab_asal
     LEFT JOIN tpabrik gt ON gt.pab_kode = h.mkl_cab_tujuan
-    LEFT JOIN tdtf_maklon dm
+    LEFT JOIN (
+      tdtf_maklon dm
+      INNER JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
+    )
       ON dm.mkl_nomor = h.mkl_nomor
       AND dm.kode_polos = d.mkld_kode_polos
-      AND dm.kode_hasil = j.mkldj_kode_jadi
+      AND dh.dmh_kode_hasil = j.mkldj_kode_jadi
     ${where}
     ORDER BY h.mkl_tanggal DESC, h.mkl_nomor DESC, d.mkld_id, j.mkldj_id
   `;

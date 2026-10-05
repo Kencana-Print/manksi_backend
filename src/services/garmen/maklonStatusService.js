@@ -27,9 +27,14 @@ const recomputeStatus = async (conn, mklNomor) => {
     (r) => Number(r.mkld_qty_terima) + Number(r.mkld_qty_bs) > 0,
   ).length;
 
+  // "DTF selesai" = bahan polos yang sudah punya minimal 1 item hasil.
+  // COUNT DISTINCT kode_polos tidak terpengaruh walau satu LHK punya banyak hasil.
   const [[dtfRow]] = await conn.query(
-    `SELECT COUNT(DISTINCT kode_polos) AS cnt FROM tdtf_maklon
-     WHERE mkl_nomor = ? AND kode_hasil IS NOT NULL AND kode_hasil <> ''`,
+    `SELECT COUNT(DISTINCT dm.kode_polos) AS cnt
+     FROM tdtf_maklon dm
+     INNER JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
+     WHERE dm.mkl_nomor = ?
+       AND dh.dmh_kode_hasil IS NOT NULL AND dh.dmh_kode_hasil <> ''`,
     [mklNomor],
   );
   const dtfDoneCount = Number(dtfRow.cnt);
