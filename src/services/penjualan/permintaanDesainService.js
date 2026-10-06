@@ -294,8 +294,10 @@ const hasLhk = async (conn, nomor) => {
 
 const updateHeader = async (nomor, payload, user) => {
   const p = payload || {};
-  const bagian = String(user?.user_bagian || "").toUpperCase();
-  const userKode = String(user?.user_kode || "");
+  const bagian = String(user?.bagian || "")
+    .toUpperCase()
+    .trim();
+  const kode = String(user?.kode || "").trim();
   const isSuper = EDIT_SUPER_BAGIAN.includes(bagian);
 
   if (bagian === "DESAIN" && !isSuper) {
@@ -340,8 +342,8 @@ const updateHeader = async (nomor, payload, user) => {
 
     if (!isSuper) {
       const pemilik =
-        String(pd.pd_marketing || "") === userKode ||
-        String(pd.pd_user_create || "") === userKode;
+        String(pd.pd_marketing || "") === kode ||
+        String(pd.pd_user_create || "") === kode;
       if (!pemilik)
         throw new Error("Hanya pembuat/marketing PD yang dapat mengedit");
     }
@@ -419,7 +421,7 @@ const updateHeader = async (nomor, payload, user) => {
         jmlBaru,
         statusBaru,
         statusBaru,
-        userKode,
+        kode,
         nomor,
       ],
     );

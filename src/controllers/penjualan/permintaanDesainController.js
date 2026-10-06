@@ -99,7 +99,9 @@ const updateHeader = async (req, res) => {
 
 const BAGIAN_DESAIN_OK = ["DESAIN", "EDP", "IT"];
 const hanyaDesain = (req, res) => {
-  const bagian = String(req.user?.user_bagian || "").toUpperCase();
+  const bagian = String(req.user?.bagian || "")
+    .toUpperCase()
+    .trim();
   if (!BAGIAN_DESAIN_OK.includes(bagian)) {
     res.status(403).json({
       success: false,
