@@ -114,6 +114,7 @@ const loginUser = async (username, password) => {
       WHERE s.spk_aktif = "Y" AND s.spk_close = 0 
       AND s.spk_cus_kode IN (SELECT cus_kode FROM tcustomer WHERE cus_keramat = "Y")
       AND s.spk_tanggal >= "2024-01-01"
+      AND IFNULL(s.spk_jumlah_kirim, 0) < s.spk_jumlah
       AND DATEDIFF(s.spk_dateline, CURDATE()) <= 3
       ORDER BY s.spk_tanggal DESC
     `;
