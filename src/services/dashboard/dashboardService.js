@@ -40,6 +40,11 @@ const isGudangBahanViewer = (user) => {
   );
 };
 
+// Dashboard Pembelian (Outstanding Beli): tim Pembelian/Gudang/PPIC + bagian FINANCE.
+// Sengaja terpisah dari isGudangBahanViewer supaya widget gudang bahan tidak ikut terbuka untuk FINANCE.
+const isPembelianViewer = (user) =>
+  isGudangBahanViewer(user) || (user.bagian || "").toUpperCase() === "FINANCE";
+
 // ──────────────────────────────────────────────
 // 1. SPK Urgent (sudah ada di login, tapi bisa di-refresh)
 // ──────────────────────────────────────────────
@@ -5798,7 +5803,7 @@ const loadOutstandingBeliAll = (cabang) => {
 };
 
 const getOutstandingBeliSummary = async (user) => {
-  if (!isGudangBahanViewer(user)) return null;
+  if (!isPembelianViewer(user)) return null;
   const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
   const hasil = {};
   for (const tab of OUTSTANDING_BELI_TABS) hasil[tab] = all[tab].length;
@@ -5811,7 +5816,7 @@ const getOutstandingBeliList = async (
   limit = 20,
   offset = 0,
 ) => {
-  if (!isGudangBahanViewer(user)) return null;
+  if (!isPembelianViewer(user)) return null;
   const key = String(tab).toUpperCase();
   if (!OUTSTANDING_BELI_TABS.includes(key)) {
     throw new Error("Tab tidak dikenali.");
