@@ -401,18 +401,43 @@ const saveData = async (payload, user) => {
     nota,
     penerima,
     keterangan,
-    cabang,
-    jenis,
-    nomerator,
     detail,
     pjh_nomor,
-    is_edit,
-    no_bkk_lama,
     byrvoucher,
   } = payload;
 
-  const conn = await db.getConnection();
-  await conn.beginTransaction();
+  // Nilai krusial dibaca dari DB, bukan dari payload klien.
+  const [[bonDb]] = await db.query(
+    `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang
+     FROM finance.tkasbon WHERE bon_nomor = ?`,
+    [nomor],
+  );
+  if (!bonDb) throw new Error("Nomor kasbon tidak ditemukan.");
+
+  const is_edit = Number(bonDb.bon_selesai) !== 0;
+  const no_bkk_lama = bonDb.bon_jur_no || "";
+  const cabang = bonDb.bon_cabang;
+  const jenis = Number(bonDb.bon_jenis) === 0 ? "KAS" : "BANK";
+  const nomerator = jenis === "KAS" ? "BKK" : "BBK";
+
+  // Account header harus aktif dan sesuai jenis bon.
+  const rek = await getAccountByKode(rek_kode);
+  if (!rek) throw new Error("Account tidak ditemukan atau tidak aktif.");
+  const prefixOk =
+    jenis === "KAS"
+      ? rek_kode.startsWith("A-111")
+      : rek_kode.startsWith("A-112") || rek_kode.startsWith("B-211");
+  if (!prefixOk)
+    throw new Error(`Account tidak sesuai dengan jenis bon (${jenis}).`);
+
+  // Account per baris detail harus ada dan aktif.
+  for (const d of detail) {
+    if (d.uraian && d.verified && d.rekkode) {
+      const r = await getAccountByKode(d.rekkode);
+      if (!r)
+        throw new Error(`Account ${d.rekkode} pada "${d.uraian}" tidak aktif.`);
+    }
+  }
 
   try {
     const totalTerpakai = detail.reduce(
