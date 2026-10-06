@@ -13,9 +13,29 @@ const create = async (req, res) => {
   }
 };
 
+// Bagian yang boleh melihat semua cabang selain user cabang HO- dan ADMIN.
+const BAGIAN_SEMUA_CABANG = ["FINANCE", "AUDIT", "EDP"];
+
+const bolehSemuaCabang = (u) =>
+  u?.cabang === "HO-" ||
+  String(u?.kode || "").toUpperCase() === "ADMIN" ||
+  BAGIAN_SEMUA_CABANG.includes(String(u?.bagian || "").toUpperCase());
+
 const getBrowse = async (req, res) => {
   try {
-    const { startDate, endDate, cabang, status } = req.query;
+    const { startDate, endDate, status } = req.query;
+
+    if (!req.user?.cabang && !bolehSemuaCabang(req.user)) {
+      return res
+        .status(403)
+        .json({ message: "Cabang user tidak terbaca dari token." });
+    }
+
+    // Boleh semua cabang: ikuti dropdown. Selain itu: paksa cabang dari token.
+    const cabang = bolehSemuaCabang(req.user)
+      ? req.query.cabang || ""
+      : req.user.cabang;
+
     const rows = await pengajuanUangMukaService.getBrowse({
       startDate,
       endDate,

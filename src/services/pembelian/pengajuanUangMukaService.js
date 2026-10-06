@@ -200,6 +200,8 @@ const createPengajuan = async (
 
 // ── Browse PUM (tab "Pengajuan Uang Muka") ──
 const getBrowse = async ({ startDate, endDate, cabang, status }) => {
+  const filterCabang = cabang && cabang !== "HO-" ? cabang : null;
+
   const unionSql = `
     (
       SELECT
@@ -230,7 +232,7 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
       WHERE 1=1
       ${startDate && endDate ? "AND h.pum_tanggal BETWEEN ? AND ?" : ""}
-      ${cabang ? "AND h.pum_cabang = ?" : ""}
+      ${filterCabang ? "AND h.pum_cabang = ?" : ""}
     )
     UNION ALL
     (
@@ -264,17 +266,16 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
         k.user_create AS DibuatOleh
       FROM finance.tkasbon k
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
-      WHERE k.bon_pjh_nomor <> ''
-        AND NOT EXISTS (
+      WHERE NOT EXISTS (
           SELECT 1 FROM tpengajuan_uang_muka_hdr h2 WHERE h2.pum_bon_nomor = k.bon_nomor
         )
       ${startDate && endDate ? "AND k.bon_tanggal BETWEEN ? AND ?" : ""}
-      ${cabang ? "AND k.bon_cabang = ?" : ""}
+      ${filterCabang ? "AND k.bon_cabang = ?" : ""}
     )
   `;
 
   const dateParams = startDate && endDate ? [startDate, endDate] : [];
-  const cabangParams = cabang ? [cabang] : [];
+  const cabangParams = filterCabang ? [filterCabang] : [];
   const params = [
     ...dateParams,
     ...cabangParams,
@@ -292,11 +293,18 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
 
   const [rows] = await db.query(sql, params);
 
+  const tutupCache = new Map();
   for (const row of rows) {
     row.Sisa = Number(row.TotalNominal) - Number(row.Terpakai || 0);
     if (row.BonTanggal) {
-      const boundary = await getTanggalTutupBukuUntukTanggal(row.BonTanggal);
-      row.Closed = new Date(row.BonTanggal) < boundary;
+      const key = new Date(row.BonTanggal).toISOString().slice(0, 10);
+      if (!tutupCache.has(key)) {
+        tutupCache.set(
+          key,
+          await getTanggalTutupBukuUntukTanggal(row.BonTanggal),
+        );
+      }
+      row.Closed = new Date(row.BonTanggal) < tutupCache.get(key);
     } else {
       row.Closed = false;
     }
