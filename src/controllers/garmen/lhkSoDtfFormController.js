@@ -71,6 +71,8 @@ const getMaklonAutofill = async (req, res) => {
   try {
     const data = await lhkSoDtfFormService.getMaklonAutofill(
       req.params.mklNomor,
+      req.query.cab,
+      req.query.tanggal,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

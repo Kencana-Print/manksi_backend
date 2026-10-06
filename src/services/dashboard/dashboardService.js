@@ -997,6 +997,52 @@ const PILIH_NORMAL_FILTER = `
   )
 `;
 
+const INV_SALES_SUBQUERY = `
+  SELECT d.invd_inv_nomor AS nota,
+         MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
+  FROM tinv_dtl d
+  LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+  LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+  GROUP BY d.invd_inv_nomor
+`;
+
+// Sisa piutang per sales, set-based (satu kali scan kredit).
+// cutoff     = kredit dihitung s.d. tanggal ini (inklusif)
+// tglSebelum = (opsional) hanya invoice dengan tanggal < tglSebelum
+const getSisaPiutangPerSales = async (cutoff, tglSebelum = null) => {
+  const params = [cutoff];
+  let tglFilter = "";
+  if (tglSebelum) {
+    tglFilter = "AND p.tanggal < ?";
+    params.push(tglSebelum);
+  }
+  const [rows] = await db.query(
+    `SELECT inv.sal_kode,
+            SUM(p.debet - IFNULL(kr.kredit, 0)) AS Sisa
+     FROM piutang_debet p
+     INNER JOIN (${INV_SALES_SUBQUERY}) inv ON inv.nota = p.nota
+     LEFT JOIN (
+        SELECT IFNULL(tfm.invf_normal, kd.nota) AS nota,
+               SUM(kd.kredit) AS kredit
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        LEFT JOIN tinv_flag tfm ON tfm.invf_taknormal = kd.nota
+        WHERE kh.tanggal <= ?
+        GROUP BY IFNULL(tfm.invf_normal, kd.nota)
+     ) kr ON kr.nota = p.nota
+     WHERE inv.sal_kode IS NOT NULL
+       AND p.is_writeoff = 0
+       AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+       ${PILIH_NORMAL_FILTER}
+       ${tglFilter}
+     GROUP BY inv.sal_kode`,
+    params,
+  );
+  const map = new Map();
+  rows.forEach((r) => map.set(r.sal_kode, Number(r.Sisa) || 0));
+  return map;
+};
+
 const getTargetCollectionSales = async (user, bulan, tahun) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = [
@@ -1047,15 +1093,6 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   const cutoff = isBulanBerjalan
     ? toLocalDateStr(new Date(cutoffThn, cutoffBln, 0))
     : toLocalDateStr(now);
-
-  const INV_SALES_SUBQUERY = `
-    SELECT d.invd_inv_nomor AS nota,
-           MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode)) AS sal_kode
-    FROM tinv_dtl d
-    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
-    GROUP BY d.invd_inv_nomor
-  `;
 
   const NOT_DIKIRIM_FILTER = `
     AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
@@ -1140,6 +1177,16 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
     collectionYtdBySales[r.sal_kode] = Number(r.Bayar) || 0;
   }
 
+  // ── Piutang lama (invoice SEBELUM bulan target) + piutang real-time ──
+  const tglAwalTarget = `${targetThn}-${String(targetBln).padStart(2, "0")}-01`;
+  const akhirBulanLalu = toLocalDateStr(new Date(thn, bln - 1, 0));
+
+  const [realtimeMap, lamaAwalMap, lamaKiniMap] = await Promise.all([
+    getSisaPiutangPerSales("9999-12-31"), // real-time, semua invoice, all time
+    getSisaPiutangPerSales(akhirBulanLalu, tglAwalTarget), // baseline target lama
+    getSisaPiutangPerSales(mtdEnd, tglAwalTarget), // sisa lama saat ini
+  ]);
+
   const [salesRows] = await db.query(
     `SELECT sal_kode, sal_nama FROM tsales WHERE sal_nama NOT IN (?)`,
     [EXCLUDED_SALES],
@@ -1148,6 +1195,8 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
     ...Object.keys(targetYtdBySales),
     ...Object.keys(piutangBySales),
     ...Object.keys(collectionYtdBySales),
+    ...realtimeMap.keys(),
+    ...lamaAwalMap.keys(),
   ]);
 
   const items = salesRows
@@ -1156,41 +1205,56 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
       const targetMtd = targetMtdBySales[s.sal_kode] || 0;
       const targetYtd = targetYtdBySales[s.sal_kode] || 0;
       const piutang = piutangBySales[s.sal_kode] || 0;
-      // ⬅ DIUBAH: collectionMtd = targetMtd - piutang (uang yang sudah
-      // terbayar dari invoice bulan target, per cutoff) — bukan lagi
-      // dari query kredit terpisah.
-      const collectionMtd = targetMtd - piutang;
+      const collectionMtdOmzet = targetMtd - piutang;
       const collectionYtd = collectionYtdBySales[s.sal_kode] || 0;
+
+      const piutangRealtime = realtimeMap.get(s.sal_kode) || 0;
+      const targetPiutangLama = Math.max(lamaAwalMap.get(s.sal_kode) || 0, 0);
+      const sisaPiutangLama = Math.max(lamaKiniMap.get(s.sal_kode) || 0, 0);
+      const collectionLama = Math.max(targetPiutangLama - sisaPiutangLama, 0);
+
+      const targetTotal = targetMtd + targetPiutangLama;
+      const collectionMtd = collectionMtdOmzet + collectionLama;
+
       return {
         salKode: s.sal_kode,
         namaSales: s.sal_nama,
         targetBulanIni: targetMtd,
+        targetPiutangLama,
+        targetTotal,
         piutangSaatIni: piutang,
+        piutangRealtime,
         collectionMtd,
         collectionYtd,
-        sisaCollectionMtd: targetMtd - collectionMtd,
+        sisaCollectionMtd: targetTotal - collectionMtd,
         pctCollectionMtd:
-          targetMtd > 0 ? (collectionMtd / targetMtd) * 100 : null,
+          targetTotal > 0 ? (collectionMtd / targetTotal) * 100 : null,
         pctCollectionYtd:
           targetYtd > 0 ? (collectionYtd / targetYtd) * 100 : null,
       };
     })
-    .sort((a, b) => b.targetBulanIni - a.targetBulanIni);
+    .sort((a, b) => b.targetTotal - a.targetTotal);
 
   const grandTotal = items.reduce(
     (acc, r) => ({
       targetBulanIni: acc.targetBulanIni + r.targetBulanIni,
+      targetPiutangLama: acc.targetPiutangLama + r.targetPiutangLama,
+      targetTotal: acc.targetTotal + r.targetTotal,
       piutangSaatIni: acc.piutangSaatIni + r.piutangSaatIni,
+      piutangRealtime: acc.piutangRealtime + r.piutangRealtime,
       collectionMtd: acc.collectionMtd + r.collectionMtd,
       collectionYtd: acc.collectionYtd + r.collectionYtd,
-      sisaCollectionMtd: acc.sisaCollectionMtd + r.sisaCollectionMtd, // ⬅ BARU
+      sisaCollectionMtd: acc.sisaCollectionMtd + r.sisaCollectionMtd,
     }),
     {
       targetBulanIni: 0,
+      targetPiutangLama: 0,
+      targetTotal: 0,
       piutangSaatIni: 0,
+      piutangRealtime: 0,
       collectionMtd: 0,
       collectionYtd: 0,
-      sisaCollectionMtd: 0, // ⬅ BARU
+      sisaCollectionMtd: 0,
     },
   );
   const targetYtdGrand = Object.values(targetYtdBySales).reduce(
@@ -1206,8 +1270,8 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
     grandTotal: {
       ...grandTotal,
       pctCollectionMtd:
-        grandTotal.targetBulanIni > 0
-          ? (grandTotal.collectionMtd / grandTotal.targetBulanIni) * 100
+        grandTotal.targetTotal > 0
+          ? (grandTotal.collectionMtd / grandTotal.targetTotal) * 100
           : null,
       pctCollectionYtd:
         targetYtdGrand > 0

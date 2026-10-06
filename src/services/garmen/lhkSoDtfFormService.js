@@ -1,6 +1,7 @@
 const db = require("../../config/database");
 const { recomputeStatus } = require("./maklonStatusService");
 const sjHasilMakloonService = require("./sjHasilMakloonService");
+const { getProgress } = require("./maklonProgressService");
 
 const generateLhkMaklonNomor = async (conn) => {
   const year = new Date().getFullYear();
@@ -61,7 +62,8 @@ const getDetail = async (cab, tanggal) => {
           dh.dmh_kode_hasil AS KodeHasil,
           bh.brg_nama AS NamaHasil,
           dh.dmh_qty_hasil AS QtyHasil,
-          dh.dmh_bs_afval AS BsAfval
+          dh.dmh_bs_afval AS BsAfval,
+          EXISTS(SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id) AS SudahSj
     FROM tdtf_maklon dm
     LEFT JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
@@ -69,6 +71,14 @@ const getDetail = async (cab, tanggal) => {
     ORDER BY dm.id, dh.id
   `;
   const [maklonRows] = await db.query(qMaklon, [tanggal, cab]);
+
+  const progMap = {};
+  for (const mkl of [...new Set(maklonRows.map((r) => r.Kode))]) {
+    progMap[mkl] = await getProgress(mkl, {
+      excludeCab: cab,
+      excludeTanggal: tanggal,
+    });
+  }
 
   const combined = [
     ...rows.map((r) => ({
@@ -86,6 +96,8 @@ const getDetail = async (cab, tanggal) => {
       QtyMasuk: Number(r.QtyMasuk) || 0,
       QtyHasil: Number(r.QtyHasil) || 0,
       BsAfval: Number(r.BsAfval) || 0,
+      Rencana: progMap[r.Kode]?.rencana ?? 0,
+      HasilLain: progMap[r.Kode]?.hasil ?? 0, // hasil dari LHK tanggal lain
     })),
   ];
 
@@ -176,12 +188,29 @@ const lookupMaklon = async (keyword, page = 1, limit = 50) => {
   const like = `%${keyword || ""}%`;
   const offset = (Number(page) - 1) * Number(limit);
 
-  const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tmaklon_hdr h
-     WHERE h.mkl_status IN ('DIKIRIM', 'SEBAGIAN DIKIRIM', 'DITERIMA SEBAGIAN', 'SELESAI')
-       AND (h.mkl_nomor LIKE ? OR h.mkl_keterangan LIKE ?)`,
-    [like, like],
-  );
+  const base = `
+    FROM tmaklon_hdr h
+    LEFT JOIN (
+      SELECT d.mkld_mkl_nomor AS nomor, SUM(j.mkldj_estimasi_qty) AS rencana
+      FROM tmaklon_dtl d
+      INNER JOIN tmaklon_dtl_jadi j ON j.mkldj_mkld_id = d.mkld_id
+      GROUP BY d.mkld_mkl_nomor
+    ) r ON r.nomor = h.mkl_nomor
+    LEFT JOIN (
+      SELECT dm.mkl_nomor AS nomor, SUM(dh.dmh_qty_hasil + dh.dmh_bs_afval) AS hasil
+      FROM tdtf_maklon dm
+      INNER JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
+      GROUP BY dm.mkl_nomor
+    ) p ON p.nomor = h.mkl_nomor
+    WHERE h.mkl_status IN ('DIKIRIM', 'SEBAGIAN DIKIRIM', 'OTW GUDANG', 'DITERIMA SEBAGIAN', 'SELESAI')
+      AND (h.mkl_nomor LIKE ? OR h.mkl_keterangan LIKE ?)
+      AND NOT (IFNULL(r.rencana, 0) > 0 AND IFNULL(p.hasil, 0) >= r.rencana)
+  `;
+
+  const [[{ total }]] = await db.query(`SELECT COUNT(*) AS total ${base}`, [
+    like,
+    like,
+  ]);
 
   const [rows] = await db.query(
     `SELECT h.mkl_nomor AS Nomor,
@@ -193,10 +222,10 @@ const lookupMaklon = async (keyword, page = 1, limit = 50) => {
               WHERE d.mkld_mkl_nomor = h.mkl_nomor
             ), h.mkl_keterangan) AS Nama,
             h.mkl_tanggal AS Tanggal,
+            IFNULL(r.rencana, 0) AS Rencana,
+            IFNULL(p.hasil, 0) AS SudahHasil,
             'MAKLON' AS Tipe
-     FROM tmaklon_hdr h
-     WHERE h.mkl_status IN ('DIKIRIM', 'SEBAGIAN DIKIRIM', 'DITERIMA SEBAGIAN', 'SELESAI')
-       AND (h.mkl_nomor LIKE ? OR h.mkl_keterangan LIKE ?)
+     ${base}
      ORDER BY h.mkl_tanggal DESC
      LIMIT ? OFFSET ?`,
     [like, like, Number(limit), offset],
@@ -213,7 +242,7 @@ const lookupMaklon = async (keyword, page = 1, limit = 50) => {
  * baris PERTAMA yang dipakai, dan qty adalah total gabungan (perlu
  * dikoreksi manual oleh user kalau multi-item).
  */
-const getMaklonAutofill = async (mklNomor) => {
+const getMaklonAutofill = async (mklNomor, cab = null, tanggal = null) => {
   const [[hdr]] = await db.query(
     `SELECT mkl_cab_tujuan FROM tmaklon_hdr WHERE mkl_nomor = ?`,
     [mklNomor],
@@ -226,14 +255,11 @@ const getMaklonAutofill = async (mklNomor) => {
   if (!rows.length) throw new Error("Detail Maklon tidak ditemukan.");
 
   const first = rows[0];
-  const totalQty = rows.reduce(
-    (s, r) => s + Number(r.mkld_qty_sudah_kirim || 0),
-    0,
-  );
+  const prog = await getProgress(mklNomor, {
+    excludeCab: cab,
+    excludeTanggal: tanggal,
+  });
 
-  // ⬅ Semua target jadi yang direncanakan (bisa dari beberapa baris
-  // polos sekaligus kalau Maklon multi-item) — daftar SARAN, bukan
-  // penguncian, karena barang jadi final tetap bebas dipilih user.
   const [targetJadi] = await db.query(
     `SELECT j.mkldj_kode_jadi AS Kode, b.brg_nama AS Nama, j.mkldj_estimasi_qty AS EstimasiQty
      FROM tmaklon_dtl_jadi j
@@ -247,8 +273,13 @@ const getMaklonAutofill = async (mklNomor) => {
   return {
     kodePolos: first.mkld_kode_polos,
     satuan: first.mkld_satuan_kirim,
-    qtyMasuk: totalQty,
-    targetJadiOptions: targetJadi, // [{Kode, Nama, EstimasiQty}, ...]
+    qtyMasuk: prog.sisaPolos, // default = sisa polos yang belum diproses LHK lain
+    totalKirim: prog.totalKirim,
+    rencana: prog.rencana,
+    sudahHasil: prog.hasil,
+    sisaHasil: prog.sisaHasil,
+    selesai: prog.selesai,
+    targetJadiOptions: targetJadi,
     cabTujuan: hdr?.mkl_cab_tujuan || "",
     multiItem: rows.length > 1,
   };
@@ -365,6 +396,19 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
     }
   }
 
+  const seenMkl = new Set();
+  for (const r of maklonRows) {
+    const key = `${r.Kode}|${r.KodePolos}`;
+    if (seenMkl.has(key)) {
+      const err = new Error(
+        `Maklon ${r.Kode} muncul lebih dari sekali di tanggal yang sama. Gabungkan ke satu baris.`,
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+    seenMkl.add(key);
+  }
+
   const conn = await db.getConnection();
   const sjHasilMaklonList = [];
   try {
@@ -397,6 +441,7 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
     }
 
     const touchedHasilIdsByMkl = {};
+    const masukBaruByMkl = {};
 
     for (const r of maklonRows) {
       const [[existing]] = await conn.query(
@@ -405,6 +450,28 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
          LIMIT 1`,
         [cab, tanggal, r.Kode, r.KodePolos],
       );
+
+      const prog = await getProgress(r.Kode, {
+        conn,
+        excludeCab: cab,
+        excludeTanggal: tanggal,
+      });
+      if (!existing && prog.selesai) {
+        const err = new Error(
+          `Maklon ${r.Kode} sudah terpenuhi sesuai rencana (${prog.hasil}/${prog.rencana}).`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
+      masukBaruByMkl[r.Kode] =
+        (masukBaruByMkl[r.Kode] || 0) + (Number(r.QtyMasuk) || 0);
+      if (prog.masuk + masukBaruByMkl[r.Kode] > prog.totalKirim + 0.0001) {
+        const err = new Error(
+          `Qty masuk Maklon ${r.Kode} melebihi qty terkirim (${prog.masuk + masukBaruByMkl[r.Kode]} > ${prog.totalKirim}).`,
+        );
+        err.statusCode = 400;
+        throw err;
+      }
 
       let dtfMaklonId;
       if (existing) {
@@ -446,16 +513,38 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
 
       for (const h of filledHasil) {
         if (h.Id && oldHasilIds.includes(h.Id)) {
-          await conn.query(
-            `UPDATE tdtf_maklon_hasil SET dmh_kode_hasil=?, dmh_qty_hasil=?, dmh_bs_afval=? WHERE id=?`,
-            [
-              h.KodeHasil,
-              Number(h.QtyHasil) || 0,
-              Number(h.BsAfval) || 0,
-              h.Id,
-            ],
+          const [[sjUsed]] = await conn.query(
+            `SELECT dh.dmh_kode_hasil, dh.dmh_qty_hasil, dh.dmh_bs_afval
+             FROM tdtf_maklon_hasil dh
+             WHERE dh.id = ?
+               AND EXISTS (SELECT 1 FROM tsj_maklon_dtl WHERE sjmd_dtf_maklon_hasil_id = dh.id)`,
+            [h.Id],
           );
-          keepIds.push(h.Id);
+          if (sjUsed) {
+            const berubah =
+              sjUsed.dmh_kode_hasil !== h.KodeHasil ||
+              Number(sjUsed.dmh_qty_hasil) !== (Number(h.QtyHasil) || 0) ||
+              Number(sjUsed.dmh_bs_afval) !== (Number(h.BsAfval) || 0);
+            if (berubah) {
+              const err = new Error(
+                `Item hasil ${sjUsed.dmh_kode_hasil} (${r.Kode}) sudah masuk SJ Hasil Maklon, tidak bisa diubah. Tambahkan sebagai LHK baru.`,
+              );
+              err.statusCode = 400;
+              throw err;
+            }
+            keepIds.push(h.Id);
+          } else {
+            await conn.query(
+              `UPDATE tdtf_maklon_hasil SET dmh_kode_hasil=?, dmh_qty_hasil=?, dmh_bs_afval=? WHERE id=?`,
+              [
+                h.KodeHasil,
+                Number(h.QtyHasil) || 0,
+                Number(h.BsAfval) || 0,
+                h.Id,
+              ],
+            );
+            keepIds.push(h.Id);
+          }
         } else {
           const [insH] = await conn.query(
             `INSERT INTO tdtf_maklon_hasil (dmh_dtf_maklon_id, dmh_kode_hasil, dmh_qty_hasil, dmh_bs_afval)
@@ -537,6 +626,14 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
         sjHasilMaklonList.push({ mklNomor, sjmNomor: result.nomor });
         await recomputeStatus(conn, mklNomor);
       }
+    }
+
+    const progressList = [];
+    for (const mkl of touchedMklNomor) {
+      progressList.push({
+        mklNomor: mkl,
+        ...(await getProgress(mkl, { conn })),
+      });
     }
 
     await conn.commit();
