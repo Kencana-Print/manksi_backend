@@ -359,13 +359,187 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
   };
 };
 
-const searchCustomer = async (keyword, page = 1, limit = 50) => {
+// ── Sumber "transaksi terakhir" ──
+// hdr: tabel header (kode, tanggal, nomor)
+// dtl: tabel detail + ekspresi nominal per baris (di-SUM per nomor)
+const SUMBER_CUSTOMER = [
+  {
+    table: "tinv_hdr",
+    kode: "INV_cus_kode",
+    tgl: "INV_tanggal",
+    nomor: "INV_nomor",
+    dtl: {
+      table: "tinv_dtl",
+      nomor: "INVD_inv_nomor",
+      nominal: "INVD_Jumlah * INVD_Harga",
+    },
+  },
+];
+
+const SUMBER_SUPPLIER = [
+  {
+    table: "tpo_hdr",
+    kode: "po_sup_kode",
+    tgl: "po_tanggal",
+    nomor: "po_nomor",
+    dtl: {
+      table: "tpo_dtl",
+      nomor: "pod_po_Nomor",
+      nominal: "pod_Jumlah * pod_hargabeli",
+    },
+  },
+  {
+    table: "tgarmenpo_hdr",
+    kode: "po_sup_kode",
+    tgl: "po_tanggal",
+    nomor: "po_nomor",
+    dtl: {
+      table: "tgarmenpo_dtl",
+      nomor: "pod_nomor",
+      nominal: "pod_jumlah * pod_harga",
+    },
+  },
+  {
+    table: "tpojasa_hdr",
+    kode: "pojh_sup_kode",
+    tgl: "pojh_tanggal",
+    nomor: "pojh_nomor",
+    dtl: {
+      table: "tpojasa_dtl",
+      nomor: "pojd_pojh_nomor",
+      nominal: "pojd_jumlah * pojd_harga",
+    },
+  },
+  {
+    table: "tpopaper_hdr",
+    kode: "pjh_sup_kode",
+    tgl: "pjh_tanggal",
+    nomor: "pjh_nomor",
+    dtl: {
+      table: "tpopaper_dtl",
+      nomor: "pjd_nomor",
+      nominal: "pjd_qty * pjd_harga",
+    },
+  },
+  {
+    table: "tpo_mmt_hdr",
+    kode: "po_sup_kode",
+    tgl: "po_tanggal",
+    nomor: "po_nomor",
+    dtl: {
+      table: "tpo_mmt_dtl",
+      nomor: "pod_po_nomor",
+      nominal: "pod_qty * pod_harga",
+    },
+  },
+  {
+    table: "tpodtf_hdr",
+    kode: "pjh_sup_kode",
+    tgl: "pjh_tanggal",
+    nomor: "pjh_nomor",
+    dtl: {
+      table: "tpodtf_dtl",
+      nomor: "pjd_nomor",
+      nominal: "pjd_qty * pjd_harga",
+    },
+  },
+];
+
+// Transaksi terakhir per kode (hanya untuk kode di halaman ini),
+// lalu nominal dijumlah dari detail HANYA untuk nomor terakhir itu
+const ambilRiwayat = async (sumber, kodeList) => {
+  const hasil = new Map();
+  if (!kodeList.length) return hasil;
+
+  const unions = sumber
+    .map(
+      (
+        s,
+        i,
+      ) => `SELECT ${s.kode} AS Kode, DATE_FORMAT(${s.tgl}, '%Y-%m-%d') AS Tgl,
+                        ${s.nomor} AS Nomor, ${i} AS Src
+                   FROM ${s.table}
+                  WHERE ${s.kode} IN (?)`,
+    )
+    .join(" UNION ALL ");
+
+  const [rows] = await db.query(
+    `SELECT * FROM (${unions}) x ORDER BY Kode, Tgl DESC, Nomor DESC`,
+    sumber.map(() => kodeList),
+  );
+  for (const r of rows) {
+    if (!hasil.has(r.Kode)) hasil.set(r.Kode, { ...r, Nominal: null }); // baris pertama = terbaru
+  }
+
+  // Kelompokkan nomor terakhir per sumber, satu query detail per sumber
+  const perSumber = new Map();
+  for (const r of hasil.values()) {
+    if (!perSumber.has(r.Src)) perSumber.set(r.Src, []);
+    perSumber.get(r.Src).push(r.Nomor);
+  }
+
+  await Promise.all(
+    [...perSumber.entries()].map(async ([src, nomorList]) => {
+      const d = sumber[src].dtl;
+      const [det] = await db.query(
+        `SELECT ${d.nomor} AS Nomor, SUM(${d.nominal}) AS Nominal
+           FROM ${d.table}
+          WHERE ${d.nomor} IN (?)
+          GROUP BY ${d.nomor}`,
+        [nomorList],
+      );
+      const m = new Map(det.map((x) => [x.Nomor, x.Nominal]));
+      for (const r of hasil.values()) {
+        if (r.Src === src) r.Nominal = m.has(r.Nomor) ? m.get(r.Nomor) : null;
+      }
+    }),
+  );
+
+  return hasil;
+};
+
+// Isi TglTrx/Nominal, lalu urutkan ulang HANYA di dalam kelompok nama yang sama
+const terapkanRiwayat = (items, riwayat) => {
+  const grup = (it) =>
+    String(it.Nama || "")
+      .trim()
+      .toUpperCase();
+  const tglFmt = (t) => (t ? t.split("-").reverse().join("/") : null);
+
+  const diperkaya = items.map((it, idx) => {
+    const r = riwayat.get(it.Kode);
+    return {
+      idx,
+      tgl: r ? r.Tgl : "",
+      it: {
+        ...it,
+        TglTrx: r ? tglFmt(r.Tgl) : null,
+        Nominal: r ? r.Nominal : null,
+      },
+    };
+  });
+
+  diperkaya.sort((a, b) => {
+    if (grup(a.it) !== grup(b.it)) return a.idx - b.idx; // beda nama: urutan SQL tetap
+    if (a.tgl !== b.tgl) return a.tgl < b.tgl ? 1 : -1; // nama sama: transaksi terbaru dulu
+    return a.idx - b.idx;
+  });
+
+  return diperkaya.map((x) => x.it);
+};
+
+const searchCustomer = async (
+  keyword,
+  page = 1,
+  limit = 50,
+  withRiwayat = false,
+) => {
   const limitNum = Number(limit);
+  const pakaiRiwayat = withRiwayat && !!(keyword && keyword.trim() !== "");
   const pageNum = Number(page);
   const offset = (pageNum - 1) * limitNum;
 
   let params = [];
-  // Hanya cari customer yang aktif
   let whereClause = `WHERE cus_aktif = 0 AND cus_iscabang = 0`;
 
   if (keyword && keyword.trim() !== "") {
@@ -377,25 +551,32 @@ const searchCustomer = async (keyword, page = 1, limit = 50) => {
     `SELECT COUNT(*) AS total FROM tcustomer ${whereClause}`,
     params,
   );
-  const total = countResult[0].total;
 
   let query = `
-    SELECT cus_kode AS Kode, cus_nama AS Nama, cus_alamat AS Alamat, 
-           cus_kota AS Kota, -- Tambahkan ini agar tidak kosong di frontend
-           cus_cp AS CP, cus_perfect AS cus_perfect
-    FROM tcustomer 
-    ${whereClause} 
-    ORDER BY cus_nama ASC
+    SELECT cus_kode AS Kode, cus_nama AS Nama, cus_alamat AS Alamat,
+           cus_kota AS Kota, cus_cp AS CP, cus_perfect AS cus_perfect
+      FROM tcustomer
+      ${whereClause}
+     ORDER BY cus_nama ASC, cus_kode ASC
   `;
-
-  // Fix Limit -1 (All)
   if (limitNum > 0) {
     query += ` LIMIT ? OFFSET ?`;
     params.push(limitNum, offset);
   }
 
-  const [rows] = await db.query(query, params);
-  return { items: rows, total: total, page: pageNum, limit: limitNum };
+  let [rows] = await db.query(query, params);
+
+  if (pakaiRiwayat && rows.length) {
+    const kodeList = [...new Set(rows.map((r) => r.Kode))];
+    rows = terapkanRiwayat(rows, await ambilRiwayat(SUMBER_CUSTOMER, kodeList));
+  }
+
+  return {
+    items: rows,
+    total: countResult[0].total,
+    page: pageNum,
+    limit: limitNum,
+  };
 };
 
 const getCabangPabrik = async (type) => {
@@ -1820,13 +2001,19 @@ const searchBarangKaosan = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- GET SUPPLIER ---
-const searchSupplier = async (keyword, jenis, page = 1, limit = 50) => {
+const searchSupplier = async (
+  keyword,
+  jenis,
+  page = 1,
+  limit = 50,
+  withRiwayat = false,
+) => {
   const limitNum = Number(limit);
+  const pakaiRiwayat = withRiwayat && !!(keyword && keyword.trim() !== "");
   const offset = (Number(page) - 1) * limitNum;
   let params = [];
 
   let whereClause = `WHERE sup_aktif = "Y"`;
-
   if (jenis === "ACCESORIES") whereClause += ` AND sup_accesories = "Y"`;
   else if (jenis === "OBAT") whereClause += ` AND sup_obat = "Y"`;
   else if (jenis === "SPAREPART") whereClause += ` AND sup_sparepart = "Y"`;
@@ -1842,21 +2029,26 @@ const searchSupplier = async (keyword, jenis, page = 1, limit = 50) => {
     params,
   );
 
-  let query = `
-    SELECT
-      sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota,
-      IFNULL(i.supd_bank, '') AS Bank,
-      IFNULL(i.supd_rekening, '') AS Rekening,
-      IFNULL(i.supd_atasnama, '') AS AtasNama
-    FROM tsupplier
-    LEFT JOIN tsupplieritem i ON i.supd_kode = tsupplier.sup_kode
-    ${whereClause}
-    ORDER BY sup_nama ASC
-    LIMIT ? OFFSET ?
+  const query = `
+    SELECT sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota,
+           IFNULL(i.supd_bank, '') AS Bank,
+           IFNULL(i.supd_rekening, '') AS Rekening,
+           IFNULL(i.supd_atasnama, '') AS AtasNama
+      FROM tsupplier
+      LEFT JOIN tsupplieritem i ON i.supd_kode = tsupplier.sup_kode
+      ${whereClause}
+     ORDER BY sup_nama ASC, sup_kode ASC
+     LIMIT ? OFFSET ?
   `;
   params.push(limitNum, offset);
 
-  const [rows] = await db.query(query, params);
+  let [rows] = await db.query(query, params);
+
+  if (pakaiRiwayat && rows.length) {
+    const kodeList = [...new Set(rows.map((r) => r.Kode))];
+    rows = terapkanRiwayat(rows, await ambilRiwayat(SUMBER_SUPPLIER, kodeList));
+  }
+
   return {
     items: rows,
     total: countResult[0].total,

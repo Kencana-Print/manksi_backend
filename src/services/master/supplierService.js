@@ -41,7 +41,61 @@ const generateKode = async () => {
   return "S" + String(nextNum).padStart(7, "0");
 };
 
-const create = async (data, user) => {
+const normalisasiNama = (s) =>
+  String(s || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const cariNamaKembar = async (nama, excludeKode = "", conn = db) => {
+  const norm = normalisasiNama(nama);
+  if (!norm) return [];
+  const [rows] = await conn.query(
+    `SELECT sup_kode AS Kode, sup_nama AS Nama, sup_kota AS Kota, sup_aktif AS Aktif
+       FROM tsupplier
+      WHERE REGEXP_REPLACE(UPPER(sup_nama), '[^A-Z0-9]', '') = ?
+        AND sup_kode <> ?
+      LIMIT 5`,
+    [norm, excludeKode || ""],
+  );
+  return rows;
+};
+
+const cariNamaMirip = async (nama, excludeKode = "") => {
+  const norm = normalisasiNama(nama);
+  if (norm.length < 3) return [];
+  const [rows] = await db.query(
+    `SELECT x.Kode, x.Nama, x.Kota, x.Aktif, (x.norm = ?) AS Sama
+       FROM (
+         SELECT sup_kode AS Kode, sup_nama AS Nama, sup_kota AS Kota, sup_aktif AS Aktif,
+                REGEXP_REPLACE(UPPER(sup_nama), '[^A-Z0-9]', '') AS norm
+           FROM tsupplier
+          WHERE sup_kode <> ?
+       ) x
+      WHERE x.norm = ?
+         OR x.norm LIKE CONCAT('%', ?, '%')
+         OR (CHAR_LENGTH(x.norm) >= 5 AND ? LIKE CONCAT('%', x.norm, '%'))
+      ORDER BY Sama DESC, x.Nama
+      LIMIT 8`,
+    [norm, excludeKode || "", norm, norm, norm],
+  );
+  return rows;
+};
+
+const errNamaKembar = (s) => {
+  const err = new Error(
+    `Nama supplier sudah terdaftar: ${s.Kode} - ${s.Nama}${s.Kota ? " (" + s.Kota + ")" : ""}${s.Aktif === "N" ? " [non-aktif]" : ""}`,
+  );
+  err.status = 409;
+  return err;
+};
+
+const errNamaKosong = () => {
+  const err = new Error("Nama supplier wajib diisi");
+  err.status = 400;
+  return err;
+};
+
+const insertSupplier = async (data, user) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -108,7 +162,42 @@ const create = async (data, user) => {
   }
 };
 
+const create = async (data, user) => {
+  if (!normalisasiNama(data.Nama)) throw errNamaKosong();
+
+  const lockConn = await db.getConnection();
+  try {
+    const [[lock]] = await lockConn.query(
+      `SELECT GET_LOCK('tsupplier_create', 10) AS got`,
+    );
+    if (Number(lock.got) !== 1) {
+      throw new Error("Sistem sedang memproses supplier lain, coba lagi.");
+    }
+    const kembar = await cariNamaKembar(data.Nama, "", lockConn);
+    if (kembar.length) throw errNamaKembar(kembar[0]);
+
+    return await insertSupplier(data, user);
+  } finally {
+    await lockConn
+      .query(`SELECT RELEASE_LOCK('tsupplier_create')`)
+      .catch(() => {});
+    lockConn.release();
+  }
+};
+
 const update = async (kode, data, user) => {
+  if (!normalisasiNama(data.Nama)) throw errNamaKosong();
+
+  const [[lama]] = await db.query(
+    `SELECT sup_nama FROM tsupplier WHERE sup_kode = ?`,
+    [kode],
+  );
+  if (!lama) throw new Error("Supplier tidak ditemukan");
+  if (normalisasiNama(lama.sup_nama) !== normalisasiNama(data.Nama)) {
+    const kembar = await cariNamaKembar(data.Nama, kode);
+    if (kembar.length) throw errNamaKembar(kembar[0]);
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -175,4 +264,11 @@ const update = async (kode, data, user) => {
   }
 };
 
-module.exports = { getBrowse, getById, create, update };
+module.exports = {
+  getBrowse,
+  getById,
+  create,
+  update,
+  cariNamaKembar,
+  cariNamaMirip,
+};

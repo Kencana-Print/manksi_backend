@@ -29,7 +29,9 @@ const create = async (req, res) => {
       .status(201)
       .json({ success: true, message: "Supplier berhasil disimpan", kode });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
   }
 };
 
@@ -40,8 +42,22 @@ const update = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Supplier berhasil diperbarui" });
   } catch (error) {
+    res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
+  }
+};
+
+const checkNama = async (req, res) => {
+  try {
+    const data = await supplierService.cariNamaMirip(
+      req.query.nama,
+      req.query.exclude || "",
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-module.exports = { getBrowse, getById, create, update };
+module.exports = { getBrowse, getById, create, update, checkNama };

@@ -61,9 +61,14 @@ const searchCustomer = async (req, res) => {
     const page = req.query.page || 1;
     const limit = req.query.limit || 50;
     const keyword = req.query.q || "";
+    const withRiwayat = req.query.riwayat === "1";
 
-    // Panggil service yang sudah kita buat sebelumnya
-    const data = await lookupService.searchCustomer(keyword, page, limit);
+    const data = await lookupService.searchCustomer(
+      keyword,
+      page,
+      limit,
+      withRiwayat,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -672,14 +677,15 @@ const searchSupplier = async (req, res) => {
     const page = req.query.page || 1;
     const limit = req.query.limit || 50;
     const keyword = req.query.q || "";
-    const jenis = req.query.jenis; // <-- TAMBAHKAN BARIS INI
+    const jenis = req.query.jenis;
+    const withRiwayat = req.query.riwayat === "1";
 
-    // UPDATE PANGGILAN SERVICE DENGAN MENYISIPKAN VARIABEL JENIS
     const data = await lookupService.searchSupplier(
       keyword,
       jenis,
       page,
       limit,
+      withRiwayat,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

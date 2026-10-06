@@ -16,6 +16,12 @@ router.get(
   controller.getBrowse,
 );
 router.get(
+  "/check-nama",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.checkNama,
+);
+router.get(
   "/:kode",
   verifyToken,
   checkPermission(menuId, "view"),

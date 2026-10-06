@@ -1233,6 +1233,16 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
           targetYtd > 0 ? (collectionYtd / targetYtd) * 100 : null,
       };
     })
+    .filter((r) =>
+      [
+        r.targetBulanIni,
+        r.piutangSaatIni,
+        r.targetPiutangLama,
+        r.targetTotal,
+        r.collectionMtd,
+        r.piutangRealtime,
+      ].some((v) => Math.abs(v) >= 0.5),
+    )
     .sort((a, b) => b.targetTotal - a.targetTotal);
 
   const grandTotal = items.reduce(
@@ -1311,6 +1321,8 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
     targetThn -= 1;
   }
   const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
+  const tglAwalTarget = `${targetBulanKey}-01`;
+  const akhirBulanLalu = toLocalDateStr(new Date(thn, bln - 1, 0));
 
   let cutoffBln = bln - 1;
   let cutoffThn = thn;
@@ -1339,59 +1351,85 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
     LEFT JOIN tcustomer c ON c.cus_kode = p.customer
   `;
 
-  const NOT_DIKIRIM_FILTER = `
-    AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
-  `;
-
   const salKodeFilter = salKode ? `attr.sal_kode = ?` : `attr.sal_kode IS NULL`;
-  const invoiceParams = salKode
-    ? [cutoff, targetBulanKey, salKode]
-    : [cutoff, targetBulanKey];
+  const salParams = salKode ? [salKode] : [];
 
-  const [rows] = await db.query(
-    `SELECT
-      IFNULL((SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1), p.nota) AS Nota,
-      DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
-      p.customer AS CusKode,
-      IFNULL(c.cus_nama, '') AS CusNama,
-      IFNULL((
-        SELECT pd2.debet
-        FROM piutang_debet pd2
-        WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
-          AND pd2.is_writeoff = 0
-        LIMIT 1
-      ), p.debet) AS Debet,
-      (IFNULL((
+  // jenis: 'BARU' (invoice bulan target) / 'LAMA' (invoice sebelum bulan target)
+  // kreditCutoff: kredit dihitung s.d. tanggal ini
+  const queryInvoice = async (
+    jenis,
+    kreditCutoff,
+    tanggalCond,
+    tanggalParams,
+    having,
+  ) => {
+    const [rows] = await db.query(
+      `SELECT
+        '${jenis}' AS Jenis,
+        IFNULL((SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1), p.nota) AS Nota,
+        DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+        p.customer AS CusKode,
+        IFNULL(c.cus_nama, '') AS CusNama,
+        IFNULL((
           SELECT pd2.debet
           FROM piutang_debet pd2
           WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
             AND pd2.is_writeoff = 0
           LIMIT 1
-        ), p.debet) - IFNULL((
-        SELECT SUM(kd.kredit)
-        FROM piutang_kredit_detail kd
-        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-        WHERE kd.nota = IFNULL(
-          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
-          p.nota
-        )
-        AND kh.tanggal <= ?
-      ), 0)) AS Sisa
-    FROM piutang_debet p
-    INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
-    LEFT JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.is_writeoff = 0
-      AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-      ${PILIH_NORMAL_FILTER}
-      AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
-      AND ${salKodeFilter}
-    ORDER BY p.tanggal, p.nota`,
-    invoiceParams,
-  );
+        ), p.debet) AS Debet,
+        (IFNULL((
+            SELECT pd2.debet
+            FROM piutang_debet pd2
+            WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+              AND pd2.is_writeoff = 0
+            LIMIT 1
+          ), p.debet) - IFNULL((
+          SELECT SUM(kd.kredit)
+          FROM piutang_kredit_detail kd
+          INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+          WHERE kd.nota = IFNULL(
+            (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+            p.nota
+          )
+          AND kh.tanggal <= ?
+        ), 0)) AS Sisa,
+        p.tanggal AS TglSort
+      FROM piutang_debet p
+      INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
+      LEFT JOIN tcustomer c ON c.cus_kode = p.customer
+      WHERE p.is_writeoff = 0
+        AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+        ${PILIH_NORMAL_FILTER}
+        AND ${tanggalCond}
+        AND ${salKodeFilter}
+      ${having}
+      ORDER BY p.tanggal, p.nota`,
+      [kreditCutoff, ...tanggalParams, ...salParams],
+    );
+    return rows;
+  };
+
+  const [rowsBaru, rowsLama] = await Promise.all([
+    queryInvoice(
+      "BARU",
+      cutoff,
+      "DATE_FORMAT(p.tanggal, '%Y-%m') = ?",
+      [targetBulanKey],
+      "",
+    ),
+    queryInvoice(
+      "LAMA",
+      akhirBulanLalu,
+      "p.tanggal < ?",
+      [tglAwalTarget],
+      "HAVING Sisa <> 0",
+    ),
+  ]);
 
   return {
     targetBulanLabel: `${String(targetBln).padStart(2, "0")}/${targetThn}`,
-    items: rows.map((r) => ({
+    items: [...rowsBaru, ...rowsLama].map((r) => ({
+      jenis: r.Jenis,
       nota: r.Nota,
       tanggal: r.Tanggal,
       cusKode: r.CusKode,
@@ -1784,14 +1822,27 @@ const batalPotensi = async (nomor, alasan, user) => {
 // Status Realisasi dihitung DINAMIS
 const POTENSI_REALISASI_CHECK = `
   IF(
-    p.pot_pen_nomor IS NOT NULL AND EXISTS (
-      SELECT 1 FROM tspk s WHERE s.spk_pen_nomor = p.pot_pen_nomor AND s.spk_aktif = 'Y'
-      UNION SELECT 1 FROM tsalesorder so WHERE so.so_pen_nomor = p.pot_pen_nomor AND so.so_aktif = 'Y'
+    EXISTS (
+      SELECT 1 FROM tsalesorder so
+      WHERE so.so_aktif = 'Y'
+        AND so.so_memo IN (
+          p.pot_mspk_nomor, map_from_pen.mspk_nomor,
+          map_r1.mspk_nomor, map_r2.mspk_nomor, map_r3.mspk_nomor,
+          map_r4.mspk_nomor, map_r5.mspk_nomor
+        )
+      UNION ALL
+      SELECT 1 FROM tspk s
+      WHERE s.spk_aktif = 'Y'
+        AND s.spk_memo IN (
+          p.pot_mspk_nomor, map_from_pen.mspk_nomor,
+          map_r1.mspk_nomor, map_r2.mspk_nomor, map_r3.mspk_nomor,
+          map_r4.mspk_nomor, map_r5.mspk_nomor
+        )
     ), 1,
     IF(
-      p.pot_mspk_nomor IS NOT NULL AND EXISTS (
-        SELECT 1 FROM tspk s WHERE s.spk_memo = p.pot_mspk_nomor AND s.spk_aktif = 'Y'
-        UNION SELECT 1 FROM tsalesorder so WHERE so.so_memo = p.pot_mspk_nomor AND so.so_aktif = 'Y'
+      p.pot_pen_nomor IS NOT NULL AND map_from_pen.mspk_nomor IS NULL AND EXISTS (
+        SELECT 1 FROM tspk s WHERE s.spk_pen_nomor = p.pot_pen_nomor AND s.spk_aktif = 'Y'
+        UNION SELECT 1 FROM tsalesorder so WHERE so.so_pen_nomor = p.pot_pen_nomor AND so.so_aktif = 'Y'
       ), 1, 0
     )
   )
@@ -1859,7 +1910,8 @@ const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
   if (!canViewPotensi(user)) return { items: [], total: 0 };
 
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM tpotensi p
+    `SELECT COUNT(DISTINCT p.pot_nomor) AS total FROM tpotensi p
+     ${POTENSI_RESOLVE_JOIN}
      WHERE p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0`,
   );
 

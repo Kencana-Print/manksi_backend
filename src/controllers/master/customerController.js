@@ -33,6 +33,18 @@ const getJenisUsahaLookup = async (req, res) => {
   }
 };
 
+const checkNama = async (req, res) => {
+  try {
+    const data = await customerService.cariNamaMirip(
+      req.query.nama,
+      req.query.exclude || "",
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const create = async (req, res) => {
   try {
     const { kode, plafonAcc } = await customerService.create(
@@ -49,7 +61,9 @@ const create = async (req, res) => {
 
     res.status(201).json({ success: true, message, data: { kode, plafonAcc } });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
   }
 };
 
@@ -70,7 +84,9 @@ const update = async (req, res) => {
 
     res.status(200).json({ success: true, message, data: { kode, plafonAcc } });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
   }
 };
 
@@ -89,6 +105,7 @@ module.exports = {
   getBrowse,
   getById,
   getJenisUsahaLookup,
+  checkNama,
   create,
   update,
   remove,

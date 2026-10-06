@@ -1,5 +1,55 @@
 const db = require("../../config/database");
 
+// Normalisasi: huruf besar, buang semua selain huruf/angka.
+const normalisasiNama = (s) =>
+  String(s || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+
+const cariNamaKembar = async (nama, excludeKode = "", conn = db) => {
+  const norm = normalisasiNama(nama);
+  if (!norm) return [];
+  const [rows] = await conn.query(
+    `SELECT cus_kode AS Kode, cus_nama AS Nama, cus_kota AS Kota,
+            IF(cus_aktif = 0, 'AKTIF', 'PASIF') AS Status
+     FROM tcustomer
+     WHERE cus_iscabang = 0 AND cus_kode <> ?
+       AND REGEXP_REPLACE(UPPER(cus_nama), '[^A-Z0-9]', '') = ?
+     LIMIT 5`,
+    [excludeKode, norm],
+  );
+  return rows;
+};
+
+const cariNamaMirip = async (nama, excludeKode = "", conn = db) => {
+  const norm = normalisasiNama(nama);
+  if (norm.length < 3) return [];
+  const [rows] = await conn.query(
+    `SELECT x.Kode, x.Nama, x.Kota, x.Status, (x.norm = ?) AS Sama
+     FROM (
+       SELECT cus_kode AS Kode, cus_nama AS Nama, cus_kota AS Kota,
+              IF(cus_aktif = 0, 'AKTIF', 'PASIF') AS Status,
+              REGEXP_REPLACE(UPPER(cus_nama), '[^A-Z0-9]', '') AS norm
+       FROM tcustomer
+       WHERE cus_iscabang = 0 AND cus_kode <> ?
+     ) x
+     WHERE x.norm LIKE CONCAT('%', ?, '%')
+        OR (CHAR_LENGTH(x.norm) >= 5 AND ? LIKE CONCAT('%', x.norm, '%'))
+     ORDER BY Sama DESC, x.Nama
+     LIMIT 8`,
+    [norm, excludeKode, norm, norm],
+  );
+  return rows.map((r) => ({ ...r, Sama: Number(r.Sama) === 1 }));
+};
+
+const errNamaKembar = (k) => {
+  const err = new Error(
+    `Nama customer sudah terdaftar: ${k.Kode} - ${k.Nama} (${k.Kota || "-"}, ${k.Status}).`,
+  );
+  err.status = 409;
+  return err;
+};
+
 const getBrowse = async (filterKorporasi) => {
   // Filter status korporasi
   let korporasiClause = "";
@@ -72,19 +122,19 @@ const getJenisUsahaLookup = async () => {
   return rows;
 };
 
-const generateKode = async () => {
+const generateKode = async (conn = db) => {
   // Logic dari Delphi: 'select ifnull(max(substr(cus_kode,1,5)),0) ...'
   // Delphi: Result:= RightStr(FloatToStr(ajumlah),5); (100001 + max_val -> ambil 5 char kanan)
   const query = `SELECT IFNULL(MAX(CAST(SUBSTR(cus_kode, 1, 5) AS UNSIGNED)), 0) AS max_val FROM tcustomer WHERE cus_iscabang = 0`;
-  const [[row]] = await db.query(query);
+  const [[row]] = await conn.query(query);
 
   const nextNum = parseInt(row.max_val, 10) + 1;
   // Pad dengan 0 di depan hingga panjang 5
   return String(nextNum).padStart(5, "0");
 };
 
-const create = async (data, user) => {
-  const kode = await generateKode();
+const insertCustomer = async (data, user, conn) => {
+  const kode = await generateKode(conn);
   const plafon = Number(data.Plafon) || 0;
 
   // Tentukan status plafon dan aktif/pasif
@@ -117,7 +167,7 @@ const create = async (data, user) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
   `;
 
-  await db.query(query, [
+  await conn.query(query, [
     kode,
     data.KodeInduk || "",
     data.Nama,
@@ -153,14 +203,39 @@ const create = async (data, user) => {
   return { kode, plafonAcc };
 };
 
+const create = async (data, user) => {
+  const conn = await db.getConnection();
+  try {
+    const [[lock]] = await conn.query(
+      `SELECT GET_LOCK('tcustomer_create', 10) AS got`,
+    );
+    if (Number(lock.got) !== 1) {
+      throw new Error("Sistem sedang memproses customer lain, coba lagi.");
+    }
+
+    const kembar = await cariNamaKembar(data.Nama, "", conn);
+    if (kembar.length) throw errNamaKembar(kembar[0]);
+
+    return await insertCustomer(data, user, conn);
+  } finally {
+    await conn.query(`SELECT RELEASE_LOCK('tcustomer_create')`).catch(() => {});
+    conn.release();
+  }
+};
+
 const update = async (kode, data, user) => {
   const plafon = Number(data.Plafon) || 0;
 
   // Ambil data lama dulu
   const [[existing]] = await db.query(
-    `SELECT cus_plafon, cus_plafon_acc, cus_aktif FROM tcustomer WHERE cus_kode = ?`,
+    `SELECT cus_nama, cus_plafon, cus_plafon_acc, cus_aktif FROM tcustomer WHERE cus_kode = ?`,
     [kode],
   );
+
+  if (normalisasiNama(existing?.cus_nama) !== normalisasiNama(data.Nama)) {
+    const kembar = await cariNamaKembar(data.Nama, kode);
+    if (kembar.length) throw errNamaKembar(kembar[0]);
+  }
 
   const plafonLama = Number(existing?.cus_plafon) || 0;
   const plafonBerubah = plafon !== plafonLama;
@@ -254,6 +329,8 @@ const remove = async (kode) => {
 };
 
 module.exports = {
+  cariNamaKembar,
+  cariNamaMirip,
   getBrowse,
   getById,
   getJenisUsahaLookup,
