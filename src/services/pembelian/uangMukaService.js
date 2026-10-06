@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+console.log("[uangMukaService] loaded, patch REALISASI aktif");
 
 // ── OUTSTANDING (browse) ──
 const getOutstanding = async ({
@@ -10,6 +11,10 @@ const getOutstanding = async ({
   cabang,
 }) => {
   const searchParam = `%${search}%`;
+  console.log(
+    "[getOutstanding]",
+    JSON.stringify({ cabang, startDate, endDate, search, page, limit }),
+  );
 
   // P04 dkk hanya lihat cabangnya sendiri. Cabang HO- statusnya setara
   // Head Office, jadi juga boleh lihat pengajuan yang cabangnya P01.
