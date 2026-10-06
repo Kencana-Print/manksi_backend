@@ -125,7 +125,7 @@ const getOutstanding = async ({
               SELECT 1 FROM tpengajuan_uang_muka_dtl pd
               JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
               WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
-                AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+                AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
             )
         ), 0) AS Nominal
       FROM tgarmenmintabeli_hdr h
@@ -152,7 +152,7 @@ const getOutstanding = async ({
             SELECT 1 FROM tpengajuan_uang_muka_dtl pd
             JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
             WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
-              AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+              AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
           )
       )
       ${startDate && endDate ? "AND h.mb_tanggal BETWEEN ? AND ?" : ""}
@@ -277,7 +277,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            SELECT 1 FROM tpengajuan_uang_muka_dtl pd
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
            WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = ?
-             AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+             AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
          )
        ORDER BY d.mbd_nourut`,
       [nomorHeader, nomorHeader],
