@@ -295,6 +295,79 @@ const getPotensiBatalList = async (req, res) => {
   }
 };
 
+const getInkasoSourceOptions = async (req, res) => {
+  try {
+    const { namaCustomer, salKode, limit = 20, offset = 0 } = req.query;
+    const data = await service.getInkasoSourceOptions(req.user, {
+      namaCustomer,
+      salKode,
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { items: [], total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const setInkasoBulk = async (req, res) => {
+  try {
+    const { items } = req.body;
+    const data = await service.setInkasoBulk(items, req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const batalInkaso = async (req, res) => {
+  try {
+    const { nomor } = req.params;
+    const { alasan } = req.body;
+    await service.batalInkaso(nomor, alasan, req.user);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const getInkasoDashboard = async (req, res) => {
+  try {
+    const data = await service.getInkasoDashboard(req.user);
+    res.status(200).json({
+      success: true,
+      data: data ?? {
+        summary: {
+          jmlItem: 0,
+          totalProyeksi: 0,
+          totalRealisasi: 0,
+          totalBatal: 0,
+        },
+        bySales: [],
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getInkasoBatalList = async (req, res) => {
+  try {
+    const { limit = 20, offset = 0 } = req.query;
+    const data = await service.getInkasoBatalList(req.user, {
+      limit: Number(limit),
+      offset: Number(offset),
+    });
+    res
+      .status(200)
+      .json({ success: true, data: data ?? { items: [], total: 0 } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPiutangDashboard = async (req, res) => {
   try {
     const data = await service.getPiutangDashboard(req.user);
@@ -1132,6 +1205,30 @@ const getBufferKaosanList = async (req, res) => {
   }
 };
 
+const getOutstandingBeliSummary = async (req, res) => {
+  try {
+    const data = await service.getOutstandingBeliSummary(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getOutstandingBeliList = async (req, res) => {
+  try {
+    const { tab = "ATK", limit = 20, offset = 0 } = req.query;
+    const data = await service.getOutstandingBeliList(
+      req.user,
+      tab,
+      Number(limit),
+      Number(offset),
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
@@ -1157,6 +1254,11 @@ module.exports = {
   getPotensiSummary,
   getPotensiList,
   getPotensiBatalList,
+  getInkasoSourceOptions,
+  setInkasoBulk,
+  batalInkaso,
+  getInkasoDashboard,
+  getInkasoBatalList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,
@@ -1220,4 +1322,6 @@ module.exports = {
   getStokBebasList,
   getBufferKaosanSummary,
   getBufferKaosanList,
+  getOutstandingBeliSummary,
+  getOutstandingBeliList,
 };

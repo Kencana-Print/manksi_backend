@@ -73,6 +73,15 @@ router.patch("/potensi/:nomor/batal", verifyToken, controller.batalPotensi);
 router.get("/potensi-summary", verifyToken, controller.getPotensiSummary);
 router.get("/potensi-list", verifyToken, controller.getPotensiList);
 router.get("/potensi-batal-list", verifyToken, controller.getPotensiBatalList);
+router.get(
+  "/inkaso-source-options",
+  verifyToken,
+  controller.getInkasoSourceOptions,
+);
+router.post("/inkaso-bulk", verifyToken, controller.setInkasoBulk);
+router.patch("/inkaso/:nomor/batal", verifyToken, controller.batalInkaso);
+router.get("/inkaso-dashboard", verifyToken, controller.getInkasoDashboard);
+router.get("/inkaso-batal-list", verifyToken, controller.getInkasoBatalList);
 router.get("/piutang-dashboard", verifyToken, controller.getPiutangDashboard);
 router.get("/piutang-overdue", verifyToken, controller.getPiutangOverdue);
 router.get("/penerimaan-summary", verifyToken, controller.getPenerimaanSummary);
@@ -195,6 +204,16 @@ router.get(
   "/stok-acc-vs-mka-list",
   verifyToken,
   controller.getStokAccVsMkaList,
+);
+router.get(
+  "/outstanding-beli-summary",
+  verifyToken,
+  controller.getOutstandingBeliSummary,
+);
+router.get(
+  "/outstanding-beli-list",
+  verifyToken,
+  controller.getOutstandingBeliList,
 );
 router.get("/barang-jadi-metric", verifyToken, controller.getBarangJadiMetric);
 router.get(

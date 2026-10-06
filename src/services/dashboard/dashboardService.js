@@ -1855,6 +1855,353 @@ const getPotensiBatalList = async (
 };
 
 // ══════════════════════════════════════════════
+// PROYEKSI INKASO (Marketing) — invoice jatuh tempo yang masih ada sisa
+// ══════════════════════════════════════════════
+
+// Sisa tagihan per baris piutang_debet `p` (dipakai untuk set kecil/1 invoice)
+const INKASO_SISA_CORR = `
+  (p.debet - IFNULL((
+    SELECT SUM(kd.kredit)
+    FROM piutang_kredit_detail kd
+    INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+    WHERE kd.nota = IFNULL(
+      (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
+      p.nota
+    )
+  ), 0))
+`;
+
+// Sales invoice: dari SPK/SO di detail invoice, fallback ke sales customer
+// (sama dengan atribusi Target Collection). Butuh alias p dan c (tcustomer).
+const INKASO_SAL_CORR = `
+  IFNULL((
+    SELECT MAX(COALESCE(s.spk_sal_kode, so.so_sal_kode))
+    FROM tinv_dtl d
+    LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.invd_spk_nomor
+    WHERE d.invd_inv_nomor = p.nota
+  ), c.cus_sales)
+`;
+
+const INKASO_VALID_FILTER = `
+  AND p.is_writeoff = 0
+  AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
+  ${PILIH_NORMAL_FILTER}
+`;
+
+const generateInkasoNomor = async (conn) => {
+  const [[row]] = await conn.query(
+    `SELECT IFNULL(MAX(CAST(SUBSTR(pik_nomor, LENGTH(pik_nomor) - 5) AS UNSIGNED)), 0) AS max_val
+     FROM tproyeksi_inkaso
+     WHERE pik_nomor LIKE 'INK_%'
+     FOR UPDATE`,
+  );
+  return `INK_${String(Number(row.max_val) + 1).padStart(6, "0")}`;
+};
+
+// Invoice jatuh tempo yang masih ada sisa & belum ditandai (SEMUA sales)
+const getInkasoSourceOptions = async (
+  user,
+  { namaCustomer, salKode, limit = 20, offset = 0 } = {},
+) => {
+  if (!canViewPotensi(user)) return { items: [], total: 0 };
+
+  const params = [];
+  let custFilter = "";
+  if (namaCustomer) {
+    custFilter = "AND src.CusNama LIKE ?";
+    params.push(`%${namaCustomer}%`);
+  }
+  let salFilter = "";
+  if (salKode) {
+    salFilter = "AND src.SalKode = ?";
+    params.push(salKode);
+  }
+
+  // Set-based (satu kali scan kredit) karena menghitung seluruh invoice
+  // jatuh tempo; subquery korelasi di sini akan lambat.
+  const sql = `
+    SELECT src.*, s.sal_nama AS SalNama
+    FROM (
+      SELECT
+        p.nota AS Nota,
+        IFNULL(tfm.taknormal, p.nota) AS NotaTampil,
+        DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+        DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+        DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+        p.customer AS CusKode,
+        c.cus_nama AS CusNama,
+        ${INKASO_SAL_CORR} AS SalKode,
+        (p.debet - IFNULL(kr.kredit, 0)) AS Sisa
+      FROM piutang_debet p
+      INNER JOIN tcustomer c ON c.cus_kode = p.customer
+      LEFT JOIN (
+        SELECT invf_normal, MIN(invf_taknormal) AS taknormal
+        FROM tinv_flag GROUP BY invf_normal
+      ) tfm ON tfm.invf_normal = p.nota
+      LEFT JOIN (
+        SELECT kd.nota, SUM(kd.kredit) AS kredit
+        FROM piutang_kredit_detail kd
+        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+        GROUP BY kd.nota
+      ) kr ON kr.nota = IFNULL(tfm.taknormal, p.nota)
+      WHERE p.tanggal_tempo < CURDATE()
+        ${INKASO_VALID_FILTER}
+        AND (p.debet - IFNULL(kr.kredit, 0)) > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM tproyeksi_inkaso k
+          WHERE k.pik_nota = p.nota AND k.pik_status <> 'BATAL'
+        )
+    ) src
+    LEFT JOIN tsales s ON s.sal_kode = src.SalKode
+    WHERE 1=1 ${custFilter} ${salFilter}
+    ORDER BY src.TerlambatHari DESC, src.Nota
+    LIMIT ? OFFSET ?
+  `;
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM (${sql.replace(/LIMIT \? OFFSET \?/, "")}) x`,
+    params,
+  );
+  const [rows] = await db.query(sql, [
+    ...params,
+    Number(limit),
+    Number(offset),
+  ]);
+
+  return { items: rows, total: Number(total) };
+};
+
+// items: [{ nota, tglTarget?, catatan? }] — all-or-nothing
+const setInkasoBulk = async (items, user) => {
+  if (!canWritePotensi(user)) {
+    throw new Error(
+      "Anda tidak memiliki akses untuk menandai proyeksi inkaso.",
+    );
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("Tidak ada invoice dipilih.");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const created = [];
+
+    for (const it of items) {
+      const nota = String(it.nota || "").trim();
+      if (!nota) throw new Error("Nomor invoice wajib diisi.");
+
+      const tglTarget = it.tglTarget ? String(it.tglTarget).slice(0, 10) : null;
+      if (tglTarget && !/^\d{4}-\d{2}-\d{2}$/.test(tglTarget)) {
+        throw new Error(`Tanggal target untuk ${nota} tidak valid.`);
+      }
+      const catatan = String(it.catatan || "").slice(0, 255);
+
+      // Nominal, sales, dan status jatuh tempo SELALU dihitung ulang di server
+      const [[inv]] = await conn.query(
+        `SELECT
+           p.nota AS Nota,
+           p.customer AS CusKode,
+           DATEDIFF(CURDATE(), p.tanggal_tempo) AS Telat,
+           ${INKASO_SAL_CORR} AS SalKode,
+           ${INKASO_SISA_CORR} AS Sisa
+         FROM piutang_debet p
+         LEFT JOIN tcustomer c ON c.cus_kode = p.customer
+         WHERE p.nota = ? ${INKASO_VALID_FILTER}`,
+        [nota],
+      );
+      if (!inv) throw new Error(`Invoice ${nota} tidak ditemukan.`);
+      if (Number(inv.Telat) <= 0) {
+        throw new Error(`Invoice ${nota} belum jatuh tempo.`);
+      }
+      if (Number(inv.Sisa) <= 0) {
+        throw new Error(`Invoice ${nota} sudah lunas.`);
+      }
+
+      const [[dup]] = await conn.query(
+        `SELECT pik_nomor FROM tproyeksi_inkaso
+         WHERE pik_nota = ? AND pik_status <> 'BATAL' FOR UPDATE`,
+        [nota],
+      );
+      if (dup) {
+        throw new Error(`Invoice ${nota} sudah ditandai proyeksi inkaso.`);
+      }
+
+      const nomor = await generateInkasoNomor(conn);
+      await conn.query(
+        `INSERT INTO tproyeksi_inkaso
+           (pik_nomor, pik_nota, pik_sal_kode, pik_cus_kode, pik_nominal,
+            pik_tgl_target, pik_catatan, pik_status, user_create, date_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, NOW())`,
+        [
+          nomor,
+          nota,
+          inv.SalKode || "",
+          inv.CusKode || "",
+          Number(inv.Sisa),
+          tglTarget,
+          catatan,
+          user.kode,
+        ],
+      );
+      created.push(nomor);
+    }
+
+    await conn.commit();
+    return { created };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+const batalInkaso = async (nomor, alasan, user) => {
+  if (!canWritePotensi(user)) {
+    throw new Error(
+      "Anda tidak memiliki akses untuk membatalkan proyeksi inkaso.",
+    );
+  }
+  if (!alasan || !String(alasan).trim()) {
+    throw new Error("Alasan batal wajib diisi.");
+  }
+
+  const [[row]] = await db.query(
+    `SELECT pik_status FROM tproyeksi_inkaso WHERE pik_nomor = ?`,
+    [nomor],
+  );
+  if (!row) throw new Error("Data proyeksi inkaso tidak ditemukan.");
+  if (row.pik_status === "BATAL") throw new Error("Data ini sudah dibatalkan.");
+
+  await db.query(
+    `UPDATE tproyeksi_inkaso
+     SET pik_status = 'BATAL', pik_alasan_batal = ?, user_modified = ?, date_modified = NOW()
+     WHERE pik_nomor = ?`,
+    [String(alasan).trim().slice(0, 255), user.kode, nomor],
+  );
+};
+
+// Ringkasan + daftar per sales (semua sales, tanpa filter kepemilikan)
+const getInkasoDashboard = async (user) => {
+  if (!canViewPotensi(user)) return null;
+
+  const [rows] = await db.query(
+    `SELECT
+       k.pik_nomor AS Nomor,
+       k.pik_nota AS Nota,
+       k.pik_sal_kode AS SalKode,
+       s.sal_nama AS SalNama,
+       k.pik_cus_kode AS CusKode,
+       c.cus_nama AS CusNama,
+       k.pik_nominal AS NominalAwal,
+       DATE_FORMAT(p.tanggal, '%d-%m-%Y') AS Tanggal,
+       DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+       DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+       DATE_FORMAT(k.pik_tgl_target, '%Y-%m-%d') AS TglTarget,
+       k.pik_catatan AS Catatan,
+       k.user_create AS UserCreate,
+       k.date_create AS DateCreate,
+       ${INKASO_SISA_CORR} AS Sisa
+     FROM tproyeksi_inkaso k
+     INNER JOIN piutang_debet p ON p.nota = k.pik_nota AND p.is_writeoff = 0
+     LEFT JOIN tcustomer c ON c.cus_kode = k.pik_cus_kode
+     LEFT JOIN tsales s ON s.sal_kode = k.pik_sal_kode
+     WHERE k.pik_status <> 'BATAL'`,
+  );
+
+  const [[batal]] = await db.query(
+    `SELECT IFNULL(SUM(pik_nominal), 0) AS TotalBatal
+     FROM tproyeksi_inkaso WHERE pik_status = 'BATAL'`,
+  );
+
+  const summary = {
+    jmlItem: 0,
+    totalProyeksi: 0,
+    totalRealisasi: 0,
+    totalBatal: Number(batal.TotalBatal) || 0,
+  };
+  const grup = new Map();
+
+  for (const r of rows) {
+    const nominal = Number(r.NominalAwal) || 0;
+    const sisa = Number(r.Sisa) || 0;
+    const terealisasi = Math.min(nominal, Math.max(nominal - sisa, 0));
+    summary.totalRealisasi += terealisasi;
+    if (sisa <= 0) continue; // sudah lunas → keluar dari daftar aktif
+
+    summary.jmlItem += 1;
+    summary.totalProyeksi += sisa;
+
+    const key = r.SalKode || "";
+    if (!grup.has(key)) {
+      grup.set(key, {
+        salKode: key,
+        salNama: r.SalNama || "(Tanpa Sales)",
+        jmlItem: 0,
+        totalSisa: 0,
+        totalTerealisasi: 0,
+        items: [],
+      });
+    }
+    const g = grup.get(key);
+    g.jmlItem += 1;
+    g.totalSisa += sisa;
+    g.totalTerealisasi += terealisasi;
+    g.items.push({
+      nomor: r.Nomor,
+      nota: r.Nota,
+      cusKode: r.CusKode,
+      cusNama: r.CusNama,
+      tanggal: r.Tanggal,
+      tempo: r.Tempo,
+      terlambatHari: Number(r.TerlambatHari) || 0,
+      nominalAwal: nominal,
+      sisa,
+      terealisasi,
+      tglTarget: r.TglTarget,
+      catatan: r.Catatan,
+      userCreate: r.UserCreate,
+      dateCreate: r.DateCreate,
+    });
+  }
+
+  const bySales = [...grup.values()]
+    .map((g) => ({
+      ...g,
+      items: g.items.sort((a, b) => b.terlambatHari - a.terlambatHari),
+    }))
+    .sort((a, b) => b.totalSisa - a.totalSisa);
+
+  return { summary, bySales };
+};
+
+const getInkasoBatalList = async (user, { limit = 20, offset = 0 } = {}) => {
+  if (!canViewPotensi(user)) return { items: [], total: 0 };
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM tproyeksi_inkaso WHERE pik_status = 'BATAL'`,
+  );
+  const [rows] = await db.query(
+    `SELECT
+       k.pik_nomor AS Nomor, k.pik_nota AS Nota, k.pik_nominal AS Nominal,
+       k.pik_alasan_batal AS AlasanBatal, k.date_create AS DateCreate,
+       k.date_modified AS TanggalBatal, k.user_create AS UserCreate,
+       k.user_modified AS UserModified,
+       s.sal_nama AS SalNama, c.cus_nama AS CusNama
+     FROM tproyeksi_inkaso k
+     LEFT JOIN tsales s ON s.sal_kode = k.pik_sal_kode
+     LEFT JOIN tcustomer c ON c.cus_kode = k.pik_cus_kode
+     WHERE k.pik_status = 'BATAL'
+     ORDER BY k.date_modified DESC
+     LIMIT ? OFFSET ?`,
+    [Number(limit), Number(offset)],
+  );
+  return { items: rows, total: Number(total) };
+};
+
+// ══════════════════════════════════════════════
 // DASHBOARD MARKETING — TAMBAHAN
 // ══════════════════════════════════════════════
 
@@ -5309,6 +5656,174 @@ const getPiutangByCustomer = async ({
   };
 };
 
+// ── Outstanding Beli (Purchasing) ──
+const OUTSTANDING_BELI_JENIS = {
+  ATK: ["ATK/RTK"],
+  OBAT: ["OBAT"],
+  SPAREPART: ["SPAREPART"],
+  ACCESORIS: ["ACCESORIES"],
+};
+const OUTSTANDING_BELI_TABS = [
+  ...Object.keys(OUTSTANDING_BELI_JENIS),
+  "PENGAJUAN_DANA",
+];
+
+// Super viewer & P01 lihat semua; cabang lain hanya miliknya sendiri
+const resolveCabangBeli = (user) => {
+  if (isSuperViewer(user)) return null;
+  const cab = (user.cabang || "").toUpperCase().trim();
+  if (!cab || cab === "P01") return null;
+  return cab;
+};
+
+const buildCabangBeli = (kolom, cabang) => {
+  if (!cabang) return { sql: "", params: [] };
+  if (cabang === "HO-")
+    return { sql: ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`, params: [] };
+  return { sql: ` AND ${kolom} = ?`, params: [cabang] };
+};
+
+// Batas awal outstanding: awal bulan berjalan. Data sistem lama dianggap selesai.
+// Kalau mau "sejak go-live MANKSI", ganti isi fungsi ini jadi: return "2026-09-01";
+const batasAwalOutstandingBeli = () => {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`;
+};
+
+const buildOutstandingPP = (cabang) => {
+  const c = buildCabangBeli("h.mb_mintake", cabang);
+  const sql = `
+    SELECT x.* FROM (
+      SELECT
+        h.mb_nomor AS Nomor,
+        h.mb_tanggal AS Tanggal,
+        h.user_create AS Peminta,
+        d.mbd_nourut AS Nourut,
+        IF(b.brg_note = '' OR b.brg_note IS NULL, b.brg_nama,
+           CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Item,
+        b.brg_satuan AS Satuan,
+        UPPER(b.brg_jenis) AS Jenis,
+        d.mbd_jumlah AS QtyMinta,
+        IFNULL(k1.Qty, 0) + IFNULL(k2.Qty, 0) AS QtyBeli,
+        IFNULL(d2.Qty, 0) AS QtyDtl2
+      FROM tgarmenmintabeli_hdr h
+      JOIN tgarmenmintabeli_dtl d ON d.mbd_nomor = h.mb_nomor
+      LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+      LEFT JOIN (
+        SELECT bond_ref_nomor, bond_ref_nourut, SUM(bond_qty_realisasi) AS Qty
+        FROM finance.tkasbonitem
+        WHERE bond_ref_tipe = 'PERMINTAAN_PEMBELIAN' AND bond_verified <> 0
+        GROUP BY bond_ref_nomor, bond_ref_nourut
+      ) k1 ON k1.bond_ref_nomor = d.mbd_nomor AND k1.bond_ref_nourut = d.mbd_nourut
+      LEFT JOIN (
+        SELECT bond2_link, bond2_brg_kode, SUM(bond2_qty_realisasi) AS Qty
+        FROM finance.tkasbonitem2
+        WHERE bond2_verified <> 0
+        GROUP BY bond2_link, bond2_brg_kode
+      ) k2 ON k2.bond2_link = d.mbd_nomor AND k2.bond2_brg_kode = d.mbd_brg_kode
+      LEFT JOIN (
+        SELECT mbd2_nomor, mbd2_brg_kode, SUM(mbd2_jumlah) AS Qty
+        FROM tgarmenmintabeli_dtl2
+        GROUP BY mbd2_nomor, mbd2_brg_kode
+      ) d2 ON d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
+      WHERE d.mbd_closed_manual = 0 AND h.mb_tanggal >= ?${c.sql}
+    ) x
+    WHERE (x.QtyMinta - x.QtyBeli) > x.QtyDtl2
+    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+  `;
+  return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
+};
+
+const buildOutstandingPD = (cabang) => {
+  const c = buildCabangBeli("a.pjh_ke", cabang);
+  const sql = `
+    SELECT x.* FROM (
+      SELECT
+        a.pjh_nomor AS Nomor,
+        a.pjh_tanggal AS Tanggal,
+        c.nama AS Peminta,
+        d.pjd_nourut AS Nourut,
+        d.pjd_nama AS Item,
+        d.pjd_satuan AS Satuan,
+        'PENGAJUAN_DANA' AS Jenis,
+        d.pjd_qty AS QtyMinta,
+        IFNULL(r.Qty, 0) AS QtyBeli
+      FROM ga2.tpengajuan2_hdr a
+      JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
+      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
+      LEFT JOIN (
+        SELECT th.pmt_pjh_nomor AS Nomor, td.pmd_nourut AS Nourut,
+               SUM(td.pmd_qty_buyed) AS Qty
+        FROM ga2.tpermintaan_dtl td
+        JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+        WHERE td.pmd_verified_buyed <> 0
+        GROUP BY th.pmt_pjh_nomor, td.pmd_nourut
+      ) r ON r.Nomor = a.pjh_nomor AND r.Nourut = d.pjd_nourut
+      WHERE d.pjd_nama <> '' AND d.pjd_closed_manual = 0
+        AND a.pjh_tanggal >= ?${c.sql}
+    ) x
+    WHERE (x.QtyMinta - x.QtyBeli) > 0
+    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+  `;
+  return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
+};
+
+// Cache hasil lengkap (promise) per cabang — summary, count, dan page
+// semua membaca dari satu query
+const OB_CACHE_TTL = 60 * 1000;
+const obCache = new Map();
+
+const loadOutstandingBeliAll = (cabang) => {
+  const key = cabang || "ALL";
+  const hit = obCache.get(key);
+  if (hit && Date.now() - hit.t < OB_CACHE_TTL) return hit.p;
+
+  const p = (async () => {
+    const pp = buildOutstandingPP(cabang);
+    const pd = buildOutstandingPD(cabang);
+    const [[rowsPP], [rowsPD]] = await Promise.all([
+      db.query(pp.sql, pp.params),
+      db.query(pd.sql, pd.params),
+    ]);
+    const hasil = { PENGAJUAN_DANA: rowsPD };
+    for (const [tab, jenisList] of Object.entries(OUTSTANDING_BELI_JENIS)) {
+      hasil[tab] = rowsPP.filter((r) => jenisList.includes(r.Jenis));
+    }
+    return hasil;
+  })();
+
+  obCache.set(key, { t: Date.now(), p });
+  p.catch(() => obCache.delete(key)); // jangan cache kegagalan
+  return p;
+};
+
+const getOutstandingBeliSummary = async (user) => {
+  if (!isGudangBahanViewer(user)) return null;
+  const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
+  const hasil = {};
+  for (const tab of OUTSTANDING_BELI_TABS) hasil[tab] = all[tab].length;
+  return hasil;
+};
+
+const getOutstandingBeliList = async (
+  user,
+  tab = "ATK",
+  limit = 20,
+  offset = 0,
+) => {
+  if (!isGudangBahanViewer(user)) return null;
+  const key = String(tab).toUpperCase();
+  if (!OUTSTANDING_BELI_TABS.includes(key)) {
+    throw new Error("Tab tidak dikenali.");
+  }
+  const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
+  const rows = all[key];
+  const items = rows
+    .slice(Number(offset), Number(offset) + Number(limit))
+    .map((r) => ({ ...r, Kekurangan: Number(r.QtyMinta) - Number(r.QtyBeli) }));
+  return { tab: key, total: rows.length, items };
+};
+
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
@@ -5338,6 +5853,11 @@ module.exports = {
   getPotensiSummary,
   getPotensiList,
   getPotensiBatalList,
+  getInkasoSourceOptions,
+  setInkasoBulk,
+  batalInkaso,
+  getInkasoDashboard,
+  getInkasoBatalList,
   getPiutangDashboard,
   getPiutangOverdue,
   getPenerimaanSummary,
@@ -5406,4 +5926,6 @@ module.exports = {
   getBufferKaosanSummary,
   getBufferKaosanList,
   getPiutangByCustomer,
+  getOutstandingBeliSummary,
+  getOutstandingBeliList,
 };

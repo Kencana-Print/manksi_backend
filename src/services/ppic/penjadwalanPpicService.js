@@ -59,18 +59,36 @@ const getDetail = async (nomor) => {
          ELSE COALESCE(src.Pesan, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0)
        END AS Pesan,
        CASE
+           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
+           SELECT SUM(sm.sjd_jumlah) FROM tsj_dtl_memo sm
+           WHERE sm.sjd_mspk_nomor = d.pjwd_map_nomor
+         ), 0)
          WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_kirim_manual, 0)
          ELSE COALESCE(src.Kirim, 0, d.pjwd_kirim_manual, 0)
        END AS Kirim,
        CASE
+           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN GREATEST(
+           IFNULL(d.pjwd_pesan_manual, 0) - IFNULL((
+             SELECT SUM(sm2.sjd_jumlah) FROM tsj_dtl_memo sm2
+             WHERE sm2.sjd_mspk_nomor = d.pjwd_map_nomor
+           ), 0), 0)
          WHEN d.pjwd_tipe = 'MAP' THEN GREATEST(IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0), 0)
          ELSE COALESCE(src.Kurang, pro.pro_qty_rencana,
            (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0)))
        END AS Kurang,
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
-              CASE
-         WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_realisasi_manual, 0)
+       CASE
+           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
+           SELECT mb.mspk_jumlah_jadi FROM tmemospk mb
+           WHERE mb.mspk_nomor = d.pjwd_map_nomor
+             AND EXISTS (
+               SELECT 1 FROM tkesesuaianmap kb
+               WHERE kb.mspk_nomor = mb.mspk_nomor
+                 AND (kb.date_create IS NULL
+                      OR kb.date_create < DATE_ADD(h.pjw_tgl2, INTERVAL 1 DAY))
+             )
+         ), 0)
          WHEN COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
            AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL
          THEN IFNULL(d.pjwd_realisasi_manual, 0)
@@ -138,6 +156,10 @@ const getDetail = async (nomor) => {
        ON so_from_map.so_memo = d.pjwd_map_nomor
        AND so_from_map.so_aktif = 'Y'
        AND d.pjwd_so_nomor IS NULL
+       AND so_from_map.so_nomor = (
+         SELECT MIN(x.so_nomor) FROM tsalesorder x
+         WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y'
+       )
      LEFT JOIN (
        SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
               so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
