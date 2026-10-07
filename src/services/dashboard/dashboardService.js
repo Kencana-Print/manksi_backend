@@ -5857,6 +5857,8 @@ const buildOutstandingPP = (cabang) => {
       SELECT
         h.mb_nomor AS Nomor,
         h.mb_tanggal AS Tanggal,
+        DATE_FORMAT(IFNULL(h.date_create, h.mb_tanggal), '%d-%m-%Y %H:%i') AS TglInput,
+        DATEDIFF(CURDATE(), IFNULL(h.date_create, h.mb_tanggal)) AS WaktuTunggu,
         h.user_create AS Peminta,
         d.mbd_nourut AS Nourut,
         IF(b.brg_note = '' OR b.brg_note IS NULL, b.brg_nama,
@@ -5901,6 +5903,8 @@ const buildOutstandingPD = (cabang) => {
       SELECT
         a.pjh_nomor AS Nomor,
         a.pjh_tanggal AS Tanggal,
+        DATE_FORMAT(a.pjh_Tanggal, '%d-%m-%Y') AS TglInput,
+        DATEDIFF(CURDATE(), a.pjh_Tanggal) AS WaktuTunggu,
         c.nama AS Peminta,
         d.pjd_nourut AS Nourut,
         d.pjd_nama AS Item,
