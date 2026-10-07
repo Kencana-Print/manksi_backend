@@ -166,6 +166,30 @@ const getById = async (nomor) => {
 
   data.nopo_acc = await getNoPoStatus(nomor);
 
+  // Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di MAP)
+  const [[pdm]] = await db.query(
+    `SELECT pd_nomor, pd_path_desain FROM tpermintaan_desain
+     WHERE pd_so_map_nomor = ? LIMIT 1`,
+    [nomor],
+  );
+  data.PdNomor = pdm?.pd_nomor || "";
+  data.PdPath = pdm?.pd_path_desain || "";
+  let lhkList = [];
+  if (pdm) {
+    const [lhkRows] = await db.query(
+      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
+      [pdm.pd_nomor],
+    );
+    lhkList = lhkRows.map((r) => r.lhk_nomor);
+  }
+  // data lama (sebelum alur PDM) tetap tampil sebagai cadangan
+  data.LhkList =
+    lhkList.length > 0
+      ? lhkList
+      : data.mspk_lhk_nomor
+        ? [data.mspk_lhk_nomor]
+        : [];
+
   return data;
 };
 
@@ -338,8 +362,8 @@ const save = async (data, userKode, isNewMode) => {
           mspk_nomor_po, mspk_tgl_po, mspk_perush_kode, mspk_rencana_order, date_create, user_create,
           mspk_revisi, mspk_tipe_revisi, mspk_revisi_no, mspk_referensi, mspk_revisi_note,
           mspk_tipe, mspk_cmo, mspk_tgl_cmo, mspk_newdesign, mspk_rencana_size,
-          mspk_acc_customer, mspk_acc_tanggal, mspk_aktif, mspk_lhk_nomor
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          mspk_acc_customer, mspk_acc_tanggal, mspk_aktif
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,?,?,?,?,?,?,?,?,?,?,?,?)
       `;
       const insertParams = [
         nomorMap,
@@ -390,7 +414,6 @@ const save = async (data, userKode, isNewMode) => {
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,
-        data.LhkNomor || null,
       ];
 
       // ── DEBUG WRAP: insertQ ──
@@ -452,7 +475,7 @@ const save = async (data, userKode, isNewMode) => {
           mspk_tanggal=?, mspk_dateline=?, mspk_pen_nomor=?, mspk_pen_id=?, mspk_mh_nomor=?,
           mspk_nomor_po=?, mspk_tgl_po=?, mspk_rencana_order=?, date_modified=NOW(), user_modified=?,
           mspk_tipe_revisi=?, mspk_tipe=?, mspk_cmo=?, mspk_tgl_cmo=?, mspk_newdesign=?, mspk_rencana_size=?,
-          mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?, mspk_lhk_nomor=?
+          mspk_acc_customer=?, mspk_acc_tanggal=?, mspk_aktif=?
         WHERE mspk_nomor=?
       `;
       const updateParams = [
@@ -498,7 +521,6 @@ const save = async (data, userKode, isNewMode) => {
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,
-        data.LhkNomor || null,
         nomorMap,
       ];
       await conn.query(updateQ, updateParams);

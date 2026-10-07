@@ -92,6 +92,31 @@ const getApprovedTutupBukuPin = async (conn, nomor) => {
   return rows.length > 0 ? rows[0].pin_urut : null;
 };
 
+// Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di SO).
+// Dicari lewat nomor SO sendiri, atau nomor MAP yang dipakai SO (prioritas SO).
+const getPdLink = async (nomor, memo = "", fallbackLhk = "") => {
+  const [[pdm]] = await db.query(
+    `SELECT pd_nomor, pd_path_desain FROM tpermintaan_desain
+     WHERE pd_so_map_nomor IN (?, ?)
+     ORDER BY (pd_so_map_nomor = ?) DESC LIMIT 1`,
+    [nomor, memo || "", nomor],
+  );
+  let lhkList = [];
+  if (pdm) {
+    const [lhkRows] = await db.query(
+      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
+      [pdm.pd_nomor],
+    );
+    lhkList = lhkRows.map((r) => r.lhk_nomor);
+  }
+  return {
+    PdNomor: pdm?.pd_nomor || "",
+    PdPath: pdm?.pd_path_desain || "",
+    // data lama (sebelum alur PDM) tetap tampil sebagai cadangan
+    LhkList: lhkList.length > 0 ? lhkList : fallbackLhk ? [fallbackLhk] : [],
+  };
+};
+
 // --- 1. GENERATE NOMOR SO OTOMATIS — algoritma TIDAK diubah,
 // hanya sumber tabel diarahkan ke tsalesorder (bukan tspk lagi) ---
 const generateNomor = async (conn, perushKode, joKode) => {
@@ -266,6 +291,10 @@ const getDetailFromNew = async (nomor, headerRows) => {
   header[0].SpkPpicClose = ppicInfo.SpkPpicClose;
   header[0].Ngedit = ppicInfo.Ngedit;
   header[0].HasApprovedUbah = ppicInfo.HasApprovedUbah;
+  Object.assign(
+    header[0],
+    await getPdLink(nomor, header[0].spk_memo, header[0].spk_lhk_nomor),
+  );
 
   const [alokasi] = await db.query(
     `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_toko AS toko, soa_kota AS kota,
@@ -379,6 +408,10 @@ const getDetailLegacy = async (nomor, legacyRows) => {
   header[0].SpkPpicClose = 0;
   header[0].Ngedit = "";
   header[0].HasApprovedUbah = false;
+  Object.assign(
+    header[0],
+    await getPdLink(nomor, header[0].spk_memo, header[0].spk_lhk_nomor),
+  );
 
   // Size — tspk_size sudah dipakai konsisten di modul lain (mis.
   // mutasiProduksiFormService) sebagai tabel size utk SPK legacy.
@@ -519,6 +552,11 @@ const HEADER_EXTRA_FIELDS = [
   "spk_isupdate",
   "MainImageBlob",
   "MainImageName",
+  "PdNomor",
+  "PdPath",
+  "LhkList",
+  "spk_lhk_nomor",
+  "isSalesOrder",
   "isSalesOrder",
 ];
 const cleanHeader = (h) => {
@@ -1409,7 +1447,8 @@ const getMemoDetail = async (nomor) => {
   );
   const normalizedHeader = normalizeKeys(header[0]);
   const normalizedSizes = sizes.map(normalizeKeys);
-  return { header: normalizedHeader, sizes: normalizedSizes };
+  const pd = await getPdLink(nomor, "", header[0].mspk_lhk_nomor);
+  return { header: normalizedHeader, sizes: normalizedSizes, pd };
 };
 
 const processImage = async (tempFilePath, cabang, spkNomor, type = "MAIN") => {

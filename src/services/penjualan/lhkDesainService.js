@@ -161,4 +161,4 @@ const createBatch = async (pdNomorList, user) => {
   }
 };
 
-module.exports = { getOutstanding, getHistory, createBatch };
+module.exports = { getOutstanding, getHistory, createBatch, generateNomor };

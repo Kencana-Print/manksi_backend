@@ -18,26 +18,13 @@ const getDetail = async (req, res) => {
   }
 };
 
-const updateProgress = async (req, res) => {
-  try {
-    if (hanyaDesain(req, res)) return;
-    const data = await service.updateProgress(
-      req.params.nomor,
-      req.body.jmlJadi,
-    );
-    res.json({ success: true, data });
-  } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
-  }
-};
-
 const updateDesainer = async (req, res) => {
   try {
     if (hanyaDesain(req, res)) return;
-    const data = await service.updateDesainer(
-      req.params.nomor,
-      req.body.desainerKode,
-    );
+    const data = await service.updateDesainer(req.params.nomor, {
+      pd2Id: req.body.pd2Id,
+      desainerKode: req.body.desainerKode,
+    });
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -97,7 +84,98 @@ const updateHeader = async (req, res) => {
   }
 };
 
-const BAGIAN_DESAIN_OK = ["DESAIN", "EDP", "IT"];
+const getAntrean = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.getAntrean(req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const mulaiKerja = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.mulaiKerja(
+      req.params.pd2Id,
+      req.body.jml,
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const updateKerja = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.updateKerja(
+      req.params.kerjaId,
+      req.body.jml,
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const batalKerja = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.batalKerja(req.params.kerjaId, req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const closeKerja = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.closeKerja(req.body.kerjaIds, req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const ambilAlih = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.ambilAlih(req.params.kerjaId, req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const closePD = async (req, res) => {
+  try {
+    if (hanyaDesain(req, res)) return;
+    const data = await service.closePD(
+      req.params.nomor,
+      { soMapNomor: req.body.soMapNomor, path: req.body.path },
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const bukaKembali = async (req, res) => {
+  try {
+    const data = await service.bukaKembali(req.params.nomor, req.user);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const BAGIAN_DESAIN_OK = ["DESAIN", "EDP", "AUDIT"];
 const hanyaDesain = (req, res) => {
   const bagian = String(req.user?.bagian || "")
     .toUpperCase()
@@ -115,11 +193,18 @@ const hanyaDesain = (req, res) => {
 module.exports = {
   getBrowse,
   getDetail,
-  updateProgress,
   updateDesainer,
   setStatusManual,
   resumeStatus,
   searchReferensi,
   getDesainerOptions,
   updateHeader,
+  getAntrean,
+  closePD,
+  bukaKembali,
+  mulaiKerja,
+  updateKerja,
+  batalKerja,
+  closeKerja,
+  ambilAlih,
 };

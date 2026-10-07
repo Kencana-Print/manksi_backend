@@ -63,6 +63,36 @@ const searchSpk = async (
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
+  } else if (filterMode === "so-map") {
+    // Lookup SO/MAP untuk Close PD Permintaan Desain:
+    // aktif saja (tanpa syarat CMO) dan belum dipakai PDM lain
+    baseQuery = `
+      FROM (
+        SELECT so_nomor AS Nomor, so_nama AS Nama, so_nama2 AS Nama2,
+               so_tanggal AS Tanggal, so_jumlah AS Jumlah, so_ukuran AS Ukuran,
+               so_divisi AS Divisi, so_aktif AS Aktif
+        FROM tsalesorder
+        UNION ALL
+        SELECT spk_nomor, spk_nama, spk_nama2,
+               spk_tanggal, spk_jumlah, spk_ukuran,
+               spk_divisi, spk_aktif
+        FROM tspk
+        WHERE spk_is_so = 1
+        UNION ALL
+        SELECT mspk_nomor, mspk_nama, mspk_nama2,
+               mspk_tanggal, mspk_jumlah, mspk_ukuran,
+               mspk_divisi, mspk_aktif
+        FROM tmemospk
+      ) a
+      WHERE Aktif = 'Y'
+        AND NOT EXISTS (
+          SELECT 1 FROM tpermintaan_desain p WHERE p.pd_so_map_nomor = a.Nomor
+        )
+    `;
+    if (keyword) {
+      whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ? OR Nama2 LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
   } else if (filterMode === "mutasi") {
     baseQuery = `
     FROM (
