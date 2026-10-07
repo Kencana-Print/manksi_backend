@@ -71,7 +71,7 @@ const searchSpk = async (
              spk_finishing AS Finishing, spk_divisi AS Divisi,
              spk_cmo AS CMO, spk_aktif AS Aktif
       FROM tspk
-      WHERE spk_aktif = 'Y' AND spk_is_so = 0 
+      WHERE spk_aktif = 'Y'
       UNION ALL
       SELECT mspk_nomor, mspk_nama, mspk_tanggal,
              mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing,
@@ -96,7 +96,6 @@ const searchSpk = async (
              spk_finishing AS Finishing, spk_divisi AS Divisi,
              spk_cmo AS CMO, spk_aktif AS Aktif
       FROM tspk
-      WHERE spk_is_so = 0
       UNION ALL
       SELECT mspk_nomor, mspk_nama, mspk_tanggal,
              mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing,
