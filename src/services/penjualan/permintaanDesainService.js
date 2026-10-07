@@ -275,7 +275,7 @@ const getDesainerOptions = async () => {
   const [rows] = await db.query(
     `SELECT user_kode AS Kode, user_nama AS Nama
      FROM tuser
-     WHERE user_bagian = 'DESAIN'
+     WHERE user_bagian = 'DESAIN' AND user_kode IN ('DINDUN', 'RIZKI')
      ORDER BY user_nama`,
   );
   return rows;
