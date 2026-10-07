@@ -150,6 +150,7 @@ const getBrowse = async ({
        h.pd_jenis_pekerjaan AS JenisPekerjaan,
        DATE_FORMAT(h.pd_dateline, '%Y-%m-%d') AS Dateline,
        h.pd_keterangan AS Keterangan,
+       h.pd_status_keterangan AS StatusKeterangan,
        h.pd_jml AS Jml,
        h.pd_jmljadi AS JmlJadi,
        h.pd_status AS Status,
@@ -196,7 +197,7 @@ const getDetail = async (nomor) => {
        h.pd_nama_project, h.pd_nama_marketing, h.pd_customer,
        IFNULL(c.cus_nama, '') AS pd_customer_nama,
        h.pd_jenis_pekerjaan, DATE_FORMAT(h.pd_dateline,'%Y-%m-%d') AS pd_dateline,
-       h.pd_keterangan, h.pd_jml, h.pd_jmljadi, h.pd_status,
+       h.pd_keterangan, h.pd_status_keterangan, h.pd_jml, h.pd_jmljadi, h.pd_status,
        h.pd_prioritas, h.pd_referensi,
        h.pd_so_map_nomor, h.pd_so_map_tipe, h.pd_path_desain, h.pd_user_done,
        DATE_FORMAT(h.pd_tgl_close,'%Y-%m-%d %H:%i') AS pd_tgl_close
@@ -308,7 +309,7 @@ const setStatusManual = async (nomor, { status, keterangan, referensi }) => {
 
   await db.query(
     `UPDATE tpermintaan_desain
-     SET pd_status = ?, pd_keterangan = ?, pd_referensi = ?
+     SET pd_status = ?, pd_status_keterangan = ?, pd_referensi = ?
      WHERE pd_nomor = ?`,
     [status, keterangan.trim(), pdReferensi, nomor],
   );
@@ -330,6 +331,10 @@ const resumeStatus = async (nomor) =>
     if (!MANUAL_STATUSES.includes(pd.pd_status)) {
       throw new Error("PD ini tidak dalam status manual.");
     }
+    await conn.query(
+      `UPDATE tpermintaan_desain SET pd_status_keterangan = NULL WHERE pd_nomor = ?`,
+      [nomor],
+    );
     const hasil = await hitungUlangHeader(conn, nomor, { paksa: true });
     return { nomor, status: hasil.status };
   });
