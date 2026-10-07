@@ -1,12 +1,11 @@
 const db = require("../../../config/database");
 
-// ─────────────────────────────────────────────────────────
-// Filter dasar (dipakai getReport & getSummaryByDesainer)
-// ─────────────────────────────────────────────────────────
+const MANUAL = `'PENDING','CANCEL','CANCEL_ALT'`;
+
+// Filter header (desainer difilter di level baris, bukan header)
 const buildWhere = ({
   startDate,
   endDate,
-  desainer = "",
   customer = "",
   jenisPekerjaan = "",
   status = "",
@@ -16,11 +15,6 @@ const buildWhere = ({
   }
   let where = `WHERE h.pd_tanggal BETWEEN ? AND ?`;
   const params = [startDate, endDate];
-
-  if (desainer) {
-    where += ` AND h.pd_desainer = ?`;
-    params.push(desainer);
-  }
   if (customer) {
     where += ` AND h.pd_customer = ?`;
     params.push(customer);
@@ -36,11 +30,64 @@ const buildWhere = ({
   return { where, params };
 };
 
+// Baris dasar per (PD, desainer). Tiga sumber digabung:
+//  A. pengerjaan desainer (kerja)      -> Acc / Progress
+//  B. sisa detail yang belum diambil   -> Belum
+//  C. PD berstatus manual              -> Pending / Cancel / Cancel Alt
+const linesSql = (where) => `
+  SELECT h.pd_nomor, k.kerja_desainer AS dk,
+         SUM(k.kerja_jml) AS jml,
+         SUM(IF(k.kerja_status = 'CLOSE', k.kerja_jml, 0)) AS acc,
+         SUM(IF(k.kerja_status = 'PROGRESS', k.kerja_jml, 0)) AS progress,
+         0 AS belum, 0 AS pending, 0 AS cancel, 0 AS cancel_alt,
+         GROUP_CONCAT(DISTINCT k.kerja_lhk_nomor ORDER BY k.kerja_lhk_nomor SEPARATOR ', ') AS lhk,
+         MAX(k.kerja_tgl_close) AS tgl_selesai
+  FROM tpermintaan_desain h
+  JOIN tpermintaan_desain_kerja k ON k.kerja_pd_nomor = h.pd_nomor
+  ${where} AND h.pd_status NOT IN (${MANUAL})
+  GROUP BY h.pd_nomor, k.kerja_desainer
+
+  UNION ALL
+
+  SELECT h.pd_nomor, IFNULL(d.pd2_desainer, '') AS dk,
+         SUM(GREATEST(d.pd2_pd_jml - IFNULL(kk.tot, 0), 0)) AS jml,
+         0, 0,
+         SUM(GREATEST(d.pd2_pd_jml - IFNULL(kk.tot, 0), 0)) AS belum,
+         0, 0, 0, NULL, NULL
+  FROM tpermintaan_desain h
+  JOIN tpermintaan_desain_detail d ON d.pd2_pd_nomor = h.pd_nomor
+  LEFT JOIN (
+    SELECT kerja_pd2_id, SUM(kerja_jml) AS tot
+    FROM tpermintaan_desain_kerja GROUP BY kerja_pd2_id
+  ) kk ON kk.kerja_pd2_id = d.pd2_id
+  ${where} AND h.pd_status NOT IN (${MANUAL})
+  GROUP BY h.pd_nomor, IFNULL(d.pd2_desainer, '')
+  HAVING belum > 0
+
+  UNION ALL
+
+  SELECT h.pd_nomor, IFNULL(d.pd2_desainer, '') AS dk,
+         SUM(d.pd2_pd_jml) AS jml, 0, 0, 0,
+         SUM(IF(h.pd_status = 'PENDING', d.pd2_pd_jml, 0)),
+         SUM(IF(h.pd_status = 'CANCEL', d.pd2_pd_jml, 0)),
+         SUM(IF(h.pd_status = 'CANCEL_ALT', d.pd2_pd_jml, 0)),
+         NULL, NULL
+  FROM tpermintaan_desain h
+  JOIN tpermintaan_desain_detail d ON d.pd2_pd_nomor = h.pd_nomor
+  ${where} AND h.pd_status IN (${MANUAL})
+  GROUP BY h.pd_nomor, IFNULL(d.pd2_desainer, '')
+`;
+
+const desainerName = `IF(x.dk = '', '(Belum Ditugaskan)', IFNULL(ud.user_nama, x.dk))`;
+
 // ─────────────────────────────────────────────────────────
-// Laporan detail — 1 baris per PD, dengan breakdown status
+// Laporan detail — 1 baris per (PD, desainer)
 // ─────────────────────────────────────────────────────────
 const getReport = async (filters) => {
   const { where, params } = buildWhere(filters);
+  const desainer = filters.desainer || "";
+  const allParams = [...params, ...params, ...params];
+  if (desainer) allParams.push(desainer);
 
   const [rows] = await db.query(
     `SELECT
@@ -49,62 +96,66 @@ const getReport = async (filters) => {
        h.pd_nama_project AS NamaProject,
        IFNULL(c.cus_nama, '') AS Customer,
        h.pd_jenis_pekerjaan AS JenisPekerjaan,
-       h.pd_desainer AS DesainerKode,
-       IFNULL(ud.user_nama, h.pd_desainer) AS Desainer,
+       x.dk AS DesainerKode,
+       ${desainerName} AS Desainer,
        h.pd_nama_marketing AS MarketingKode,
        IFNULL(um.user_nama, h.pd_nama_marketing) AS Marketing,
-       h.pd_jml AS Jml,
+       SUM(x.jml) AS Jml,
+       SUM(x.acc) AS Acc,
+       SUM(x.progress) AS Progress,
+       SUM(x.belum) AS Belum,
+       SUM(x.pending) AS Pending,
+       SUM(x.cancel) AS Cancel,
+       SUM(x.cancel_alt) AS CancelAlt,
        h.pd_status AS Status,
        h.pd_keterangan AS Keterangan,
-       CASE WHEN h.pd_status IN ('OPEN','PROGRESS','CLOSE')
-            THEN h.pd_jmljadi ELSE 0 END AS Acc,
-       CASE WHEN h.pd_status IN ('OPEN','PROGRESS')
-            THEN h.pd_jml - h.pd_jmljadi ELSE 0 END AS Revisi,
-       CASE WHEN h.pd_status = 'PENDING' THEN h.pd_jml ELSE 0 END AS Pending,
-       CASE WHEN h.pd_status = 'CANCEL' THEN h.pd_jml ELSE 0 END AS Cancel,
-       CASE WHEN h.pd_status = 'CANCEL_ALT' THEN h.pd_jml ELSE 0 END AS CancelAlt,
-       l.lhk_nomor AS LhkNomor,
-       DATE_FORMAT(l.lhk_tgl_selesai, '%Y-%m-%d %H:%i') AS TglSelesai
-     FROM tpermintaan_desain h
+       IFNULL(h.pd_so_map_nomor, '') AS SoMap,
+       IFNULL(h.pd_path_desain, '') AS PathDesain,
+       GROUP_CONCAT(DISTINCT x.lhk SEPARATOR ', ') AS LhkNomor,
+       DATE_FORMAT(MAX(x.tgl_selesai), '%Y-%m-%d %H:%i') AS TglSelesai
+     FROM (${linesSql(where)}) x
+     JOIN tpermintaan_desain h ON h.pd_nomor = x.pd_nomor
      LEFT JOIN tcustomer c ON c.cus_kode = h.pd_customer
-     LEFT JOIN tuser ud ON ud.user_kode = h.pd_desainer
+     LEFT JOIN tuser ud ON ud.user_kode = x.dk
      LEFT JOIN tuser um ON um.user_kode = h.pd_nama_marketing
-     LEFT JOIN tlhk_desain l ON l.lhk_pd_nomor = h.pd_nomor
-     ${where}
-     ORDER BY h.pd_tanggal, h.pd_nomor`,
-    params,
+     ${desainer ? "WHERE x.dk = ?" : ""}
+     GROUP BY h.pd_nomor, x.dk
+     ORDER BY h.pd_tanggal, h.pd_nomor, Desainer`,
+    allParams,
   );
   return rows;
 };
 
 // ─────────────────────────────────────────────────────────
-// Rekap pivot — Desainer x Marketing, breakdown status + total
-// (dasar sheet "Total Semua" & panel rekap di web)
+// Rekap pivot — Desainer x Marketing
 // ─────────────────────────────────────────────────────────
 const getSummaryByDesainer = async (filters) => {
   const { where, params } = buildWhere(filters);
+  const desainer = filters.desainer || "";
+  const allParams = [...params, ...params, ...params];
+  if (desainer) allParams.push(desainer);
 
   const [rows] = await db.query(
     `SELECT
-       h.pd_desainer AS DesainerKode,
-       IFNULL(ud.user_nama, h.pd_desainer) AS Desainer,
+       x.dk AS DesainerKode,
+       ${desainerName} AS Desainer,
        h.pd_nama_marketing AS MarketingKode,
        IFNULL(um.user_nama, h.pd_nama_marketing) AS Marketing,
-       SUM(h.pd_jml) AS JumlahTot,
-       SUM(CASE WHEN h.pd_status IN ('OPEN','PROGRESS','CLOSE')
-                THEN h.pd_jmljadi ELSE 0 END) AS Acc,
-       SUM(CASE WHEN h.pd_status IN ('OPEN','PROGRESS')
-                THEN h.pd_jml - h.pd_jmljadi ELSE 0 END) AS Revisi,
-       SUM(CASE WHEN h.pd_status = 'PENDING' THEN h.pd_jml ELSE 0 END) AS Pending,
-       SUM(CASE WHEN h.pd_status = 'CANCEL' THEN h.pd_jml ELSE 0 END) AS Cancel,
-       SUM(CASE WHEN h.pd_status = 'CANCEL_ALT' THEN h.pd_jml ELSE 0 END) AS CancelAlt
-     FROM tpermintaan_desain h
-     LEFT JOIN tuser ud ON ud.user_kode = h.pd_desainer
+       SUM(x.jml) AS JumlahTot,
+       SUM(x.acc) AS Acc,
+       SUM(x.progress) AS Progress,
+       SUM(x.belum) AS Belum,
+       SUM(x.pending) AS Pending,
+       SUM(x.cancel) AS Cancel,
+       SUM(x.cancel_alt) AS CancelAlt
+     FROM (${linesSql(where)}) x
+     JOIN tpermintaan_desain h ON h.pd_nomor = x.pd_nomor
+     LEFT JOIN tuser ud ON ud.user_kode = x.dk
      LEFT JOIN tuser um ON um.user_kode = h.pd_nama_marketing
-     ${where}
-     GROUP BY h.pd_desainer, h.pd_nama_marketing
+     ${desainer ? "WHERE x.dk = ?" : ""}
+     GROUP BY x.dk, h.pd_nama_marketing
      ORDER BY Desainer, Marketing`,
-    params,
+    allParams,
   );
   return rows;
 };

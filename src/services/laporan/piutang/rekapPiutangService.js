@@ -13,23 +13,34 @@ const getRekapPiutang = async (query) => {
   const year = new Date(dEnd).getFullYear();
   const startOfYear = `${year}-01-01`;
 
+  const TOL = 1000; // toleransi selisih kecil (Rp)
+  const POS = `CASE WHEN base.Sisa > ${TOL} THEN base.Sisa ELSE 0 END`;
+  const NEG = `CASE WHEN base.Sisa < -${TOL} THEN base.Sisa ELSE 0 END`;
+  const BULAN = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "Mei",
+    "Jun",
+    "Jul",
+    "Agu",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Des",
+  ];
+  const kolomBulan = BULAN.map(
+    (b, i) =>
+      `SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = ${i + 1} THEN ${POS} ELSE 0 END) AS ${b}`,
+  ).join(",\n      ");
+
   let filterPerusahaan = "";
   const subParams = [
     startOfYear, // Tahun Lalu < Tahun ini
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year,
-    year, // 12 Parameter Tahun
-    dEnd, // Tgl limit untuk subquery Bayar (tak-normal aware)
-    dEnd, // Tgl limit untuk filter tanggal di base
+    ...Array(12).fill(year), // 12 kolom bulan
+    dEnd, // limit subquery Bayar
+    dEnd, // limit tanggal base
   ];
 
   if (perusahaan) {
@@ -41,20 +52,11 @@ const getRekapPiutang = async (query) => {
     SELECT 
       base.customer AS Kode,
       c.Cus_nama AS Customer,
-      SUM(CASE WHEN base.tanggal < ? THEN base.Sisa ELSE 0 END) AS TahunLalu,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 1 THEN base.Sisa ELSE 0 END) AS Jan,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 2 THEN base.Sisa ELSE 0 END) AS Feb,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 3 THEN base.Sisa ELSE 0 END) AS Mar,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 4 THEN base.Sisa ELSE 0 END) AS Apr,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 5 THEN base.Sisa ELSE 0 END) AS Mei,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 6 THEN base.Sisa ELSE 0 END) AS Jun,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 7 THEN base.Sisa ELSE 0 END) AS Jul,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 8 THEN base.Sisa ELSE 0 END) AS Agu,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 9 THEN base.Sisa ELSE 0 END) AS Sep,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 10 THEN base.Sisa ELSE 0 END) AS Okt,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 11 THEN base.Sisa ELSE 0 END) AS Nov,
-      SUM(CASE WHEN YEAR(base.tanggal) = ? AND MONTH(base.tanggal) = 12 THEN base.Sisa ELSE 0 END) AS Des,
-      SUM(base.Sisa) AS GrandTotal
+      SUM(CASE WHEN base.tanggal < ? THEN ${POS} ELSE 0 END) AS TahunLalu,
+      ${kolomBulan},
+      SUM(${POS}) AS GrandTotal,
+      SUM(${NEG}) AS LebihBayar,
+      SUM(CASE WHEN ABS(base.Sisa) > ${TOL} THEN base.Sisa ELSE 0 END) AS Netto
     FROM (
       SELECT
         p.customer,
@@ -85,8 +87,8 @@ const getRekapPiutang = async (query) => {
     ) base
     LEFT JOIN tcustomer c ON c.Cus_kode = base.customer
     GROUP BY base.customer, c.Cus_nama
-    HAVING GrandTotal <> 0 OR TahunLalu <> 0
-    ORDER BY TahunLalu DESC, Jan DESC, Feb DESC, Mar DESC, Apr DESC, Mei DESC, Jun DESC, Jul DESC, Agu DESC, Sep DESC, Okt DESC, Nov DESC, Des DESC
+    HAVING GrandTotal <> 0 OR LebihBayar <> 0
+    ORDER BY GrandTotal DESC, LebihBayar ASC
   `;
 
   const [rows] = await db.query(sql, subParams);
@@ -129,6 +131,13 @@ const getDetailPiutang = async (query) => {
         WHERE d.invd_inv_nomor = p.nota
       ), '') AS NoPO,
       IFNULL((
+        SELECT pd2.debet
+        FROM piutang_debet pd2
+        WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+          AND pd2.is_writeoff = 0
+        LIMIT 1
+      ), p.debet) AS Debet,
+      IFNULL((
         SELECT SUM(kd.kredit)
         FROM piutang_kredit_detail kd
         INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
@@ -162,7 +171,7 @@ const getDetailPiutang = async (query) => {
       AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
       ${filterPerusahaan}
       AND p.customer = ?
-    HAVING Sisa <> 0
+    HAVING ABS(Sisa) > 1000
     ORDER BY p.tanggal ASC
   `;
 
