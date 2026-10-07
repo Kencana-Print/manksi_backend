@@ -84,6 +84,7 @@ const getRekapPiutang = async (query) => {
         ${filterPerusahaan}
     ) base
     LEFT JOIN tcustomer c ON c.Cus_kode = base.customer
+    WHERE base.Sisa > 1000
     GROUP BY base.customer, c.Cus_nama
     HAVING GrandTotal <> 0 OR TahunLalu <> 0
     ORDER BY TahunLalu DESC, Jan DESC, Feb DESC, Mar DESC, Apr DESC, Mei DESC, Jun DESC, Jul DESC, Agu DESC, Sep DESC, Okt DESC, Nov DESC, Des DESC
@@ -169,7 +170,7 @@ const getDetailPiutang = async (query) => {
       AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE '%INV YG DIKIRIM%')
       ${filterPerusahaan}
       AND p.customer = ?
-    HAVING Sisa <> 0
+    HAVING Sisa > 1000
     ORDER BY p.tanggal ASC
   `;
 
