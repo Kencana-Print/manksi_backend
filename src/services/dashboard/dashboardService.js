@@ -1393,7 +1393,15 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
           )
           AND kh.tanggal <= ?
         ), 0)) AS Sisa,
-        p.tanggal AS TglSort
+        p.tanggal AS TglSort,
+        p.nota AS NotaAsli,
+        DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+        DATEDIFF(CURDATE(), p.tanggal_tempo) AS Telat,
+        ${INKASO_SISA_CORR} AS SisaKini,
+        EXISTS (
+          SELECT 1 FROM tproyeksi_inkaso k
+          WHERE k.pik_nota = p.nota AND k.pik_status <> 'BATAL'
+        ) AS SudahDitandai
       FROM piutang_debet p
       INNER JOIN (${ATTR_SUBQUERY}) attr ON attr.nota = p.nota
       LEFT JOIN tcustomer c ON c.cus_kode = p.customer
@@ -1431,12 +1439,17 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
     items: [...rowsBaru, ...rowsLama].map((r) => ({
       jenis: r.Jenis,
       nota: r.Nota,
+      notaAsli: r.NotaAsli,
       tanggal: r.Tanggal,
+      tempo: r.Tempo,
+      terlambatHari: Number(r.Telat) || 0,
       cusKode: r.CusKode,
       cusNama: r.CusNama,
       debet: Number(r.Debet) || 0,
       sisa: Number(r.Sisa) || 0,
       terbayar: (Number(r.Debet) || 0) - (Number(r.Sisa) || 0),
+      sisaKini: Number(r.SisaKini) || 0,
+      sudahDitandai: Number(r.SudahDitandai) === 1,
     })),
   };
 };
@@ -1981,7 +1994,13 @@ const getPotensiBatalList = async (
 
 // Sisa tagihan per baris piutang_debet `p` (dipakai untuk set kecil/1 invoice)
 const INKASO_SISA_CORR = `
-  (p.debet - IFNULL((
+  (IFNULL((
+      SELECT pd2.debet
+      FROM piutang_debet pd2
+      WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)
+        AND pd2.is_writeoff = 0
+      LIMIT 1
+    ), p.debet) - IFNULL((
     SELECT SUM(kd.kredit)
     FROM piutang_kredit_detail kd
     INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
@@ -1991,6 +2010,9 @@ const INKASO_SISA_CORR = `
     )
   ), 0))
 `;
+
+// Sisa <= toleransi dianggap lunas (sama dengan Rekap Piutang)
+const INKASO_TOL = 1000;
 
 // Sales invoice: dari SPK/SO di detail invoice, fallback ke sales customer
 // (sama dengan atribusi Target Collection). Butuh alias p dan c (tcustomer).
@@ -2023,9 +2045,9 @@ const generateInkasoNomor = async (conn) => {
 // Invoice jatuh tempo yang masih ada sisa & belum ditandai (SEMUA sales)
 const getInkasoSourceOptions = async (
   user,
-  { namaCustomer, salKode, limit = 20, offset = 0 } = {},
+  { namaCustomer, salKode, limit = 100, offset = 0 } = {},
 ) => {
-  if (!canViewPotensi(user)) return { items: [], total: 0 };
+  if (!canViewPotensi(user)) return { items: [], total: 0, salesSummary: [] };
 
   const params = [];
   let custFilter = "";
@@ -2041,7 +2063,7 @@ const getInkasoSourceOptions = async (
 
   // Set-based (satu kali scan kredit) karena menghitung seluruh invoice
   // jatuh tempo; subquery korelasi di sini akan lambat.
-  const sql = `
+  const innerSql = `
     SELECT src.*, s.sal_nama AS SalNama
     FROM (
       SELECT
@@ -2053,6 +2075,8 @@ const getInkasoSourceOptions = async (
         p.customer AS CusKode,
         c.cus_nama AS CusNama,
         ${INKASO_SAL_CORR} AS SalKode,
+        p.debet AS Nominal,
+        IFNULL(kr.kredit, 0) AS Terbayar,
         (p.debet - IFNULL(kr.kredit, 0)) AS Sisa
       FROM piutang_debet p
       INNER JOIN tcustomer c ON c.cus_kode = p.customer
@@ -2076,21 +2100,39 @@ const getInkasoSourceOptions = async (
     ) src
     LEFT JOIN tsales s ON s.sal_kode = src.SalKode
     WHERE 1=1 ${custFilter} ${salFilter}
-    ORDER BY src.TerlambatHari DESC, src.Nota
-    LIMIT ? OFFSET ?
   `;
 
-  const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM (${sql.replace(/LIMIT \? OFFSET \?/, "")}) x`,
-    params,
+  // Urut per sales (tanpa sales di paling bawah) → customer → paling telat dulu,
+  // supaya baris satu sales selalu berurutan di semua halaman.
+  const [rows] = await db.query(
+    `${innerSql}
+     ORDER BY (s.sal_nama IS NULL), s.sal_nama, src.SalKode, src.CusNama,
+              src.TerlambatHari DESC, src.Nota
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), Number(offset)],
   );
-  const [rows] = await db.query(sql, [
-    ...params,
-    Number(limit),
-    Number(offset),
-  ]);
 
-  return { items: rows, total: Number(total) };
+  // Ringkasan per sales hanya dihitung di halaman pertama (scan penuh sekali saja)
+  let total;
+  let salesSummary = [];
+  if (Number(offset) === 0) {
+    const [sumRows] = await db.query(
+      `SELECT x.SalKode, x.SalNama, COUNT(*) AS jml, SUM(x.Sisa) AS total
+       FROM (${innerSql}) x
+       GROUP BY x.SalKode, x.SalNama
+       ORDER BY (x.SalNama IS NULL), x.SalNama`,
+      params,
+    );
+    salesSummary = sumRows.map((r) => ({
+      SalKode: r.SalKode,
+      SalNama: r.SalNama,
+      jml: Number(r.jml),
+      total: Number(r.total),
+    }));
+    total = salesSummary.reduce((s, r) => s + r.jml, 0);
+  }
+
+  return { items: rows, total, salesSummary };
 };
 
 // items: [{ nota, tglTarget?, catatan? }] — all-or-nothing
@@ -2133,10 +2175,7 @@ const setInkasoBulk = async (items, user) => {
         [nota],
       );
       if (!inv) throw new Error(`Invoice ${nota} tidak ditemukan.`);
-      if (Number(inv.Telat) <= 0) {
-        throw new Error(`Invoice ${nota} belum jatuh tempo.`);
-      }
-      if (Number(inv.Sisa) <= 0) {
+      if (Number(inv.Sisa) <= INKASO_TOL) {
         throw new Error(`Invoice ${nota} sudah lunas.`);
       }
 
@@ -2250,7 +2289,7 @@ const getInkasoDashboard = async (user) => {
     const sisa = Number(r.Sisa) || 0;
     const terealisasi = Math.min(nominal, Math.max(nominal - sisa, 0));
     summary.totalRealisasi += terealisasi;
-    if (sisa <= 0) continue; // sudah lunas → keluar dari daftar aktif
+    if (sisa <= INKASO_TOL) continue; // sudah lunas → keluar dari daftar aktif
 
     summary.jmlItem += 1;
     summary.totalProyeksi += sisa;
