@@ -23,7 +23,6 @@ const searchSpk = async (
       WHERE spk_aktif = 'Y'
         AND spk_cmo <> ''
         AND spk_jumlah <> spk_jumlah_kirim
-        AND spk_is_so = 0
     `;
     if (divisi) {
       baseQuery += ` AND FIND_IN_SET(spk_divisi, ?)`;
