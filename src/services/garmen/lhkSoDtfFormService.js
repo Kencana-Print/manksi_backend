@@ -63,7 +63,11 @@ const getDetail = async (cab, tanggal) => {
           bh.brg_nama AS NamaHasil,
           dh.dmh_qty_hasil AS QtyHasil,
           dh.dmh_bs_afval AS BsAfval,
-          EXISTS(SELECT 1 FROM tsj_maklon_dtl sd WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id) AS SudahSj
+          EXISTS(
+            SELECT 1 FROM tsj_maklon_dtl sd
+            JOIN tmaklon_terima_dtl t ON t.mtd_sjmd_id = sd.sjmd_id
+            WHERE sd.sjmd_dtf_maklon_hasil_id = dh.id
+          ) AS SudahSj
     FROM tdtf_maklon dm
     LEFT JOIN tdtf_maklon_hasil dh ON dh.dmh_dtf_maklon_id = dm.id
     LEFT JOIN tgarmen_brg bh ON bh.brg_kode = dh.dmh_kode_hasil
@@ -93,6 +97,7 @@ const getDetail = async (cab, tanggal) => {
     })),
     ...maklonRows.map((r) => ({
       ...r,
+      SudahDiterima: Number(r.SudahSj) === 1,
       QtyMasuk: Number(r.QtyMasuk) || 0,
       QtyHasil: Number(r.QtyHasil) || 0,
       BsAfval: Number(r.BsAfval) || 0,
@@ -513,50 +518,55 @@ const save = async (cab, tanggal, rows, userKode, userCab) => {
 
       for (const h of filledHasil) {
         if (h.Id && oldHasilIds.includes(h.Id)) {
-          const [[sjUsed]] = await conn.query(
-            `SELECT dh.dmh_kode_hasil, dh.dmh_qty_hasil, dh.dmh_bs_afval
+          const [[cur]] = await conn.query(
+            `SELECT dh.dmh_kode_hasil, dh.dmh_qty_hasil, dh.dmh_bs_afval,
+              sd.sjmd_id,
+              EXISTS(SELECT 1 FROM tmaklon_terima_dtl t WHERE t.mtd_sjmd_id = sd.sjmd_id) AS diterima
              FROM tdtf_maklon_hasil dh
-             WHERE dh.id = ?
-               AND EXISTS (SELECT 1 FROM tsj_maklon_dtl WHERE sjmd_dtf_maklon_hasil_id = dh.id)`,
+             LEFT JOIN tsj_maklon_dtl sd ON sd.sjmd_dtf_maklon_hasil_id = dh.id
+             WHERE dh.id = ? FOR UPDATE`,
             [h.Id],
           );
-          if (sjUsed) {
+
+          const kode = h.KodeHasil;
+          const qty = Number(h.QtyHasil) || 0;
+          const bs = Number(h.BsAfval) || 0;
+
+          if (cur.diterima) {
             const berubah =
-              sjUsed.dmh_kode_hasil !== h.KodeHasil ||
-              Number(sjUsed.dmh_qty_hasil) !== (Number(h.QtyHasil) || 0) ||
-              Number(sjUsed.dmh_bs_afval) !== (Number(h.BsAfval) || 0);
+              cur.dmh_kode_hasil !== kode ||
+              Number(cur.dmh_qty_hasil) !== qty ||
+              Number(cur.dmh_bs_afval) !== bs;
             if (berubah) {
               const err = new Error(
-                `Item hasil ${sjUsed.dmh_kode_hasil} (${r.Kode}) sudah masuk SJ Hasil Maklon, tidak bisa diubah. Tambahkan sebagai LHK baru.`,
+                `Item hasil ${cur.dmh_kode_hasil} (${r.Kode}) sudah diterima gudang, tidak bisa diubah.`,
               );
               err.statusCode = 400;
               throw err;
             }
-            keepIds.push(h.Id);
           } else {
             await conn.query(
               `UPDATE tdtf_maklon_hasil SET dmh_kode_hasil=?, dmh_qty_hasil=?, dmh_bs_afval=? WHERE id=?`,
-              [
-                h.KodeHasil,
-                Number(h.QtyHasil) || 0,
-                Number(h.BsAfval) || 0,
-                h.Id,
-              ],
+              [kode, qty, bs, h.Id],
             );
-            keepIds.push(h.Id);
+            if (cur.sjmd_id) {
+              await conn.query(
+                `UPDATE tsj_maklon_dtl SET sjmd_kode_jadi=?, sjmd_qty_terima=?, sjmd_qty_bs=? WHERE sjmd_id=?`,
+                [kode, qty, bs, cur.sjmd_id],
+              );
+            }
           }
+          keepIds.push(h.Id);
         } else {
-          const [insH] = await conn.query(
+          const qty = Number(h.QtyHasil) || 0;
+          const bs = Number(h.BsAfval) || 0;
+          if (qty <= 0 && bs <= 0) continue;
+          const [insHasil] = await conn.query(
             `INSERT INTO tdtf_maklon_hasil (dmh_dtf_maklon_id, dmh_kode_hasil, dmh_qty_hasil, dmh_bs_afval)
              VALUES (?, ?, ?, ?)`,
-            [
-              dtfMaklonId,
-              h.KodeHasil,
-              Number(h.QtyHasil) || 0,
-              Number(h.BsAfval) || 0,
-            ],
+            [dtfMaklonId, h.KodeHasil, qty, bs],
           );
-          keepIds.push(insH.insertId);
+          keepIds.push(insHasil.insertId);
         }
       }
 
