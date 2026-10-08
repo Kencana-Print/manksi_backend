@@ -59,7 +59,7 @@ const getById = async (kode) => {
     LEFT JOIN taccesories_warna w ON w.aw_kode = MID(b.brg_kode, 3, 3)
     LEFT JOIN taccesories_ukuran u ON u.au_kode = MID(b.brg_kode, 6, 3)
     LEFT JOIN taccesories_ket k ON k.ak_kode = MID(b.brg_kode, 9, 2)
-    LEFT JOIN tbahan_project p ON p.kode = RIGHT(b.brg_kode, 1)
+    LEFT JOIN tbahan_project p ON CHAR_LENGTH(b.brg_kode) > 10 AND p.kode = RIGHT(b.brg_kode, 1)
     WHERE b.brg_kode = ?
   `;
   const [rows] = await db.query(query, [kode]);
@@ -244,4 +244,218 @@ const getLookups = async (category) => {
   }
 };
 
-module.exports = { getBrowse, getById, create, update, remove, getLookups };
+// ── Kode barang garmen disimpan sebagai teks di banyak tabel (tanpa FK) ──
+// KODE_BLOKIR: dokumen yang MENGUNCI kode. Satu dokumen saja sudah cukup untuk mengunci.
+const KODE_BLOKIR = [
+  {
+    label: "BPB",
+    sql: `SELECT COUNT(DISTINCT bpbd_nomor) AS jml
+          FROM tgarmenbpb_dtl WHERE bpbd_brg_kode = ?`,
+  },
+  {
+    // jalur 1: baris tkasbonitem2 yang menyimpan kode langsung
+    label: "penyelesaian uang muka",
+    sql: `SELECT COUNT(DISTINCT bond2_nomor) AS jml
+          FROM finance.tkasbonitem2 WHERE bond2_brg_kode = ?`,
+  },
+  {
+    // jalur 2: item Permintaan Pembelian di tkasbonitem tidak menyimpan kode,
+    // hanya nomor+urut permintaan. Dihitung bila kasbon sudah diselesaikan.
+    label: "penyelesaian uang muka",
+    sql: `SELECT COUNT(DISTINCT k.bond_nomor) AS jml
+          FROM finance.tkasbonitem k
+          INNER JOIN finance.tkasbon b
+            ON b.bon_nomor = k.bond_nomor AND b.bon_selesai <> 0
+          INNER JOIN tgarmenmintabeli_dtl d
+            ON d.mbd_nomor = k.bond_ref_nomor AND d.mbd_nourut = k.bond_ref_nourut
+          WHERE k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN' AND d.mbd_brg_kode = ?`,
+  },
+  {
+    // trigger tgarmenmso_dtl_after_update belum dibaca: aman = kunci dulu
+    label: "mutasi stok",
+    sql: `SELECT COUNT(DISTINCT msod_nomor) AS jml
+          FROM tgarmenmso_dtl WHERE msod_brg_kode = ?`,
+  },
+  {
+    label: "stok keuangan",
+    sql: `SELECT COUNT(*) AS jml
+          FROM finance.tmasterstok_finance WHERE mst_brg_kode = ?`,
+  },
+
+  {
+    label: "pengajuan uang muka berjalan",
+    sql: `SELECT COUNT(DISTINCT h.pum_nomor) AS jml
+          FROM tpengajuan_uang_muka_dtl d
+          INNER JOIN tpengajuan_uang_muka_hdr h ON h.pum_nomor = d.pumd_pum_nomor
+          INNER JOIN tgarmenmintabeli_dtl m
+            ON m.mbd_nomor = d.pumd_nomor_sumber AND m.mbd_nourut = d.pumd_item_nourut
+          WHERE d.pumd_sumber = 'PERMINTAAN_PEMBELIAN'
+            AND h.pum_status = 'DIAJUKAN' AND m.mbd_brg_kode = ?`,
+  },
+];
+
+// KODE_IKUT: tabel yang kodenya ikut diganti. Trigger-nya hanya menyala saat
+// insert/delete, jadi UPDATE kolom kode aman. Stok harus ikut supaya hapus
+// dokumen di kemudian hari tetap mengurangi stok pada kode yang sama.
+const KODE_IKUT = [
+  ["tgarmenmintabeli_dtl", "mbd_brg_kode"],
+  ["tgarmenmintabeli_dtl2", "mbd2_brg_kode"],
+  ["tgarmenminta_dtl", "mind_brg_kode"],
+  ["tgarmenpo_dtl", "pod_brg_kode"],
+  ["tgarmeniv_dtl", "ivd_brg_kode"],
+  ["tgarmenkor_dtl", "kord_brg_kode"],
+  ["tgarmenrb_dtl", "rbd_brg_kode"],
+  ["tgarmenrealisasi_dtl", "red_brg_kode"],
+  ["tgarmenrealisasi_dtl2", "red2_brg_kode"],
+  ["tgarmenretur_dtl", "retd_brg_kode"],
+  ["tgarmenreturlog_dtl", "retd_brg_kode"],
+  ["tmasterstok_acc", "mst_brg_kode"],
+  ["tmasterstok_atk", "mst_brg_kode"],
+  ["tmasterstok_obat", "mst_brg_kode"],
+  ["tmasterstok_sparepart", "mst_brg_kode"],
+];
+
+// Hasil: daftar teks pemakaian, mis. ["2 BPB", "1 penyelesaian uang muka"]. Kosong = bebas.
+const hitungPemakaianKode = async (executor, kode) => {
+  const total = new Map();
+  for (const { label, sql } of KODE_BLOKIR) {
+    const [[row]] = await executor.query(sql, [kode]);
+    const jml = Number(row.jml);
+    if (jml) total.set(label, (total.get(label) || 0) + jml);
+  }
+  return [...total].map(([label, jml]) => `${jml} ${label}`);
+};
+
+const getKodeStatus = async (kode) => {
+  const [[ada]] = await db.query(
+    "SELECT brg_kode FROM tgarmen_brg WHERE brg_kode = ?",
+    [kode],
+  );
+  if (!ada) throw new Error("Barang tidak ditemukan.");
+
+  const pemakaian = await hitungPemakaianKode(db, kode);
+  return { editable: pemakaian.length === 0, pemakaian };
+};
+
+// Kode baru tidak boleh sudah ada di tabel dokumen manapun (kode yatim sisa
+// data lama). Ini juga yang membuat pembatalan manual di bawah aman dijalankan.
+const kodeDipakaiDokumen = async (executor, kode) => {
+  for (const [table, col] of KODE_IKUT) {
+    const [[row]] = await executor.query(
+      `SELECT 1 AS ada FROM ${table} WHERE ${col} = ? LIMIT 1`,
+      [kode],
+    );
+    if (row) return table;
+  }
+  return null;
+};
+
+const changeKode = async (kodeLama, kodeBaruInput, user) => {
+  const kodeBaru = String(kodeBaruInput || "")
+    .trim()
+    .toUpperCase();
+  if (!kodeBaru) throw new Error("Kode baru wajib diisi.");
+  if (/\s/.test(kodeBaru))
+    throw new Error("Kode tidak boleh mengandung spasi.");
+
+  const conn = await db.getConnection();
+  // Tabel yang sudah diubah. Master dan banyak tabel dokumen bertipe MyISAM,
+  // jadi rollback tidak membatalkannya: dibatalkan manual bila ada yang gagal.
+  const sudahDiubah = [];
+  try {
+    const [[brg]] = await conn.query(
+      "SELECT brg_kode, brg_nama FROM tgarmen_brg WHERE brg_kode = ?",
+      [kodeLama],
+    );
+    if (!brg) throw new Error("Barang tidak ditemukan.");
+    if (!brg.brg_kode.trim())
+      throw new Error(
+        "Master dengan kode kosong tidak bisa diganti lewat fitur ini. Perbaiki langsung di database.",
+      );
+    if (kodeBaru === brg.brg_kode)
+      throw new Error("Kode baru sama dengan kode lama.");
+
+    const [dup] = await conn.query(
+      `SELECT brg_kode FROM tgarmen_brg
+       WHERE brg_kode = ? AND brg_kode <> ? LIMIT 1`,
+      [kodeBaru, brg.brg_kode],
+    );
+    if (dup.length)
+      throw new Error(`Kode ${kodeBaru} sudah dipakai barang lain.`);
+
+    const yatim = await kodeDipakaiDokumen(conn, kodeBaru);
+    if (yatim)
+      throw new Error(
+        `Kode ${kodeBaru} masih tercatat di data lama (${yatim}). Gunakan kode lain.`,
+      );
+
+    // Cek ulang di sini, jangan percaya status dari dialog
+    const pemakaian = await hitungPemakaianKode(conn, brg.brg_kode);
+    if (pemakaian.length)
+      throw new Error(
+        `Kode tidak bisa diubah: sudah dipakai di ${pemakaian.join(" dan ")}.`,
+      );
+
+    await conn.beginTransaction(); // hanya melindungi tabel stok (InnoDB)
+
+    // Master dulu: kegagalan paling mungkin ada di sini (kunci unik)
+    await conn.query(
+      `UPDATE tgarmen_brg
+       SET brg_kode = ?, user_modified = ?, date_modified = NOW()
+       WHERE brg_kode = ?`,
+      [kodeBaru, user, brg.brg_kode],
+    );
+    sudahDiubah.push(["tgarmen_brg", "brg_kode"]);
+
+    let barisDiperbarui = 0;
+    for (const [table, col] of KODE_IKUT) {
+      const [r] = await conn.query(
+        `UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`,
+        [kodeBaru, brg.brg_kode],
+      );
+      sudahDiubah.push([table, col]);
+      barisDiperbarui += r.affectedRows;
+    }
+
+    await conn.query(
+      `INSERT INTO tgarmen_brg_kode_log
+         (log_kode_lama, log_kode_baru, log_nama, log_baris, log_user, log_date)
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [brg.brg_kode, kodeBaru, brg.brg_nama || "", barisDiperbarui, user],
+    );
+
+    await conn.commit();
+    return { kode: kodeBaru, barisDiperbarui };
+  } catch (e) {
+    try {
+      await conn.rollback(); // membatalkan tabel InnoDB
+    } catch {
+      /* belum ada transaksi */
+    }
+    // Batalkan tabel MyISAM. Aman: kode baru dijamin belum dipakai siapa pun.
+    for (const [table, col] of sudahDiubah.reverse()) {
+      try {
+        await conn.query(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`, [
+          kodeLama,
+          kodeBaru,
+        ]);
+      } catch {
+        /* lanjutkan membatalkan tabel lain */
+      }
+    }
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
+module.exports = {
+  getBrowse,
+  getById,
+  create,
+  update,
+  remove,
+  getLookups,
+  getKodeStatus,
+  changeKode,
+};

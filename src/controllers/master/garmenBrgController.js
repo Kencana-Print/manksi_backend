@@ -70,4 +70,37 @@ const getLookups = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, getById, create, update, remove, getLookups };
+const getKodeStatus = async (req, res) => {
+  try {
+    const data = await garmenBrgService.getKodeStatus(req.params.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const changeKode = async (req, res) => {
+  try {
+    const data = await garmenBrgService.changeKode(
+      req.params.kode,
+      req.body.kode_baru,
+      req.user.kode,
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Kode barang berhasil diubah.", data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = {
+  getBrowse,
+  getById,
+  create,
+  update,
+  remove,
+  getLookups,
+  getKodeStatus,
+  changeKode,
+};

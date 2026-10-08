@@ -21,6 +21,18 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getById,
 );
+router.get(
+  "/:kode/kode-status",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getKodeStatus,
+);
+router.put(
+  "/:kode/kode",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  controller.changeKode,
+);
 router.post(
   "/",
   verifyToken,
