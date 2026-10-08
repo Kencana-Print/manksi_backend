@@ -1,10 +1,10 @@
 const db = require("../../../config/database");
 
 const getBrowse = async (gudang = "", canLihatCus = false) => {
-  let where = `WHERE b.brg_divisi IN (3,4,6)`;
   const params = [];
+  let gdgFilter = "";
   if (gudang) {
-    where += ` AND m.vgdg LIKE ?`;
+    gdgFilter = `WHERE mst_gdg_kode LIKE ?`;
     params.push(`%${gudang}%`);
   }
 
@@ -26,11 +26,18 @@ const getBrowse = async (gudang = "", canLihatCus = false) => {
         g.gdg_nama AS Gudang,
         IFNULL(s.spk_cus_kode, o.mspk_cus_kode) AS Kodecus
       FROM tbarang b
-      INNER JOIN vmasterstok_jadi m ON m.vkode = b.brg_kode
+      INNER JOIN (
+        SELECT mst_brg_kode AS vkode,
+               mst_gdg_kode AS vgdg,
+               SUM(mst_stok_in - mst_stok_out) AS vstok
+        FROM tmasterstok_jadi
+        ${gdgFilter}
+        GROUP BY mst_brg_kode, mst_gdg_kode
+      ) m ON m.vkode = b.brg_kode
       LEFT JOIN tspk s ON s.SPK_Nomor = b.Brg_kode
       LEFT JOIN tgudang g ON g.gdg_kode = m.vgdg
       LEFT JOIN tmemospk o ON o.mSPK_Nomor = b.Brg_kode
-      ${where}
+      WHERE b.brg_divisi IN (3,4,6)
       GROUP BY b.brg_kode, m.vgdg
     ) x
     LEFT JOIN tcustomer c ON c.Cus_kode = x.Kodecus

@@ -10,6 +10,144 @@ const rekapMapService = require("../laporan/marketing/rekapMapService");
 const proyeksiVsRealisasiService = require("../laporan/marketing/proyeksiVsRealisasiService");
 const proyeksiBulananService = require("../laporan/marketing/proyeksiBulananService");
 
+// ══════════════════════════════════════════════
+// CACHE: stale-while-revalidate + pembaruan diam-diam
+// ══════════════════════════════════════════════
+const _cache = new Map();
+const CACHE_TTL = 3 * 60 * 1000; // dianggap segar
+const STALE_GRACE = 10 * 60 * 1000; // lewat TTL: data lama dipakai sambil diperbarui
+const ACTIVE_WINDOW = 45 * 60 * 1000; // diperbarui otomatis jika ada yang membuka dalam rentang ini
+const IDLE_EVICT = 30 * 60 * 60 * 1000; // dibuang jika tidak dibuka 30 jam
+const WARM_HOURS = { start: 6, end: 20 }; // jam server; di luar ini tidak diperbarui
+const MAX_ENTRIES = 600;
+
+const logSlow = (label, t0) => {
+  const ms = Date.now() - t0;
+  if (ms > 500) console.warn(`[SLOW] ${label}: ${ms} ms`);
+};
+
+const refreshEntry = (key, e) => {
+  if (e.refreshing) return e.refreshing;
+  const t0 = Date.now();
+  e.refreshing = Promise.resolve()
+    .then(() => e.loader())
+    .then((value) => {
+      if (_cache.get(key) === e) {
+        e.value = value;
+        e.born = Date.now();
+      }
+      logSlow(e.label, t0);
+    })
+    .catch((err) => {
+      console.error(`[CACHE] gagal memperbarui ${e.label}: ${err.message}`);
+    })
+    .finally(() => {
+      e.refreshing = null;
+    });
+  return e.refreshing;
+};
+
+const memo = (key, ttlMs, loader, label = key) => {
+  const now = Date.now();
+  const e = _cache.get(key);
+
+  if (e) {
+    e.last = now;
+    e.loader = loader;
+    e.ttl = ttlMs;
+    if (e.pending) return e.pending;
+    const age = now - e.born;
+    if (age < ttlMs) return Promise.resolve(e.value);
+    if (age < ttlMs + STALE_GRACE) {
+      refreshEntry(key, e); // diam-diam, user tidak menunggu
+      return Promise.resolve(e.value);
+    }
+    _cache.delete(key); // terlalu basi: hitung ulang
+  }
+
+  const entry = {
+    ttl: ttlMs,
+    loader,
+    label,
+    last: now,
+    born: 0,
+    value: undefined,
+    pending: null,
+    refreshing: null,
+  };
+  entry.pending = Promise.resolve()
+    .then(() => loader())
+    .then((value) => {
+      entry.value = value;
+      entry.born = Date.now();
+      entry.pending = null;
+      logSlow(label, now);
+      return value;
+    })
+    .catch((err) => {
+      if (_cache.get(key) === entry) _cache.delete(key);
+      throw err;
+    });
+  _cache.set(key, entry);
+  return entry.pending;
+};
+const memoSwr = memo; // semua pemanggil lama otomatis ikut pola baru
+
+const sweepCache = () => {
+  const now = Date.now();
+  for (const [k, e] of _cache) {
+    if (!e.pending && now - e.last > IDLE_EVICT) _cache.delete(k);
+  }
+  if (_cache.size > MAX_ENTRIES) {
+    const lebih = _cache.size - MAX_ENTRIES;
+    [..._cache]
+      .filter(([, e]) => !e.pending)
+      .sort((a, b) => a[1].last - b[1].last)
+      .slice(0, lebih)
+      .forEach(([k]) => _cache.delete(k));
+  }
+};
+
+let _warming = false;
+let _morningDay = "";
+const warmTick = async () => {
+  if (_warming) return;
+  const d = new Date();
+  const h = d.getHours();
+  if (h < WARM_HOURS.start || h >= WARM_HOURS.end) return;
+
+  const dayKey = d.toDateString();
+  const morning = h === WARM_HOURS.start && _morningDay !== dayKey;
+  if (morning) _morningDay = dayKey;
+
+  _warming = true;
+  try {
+    sweepCache();
+    for (const [key, e] of [..._cache]) {
+      if (e.pending || e.refreshing || !e.born) continue;
+      const now = Date.now();
+      if (!morning && now - e.last > ACTIVE_WINDOW) continue; // tak ada yang membuka
+      if (now - e.born < e.ttl * 0.7) continue; // masih segar
+      await refreshEntry(key, e); // berurutan, satu per satu
+    }
+  } finally {
+    _warming = false;
+  }
+};
+setInterval(warmTick, 30 * 1000).unref();
+
+const clearCache = (prefix = "") => {
+  for (const k of [..._cache.keys()])
+    if (k.startsWith(prefix)) _cache.delete(k);
+};
+const cacheStats = () =>
+  [..._cache].map(([key, e]) => ({
+    key,
+    umurDetik: e.born ? Math.round((Date.now() - e.born) / 1000) : null,
+    idleDetik: Math.round((Date.now() - e.last) / 1000),
+    sedangDiperbarui: !!(e.pending || e.refreshing),
+  }));
+
 const RANGE_DAYS = 90;
 
 // ── Helper: apakah user ini "super viewer" (lihat semua) ──
@@ -1699,6 +1837,7 @@ const setPotensi = async (payload, user) => {
     );
 
     await conn.commit();
+    _cache.delete(POTENSI_CACHE_KEY);
     return { nomor };
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY" && err.message.includes("uq_pot_dedupe")) {
@@ -1800,6 +1939,7 @@ const setPotensiBulk = async (items, user) => {
     }
 
     await conn.commit();
+    _cache.delete(POTENSI_CACHE_KEY);
     return { created };
   } catch (err) {
     if (err.code === "ER_DUP_ENTRY" && err.message.includes("uq_pot_dedupe")) {
@@ -1830,36 +1970,8 @@ const batalPotensi = async (nomor, alasan, user) => {
      WHERE pot_nomor = ?`,
     [alasan, user.kode, nomor],
   );
+  _cache.delete(POTENSI_CACHE_KEY);
 };
-
-// Status Realisasi dihitung DINAMIS
-const POTENSI_REALISASI_CHECK = `
-  IF(
-    EXISTS (
-      SELECT 1 FROM tsalesorder so
-      WHERE so.so_aktif = 'Y'
-        AND so.so_memo IN (
-          p.pot_mspk_nomor, map_from_pen.mspk_nomor,
-          map_r1.mspk_nomor, map_r2.mspk_nomor, map_r3.mspk_nomor,
-          map_r4.mspk_nomor, map_r5.mspk_nomor
-        )
-      UNION ALL
-      SELECT 1 FROM tspk s
-      WHERE s.spk_aktif = 'Y'
-        AND s.spk_memo IN (
-          p.pot_mspk_nomor, map_from_pen.mspk_nomor,
-          map_r1.mspk_nomor, map_r2.mspk_nomor, map_r3.mspk_nomor,
-          map_r4.mspk_nomor, map_r5.mspk_nomor
-        )
-    ), 1,
-    IF(
-      p.pot_pen_nomor IS NOT NULL AND map_from_pen.mspk_nomor IS NULL AND EXISTS (
-        SELECT 1 FROM tspk s WHERE s.spk_pen_nomor = p.pot_pen_nomor AND s.spk_aktif = 'Y'
-        UNION SELECT 1 FROM tsalesorder so WHERE so.so_pen_nomor = p.pot_pen_nomor AND so.so_aktif = 'Y'
-      ), 1, 0
-    )
-  )
-`;
 
 // Resolve rantai: Penawaran → MAP (kalau sudah dikonversi) → MAP revisi
 // terbaru (sampai 5 level). Dipakai di getPotensiList & getPotensiSummary
@@ -1897,57 +2009,141 @@ const POTENSI_RESOLVED_HARGA = `
   )
 `;
 
+// Data potensi + hasil resolve rantai MAP + status realisasi.
+// Dihitung sekali (190-an baris), dipakai bersama oleh summary & list.
+const POTENSI_CACHE_KEY = "potensi:resolved";
+
+const loadPotensiResolved = () =>
+  memo(POTENSI_CACHE_KEY, 30 * 1000, async () => {
+    const [rows] = await db.query(`
+      SELECT
+        p.pot_nomor, p.pot_status, p.date_create, p.user_create,
+        p.pot_pen_nomor, p.pot_mspk_nomor,
+        p.pot_harga AS HargaAsli,
+        s.sal_nama, c.cus_nama,
+        map_from_pen.mspk_nomor AS m0,
+        map_r1.mspk_nomor AS m1, map_r2.mspk_nomor AS m2,
+        map_r3.mspk_nomor AS m3, map_r4.mspk_nomor AS m4,
+        map_r5.mspk_nomor AS m5,
+        ${POTENSI_RESOLVED_NOMOR} AS NomorSumber,
+        COALESCE(map_r5.mspk_nama, map_r4.mspk_nama, map_r3.mspk_nama,
+                 map_r2.mspk_nama, map_r1.mspk_nama, map_from_pen.mspk_nama,
+                 p.pot_nama_item) AS pot_nama_item,
+        (${POTENSI_RESOLVED_HARGA}) AS pot_harga,
+        IF(p.pot_mspk_nomor IS NOT NULL OR map_from_pen.mspk_nomor IS NOT NULL,
+           'MAP', 'PENAWARAN') AS Sumber
+      FROM tpotensi p
+      LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
+      LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
+      ${POTENSI_RESOLVE_JOIN}
+    `);
+
+    const memoNos = new Set();
+    const penNos = new Set();
+    for (const r of rows) {
+      for (const n of [r.pot_mspk_nomor, r.m0, r.m1, r.m2, r.m3, r.m4, r.m5]) {
+        if (n) memoNos.add(n);
+      }
+      if (r.pot_pen_nomor && !r.m0) penNos.add(r.pot_pen_nomor);
+    }
+
+    const memoReal = new Set();
+    if (memoNos.size) {
+      const list = [...memoNos];
+      const [found] = await db.query(
+        `SELECT so_memo AS n FROM tsalesorder
+          WHERE so_aktif = 'Y' AND so_memo IN (?)
+         UNION
+         SELECT spk_memo AS n FROM tspk
+          WHERE spk_aktif = 'Y' AND spk_memo IN (?)`,
+        [list, list],
+      );
+      for (const f of found) memoReal.add(f.n);
+    }
+
+    const penReal = new Set();
+    if (penNos.size) {
+      const list = [...penNos];
+      const [found] = await db.query(
+        `SELECT spk_pen_nomor AS n FROM tspk
+          WHERE spk_aktif = 'Y' AND spk_pen_nomor IN (?)
+         UNION
+         SELECT so_pen_nomor AS n FROM tsalesorder
+          WHERE so_aktif = 'Y' AND so_pen_nomor IN (?)`,
+        [list, list],
+      );
+      for (const f of found) penReal.add(f.n);
+    }
+
+    return rows.map((r) => {
+      const adaMemoReal = [
+        r.pot_mspk_nomor,
+        r.m0,
+        r.m1,
+        r.m2,
+        r.m3,
+        r.m4,
+        r.m5,
+      ].some((n) => n && memoReal.has(n));
+      const adaPenReal =
+        !!r.pot_pen_nomor && !r.m0 && penReal.has(r.pot_pen_nomor);
+      return {
+        ...r,
+        pot_harga: Number(r.pot_harga) || 0,
+        HargaAsli: Number(r.HargaAsli) || 0,
+        IsRealisasi: adaMemoReal || adaPenReal ? 1 : 0,
+      };
+    });
+  });
+
 // SEMUA data — tanpa filter sal_kode
 const getPotensiSummary = async (user) => {
   if (!canViewPotensi(user)) return null;
 
-  const sql = `
-    SELECT
-      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0 THEN 1 ELSE 0 END) AS JmlItem,
-      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0 THEN (${POTENSI_RESOLVED_HARGA}) ELSE 0 END) AS TotalPotensi,
-      SUM(CASE WHEN p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 1 THEN (${POTENSI_RESOLVED_HARGA}) ELSE 0 END) AS TotalRealisasi,
-      SUM(CASE WHEN p.pot_status = 'BATAL' THEN p.pot_harga ELSE 0 END) AS TotalBatal
-    FROM tpotensi p
-    ${POTENSI_RESOLVE_JOIN}
-  `;
-  const [[row]] = await db.query(sql);
-  return {
-    jmlItem: Number(row.JmlItem) || 0,
-    totalPotensi: Number(row.TotalPotensi) || 0,
-    totalRealisasi: Number(row.TotalRealisasi) || 0,
-    totalBatal: Number(row.TotalBatal) || 0,
-  };
+  const rows = await loadPotensiResolved();
+  let jmlItem = 0;
+  let totalPotensi = 0;
+  let totalRealisasi = 0;
+  let totalBatal = 0;
+
+  for (const r of rows) {
+    if (r.pot_status === "BATAL") {
+      totalBatal += r.HargaAsli;
+    } else if (r.IsRealisasi) {
+      totalRealisasi += r.pot_harga;
+    } else {
+      jmlItem += 1;
+      totalPotensi += r.pot_harga;
+    }
+  }
+  return { jmlItem, totalPotensi, totalRealisasi, totalBatal };
 };
 
 const getPotensiList = async (user, { limit = 20, offset = 0 } = {}) => {
   if (!canViewPotensi(user)) return { items: [], total: 0 };
 
-  const [[{ total }]] = await db.query(
-    `SELECT COUNT(DISTINCT p.pot_nomor) AS total FROM tpotensi p
-     ${POTENSI_RESOLVE_JOIN}
-     WHERE p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0`,
-  );
+  const rows = await loadPotensiResolved();
+  const aktif = rows
+    .filter((r) => r.pot_status !== "BATAL" && !r.IsRealisasi)
+    .sort((a, b) => new Date(b.date_create) - new Date(a.date_create));
 
-  const [rows] = await db.query(
-    `SELECT
-       p.pot_nomor, p.pot_status, p.date_create, p.user_create,
-       s.sal_nama, c.cus_nama,
-       ${POTENSI_RESOLVED_NOMOR} AS NomorSumber,
-       COALESCE(map_r5.mspk_nama, map_r4.mspk_nama, map_r3.mspk_nama, map_r2.mspk_nama, map_r1.mspk_nama, map_from_pen.mspk_nama, p.pot_nama_item) AS pot_nama_item,
-       (${POTENSI_RESOLVED_HARGA}) AS pot_harga,
-       IF(p.pot_mspk_nomor IS NOT NULL OR map_from_pen.mspk_nomor IS NOT NULL, 'MAP', 'PENAWARAN') AS Sumber,
-       (${POTENSI_REALISASI_CHECK}) AS IsRealisasi
-     FROM tpotensi p
-     LEFT JOIN tsales s ON s.sal_kode = p.pot_sal_kode
-     LEFT JOIN tcustomer c ON c.cus_kode = p.pot_cus_kode
-     ${POTENSI_RESOLVE_JOIN}
-     WHERE p.pot_status <> 'BATAL' AND (${POTENSI_REALISASI_CHECK}) = 0
-     ORDER BY p.date_create DESC
-     LIMIT ? OFFSET ?`,
-    [Number(limit), Number(offset)],
-  );
+  const items = aktif
+    .slice(Number(offset), Number(offset) + Number(limit))
+    .map((r) => ({
+      pot_nomor: r.pot_nomor,
+      pot_status: r.pot_status,
+      date_create: r.date_create,
+      user_create: r.user_create,
+      sal_nama: r.sal_nama,
+      cus_nama: r.cus_nama,
+      NomorSumber: r.NomorSumber,
+      pot_nama_item: r.pot_nama_item,
+      pot_harga: r.pot_harga,
+      Sumber: r.Sumber,
+      IsRealisasi: r.IsRealisasi,
+    }));
 
-  return { items: rows, total: Number(total) };
+  return { items, total: aktif.length };
 };
 
 const getPotensiBatalList = async (
@@ -2761,165 +2957,115 @@ const getAchievementMonthly = async (user, tahun) => {
 };
 
 // ── Dashboard Piutang (AR) ──
+const PIUTANG_JOINS = `
+  LEFT JOIN (
+    SELECT invf_normal, MIN(invf_taknormal) AS taknormal
+    FROM tinv_flag GROUP BY invf_normal
+  ) tfm ON tfm.invf_normal = p.nota
+  LEFT JOIN (
+    SELECT kd.nota, SUM(kd.kredit) AS kredit
+    FROM piutang_kredit_detail kd
+    INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
+    GROUP BY kd.nota
+  ) kr ON kr.nota = IFNULL(tfm.taknormal, p.nota)
+`;
+const PIUTANG_WHERE = `
+  p.is_writeoff = 0
+  AND (p.flag = 0 OR tfm.invf_normal IS NOT NULL)
+`;
+const PIUTANG_SISA = "(p.debet - IFNULL(kr.kredit, 0))";
+const PIUTANG_ALLOWED = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
+
 const getPiutangDashboard = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
-  if (!allowed.includes(bagian)) return null;
+  if (!PIUTANG_ALLOWED.includes(bagian)) return null;
 
-  const KREDIT_LOOKUP = `
-    IFNULL((
-      SELECT SUM(kd.kredit)
-      FROM piutang_kredit_detail kd
-      INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-      WHERE kd.nota = IFNULL(
-        (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
-        p.nota
-      )
-    ), 0)
-  `;
-
-  // ⬅ FIX: flag=0 dipertahankan sebagai default exclude (flag=1 punya
-  // banyak makna — kelengkapan SJ, dll — bukan cuma Invoice Tak Normal),
-  // dikecualikan HANYA untuk invoice yang memang tercatat di tinv_flag
-  // (di-link ke Invoice Tak Normal). Menghapus flag=0 sama sekali
-  // (versi kemarin) salah — ikut memasukkan invoice flag=1 lain yang
-  // seharusnya tetap dikecualikan karena alasan berbeda.
-  const OUTSTANDING_FILTER = `
-    AND p.is_writeoff = 0
-    AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-  `;
-
-  const sqlSummary = `
-    SELECT 
-      (SELECT SUM(debet) 
+  const [[sumRows], [top5], [terimaRows], [trend]] = await Promise.all([
+    db.query(`
+      SELECT
+        IFNULL(SUM(p.debet), 0) AS TotalDebet,
+        IFNULL(SUM(IFNULL(kr.kredit, 0)), 0) AS TotalKredit,
+        IFNULL(SUM(${PIUTANG_SISA}), 0) AS TotalOutstanding,
+        IFNULL(SUM(CASE WHEN DATE_FORMAT(p.tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+              THEN p.debet ELSE 0 END), 0) AS InvoiceBulanIni,
+        IFNULL(SUM(CASE WHEN p.tanggal_tempo < CURDATE() AND ${PIUTANG_SISA} > 0
+              THEN 1 ELSE 0 END), 0) AS OverdueTotal
       FROM piutang_debet p
-      WHERE 1=1 ${OUTSTANDING_FILTER}) AS TotalDebet,
-
-      (SELECT SUM(${KREDIT_LOOKUP})
-      FROM piutang_debet p WHERE 1=1 ${OUTSTANDING_FILTER}) AS TotalKredit,
-
-      (SELECT SUM(debet) - SUM(${KREDIT_LOOKUP})
-      FROM piutang_debet p WHERE 1=1 ${OUTSTANDING_FILTER}) AS TotalOutstanding,
-
-      (SELECT SUM(debet) FROM piutang_debet p
-      WHERE 1=1 ${OUTSTANDING_FILTER}
-      AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
-      ) AS InvoiceBulanIni,
-
-      (SELECT SUM(d.kredit) 
-      FROM piutang_kredit_detail d 
-      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor 
-      WHERE DATE_FORMAT(h.tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
-      ) AS TerimaBulanIni
-  `;
-
-  const sqlTop5 = `
-    SELECT 
-      c.cus_nama AS Customer,
-      SUM(p.debet) - SUM(${KREDIT_LOOKUP}) AS Saldo
-    FROM piutang_debet p
-    INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE 1=1 ${OUTSTANDING_FILTER}
-    GROUP BY p.customer
-    HAVING Saldo > 0
-    ORDER BY Saldo DESC
-    LIMIT 10
-  `;
-
-  const sqlOverdue = `
-    SELECT 
-      p.nota AS Invoice,
-      c.cus_nama AS Customer,
-      DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
-      DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
-      (p.debet - ${KREDIT_LOOKUP}) AS SisaTagihan
-    FROM piutang_debet p
-    INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE 1=1 ${OUTSTANDING_FILTER}
-      AND p.tanggal_tempo < CURDATE()
-    HAVING SisaTagihan > 0
-    ORDER BY TerlambatHari DESC
-    LIMIT 20
-  `;
-
-  const sqlOverdueCount = `
-    SELECT COUNT(*) AS Total
-    FROM (
-      SELECT p.nota,
-        (p.debet - ${KREDIT_LOOKUP}) AS SisaTagihan
+      ${PIUTANG_JOINS}
+      WHERE ${PIUTANG_WHERE}
+    `),
+    db.query(`
+      SELECT c.cus_nama AS Customer, SUM(${PIUTANG_SISA}) AS Saldo
       FROM piutang_debet p
-      WHERE 1=1 ${OUTSTANDING_FILTER} AND p.tanggal_tempo < CURDATE()
-      HAVING SisaTagihan > 0
-    ) x
-  `;
-
-  const sqlTrend = `
-    SELECT 
-      Bulan,
-      SUM(Debet) AS TotalTagihan,
-      SUM(Kredit) AS TotalPenerimaan
-    FROM (
-      SELECT DATE_FORMAT(tanggal, '%Y-%m') AS Bulan, debet AS Debet, 0 AS Kredit
-      FROM piutang_debet
-      WHERE is_writeoff = 0 AND tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
-      UNION ALL
-      SELECT DATE_FORMAT(h.tanggal, '%Y-%m') AS Bulan, 0 AS Debet, d.kredit AS Kredit
+      ${PIUTANG_JOINS}
+      INNER JOIN tcustomer c ON c.cus_kode = p.customer
+      WHERE ${PIUTANG_WHERE}
+      GROUP BY p.customer, c.cus_nama
+      HAVING Saldo > 0
+      ORDER BY Saldo DESC
+      LIMIT 10
+    `),
+    db.query(`
+      SELECT IFNULL(SUM(d.kredit), 0) AS TerimaBulanIni
       FROM piutang_kredit_detail d
-      INNER JOIN piutang_kredit_header h ON d.nomor = h.nomor
-      WHERE h.tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
-    ) x
-    GROUP BY Bulan
-    ORDER BY Bulan ASC
-  `;
+      INNER JOIN piutang_kredit_header h ON h.nomor = d.nomor
+      WHERE DATE_FORMAT(h.tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
+    `),
+    db.query(`
+      SELECT Bulan, SUM(Debet) AS TotalTagihan, SUM(Kredit) AS TotalPenerimaan
+      FROM (
+        SELECT DATE_FORMAT(tanggal, '%Y-%m') AS Bulan, debet AS Debet, 0 AS Kredit
+        FROM piutang_debet
+        WHERE is_writeoff = 0
+          AND tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+        UNION ALL
+        SELECT DATE_FORMAT(h.tanggal, '%Y-%m'), 0, d.kredit
+        FROM piutang_kredit_detail d
+        INNER JOIN piutang_kredit_header h ON d.nomor = h.nomor
+        WHERE h.tanggal >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 5 MONTH), '%Y-%m-01')
+      ) x
+      GROUP BY Bulan
+      ORDER BY Bulan ASC
+    `),
+  ]);
 
-  const [[summary], [top5], [overdue], [overdueCount], [trend]] =
-    await Promise.all([
-      db.query(sqlSummary),
-      db.query(sqlTop5),
-      db.query(sqlOverdue),
-      db.query(sqlOverdueCount),
-      db.query(sqlTrend),
-    ]);
-
+  const s = sumRows[0] || {};
   return {
-    summary: { ...summary[0], overdueTotal: overdueCount[0]?.Total || 0 },
+    summary: {
+      TotalDebet: Number(s.TotalDebet) || 0,
+      TotalKredit: Number(s.TotalKredit) || 0,
+      TotalOutstanding: Number(s.TotalOutstanding) || 0,
+      InvoiceBulanIni: Number(s.InvoiceBulanIni) || 0,
+      TerimaBulanIni: Number(terimaRows[0]?.TerimaBulanIni) || 0,
+      overdueTotal: Number(s.OverdueTotal) || 0,
+    },
     top5,
-    overdue,
+    overdue: [], // list overdue memakai getPiutangOverdue (paged)
     trend,
   };
 };
 
 const getPiutangOverdue = async (user, limit = 20, offset = 0) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
-  if (!allowed.includes(bagian)) return [];
+  if (!PIUTANG_ALLOWED.includes(bagian)) return [];
 
-  const sql = `
-    SELECT 
-      p.nota AS Invoice,
-      c.cus_nama AS Customer,
-      DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
-      DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
-      (p.debet - IFNULL((
-        SELECT SUM(kd.kredit)
-        FROM piutang_kredit_detail kd
-        INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-        WHERE kd.nota = IFNULL(
-          (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
-          p.nota
-        )
-      ), 0)) AS SisaTagihan
-    FROM piutang_debet p
-    INNER JOIN tcustomer c ON c.cus_kode = p.customer
-    WHERE p.is_writeoff = 0
-      AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-      AND p.tanggal_tempo < CURDATE()
-    HAVING SisaTagihan > 0
-    ORDER BY TerlambatHari DESC
-    LIMIT ? OFFSET ?
-  `;
-
-  const [rows] = await db.query(sql, [limit, offset]);
+  const [rows] = await db.query(
+    `SELECT
+       p.nota AS Invoice,
+       c.cus_nama AS Customer,
+       DATE_FORMAT(p.tanggal_tempo, '%d-%m-%Y') AS Tempo,
+       DATEDIFF(CURDATE(), p.tanggal_tempo) AS TerlambatHari,
+       ${PIUTANG_SISA} AS SisaTagihan
+     FROM piutang_debet p
+     ${PIUTANG_JOINS}
+     INNER JOIN tcustomer c ON c.cus_kode = p.customer
+     WHERE ${PIUTANG_WHERE}
+       AND p.tanggal_tempo < CURDATE()
+       AND ${PIUTANG_SISA} > 0
+     ORDER BY TerlambatHari DESC, p.nota ASC
+     LIMIT ? OFFSET ?`,
+    [limit, offset],
+  );
   return rows;
 };
 
@@ -4798,19 +4944,20 @@ const getPoJasaVsBpjSummary = async (user) => {
 
 // ── Outstanding PO Mitra — summary + list ber-paginasi (slice
 // in-memory dari getBrowse 514, sudah sorted by Kurang desc) ──
+const loadOutstandingPoMitra = () => {
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  return memo(`opm:${startDate}:${endDate}`, CACHE_TTL, () =>
+    outstandingPoMitraService.getBrowse(startDate, endDate, "ALL"),
+  );
+};
+
 const getOutstandingPoMitraSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await outstandingPoMitraService.getBrowse(
-    startDate,
-    endDate,
-    "ALL",
-  );
-
+  const rows = await loadOutstandingPoMitra();
   const totalMitra = rows.length;
   const totalKurang = rows.reduce((s, r) => s + Number(r.Kurang || 0), 0);
   return { totalMitra, totalKurang };
@@ -4821,14 +4968,7 @@ const getOutstandingPoMitraList = async (user, limit = 20, offset = 0) => {
   const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await outstandingPoMitraService.getBrowse(
-    startDate,
-    endDate,
-    "ALL",
-  );
-
+  const rows = await loadOutstandingPoMitra();
   const sorted = [...rows].sort(
     (a, b) => Number(b.Kurang || 0) - Number(a.Kurang || 0),
   );
@@ -4837,20 +4977,25 @@ const getOutstandingPoMitraList = async (user, limit = 20, offset = 0) => {
 
 // ── Efisiensi Babaran — summary + list ber-paginasi (slice in-memory
 // dari getBrowse 509 mode 'spk', sorted by Minus asc) ──
+const loadEfisiensiBabaran = () => {
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  return memo(`efb:${startDate}:${endDate}`, CACHE_TTL, () =>
+    standartBabaranVsRealisasiService.getBrowse(
+      startDate,
+      endDate,
+      "ALL",
+      "spk",
+    ),
+  );
+};
+
 const getEfisiensiBabaranSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await standartBabaranVsRealisasiService.getBrowse(
-    startDate,
-    endDate,
-    "ALL",
-    "spk",
-  );
-
+  const rows = await loadEfisiensiBabaran();
   const totalSpk = rows.length;
   const spkDeviasi = rows.filter((r) => Number(r.Minus) < 0);
   return {
@@ -4865,15 +5010,7 @@ const getEfisiensiBabaranList = async (user, limit = 20, offset = 0) => {
   const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await standartBabaranVsRealisasiService.getBrowse(
-    startDate,
-    endDate,
-    "ALL",
-    "spk",
-  );
-
+  const rows = await loadEfisiensiBabaran();
   const spkDeviasi = rows.filter((r) => Number(r.Minus) < 0);
   const sorted = [...spkDeviasi].sort(
     (a, b) => Number(a.Minus) - Number(b.Minus),
@@ -4890,13 +5027,18 @@ const getEfisiensiBabaranList = async (user, limit = 20, offset = 0) => {
 // ── Stok Acc vs MKA — item aksesoris yang StokAcc < Mka (Free < 0),
 // reuse getBrowse 569, filter+sort di JS (dataset per bulan relatif
 // kecil, aman tanpa query SQL terpisah) ──
+const loadStokAccVsMka = () => {
+  const startDate = new Date().toISOString().slice(0, 8) + "01";
+  const endDate = new Date().toISOString().substring(0, 10);
+  return memo(`sam:${startDate}:${endDate}`, CACHE_TTL, () =>
+    stokAccVsMkaService.getBrowse(startDate, endDate),
+  ).then((rows) => ({ rows, startDate, endDate }));
+};
+
 const getStokAccVsMkaCount = async (user) => {
   if (!isGudangBahanViewer(user)) return null;
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await stokAccVsMkaService.getBrowse(startDate, endDate);
-
+  const { rows } = await loadStokAccVsMka();
   const kurang = rows.filter(
     (r) => Number(r.Free) < 0 && Number(r.StokAcc) >= 0,
   );
@@ -4906,24 +5048,19 @@ const getStokAccVsMkaCount = async (user) => {
 const getStokAccVsMkaList = async (user, limit = 20, offset = 0) => {
   if (!isGudangBahanViewer(user)) return null;
 
-  const startDate = new Date().toISOString().slice(0, 8) + "01";
-  const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await stokAccVsMkaService.getBrowse(startDate, endDate);
-
+  const { rows, startDate, endDate } = await loadStokAccVsMka();
   const kurang = rows.filter(
     (r) => Number(r.Free) < 0 && Number(r.StokAcc) >= 0,
   );
   const sorted = [...kurang].sort((a, b) => Number(a.Free) - Number(b.Free));
   const page = sorted.slice(offset, offset + limit);
 
-  // Ambil breakdown per SPK untuk tiap item di halaman ini (bukan
-  // seluruh dataset — cuma page-size, aman dari N+1 besar)
-  const withSpkDetail = await Promise.all(
+  return Promise.all(
     page.map(async (r) => {
-      const dtl = await stokAccVsMkaService.getDetail(
-        r.Kode,
-        startDate,
-        endDate,
+      const dtl = await memo(
+        `sam-dtl:${r.Kode}:${startDate}:${endDate}`,
+        CACHE_TTL,
+        () => stokAccVsMkaService.getDetail(r.Kode, startDate, endDate),
       );
       return {
         Kode: r.Kode,
@@ -4943,8 +5080,6 @@ const getStokAccVsMkaList = async (user, limit = 20, offset = 0) => {
       };
     }),
   );
-
-  return withSpkDetail;
 };
 
 // ── Metric ringkas Barang Jadi ──
@@ -4957,8 +5092,10 @@ const getBarangJadiMetric = async (user) => {
   const endDate = new Date().toISOString().substring(0, 10);
 
   const [stokRows, mutasiRows] = await Promise.all([
-    stokBarangJadiService.getBrowse(""),
-    mutasiStokBarangJadiService.getBrowse(startDate, endDate, "", false),
+    memoSwr("sbj:", 5 * 60 * 1000, () => stokBarangJadiService.getBrowse("")),
+    memoSwr(`mbj:${startDate}:${endDate}`, 5 * 60 * 1000, () =>
+      mutasiStokBarangJadiService.getBrowse(startDate, endDate, "", false),
+    ),
   ]);
 
   const distinctKode = new Set(stokRows.map((r) => r.Kode));
@@ -4984,7 +5121,10 @@ const getStokBarangJadiList = async (
   const allowed = ["ADMIN", "PRODUKSI", "PPIC"];
   if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
 
-  const rows = await stokBarangJadiService.getBrowse(gudang);
+  const rows = await memoSwr(`sbj:${gudang}`, 5 * 60 * 1000, () =>
+    stokBarangJadiService.getBrowse(gudang),
+  );
+
   const sorted = [...rows].sort((a, b) => Number(b.Stok) - Number(a.Stok));
   return sorted.slice(offset, offset + limit).map((r) => ({
     Kode: r.Kode,
@@ -5005,11 +5145,8 @@ const getMutasiBarangJadiList = async (user, limit = 20, offset = 0) => {
 
   const startDate = new Date().toISOString().slice(0, 8) + "01";
   const endDate = new Date().toISOString().substring(0, 10);
-  const rows = await mutasiStokBarangJadiService.getBrowse(
-    startDate,
-    endDate,
-    "",
-    false,
+  const rows = await memoSwr(`mbj:${startDate}:${endDate}`, 5 * 60 * 1000, () =>
+    mutasiStokBarangJadiService.getBrowse(startDate, endDate, "", false),
   );
 
   const withNet = rows.map((r) => ({
@@ -5422,47 +5559,21 @@ const getSpkTerkirimBelumTagihList = async (
 // ada tapi belum ke-export.
 const getCompanyPulseSummary = async (user) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
-  if (!allowed.includes(bagian)) return null;
+  if (!PIUTANG_ALLOWED.includes(bagian)) return null;
 
-  const sqlRevenue = `
-    SELECT 
-      (SELECT SUM(debet) - SUM(
-          IFNULL((
-            SELECT SUM(kd.kredit)
-            FROM piutang_kredit_detail kd
-            INNER JOIN piutang_kredit_header kh ON kh.nomor = kd.nomor
-            WHERE kd.nota = IFNULL(
-              (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1),
-              p.nota
-            )
-          ), 0)
-      ) FROM piutang_debet p
-      WHERE p.is_writeoff = 0
-        AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-      ) AS TotalOutstanding,
-      
-      (SELECT SUM(debet) FROM piutang_debet p
-      WHERE p.is_writeoff = 0
-        AND (p.flag = 0 OR EXISTS (SELECT 1 FROM tinv_flag tf WHERE tf.invf_normal = p.nota))
-        AND DATE_FORMAT(tanggal, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')
-      ) AS InvoiceBulanIni
-  `;
-
-  const [[revRows], approvalRow] = await Promise.all([
-    db.query(sqlRevenue),
+  const [dash, approval] = await Promise.all([
+    module.exports.getPiutangDashboard(user), // versi ter-cache
     getApprovalPendingCount(),
   ]);
 
-  const approval = approvalRow || {};
-  const approvalPendingTotal = Object.values(approval).reduce(
+  const approvalPendingTotal = Object.values(approval || {}).reduce(
     (s, v) => s + Number(v || 0),
     0,
   );
 
   return {
-    revenueMtd: Number(revRows[0]?.InvoiceBulanIni) || 0,
-    outstandingAr: Number(revRows[0]?.TotalOutstanding) || 0,
+    revenueMtd: Number(dash?.summary?.InvoiceBulanIni) || 0,
+    outstandingAr: Number(dash?.summary?.TotalOutstanding) || 0,
     approvalPendingTotal,
     approvalBreakdown: approval,
   };
@@ -6093,3 +6204,126 @@ module.exports = {
   getOutstandingBeliSummary,
   getOutstandingBeliList,
 };
+
+// ══════════════════════════════════════════════
+// REGISTRASI CACHE — HARUS di bawah module.exports = {...}
+// ══════════════════════════════════════════════
+// Kunci cache = atribut user yang benar-benar mempengaruhi hasil
+// (bagian, divisi, cabang, cabang garmen, dan kode khusus), bukan per user.
+const scopeUser = (u) => {
+  const kode = String(u.kode || "").toUpperCase();
+  return [
+    String(u.bagian || "").toUpperCase(),
+    u.divisi ?? "",
+    u.cabang ?? "",
+    u.cabangGarmen ?? "",
+    kode === "ADMIN" || GUDANG_BAHAN_USER_EXCEPTION.includes(kode) ? kode : "",
+  ].join("|");
+};
+
+const cached =
+  (name, ttlMs, fn) =>
+  (...args) => {
+    const [user, ...rest] = args;
+    const key = `${name}|${scopeUser(user || {})}|${JSON.stringify(rest)}`;
+    return memo(key, ttlMs, () => fn(...args), name);
+  };
+
+const MIN = 60 * 1000;
+const CACHED = {
+  // ── Overview ──
+  getSoSummary: CACHE_TTL,
+  getSoAktifTrend: CACHE_TTL,
+  getTrendSpk7Hari: CACHE_TTL,
+  getApprovalPendingCount: CACHE_TTL,
+  getSaldoKas: CACHE_TTL,
+  getCompanyPulseSummary: CACHE_TTL,
+
+  // ── Marketing ──
+  getPenawaranSummary: CACHE_TTL,
+  getPenawaranBelumSpk: CACHE_TTL,
+  getPenawaranBelumMap: CACHE_TTL,
+  getPenawaranMapSummary: CACHE_TTL,
+  getPenawaranBatalSummary: CACHE_TTL,
+  getPenawaranBatalList: CACHE_TTL,
+  getKunjunganSalesSummary: CACHE_TTL,
+  getEffectiveCallingDetail: CACHE_TTL,
+  getRealisasiPenawaranDashboard: CACHE_TTL,
+  getRealisasiPenawaranDetail: CACHE_TTL,
+  getRealisasiPenawaranToMap: CACHE_TTL,
+  getRealisasiMapToSo: CACHE_TTL,
+  getRealisasiPenawaranToMapDetail: CACHE_TTL,
+  getRealisasiMapToSoDetail: CACHE_TTL,
+  getMapVsSpkDashboard: CACHE_TTL,
+  getMapVsSjDashboard: CACHE_TTL,
+  getMapBelumSo: CACHE_TTL,
+  getMapBelumKirim: CACHE_TTL,
+  getProyeksiVsRealisasiSummary: CACHE_TTL,
+  getTargetCollectionSales: 5 * MIN,
+  getAchievementSummary: 5 * MIN,
+  getAchievementMonthly: 10 * MIN,
+  getGrowthYoy: 10 * MIN,
+  getRealisasiPenawaranBulanan: 10 * MIN,
+  getStatusPengirimanMapBulanan: 10 * MIN,
+  getStokSlowDeadStockBahan: 15 * MIN,
+  getKonversiBabaranAktual: 30 * MIN,
+
+  // ── Finance ──
+  getPiutangDashboard: CACHE_TTL,
+  getPiutangOverdue: CACHE_TTL,
+  getPenerimaanSummary: CACHE_TTL,
+  getSpkTerkirimBelumTagihSummary: CACHE_TTL,
+  getSpkTerkirimBelumTagihList: CACHE_TTL,
+
+  // ── Gudang Bahan ──
+  getGudangBahanDashboard: CACHE_TTL,
+  getGudangBahanBuffer: CACHE_TTL,
+  getGudangBahanBarcode: CACHE_TTL,
+  getBahanKurangCount: CACHE_TTL,
+  getBahanKurangList: CACHE_TTL,
+  getSpkBelumMkbCount: CACHE_TTL,
+  getSpkBelumMkbListPaged: CACHE_TTL,
+  getMapSpkBelumPermintaanSummary: CACHE_TTL,
+  getMapSpkBelumPermintaanList: CACHE_TTL,
+  getPermintaanBelumRealisasiSummary: CACHE_TTL,
+  getPermintaanBelumRealisasiList: CACHE_TTL,
+  getPoBahanBelumDatangSummary: CACHE_TTL,
+  getPoBahanBelumDatangList: CACHE_TTL,
+  getStokBebasSummary: CACHE_TTL,
+  getStokBebasList: CACHE_TTL,
+  getBufferKaosanSummary: CACHE_TTL,
+  getBufferKaosanList: CACHE_TTL,
+
+  // ── Gudang Garmen ──
+  getPoBahanVsBpbSummary: CACHE_TTL,
+  getPoJasaVsBpjSummary: CACHE_TTL,
+  getPipelineSpkProduksi: CACHE_TTL,
+  getPipelinePenyelesaianSpk: CACHE_TTL,
+  getSpkVsStbjSummary: CACHE_TTL,
+  getSpkVsStbjList: CACHE_TTL,
+  getSpkVsSjSummary: CACHE_TTL,
+  getSpkVsSjList: CACHE_TTL,
+
+  // ── Pembelian ──
+  getOutstandingBeliSummary: CACHE_TTL,
+  getOutstandingBeliList: CACHE_TTL,
+};
+
+for (const [name, ttl] of Object.entries(CACHED)) {
+  if (typeof module.exports[name] !== "function") {
+    console.warn(`[CACHE] fungsi tidak ditemukan, dilewati: ${name}`);
+    continue;
+  }
+  module.exports[name] = cached(name, ttl, module.exports[name]);
+}
+
+module.exports.memo = memo;
+module.exports.clearCache = clearCache;
+module.exports.cacheStats = cacheStats;
+
+// Hangatkan data barang jadi saat server baru menyala
+setTimeout(() => {
+  module.exports
+    .getBarangJadiMetric({ kode: "ADMIN", bagian: "ADMIN" })
+    .catch(() => {});
+}, 5000);

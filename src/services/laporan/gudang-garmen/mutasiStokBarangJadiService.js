@@ -24,48 +24,38 @@ const getBrowse = async (
         b.brg_kode   AS Kode,
         b.brg_name   AS Nama,
         b.brg_ukuran AS Ukuran,
-        IFNULL((
-          SELECT SUM(m.mst_stok_in - m.mst_stok_out)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal < ? AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS StokAwal,
-        IFNULL((
-          SELECT SUM(m.mst_stok_in)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal >= ? AND m.mst_tanggal <= ?
-            AND LEFT(m.mst_noreferensi, 4) = 'STBJ' AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS Stbj,
-        IFNULL((
-          SELECT SUM(m.mst_stok_in)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal >= ? AND m.mst_tanggal <= ?
-            AND LEFT(m.mst_noreferensi, 3) = 'BJM' AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS MutasiMasuk,
-        IFNULL((
-          SELECT SUM(m.mst_stok_in)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal >= ? AND m.mst_tanggal <= ?
-            AND LEFT(m.mst_noreferensi, 3) = 'KOR' AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS Koreksi,
-        IFNULL((
-          SELECT SUM(m.mst_stok_out)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal >= ? AND m.mst_tanggal <= ?
-            AND LEFT(m.mst_noreferensi, 2) = 'SG' AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS SuratJalan,
-        IFNULL((
-          SELECT SUM(m.mst_stok_out)
-          FROM tmasterstok_jadi m
-          WHERE m.mst_gdg_kode LIKE ?
-            AND m.mst_tanggal >= ? AND m.mst_tanggal <= ?
-            AND LEFT(m.mst_noreferensi, 3) = 'BJK' AND m.mst_brg_kode = b.brg_kode
-        ), 0) AS MutasiKeluar
+        IFNULL(a.StokAwal, 0)     AS StokAwal,
+        IFNULL(a.Stbj, 0)         AS Stbj,
+        IFNULL(a.MutasiMasuk, 0)  AS MutasiMasuk,
+        IFNULL(a.Koreksi, 0)      AS Koreksi,
+        IFNULL(a.SuratJalan, 0)   AS SuratJalan,
+        IFNULL(a.MutasiKeluar, 0) AS MutasiKeluar
       FROM tbarang b
+      LEFT JOIN (
+        SELECT
+          m.mst_brg_kode,
+          SUM(CASE WHEN m.mst_tanggal < ?
+                   THEN m.mst_stok_in - m.mst_stok_out ELSE 0 END) AS StokAwal,
+          SUM(CASE WHEN m.mst_tanggal >= ? AND m.mst_tanggal <= ?
+                    AND LEFT(m.mst_noreferensi, 4) = 'STBJ'
+                   THEN m.mst_stok_in ELSE 0 END) AS Stbj,
+          SUM(CASE WHEN m.mst_tanggal >= ? AND m.mst_tanggal <= ?
+                    AND LEFT(m.mst_noreferensi, 3) = 'BJM'
+                   THEN m.mst_stok_in ELSE 0 END) AS MutasiMasuk,
+          SUM(CASE WHEN m.mst_tanggal >= ? AND m.mst_tanggal <= ?
+                    AND LEFT(m.mst_noreferensi, 3) = 'KOR'
+                   THEN m.mst_stok_in ELSE 0 END) AS Koreksi,
+          SUM(CASE WHEN m.mst_tanggal >= ? AND m.mst_tanggal <= ?
+                    AND LEFT(m.mst_noreferensi, 2) = 'SG'
+                   THEN m.mst_stok_out ELSE 0 END) AS SuratJalan,
+          SUM(CASE WHEN m.mst_tanggal >= ? AND m.mst_tanggal <= ?
+                    AND LEFT(m.mst_noreferensi, 3) = 'BJK'
+                   THEN m.mst_stok_out ELSE 0 END) AS MutasiKeluar
+        FROM tmasterstok_jadi m
+        WHERE m.mst_gdg_kode LIKE ?
+          AND m.mst_tanggal <= ?
+        GROUP BY m.mst_brg_kode
+      ) a ON a.mst_brg_kode = b.brg_kode
       WHERE b.brg_divisi IN (3,4,6)
     ) x
     ${
@@ -77,22 +67,18 @@ const getBrowse = async (
   `;
 
   const params = [
-    gdgLike,
+    startDate, // StokAwal
     startDate,
-    gdgLike,
+    endDate, // Stbj
     startDate,
-    endDate,
-    gdgLike,
+    endDate, // MutasiMasuk
     startDate,
-    endDate,
-    gdgLike,
+    endDate, // Koreksi
     startDate,
-    endDate,
-    gdgLike,
+    endDate, // SuratJalan
     startDate,
-    endDate,
+    endDate, // MutasiKeluar
     gdgLike,
-    startDate,
     endDate,
   ];
 
