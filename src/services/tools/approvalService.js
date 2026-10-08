@@ -588,11 +588,11 @@ const getPerubahanDataList = async (query) => {
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
-  // ⬅ UBAH: sekarang mencakup 2 jenis — "UBAH" (SPK PPIC turunan
-  // closed) dan "TUTUPBUKU" (SO/SPK yang tanggalnya sudah lewat
-  // periode tutup buku). Keduanya sama-sama alur "Pengajuan Perubahan
-  // Data" di menu 259, dibedakan lewat kolom Jenis yang di-return.
-  let sqlCondition = ` WHERE p.pin_jenis IN ("UBAH", "TUTUPBUKU") AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
+  // Mencakup 3 jenis "Pengajuan Perubahan Data": "UBAH" (SPK PPIC
+  // turunan closed), "TUTUPBUKU" (tanggal lewat periode tutup buku),
+  // dan "INVOICE" (SO sudah diinvoice, mau ubah harga). Dibedakan
+  // lewat kolom Jenis yang di-return.
+  let sqlCondition = ` WHERE p.pin_jenis IN ("UBAH", "TUTUPBUKU", "INVOICE") AND DATE(p.pin_tgl_minta) >= ? AND DATE(p.pin_tgl_minta) <= ? `;
 
   if (belumAccSaja === "true" || belumAccSaja === true) {
     sqlCondition += ` AND p.pin_acc = "" `;
@@ -628,11 +628,11 @@ const submitPerubahanDataOtorisasi = async (
   nomor,
   transaksi,
   urut,
-  jenis, // ⬅ BARU: "UBAH" atau "TUTUPBUKU"
+  jenis, // "UBAH", "TUTUPBUKU", atau "INVOICE"
   statusAcc,
   userKode,
 ) => {
-  if (!["UBAH", "TUTUPBUKU"].includes(jenis)) {
+  if (!["UBAH", "TUTUPBUKU", "INVOICE"].includes(jenis)) {
     throw new Error("Jenis approval tidak dikenal.");
   }
 

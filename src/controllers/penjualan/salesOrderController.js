@@ -257,11 +257,12 @@ const saveRevisi = async (req, res) => {
 
 const requestRevisiPin = async (req, res) => {
   try {
-    const { alasan } = req.body;
+    const { alasan, jenis } = req.body;
     const result = await service.requestRevisiPin(
       req.params.nomor,
       alasan,
       req.user.kode,
+      jenis || "TUTUPBUKU",
     );
     res.json({
       success: true,

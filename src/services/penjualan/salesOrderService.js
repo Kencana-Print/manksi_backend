@@ -452,6 +452,15 @@ const requestPin = async (nomor, alasan, userKode) => {
   const needsTutupBukuApproval = !!(
     zdtClose && new Date(spk[0].spk_tanggal) < zdtClose
   );
+  // Kondisi 3: SO sudah diinvoice dan tidak punya SPK PPIC (kalau punya,
+  // pengajuan harga lewat dialog Revisi SO)
+  const needsInvoiceApproval = !ppic && (await isSoInvoiced(nomor, null));
+
+  if (!needsPpicApproval && !needsTutupBukuApproval && !needsInvoiceApproval) {
+    throw new Error(
+      "SO ini tidak sedang terkena kondisi apa pun yang butuh Pengajuan Perubahan Data.",
+    );
+  }
 
   if (!needsPpicApproval && !needsTutupBukuApproval) {
     throw new Error(
@@ -518,6 +527,14 @@ const requestPin = async (nomor, alasan, userKode) => {
     } else {
       await insertPinFor("TUTUPBUKU");
       jenisdiajukan.push("TUTUPBUKU");
+    }
+  }
+  if (needsInvoiceApproval) {
+    if (await hasApprovedUnused("INVOICE")) {
+      jenisSudahSiap.push("INVOICE");
+    } else {
+      await insertPinFor("INVOICE");
+      jenisdiajukan.push("INVOICE");
     }
   }
 
@@ -969,15 +986,28 @@ const searchAvailableForSpk = async (
 // di-ACC di satu jalur juga otomatis berlaku di jalur lainnya).
 // ============================================================
 
-const getApprovedTutupBukuPinSO = async (nomor) => {
+const getApprovedPinSO = async (nomor, jenis) => {
   const [rows] = await db.query(
     `SELECT pin_urut FROM tspk_pin5
-     WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=?
+     WHERE pin_trs="SO" AND pin_jenis=? AND pin_nomor=?
        AND pin_acc="Y" AND pin_dipakai=""
      ORDER BY pin_urut DESC LIMIT 1`,
-    [nomor],
+    [jenis, nomor],
   );
   return rows.length > 0 ? rows[0].pin_urut : null;
+};
+
+const getApprovedTutupBukuPinSO = (nomor) =>
+  getApprovedPinSO(nomor, "TUTUPBUKU");
+
+// SO dianggap sudah diinvoice kalau ada baris invoice yang merujuk
+// nomor SO-nya atau nomor SPK PPIC turunannya.
+const isSoInvoiced = async (nomor, ppicNomor) => {
+  const [rows] = await db.query(
+    `SELECT 1 FROM tinv_dtl WHERE invd_spk_nomor IN (?, ?) LIMIT 1`,
+    [nomor, ppicNomor || nomor],
+  );
+  return rows.length > 0;
 };
 
 // --- GET DETAIL UNTUK DIALOG REVISI ---
@@ -1046,6 +1076,11 @@ const getRevisiDetail = async (nomor) => {
     ? await getApprovedTutupBukuPinSO(nomor)
     : null;
 
+  const isInvoiced = await isSoInvoiced(nomor, ppic.spk_nomor);
+  const approvedInvoiceUrut = isInvoiced
+    ? await getApprovedPinSO(nomor, "INVOICE")
+    : null;
+
   return {
     nomorPo: rows[0].nomorPo || "",
     tglPo: rows[0].tglPo,
@@ -1063,6 +1098,8 @@ const getRevisiDetail = async (nomor) => {
     spkPpic: ppic.spk_nomor,
     isTutupBuku,
     canSaveNow: !isTutupBuku || !!approvedUrut,
+    isInvoiced,
+    canEditHarga: !isInvoiced || !!approvedInvoiceUrut,
   };
 };
 
@@ -1071,8 +1108,16 @@ const getRevisiDetail = async (nomor) => {
 // kondisi "SPK PPIC turunan closed" (pin_jenis "UBAH"), yang TIDAK
 // relevan untuk alur Revisi ini (Revisi memang sengaja bypass itu).
 // Fungsi ini HANYA peduli status tutup buku.
-const requestRevisiPin = async (nomor, alasan, userKode) => {
+const requestRevisiPin = async (
+  nomor,
+  alasan,
+  userKode,
+  jenis = "TUTUPBUKU",
+) => {
   if (!alasan || !alasan.trim()) throw new Error("Alasan wajib diisi.");
+  if (!["TUTUPBUKU", "INVOICE"].includes(jenis)) {
+    throw new Error("Jenis pengajuan tidak valid.");
+  }
 
   const loc = await resolveSoLocation(nomor);
   if (!loc) throw new Error("SO tidak ditemukan.");
@@ -1089,26 +1134,32 @@ const requestRevisiPin = async (nomor, alasan, userKode) => {
         );
   if (!spk[0]) throw new Error("Data SO tidak ditemukan.");
 
-  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
-  const needsTutupBukuApproval = !!(
-    zdtClose && new Date(spk[0].tanggal) < zdtClose
-  );
-  if (!needsTutupBukuApproval) {
-    throw new Error(
-      "SO ini tidak berada pada periode yang sudah ditutup buku. Revisi bisa langsung disimpan tanpa pengajuan.",
+  if (jenis === "TUTUPBUKU") {
+    const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+    if (!(zdtClose && new Date(spk[0].tanggal) < zdtClose)) {
+      throw new Error(
+        "SO ini tidak berada pada periode yang sudah ditutup buku. Revisi bisa langsung disimpan tanpa pengajuan.",
+      );
+    }
+  } else {
+    const [[ppic]] = await db.query(
+      `SELECT spk_nomor FROM tspk WHERE spk_so_ref = ? AND spk_is_so = 0 LIMIT 1`,
+      [nomor],
     );
+    if (!(await isSoInvoiced(nomor, ppic?.spk_nomor))) {
+      throw new Error("SO ini belum diinvoice. Harga bisa langsung direvisi.");
+    }
   }
 
-  const existingApproved = await getApprovedTutupBukuPinSO(nomor);
-  if (existingApproved) {
+  if (await getApprovedPinSO(nomor, jenis)) {
     return { alreadyApproved: true };
   }
 
   const [lastPin] = await db.query(
     `SELECT pin_urut, pin_dipakai FROM tspk_pin5
-     WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=?
+     WHERE pin_trs="SO" AND pin_jenis=? AND pin_nomor=?
      ORDER BY pin_urut DESC LIMIT 1`,
-    [nomor],
+    [jenis, nomor],
   );
   let urut = 1;
   if (lastPin.length > 0) {
@@ -1121,11 +1172,11 @@ const requestRevisiPin = async (nomor, alasan, userKode) => {
   await db.query(
     `INSERT INTO tspk_pin5
        (pin_trs, pin_nomor, pin_urut, pin_jenis, pin_tgl_trs, pin_ket, pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ("SO", ?, ?, "TUTUPBUKU", ?, ?, NOW(), ?, ?)
+     VALUES ("SO", ?, ?, ?, ?, ?, NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        pin_acc="", pin_tgl_minta=NOW(),
        pin_user_minta=VALUES(pin_user_minta), pin_alasan=VALUES(pin_alasan)`,
-    [nomor, urut, spk[0].tanggal, spk[0].nama, userKode, alasan],
+    [nomor, urut, jenis, spk[0].tanggal, spk[0].nama, userKode, alasan],
   );
 
   return { alreadyApproved: false, urut };
@@ -1167,7 +1218,8 @@ const saveRevisi = async (nomor, payload, user) => {
   const nomorCol = loc === "new" ? "so_nomor" : "spk_nomor";
 
   const [[hdr]] = await db.query(
-    `SELECT ${prefix}tanggal AS tanggal, ${prefix}pen_nomor AS oldPenNomor, ${prefix}pen_id AS oldPenId
+    `SELECT ${prefix}tanggal AS tanggal, ${prefix}pen_nomor AS oldPenNomor, ${prefix}pen_id AS oldPenId,
+            ${prefix}harga AS oldHarga, ${prefix}hargariil AS oldHargaRiil, ${prefix}hargafee AS oldHargaFee
      FROM ${table} WHERE ${nomorCol} = ?`,
     [nomor],
   );
@@ -1181,6 +1233,21 @@ const saveRevisi = async (nomor, payload, user) => {
     if (!approvedUrut) {
       throw new Error(
         "Periode SO ini sudah ditutup buku. Ajukan Pengajuan Perubahan Data terlebih dahulu dan tunggu ACC sebelum menyimpan Revisi.",
+      );
+    }
+  }
+
+  const hargaBerubah =
+    Number(hdr.oldHarga || 0) !== (Number(hargaJual) || 0) ||
+    Number(hdr.oldHargaRiil || 0) !== (Number(hargaRiil) || 0) ||
+    Number(hdr.oldHargaFee || 0) !== (Number(hargaFee) || 0);
+
+  let approvedInvoiceUrut = null;
+  if (hargaBerubah && (await isSoInvoiced(nomor, ppic.spk_nomor))) {
+    approvedInvoiceUrut = await getApprovedPinSO(nomor, "INVOICE");
+    if (!approvedInvoiceUrut) {
+      throw new Error(
+        "SO ini sudah diinvoice, harga terkunci. Info ke Accounting, lalu ajukan Pengajuan Perubahan Data dan tunggu ACC sebelum mengubah harga.",
       );
     }
   }
@@ -1310,6 +1377,15 @@ const saveRevisi = async (nomor, payload, user) => {
       ],
     );
 
+    // Sinkron harga ke master barang — saat SO dibuat, tbarang digenerate
+    // dengan brg_kode = nomor SO. UPDATE (bukan DELETE+INSERT) supaya kolom
+    // lain di tbarang tidak ikut ter-reset. Nomor SPK PPIC ikut dicakup;
+    // kalau tidak punya baris di tbarang, UPDATE-nya tidak berefek apa-apa.
+    await conn.query(
+      `UPDATE tbarang SET brg_harga = ? WHERE brg_kode IN (?, ?)`,
+      [Number(hargaJual) || 0, nomor, ppic.spk_nomor],
+    );
+
     // ⬅ BARU: sinkron status tpenawaran_dtl — sama seperti auto-close
     // di salesOrderFormService.saveData() saat SO dibuat, tapi di
     // Revisi ini penawaran lama bisa diganti dengan yang baru, jadi
@@ -1339,6 +1415,14 @@ const saveRevisi = async (nomor, payload, user) => {
         `UPDATE tspk_pin5 SET pin_dipakai="Y"
          WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=? AND pin_urut=?`,
         [nomor, approvedUrut],
+      );
+    }
+
+    if (approvedInvoiceUrut) {
+      await conn.query(
+        `UPDATE tspk_pin5 SET pin_dipakai="Y"
+         WHERE pin_trs="SO" AND pin_jenis="INVOICE" AND pin_nomor=? AND pin_urut=?`,
+        [nomor, approvedInvoiceUrut],
       );
     }
 

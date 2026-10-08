@@ -92,6 +92,31 @@ const getApprovedTutupBukuPin = async (conn, nomor) => {
   return rows.length > 0 ? rows[0].pin_urut : null;
 };
 
+// Approval khusus kunci harga SO yang sudah diinvoice (pin_jenis="INVOICE").
+// Independen dari "UBAH" (SPK PPIC) dan "TUTUPBUKU".
+const getApprovedInvoicePin = async (conn, nomor) => {
+  const runner = conn || db;
+  const [rows] = await runner.query(
+    `SELECT pin_urut FROM tspk_pin5
+     WHERE pin_trs="SO" AND pin_jenis="INVOICE" AND pin_nomor=?
+       AND pin_acc="Y" AND pin_dipakai=""
+     ORDER BY pin_urut DESC LIMIT 1`,
+    [nomor],
+  );
+  return rows.length > 0 ? rows[0].pin_urut : null;
+};
+
+// SO dianggap sudah diinvoice kalau ada baris invoice yang merujuk
+// nomor SO atau nomor SPK PPIC turunannya.
+const isSoInvoiced = async (conn, nomor, ppicNomor) => {
+  const runner = conn || db;
+  const [rows] = await runner.query(
+    `SELECT 1 FROM tinv_dtl WHERE INVD_Spk_Nomor IN (?, ?) LIMIT 1`,
+    [nomor, ppicNomor || nomor],
+  );
+  return rows.length > 0;
+};
+
 // Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di SO).
 // Dicari lewat nomor SO sendiri, atau nomor MAP yang dipakai SO (prioritas SO).
 const getPdLink = async (nomor, memo = "", fallbackLhk = "") => {
@@ -291,6 +316,11 @@ const getDetailFromNew = async (nomor, headerRows) => {
   header[0].SpkPpicClose = ppicInfo.SpkPpicClose;
   header[0].Ngedit = ppicInfo.Ngedit;
   header[0].HasApprovedUbah = ppicInfo.HasApprovedUbah;
+  const invoiced = await isSoInvoiced(null, nomor, ppicInfo.SpkPpic);
+  header[0].IsInvoiced = invoiced ? 1 : 0;
+  header[0].HasApprovedInvoice = invoiced
+    ? !!(await getApprovedInvoicePin(null, nomor))
+    : false;
   Object.assign(
     header[0],
     await getPdLink(nomor, header[0].spk_memo, header[0].spk_lhk_nomor),
@@ -581,6 +611,7 @@ const saveData = async (payload, user) => {
 
   let approvedUbahPin = null; // khusus gate SPK PPIC (pin_jenis="UBAH")
   let approvedTutupBukuUrut = null; // khusus gate tutup buku (pin_jenis="TUTUPBUKU")
+  let approvedInvoiceUrut = null;
   let ppicInfo = null;
 
   const conn = await db.getConnection();
@@ -766,7 +797,8 @@ const saveData = async (payload, user) => {
       ]);
     } else {
       const [existingRows] = await conn.query(
-        `SELECT so_acc_customer, so_cmo FROM tsalesorder WHERE so_nomor = ?`,
+        `SELECT so_acc_customer, so_cmo, so_harga, so_hargariil, so_hargafee
+         FROM tsalesorder WHERE so_nomor = ?`,
         [nomor],
       );
       const existingData = existingRows[0] || {};
@@ -802,6 +834,25 @@ const saveData = async (payload, user) => {
           `SPK PPIC turunan sudah di-close. Silakan ajukan "Pengajuan Perubahan Data" ` +
             `(menu Tindakan) dan tunggu ACC sebelum mengubah SO ini.`,
         );
+      }
+      // GATE 3: harga berubah pada SO yang sudah diinvoice → wajib ada
+      // ACC "Pengajuan Perubahan Data" jenis INVOICE. Accounting
+      // menyesuaikan invoicenya sendiri; ini hanya mengunci SO.
+      const hargaBerubah =
+        Number(existingData.so_harga || 0) !== Number(header.spk_harga || 0) ||
+        Number(existingData.so_hargariil || 0) !==
+          Number(header.spk_hargariil || 0) ||
+        Number(existingData.so_hargafee || 0) !==
+          Number(header.spk_hargafee || 0);
+
+      if (hargaBerubah && (await isSoInvoiced(conn, nomor, ppicInfo.SpkPpic))) {
+        approvedInvoiceUrut = await getApprovedInvoicePin(conn, nomor);
+        if (!approvedInvoiceUrut) {
+          throw new Error(
+            "SO ini sudah diinvoice, harga terkunci. Info ke Accounting, lalu ajukan " +
+              '"Pengajuan Perubahan Data" (Revisi SO) dan tunggu ACC sebelum mengubah harga.',
+          );
+        }
       }
       // Divisi 3 (Kaosan) dikecualikan dari gate persetujuan customer
       if (!header.spk_memo && divisiStr !== "3") {
@@ -1130,6 +1181,13 @@ const saveData = async (payload, user) => {
       await conn.query(
         `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_jenis="TUTUPBUKU" AND pin_nomor=? AND pin_urut=?`,
         [nomor, approvedTutupBukuUrut],
+      );
+    }
+
+    if (approvedInvoiceUrut) {
+      await conn.query(
+        `UPDATE tspk_pin5 SET pin_dipakai="Y" WHERE pin_trs="SO" AND pin_jenis="INVOICE" AND pin_nomor=? AND pin_urut=?`,
+        [nomor, approvedInvoiceUrut],
       );
     }
 
