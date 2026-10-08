@@ -1664,8 +1664,10 @@ const getPotensiSourceOptions = async (
   }
   let custFilter = "";
   if (namaCustomer) {
-    custFilter = "AND src.cus_nama LIKE ?";
-    params.push(`%${namaCustomer}%`);
+    custFilter =
+      "AND (src.cus_nama LIKE ? OR src.Nomor LIKE ? OR src.NamaItem LIKE ?)";
+    const like = `%${namaCustomer}%`;
+    params.push(like, like, like);
   }
 
   const SELESAI_SUBQUERY = `
