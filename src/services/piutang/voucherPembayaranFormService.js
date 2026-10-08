@@ -432,7 +432,8 @@ const getDetailForm = async (nomor) => {
   // Bahan tambahan
   const [dtl2] = await db.query(
     `SELECT voud2_nama AS nama, voud2_satuan AS satuan,
-            voud2_jumlah AS jumlah, voud2_harga AS harga
+            voud2_jumlah AS jumlah, voud2_harga AS harga,
+            voud2_tambah AS tambah
      FROM tvoucher_dtl2
      WHERE voud2_vou_nomor = ?`,
     [nomor],
@@ -443,6 +444,7 @@ const getDetailForm = async (nomor) => {
     jumlah: Number(r.jumlah),
     harga: Number(r.harga),
     nilai: Number(r.jumlah) * Number(r.harga),
+    tambah: Number(r.tambah) === 1,
   }));
 
   // cekClose / pin5 status — Delphi cekClose, sekarang pakai
@@ -663,9 +665,16 @@ const save = async (payload, userKode) => {
       if (b.nama) {
         await conn.query(
           `INSERT INTO tvoucher_dtl2
-             (voud2_vou_nomor, voud2_nama, voud2_satuan, voud2_harga, voud2_jumlah)
-           VALUES (?, ?, ?, ?, ?)`,
-          [anomor, b.nama, b.satuan || "", Number(b.harga), Number(b.jumlah)],
+             (voud2_vou_nomor, voud2_nama, voud2_satuan, voud2_harga, voud2_jumlah, voud2_tambah)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            anomor,
+            b.nama,
+            b.satuan || "",
+            Number(b.harga),
+            Number(b.jumlah),
+            b.tambah ? 1 : 0,
+          ],
         );
       }
     }

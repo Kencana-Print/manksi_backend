@@ -438,8 +438,9 @@ const saveData = async (payload, user) => {
         throw new Error(`Account ${d.rekkode} pada "${d.uraian}" tidak aktif.`);
     }
   }
-
+  const conn = await db.getConnection();
   try {
+    await conn.beginTransaction();
     const totalTerpakai = detail.reduce(
       (s, d) => s + (d.verified && d.total > 0 ? d.total : 0),
       0,

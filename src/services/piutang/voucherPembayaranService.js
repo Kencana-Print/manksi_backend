@@ -18,12 +18,12 @@ const getBrowse = async (startDate, endDate) => {
        IFNULL(a.vou_nomor_pajak, '')                      AS NomorPajak,
        a.vou_total                                        AS Total,
        IFNULL((
-         SELECT SUM(d2.voud2_harga * d2.voud2_jumlah)
+         SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
        ), 0)                                              AS BahanTambahan,
        a.vou_total - IFNULL((
-         SELECT SUM(d2.voud2_harga * d2.voud2_jumlah)
+         SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
        ), 0)                                              AS Net,
@@ -302,7 +302,7 @@ const getPrintData = async (nomor) => {
          WHERE bpj_nomor = d.voud_nota
        ), '')                                         AS nomor_po,
        IFNULL((
-         SELECT SUM(voud2_harga * voud2_jumlah)
+         SELECT SUM(IF(voud2_tambah = 1, -1, 1) * voud2_harga * voud2_jumlah)
          FROM tvoucher_dtl2
          WHERE voud2_vou_nomor = h.vou_nomor
        ), 0)                                          AS bahan_tambahan
@@ -315,7 +315,26 @@ const getPrintData = async (nomor) => {
     [nomor],
   );
   if (!rows.length) throw new Error("Data tidak ditemukan.");
-  return rows;
+
+  const [bahan] = await db.query(
+    `SELECT voud2_nama AS nama, voud2_satuan AS satuan,
+            voud2_jumlah AS jumlah, voud2_harga AS harga,
+            voud2_tambah AS tambah
+     FROM tvoucher_dtl2
+     WHERE voud2_vou_nomor = ?`,
+    [nomor],
+  );
+  // Bentuk respons tetap berupa array baris, jadi controller tidak berubah.
+  // Daftar bahan dilampirkan di setiap baris dan dibaca dari baris pertama.
+  const bahanList = bahan.map((b) => ({
+    nama: b.nama,
+    satuan: b.satuan,
+    jumlah: Number(b.jumlah),
+    harga: Number(b.harga),
+    nilai: Number(b.jumlah) * Number(b.harga),
+    tambah: Number(b.tambah) === 1,
+  }));
+  return rows.map((r) => ({ ...r, bahan: bahanList }));
 };
 
 // Khusus filter pending dari dashboard — semua periode, belum ada PT
