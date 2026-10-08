@@ -1,3 +1,4 @@
+const { AsyncLocalStorage } = require("node:async_hooks");
 const db = require("../../config/database");
 const outstandingPoMitraService = require("../laporan/gudang-garmen/outstandingPoMitraService");
 const standartBabaranVsRealisasiService = require("../laporan/gudang-garmen/standartBabaranVsRealisasiService");
@@ -26,6 +27,17 @@ const logSlow = (label, t0) => {
   if (ms > 500) console.warn(`[SLOW] ${label}: ${ms} ms`);
 };
 
+// ── Mode request: ?fresh=1 / header X-Fresh melewati simpanan ──
+const _reqCtx = new AsyncLocalStorage();
+const runWithCacheMode = (fresh, fn) => _reqCtx.run({ fresh }, fn);
+const isFreshReq = () => _reqCtx.getStore()?.fresh === true;
+
+const FRESH_MIN_AGE = 5 * 1000; // klik Refresh beruntun tidak menghitung ulang dua kali
+const ADAPTIVE_FACTOR = 40; // TTL minimal = lama hitung × 40
+const ADAPTIVE_MAX = 15 * 60 * 1000;
+const effTtl = (e) =>
+  Math.min(Math.max(e.ttl, (e.dur || 0) * ADAPTIVE_FACTOR), ADAPTIVE_MAX);
+
 const refreshEntry = (key, e) => {
   if (e.refreshing) return e.refreshing;
   const t0 = Date.now();
@@ -35,8 +47,9 @@ const refreshEntry = (key, e) => {
       if (_cache.get(key) === e) {
         e.value = value;
         e.born = Date.now();
+        e.dur = e.born - t0;
       }
-      logSlow(e.label, t0);
+      logSlow(`${e.label} (bg)`, t0);
     })
     .catch((err) => {
       console.error(`[CACHE] gagal memperbarui ${e.label}: ${err.message}`);
@@ -47,30 +60,15 @@ const refreshEntry = (key, e) => {
   return e.refreshing;
 };
 
-const memo = (key, ttlMs, loader, label = key) => {
-  const now = Date.now();
-  const e = _cache.get(key);
-
-  if (e) {
-    e.last = now;
-    e.loader = loader;
-    e.ttl = ttlMs;
-    if (e.pending) return e.pending;
-    const age = now - e.born;
-    if (age < ttlMs) return Promise.resolve(e.value);
-    if (age < ttlMs + STALE_GRACE) {
-      refreshEntry(key, e); // diam-diam, user tidak menunggu
-      return Promise.resolve(e.value);
-    }
-    _cache.delete(key); // terlalu basi: hitung ulang
-  }
-
+const startEntry = (key, ttlMs, loader, label, prev) => {
+  const t0 = Date.now();
   const entry = {
     ttl: ttlMs,
     loader,
     label,
-    last: now,
+    last: t0,
     born: 0,
+    dur: 0,
     value: undefined,
     pending: null,
     refreshing: null,
@@ -80,16 +78,47 @@ const memo = (key, ttlMs, loader, label = key) => {
     .then((value) => {
       entry.value = value;
       entry.born = Date.now();
+      entry.dur = entry.born - t0;
       entry.pending = null;
-      logSlow(label, now);
+      logSlow(label, t0);
       return value;
     })
     .catch((err) => {
-      if (_cache.get(key) === entry) _cache.delete(key);
+      if (_cache.get(key) === entry) {
+        if (prev)
+          _cache.set(key, prev); // refresh gagal: pertahankan data lama
+        else _cache.delete(key);
+      }
       throw err;
     });
   _cache.set(key, entry);
   return entry.pending;
+};
+
+const memo = (key, ttlMs, loader, label = key, force = isFreshReq()) => {
+  const now = Date.now();
+  const e = _cache.get(key);
+
+  // Refresh hanya melewati simpanan jika data bukan baru saja dihitung / sedang dihitung
+  const bypass =
+    force && !(e && (e.pending || (e.born && now - e.born < FRESH_MIN_AGE)));
+
+  if (e && !bypass) {
+    e.last = now;
+    e.loader = loader;
+    e.ttl = ttlMs;
+    if (e.pending) return e.pending;
+    const age = now - e.born;
+    const ttl = effTtl(e);
+    if (age < ttl) return Promise.resolve(e.value);
+    if (age < ttl + STALE_GRACE) {
+      refreshEntry(key, e); // diam-diam, user tidak menunggu
+      return Promise.resolve(e.value);
+    }
+    _cache.delete(key); // terlalu basi: hitung ulang
+  }
+
+  return startEntry(key, ttlMs, loader, label, bypass ? e : undefined);
 };
 const memoSwr = memo; // semua pemanggil lama otomatis ikut pola baru
 
@@ -127,7 +156,7 @@ const warmTick = async () => {
       if (e.pending || e.refreshing || !e.born) continue;
       const now = Date.now();
       if (!morning && now - e.last > ACTIVE_WINDOW) continue; // tak ada yang membuka
-      if (now - e.born < e.ttl * 0.7) continue; // masih segar
+      if (now - e.born < effTtl(e) * 0.7) continue; // masih segar
       await refreshEntry(key, e); // berurutan, satu per satu
     }
   } finally {
@@ -4825,62 +4854,65 @@ const bahanKurangBaseQuery = `
   WHERE sp.spk_nomor IS NOT NULL OR mm.mspk_nomor IS NOT NULL
 `;
 
-const getBahanKurangCount = async (user) => {
+const bahanKurangAllowed = (user) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return { total: 0 };
-
-  const sql = `SELECT COUNT(DISTINCT y.Nomor) AS Total FROM (${bahanKurangBaseQuery}) y WHERE y.Kurang > 0`;
-  const [rows] = await db.query(sql);
-  return { total: rows[0]?.Total || 0 };
+  return (
+    ["PEMBELIAN", "GUDANG", "PPIC"].includes(bagian) || isSuperViewer(user)
+  );
 };
 
-// ── List ber-paginasi: langkah 1 ambil SPK page (Nomor, NamaSpk,
-// JmlBahanKurang), langkah 2 ambil detail bahan utk SPK di page itu
-// (WHERE Nomor IN (...)), lalu digabung jadi nested array bahanList
-// per SPK. 2 query per page, bukan N+1. ──
+const loadBahanKurang = () =>
+  memo(
+    "bahankurang:all",
+    CACHE_TTL,
+    async () => {
+      const [rows] = await db.query(`
+        SELECT y.Nomor, y.NamaSpk, y.Kode, y.NamaBahan, y.Satuan, y.Kurang
+        FROM (${bahanKurangBaseQuery}) y
+        WHERE y.Kurang > 0
+      `);
+
+      const bySpk = new Map();
+      for (const r of rows) {
+        let g = bySpk.get(r.Nomor);
+        if (!g) {
+          g = { Nomor: r.Nomor, NamaSpk: r.NamaSpk, total: 0, bahanList: [] };
+          bySpk.set(r.Nomor, g);
+        }
+        g.total += Number(r.Kurang) || 0;
+        g.bahanList.push({
+          Kode: r.Kode,
+          NamaBahan: r.NamaBahan,
+          Satuan: r.Satuan,
+          Kurang: r.Kurang,
+        });
+      }
+
+      return [...bySpk.values()]
+        .sort((a, b) => b.total - a.total || (a.Nomor < b.Nomor ? -1 : 1))
+        .map((g) => ({
+          Nomor: g.Nomor,
+          NamaSpk: g.NamaSpk,
+          JmlBahanKurang: g.bahanList.length,
+          bahanList: g.bahanList.sort(
+            (a, b) => (Number(b.Kurang) || 0) - (Number(a.Kurang) || 0),
+          ),
+        }));
+    },
+    "bahanKurang",
+  );
+
+const getBahanKurangCount = async (user) => {
+  if (!bahanKurangAllowed(user)) return { total: 0 };
+  const list = await loadBahanKurang();
+  return { total: list.length };
+};
+
 const getBahanKurangList = async (user, limit = 20, offset = 0) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
-
-  const sqlSpkPage = `
-    SELECT y.Nomor, y.NamaSpk, COUNT(*) AS JmlBahanKurang
-    FROM (${bahanKurangBaseQuery}) y
-    WHERE y.Kurang > 0
-    GROUP BY y.Nomor, y.NamaSpk
-    ORDER BY SUM(y.Kurang) DESC
-    LIMIT ? OFFSET ?
-  `;
-  const [spkRows] = await db.query(sqlSpkPage, [limit, offset]);
-  if (!spkRows.length) return [];
-
-  const nomorList = spkRows.map((r) => r.Nomor);
-  const sqlDetail = `
-    SELECT y.Nomor, y.Kode, y.NamaBahan, y.Satuan, y.Kurang
-    FROM (${bahanKurangBaseQuery}) y
-    WHERE y.Kurang > 0 AND y.Nomor IN (?)
-    ORDER BY y.Nomor, y.Kurang DESC
-  `;
-  const [detailRows] = await db.query(sqlDetail, [nomorList]);
-
-  const detailBySpk = {};
-  for (const d of detailRows) {
-    if (!detailBySpk[d.Nomor]) detailBySpk[d.Nomor] = [];
-    detailBySpk[d.Nomor].push({
-      Kode: d.Kode,
-      NamaBahan: d.NamaBahan,
-      Satuan: d.Satuan,
-      Kurang: d.Kurang,
-    });
-  }
-
-  return spkRows.map((s) => ({
-    Nomor: s.Nomor,
-    NamaSpk: s.NamaSpk,
-    JmlBahanKurang: s.JmlBahanKurang,
-    bahanList: detailBySpk[s.Nomor] || [],
-  }));
+  if (!bahanKurangAllowed(user)) return [];
+  const list = await loadBahanKurang();
+  const o = Number(offset) || 0;
+  return list.slice(o, o + (Number(limit) || 20));
 };
 
 // ── SPK Belum MKB — list ber-paginasi (count reuse getSpkBelumMkbCount
@@ -5487,33 +5519,92 @@ const spkBelumTagihRange = (startDate, endDate) => {
   return { dStart, dEnd, base: [dEnd, dStart, dEnd, dEnd] };
 };
 
-const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
+const spkBelumTagihAllowed = (user) => {
   const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  return (
+    ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"].includes(bagian) ||
+    isSuperViewer(user)
+  );
+};
 
-  const { base } = spkBelumTagihRange(startDate, endDate);
+const loadSpkBelumTagih = (startDate, endDate) => {
+  const { dStart, dEnd, base } = spkBelumTagihRange(startDate, endDate);
+  return memo(
+    `stagih:${dStart}:${dEnd}`,
+    CACHE_TTL,
+    async () => {
+      const [rows] = await db.query(
+        `
+        SELECT
+          o.Nomor AS Nomor,
+          o.Nama AS Nama,
+          IFNULL(c.cus_nama, o.CusKode) AS NamaCustomer,
+          kirim.TotalKirim AS QtyKirim,
+          IFNULL(inv.TotalInvoice, 0) AS QtyInvoice,
+          DATE_FORMAT(kirim.TglKirimTerakhir, '%d-%m-%Y') AS TglKirimTerakhir,
+          DATEDIFF(?, kirim.TglKirimTerakhir) AS UmurHari
+        FROM (${ORDER_SPK_SO_SUBQUERY}) o
+        LEFT JOIN tcustomer c ON c.cus_kode = o.CusKode
+        ${KIRIM_INV_SUBQUERY}
+        `,
+        [dEnd, ...base],
+      );
 
-  const sql = `
-    SELECT
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN o.Nomor END) AS TotalTerkirim,
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) = 0
-            THEN o.Nomor END) AS BelumInvoice,
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 AND IFNULL(inv.TotalInvoice, 0) > 0
-            AND IFNULL(inv.TotalInvoice, 0) < kirim.TotalKirim
-            THEN o.Nomor END) AS SebagianInvoice,
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0
-            AND IFNULL(inv.TotalInvoice, 0) >= kirim.TotalKirim
-            THEN o.Nomor END) AS FullInvoice,
-      IFNULL(SUM(CASE WHEN kirim.TotalKirim > 0
-            THEN GREATEST(kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0), 0)
-            ELSE 0 END), 0) AS TotalQtyBelumDitagih
-    FROM (${ORDER_SPK_SO_SUBQUERY}) o
-    ${KIRIM_INV_SUBQUERY}
-  `;
+      const items = rows.map((r) => {
+        const kirim = Number(r.QtyKirim) || 0;
+        const inv = Number(r.QtyInvoice) || 0;
+        return {
+          Nomor: r.Nomor,
+          Nama: r.Nama,
+          NamaCustomer: r.NamaCustomer,
+          QtyKirim: kirim,
+          QtyInvoice: inv,
+          QtyBelumDitagih: kirim - inv,
+          TglKirimTerakhir: r.TglKirimTerakhir,
+          UmurHari: Number(r.UmurHari) || 0,
+        };
+      });
 
-  const [rows] = await db.query(sql, base);
-  return rows[0] || {};
+      // Ringkasan (hitungan per nomor unik, qty dijumlah per baris seperti query lama)
+      const terkirim = new Set();
+      const belumInv = new Set();
+      const sebagian = new Set();
+      const full = new Set();
+      let qtyBelum = 0;
+      for (const it of items) {
+        if (it.QtyKirim <= 0) continue;
+        terkirim.add(it.Nomor);
+        if (it.QtyInvoice === 0) belumInv.add(it.Nomor);
+        else if (it.QtyInvoice < it.QtyKirim) sebagian.add(it.Nomor);
+        else full.add(it.Nomor);
+        qtyBelum += Math.max(it.QtyKirim - it.QtyInvoice, 0);
+      }
+
+      const list = items
+        .filter((it) => it.QtyKirim > it.QtyInvoice)
+        .sort(
+          (a, b) => b.UmurHari - a.UmurHari || (a.Nomor < b.Nomor ? -1 : 1),
+        );
+
+      return {
+        summary: {
+          TotalTerkirim: terkirim.size,
+          BelumInvoice: belumInv.size,
+          SebagianInvoice: sebagian.size,
+          FullInvoice: full.size,
+          TotalQtyBelumDitagih: qtyBelum,
+        },
+        list,
+      };
+    },
+    "spkBelumTagih",
+  );
+};
+
+const getSpkTerkirimBelumTagihSummary = async (user, startDate, endDate) => {
+  if (!spkBelumTagihAllowed(user)) return null;
+  const data = await loadSpkBelumTagih(startDate, endDate);
+  return data.summary;
 };
 
 const getSpkTerkirimBelumTagihList = async (
@@ -5523,33 +5614,10 @@ const getSpkTerkirimBelumTagihList = async (
   startDate,
   endDate,
 ) => {
-  const bagian = (user.bagian || "").toUpperCase();
-  const allowed = ["FINANCE", "DIREKSI", "OWNER", "AUDIT", "EDP", "IT"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return [];
-
-  const { dEnd, base } = spkBelumTagihRange(startDate, endDate);
-  const params = [dEnd, ...base, limit, offset];
-
-  const sql = `
-    SELECT
-      o.Nomor AS Nomor,
-      o.Nama AS Nama,
-      IFNULL(c.cus_nama, o.CusKode) AS NamaCustomer,
-      kirim.TotalKirim AS QtyKirim,
-      IFNULL(inv.TotalInvoice, 0) AS QtyInvoice,
-      (kirim.TotalKirim - IFNULL(inv.TotalInvoice, 0)) AS QtyBelumDitagih,
-      DATE_FORMAT(kirim.TglKirimTerakhir, '%d-%m-%Y') AS TglKirimTerakhir,
-      DATEDIFF(?, kirim.TglKirimTerakhir) AS UmurHari
-    FROM (${ORDER_SPK_SO_SUBQUERY}) o
-    LEFT JOIN tcustomer c ON c.cus_kode = o.CusKode
-    ${KIRIM_INV_SUBQUERY}
-    WHERE kirim.TotalKirim > IFNULL(inv.TotalInvoice, 0)
-    ORDER BY UmurHari DESC, o.Nomor ASC
-    LIMIT ? OFFSET ?
-  `;
-
-  const [rows] = await db.query(sql, params);
-  return rows;
+  if (!spkBelumTagihAllowed(user)) return [];
+  const data = await loadSpkBelumTagih(startDate, endDate);
+  const o = Number(offset) || 0;
+  return data.list.slice(o, o + (Number(limit) || 20));
 };
 
 // ── Company Pulse Strip — ringkasan level perusahaan (Revenue MTD +
@@ -5764,26 +5832,34 @@ const STOK_BEBAS_BASE_QUERY = `
   WHERE X.Stok > 0 OR X.Stok < -0.1
 `;
 
+// Satu hitungan dipakai Summary + semua halaman List
+const loadStokBebas = () =>
+  memo(
+    "sb:all",
+    CACHE_TTL,
+    async () => {
+      const [rows] = await db.query(`
+        SELECT Kode, Nama, Satuan, Stok, MkbBelumRealisasi, Free
+        FROM (${STOK_BEBAS_BASE_QUERY}) y
+        WHERE y.Free < 0
+        ORDER BY y.Free ASC, y.Kode ASC
+      `);
+      return rows;
+    },
+    "stokBebas",
+  );
+
 const getStokBebasSummary = async (user) => {
   if (!isGudangBahanViewer(user)) return null;
-
-  const sql = `SELECT COUNT(*) AS Total FROM (${STOK_BEBAS_BASE_QUERY}) y WHERE y.Free < 0`;
-  const [rows] = await db.query(sql);
-  return { total: rows[0]?.Total || 0 };
+  const rows = await loadStokBebas();
+  return { total: rows.length };
 };
 
 const getStokBebasList = async (user, limit = 20, offset = 0) => {
   if (!isGudangBahanViewer(user)) return null;
-
-  const sql = `
-    SELECT Kode, Nama, Satuan, Stok, MkbBelumRealisasi, Free
-    FROM (${STOK_BEBAS_BASE_QUERY}) y
-    WHERE y.Free < 0
-    ORDER BY y.Free ASC
-    LIMIT ? OFFSET ?
-  `;
-  const [rows] = await db.query(sql, [limit, offset]);
-  return rows;
+  const rows = await loadStokBebas();
+  const o = Number(offset) || 0;
+  return rows.slice(o, o + (Number(limit) || 20));
 };
 
 // ── g. Monitoring Buffer Bahan & Aksesoris KAOSAN ──
@@ -5831,25 +5907,32 @@ const BUFFER_KAOSAN_BASE_QUERY = `
   WHERE x.StokAkhir < x.Buffer
 `;
 
+const loadBufferKaosan = () =>
+  memo(
+    "bkaosan:all",
+    CACHE_TTL,
+    async () => {
+      const [rows] = await db.query(`
+        SELECT Kode, Nama, Satuan, Buffer, StokAkhir, Tipe
+        FROM (${BUFFER_KAOSAN_BASE_QUERY}) y
+        ORDER BY (y.StokAkhir / y.Buffer) ASC, y.Kode ASC
+      `);
+      return rows;
+    },
+    "bufferKaosan",
+  );
+
 const getBufferKaosanSummary = async (user) => {
   if (!isGudangBahanViewer(user)) return null;
-
-  const sql = `SELECT COUNT(*) AS Total FROM (${BUFFER_KAOSAN_BASE_QUERY}) y`;
-  const [rows] = await db.query(sql);
-  return { total: rows[0]?.Total || 0 };
+  const rows = await loadBufferKaosan();
+  return { total: rows.length };
 };
 
 const getBufferKaosanList = async (user, limit = 20, offset = 0) => {
   if (!isGudangBahanViewer(user)) return null;
-
-  const sql = `
-    SELECT Kode, Nama, Satuan, Buffer, StokAkhir, Tipe
-    FROM (${BUFFER_KAOSAN_BASE_QUERY}) y
-    ORDER BY (y.StokAkhir / y.Buffer) ASC
-    LIMIT ? OFFSET ?
-  `;
-  const [rows] = await db.query(sql, [limit, offset]);
-  return rows;
+  const rows = await loadBufferKaosan();
+  const o = Number(offset) || 0;
+  return rows.slice(o, o + (Number(limit) || 20));
 };
 
 // ── Piutang per Customer (untuk chatbot AI) — reuse formula yang
@@ -6320,6 +6403,7 @@ for (const [name, ttl] of Object.entries(CACHED)) {
 module.exports.memo = memo;
 module.exports.clearCache = clearCache;
 module.exports.cacheStats = cacheStats;
+module.exports.runWithCacheMode = runWithCacheMode;
 
 // Hangatkan data barang jadi saat server baru menyala
 setTimeout(() => {

@@ -1,7 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../../controllers/dashboard/dashboardController");
+const dashboardService = require("../../services/dashboard/dashboardService");
 const { verifyToken } = require("../../middleware/authMiddleware");
+
+// Mode Refresh: ?fresh=1 atau header X-Fresh: 1 melewati simpanan cache server
+router.use((req, res, next) => {
+  const fresh = req.query.fresh === "1" || req.get("x-fresh") === "1";
+  dashboardService.runWithCacheMode(fresh, next);
+});
 
 // Semua route dashboard hanya butuh verifyToken
 // (tidak perlu checkPermission — dashboard bukan menu ERP)
