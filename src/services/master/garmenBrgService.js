@@ -1,8 +1,13 @@
 const db = require("../../config/database");
 
+const CABANG_BROWSE = ["HO-", "P01", "P02", "P04", "P05"];
+
 const getBrowse = async (jenis, cabang, bagian) => {
   const validJenis = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
   const selectedJenis = validJenis.includes(jenis) ? jenis : "ACCESORIES";
+  if (!CABANG_BROWSE.includes(cabang)) {
+    throw new Error("Cabang tidak valid untuk browse barang garmen.");
+  }
 
   let selectNote = "";
   let stokQuery = "";
@@ -180,6 +185,13 @@ const getLookups = async (category) => {
       return (
         await db.query(
           "SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik ORDER BY pab_kode ASC",
+        )
+      )[0];
+    case "cabang_browse":
+      return (
+        await db.query(
+          "SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik WHERE pab_kode IN (?) ORDER BY FIELD(pab_kode, ?)",
+          [CABANG_BROWSE, CABANG_BROWSE],
         )
       )[0];
     case "acc_barang":
