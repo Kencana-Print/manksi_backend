@@ -868,6 +868,25 @@ const getPipelinePenyelesaianSpk = async (req, res) => {
   }
 };
 
+const getPipelinePerCabang = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Tanggal wajib diisi." });
+    }
+    const data = await service.getPipelinePerCabang(
+      req.user,
+      startDate,
+      endDate,
+    );
+    res.json({ success: true, data: data ?? [] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getSpkVsStbjSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -1298,6 +1317,7 @@ module.exports = {
   getStokBarangJadiList,
   getMutasiBarangJadiList,
   getPipelinePenyelesaianSpk,
+  getPipelinePerCabang,
   getSpkVsStbjSummary,
   getSpkVsStbjList,
   getSpkVsSjSummary,

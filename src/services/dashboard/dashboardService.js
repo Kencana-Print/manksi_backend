@@ -3949,10 +3949,10 @@ const getMapVsSpkDashboard = async (user, startDate, endDate) => {
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return null;
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
   const paramsMetric = [dStart, dEnd];
   const paramsDivisi = [dStart, dEnd];
   let whereExtra = "";
@@ -4038,10 +4038,10 @@ const getMapBelumSo = async (
   if (!MARKETING_BAGIAN.includes(bagian) && !isSuperViewer(user)) return [];
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
   const params = [dStart, dEnd];
   let whereExtra = "";
   if (!isSuperViewer(user) && user.divisi) {
@@ -4091,10 +4091,10 @@ const getMapVsSjDashboard = async (user, startDate, endDate) => {
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -4142,10 +4142,10 @@ const getMapBelumKirim = async (
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -4732,13 +4732,29 @@ const getPipelineSpkProduksi = async (user, startDate, endDate) => {
       SUM(CASE WHEN EXISTS (
         SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
       ) THEN s.spk_jumlah ELSE 0 END) AS TotalQtyJadi,
-      COUNT(DISTINCT CASE WHEN EXISTS (
-        SELECT 1 FROM tsj_dtl d WHERE d.sjd_spk_nomor = s.spk_nomor
-      ) THEN s.spk_nomor END) AS AdaKirim,
-      SUM(CASE WHEN EXISTS (
-        SELECT 1 FROM tsj_dtl d WHERE d.sjd_spk_nomor = s.spk_nomor
-      ) THEN s.spk_jumlah ELSE 0 END) AS TotalQtyKirim
+      COUNT(DISTINCT CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+        THEN s.spk_nomor END) AS AdaKirim,
+      SUM(CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+        THEN s.spk_jumlah ELSE 0 END) AS TotalQtyKirim
     FROM tspk s
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) k1 ON k1.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) k2 ON k2.Nomor = NULLIF(s.spk_so_ref, '') AND s.spk_so_ref <> s.spk_nomor
     WHERE s.spk_aktif = 'Y'
       AND s.spk_divisi IN (3, 4, 6)
       AND s.spk_dateline >= ? AND s.spk_dateline <= ?
@@ -5214,10 +5230,10 @@ const getPipelinePenyelesaianSpk = async (user, startDate, endDate) => {
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -5232,9 +5248,13 @@ const getPipelinePenyelesaianSpk = async (user, startDate, endDate) => {
       COUNT(DISTINCT CASE WHEN EXISTS (
         SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
       ) THEN s.spk_nomor END) AS SudahStbj,
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0 THEN s.spk_nomor END) AS SudahKirim,
-      COUNT(DISTINCT CASE WHEN kirim.TotalKirim > 0
-        AND IFNULL(inv.TotalInvoice, 0) >= kirim.TotalKirim
+      COUNT(DISTINCT CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+        THEN s.spk_nomor END) AS SudahKirim,
+      COUNT(DISTINCT CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+         AND IFNULL(i1.TotalInvoice, 0) + IFNULL(i2.TotalInvoice, 0)
+             >= IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0)
         THEN s.spk_nomor END) AS FullInvoice
     FROM tspk s
     LEFT JOIN (
@@ -5244,21 +5264,130 @@ const getPipelinePenyelesaianSpk = async (user, startDate, endDate) => {
       WHERE h.sj_approve <> 2
         AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
       GROUP BY d.sjd_spk_nomor
-    ) kirim ON kirim.Nomor = s.spk_nomor
+    ) k1 ON k1.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) k2 ON k2.Nomor = NULLIF(s.spk_so_ref, '') AND s.spk_so_ref <> s.spk_nomor
     LEFT JOIN (
       SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
       FROM tinv_dtl d
       INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
       WHERE h.inv_status_otomatis = 0
       GROUP BY d.invd_spk_nomor
-    ) inv ON inv.Nomor = s.spk_nomor
+    ) i1 ON i1.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) i2 ON i2.Nomor = NULLIF(s.spk_so_ref, '') AND s.spk_so_ref <> s.spk_nomor
     WHERE s.spk_aktif = 'Y'
-      AND s.spk_tanggal >= ? AND s.spk_tanggal <= ?
+      AND s.spk_divisi IN (3, 4, 6)
+      AND s.spk_dateline >= ? AND s.spk_dateline <= ?
+      AND s.spk_close = 0
+      AND s.spk_cmo <> ''
+      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
       ${whereExtra}
   `;
 
   const [rows] = await db.query(sql, params);
   return rows[0] || {};
+};
+
+const CAB_PIPELINE = ["P01", "P02", "P04", "P05", "MT1"];
+
+const getPipelinePerCabang = async (user, startDate, endDate) => {
+  const bagian = (user.bagian || "").toUpperCase();
+  const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
+  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+
+  const params = [startDate, endDate];
+  let whereExtra = "";
+  if (!isSuperViewer(user) && user.divisi) {
+    whereExtra = "AND s.spk_divisi = ?";
+    params.push(String(user.divisi));
+  }
+
+  const sql = `
+    SELECT
+      IF(s.spk_cab IN ('P01','P02','P04','P05','MT1'), s.spk_cab, 'LAIN') AS Cab,
+      MAX(IF(s.spk_cab IN ('P01','P02','P04','P05','MT1'), s.spk_workshop, NULL)) AS Workshop,
+      COUNT(DISTINCT s.spk_nomor) AS TotalMasuk,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tmkb_hdr k
+        WHERE k.MKB_SPK_NOMOR = IFNULL(NULLIF(s.spk_so_ref, ''), s.spk_nomor)
+      ) THEN s.spk_nomor END) AS AdaMkb,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tproduksiminta_hdr h WHERE h.promin_spk_nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaRealisasi,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tmutasiproduksi_hdr h
+        WHERE h.mph_spk_nomor = s.spk_nomor
+          AND (h.mph_gdgasal = 'GP001' OR h.mph_gdgasal = 'GP015')
+          AND h.mph_nomaterial <> ''
+      ) THEN s.spk_nomor END) AS AdaLhk,
+      COUNT(DISTINCT CASE WHEN EXISTS (
+        SELECT 1 FROM tstbj_dtl d WHERE d.STBJD_SPK_Nomor = s.spk_nomor
+      ) THEN s.spk_nomor END) AS AdaStbj,
+      COUNT(DISTINCT CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+        THEN s.spk_nomor END) AS AdaKirim,
+      COUNT(DISTINCT CASE
+        WHEN IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0) > 0
+         AND IFNULL(i1.TotalInvoice, 0) + IFNULL(i2.TotalInvoice, 0)
+             >= IFNULL(k1.TotalKirim, 0) + IFNULL(k2.TotalKirim, 0)
+        THEN s.spk_nomor END) AS FullInvoice
+    FROM tspk s
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) k1 ON k1.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.sjd_spk_nomor AS Nomor, SUM(d.sjd_jumlah) AS TotalKirim
+      FROM tsj_dtl d
+      INNER JOIN tsj_hdr h ON h.sj_nomor = d.sjd_sj_nomor
+      WHERE h.sj_approve <> 2
+        AND ${KODE_PERUSH_ORDER("d.sjd_spk_nomor")} = MID(h.sj_nomor, 4, 2)
+      GROUP BY d.sjd_spk_nomor
+    ) k2 ON k2.Nomor = NULLIF(s.spk_so_ref, '') AND s.spk_so_ref <> s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) i1 ON i1.Nomor = s.spk_nomor
+    LEFT JOIN (
+      SELECT d.invd_spk_nomor AS Nomor, SUM(d.invd_jumlah) AS TotalInvoice
+      FROM tinv_dtl d
+      INNER JOIN tinv_hdr h ON h.inv_nomor = d.invd_inv_nomor
+      WHERE h.inv_status_otomatis = 0
+      GROUP BY d.invd_spk_nomor
+    ) i2 ON i2.Nomor = NULLIF(s.spk_so_ref, '') AND s.spk_so_ref <> s.spk_nomor
+    WHERE s.spk_aktif = 'Y'
+      AND s.spk_divisi IN (1, 3, 4, 5, 6)
+      AND s.spk_dateline >= ? AND s.spk_dateline <= ?
+      AND s.spk_close = 0
+      AND s.spk_cmo <> ''
+      AND s.spk_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      ${whereExtra}
+    GROUP BY Cab
+  `;
+
+  const [rows] = await db.query(sql, params);
+  // urutkan P01, P02, P04, P05, lalu LAIN
+  const order = [...CAB_PIPELINE, "LAIN"];
+  return rows.sort((a, b) => order.indexOf(a.Cab) - order.indexOf(b.Cab));
 };
 
 // ── SPK vs STBJ (summary + list SPK belum STBJ) ──
@@ -5269,10 +5398,10 @@ const getSpkVsStbjSummary = async (user, startDate, endDate) => {
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -5317,10 +5446,10 @@ const getSpkVsStbjList = async (
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -5360,10 +5489,10 @@ const getSpkVsSjSummary = async (user, startDate, endDate) => {
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -5412,10 +5541,10 @@ const getSpkVsSjList = async (
 
   const dStart =
     startDate ||
-    new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .substring(0, 10);
-  const dEnd = endDate || new Date().toISOString().substring(0, 10);
+    toLocalDateStr(
+      new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+    );
+  const dEnd = endDate || toLocalDateStr(new Date());
 
   const params = [dStart, dEnd];
   let whereExtra = "";
@@ -6259,6 +6388,7 @@ module.exports = {
   getStokBarangJadiList,
   getMutasiBarangJadiList,
   getPipelinePenyelesaianSpk,
+  getPipelinePerCabang,
   getSpkVsStbjSummary,
   getSpkVsStbjList,
   getSpkVsSjSummary,
@@ -6384,6 +6514,7 @@ const CACHED = {
   getPoJasaVsBpjSummary: CACHE_TTL,
   getPipelineSpkProduksi: CACHE_TTL,
   getPipelinePenyelesaianSpk: CACHE_TTL,
+  getPipelinePerCabang: CACHE_TTL,
   getSpkVsStbjSummary: CACHE_TTL,
   getSpkVsStbjList: CACHE_TTL,
   getSpkVsSjSummary: CACHE_TTL,

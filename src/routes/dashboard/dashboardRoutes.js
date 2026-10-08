@@ -238,6 +238,11 @@ router.get(
   verifyToken,
   controller.getPipelinePenyelesaianSpk,
 );
+router.get(
+  "/pipeline-per-cabang",
+  verifyToken,
+  controller.getPipelinePerCabang,
+);
 router.get("/spk-vs-stbj-summary", verifyToken, controller.getSpkVsStbjSummary);
 router.get("/spk-vs-stbj-list", verifyToken, controller.getSpkVsStbjList);
 router.get("/spk-vs-sj-summary", verifyToken, controller.getSpkVsSjSummary);
