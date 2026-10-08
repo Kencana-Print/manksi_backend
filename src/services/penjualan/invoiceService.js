@@ -3,6 +3,42 @@ const tutupBukuService = require("../tutupBukuService");
 
 const MENU_ID = "156";
 
+// Jenis invoice menentukan pin_trs & kunci tutup buku
+const getJenis = async (nomor, runner = db) => {
+  const [[r]] = await runner.query(
+    `SELECT inv_sts_pro, inv_tanggal FROM tinv_hdr WHERE inv_nomor = ?`,
+    [nomor],
+  );
+  if (!r) throw new Error("Data tidak ditemukan.");
+  const tak = Number(r.inv_sts_pro) === 2;
+  return {
+    tak,
+    pinTrs: tak ? "INV TAKNORMAL" : "INV",
+    tglInv: r.inv_tanggal,
+  };
+};
+
+const cekPeriodeClosed = async (tglInv, kunci) => {
+  const tgl = new Date(tglInv);
+  let ztglclose = 0;
+  const [verRows] = await db.query(
+    `SELECT tgl_close FROM tversi WHERE aplikasi = 'MANKSI' LIMIT 1`,
+  );
+  if (verRows.length > 0) ztglclose = parseInt(verRows[0].tgl_close, 10) || 0;
+
+  const limitDate = new Date(tgl.getFullYear(), tgl.getMonth() + 1, ztglclose);
+  limitDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const zCloseManual = await tutupBukuService.getManualTutupBuku(kunci);
+  if (zCloseManual) {
+    zCloseManual.setHours(0, 0, 0, 0);
+    return tgl < zCloseManual;
+  }
+  return limitDate < today;
+};
+
 // ═══════════════════════════════════════════════════════════
 // BROWSE
 // Sesuai Delphi btnRefreshClick
@@ -55,12 +91,12 @@ const getBrowse = async (tglAwal, tglAkhir) => {
                IF(pin_acc='Y' AND pin_dipakai='Y','ACC - USED',
                  IF(pin_acc='N','REJECTED','')))),'')
          FROM tspk_pin5
-         WHERE pin_trs = 'INV' AND pin_nomor = a.inv_nomor
+         WHERE pin_trs = IF(a.inv_sts_pro = 2, 'INV TAKNORMAL', 'INV') AND pin_nomor = a.inv_nomor
          ORDER BY pin_urut DESC LIMIT 1
        ), '')                                           AS ACC_Edit,
        (
          SELECT pin_alasan FROM tspk_pin5
-         WHERE pin_trs = 'INV' AND pin_nomor = a.inv_nomor
+         WHERE pin_trs = IF(a.inv_sts_pro = 2, 'INV TAKNORMAL', 'INV') AND pin_nomor = a.inv_nomor
          ORDER BY pin_urut DESC LIMIT 1
        )                                                AS Alasan
      FROM tinv_hdr a
@@ -111,39 +147,8 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
 // Sesuai Delphi cxButton4Click
 // ═══════════════════════════════════════════════════════════
 const cekBisaHapus = async (nomor) => {
-  const [[hdr]] = await db.query(
-    `SELECT inv_nomor, inv_tanggal FROM tinv_hdr WHERE inv_nomor = ?`,
-    [nomor],
-  );
-  if (!hdr) throw new Error("Data tidak ditemukan.");
-
-  const tgl = new Date(hdr.inv_tanggal);
-  const zMonth = tgl.getMonth();
-  const zYear = tgl.getFullYear();
-
-  let ztglclose = 0;
-  const [verRows] = await db.query(
-    `SELECT tgl_close FROM tversi WHERE aplikasi = 'MANKSI' LIMIT 1`,
-  );
-  if (verRows.length > 0) ztglclose = parseInt(verRows[0].tgl_close, 10) || 0;
-
-  const limitDate = new Date(zYear, zMonth + 1, ztglclose);
-  limitDate.setHours(0, 0, 0, 0);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const zCloseManual = await tutupBukuService.getManualTutupBuku("INV");
-
-  let isTutupBuku = false;
-  if (zCloseManual) {
-    zCloseManual.setHours(0, 0, 0, 0);
-    if (tgl < zCloseManual) isTutupBuku = true;
-  } else {
-    if (limitDate < today) isTutupBuku = true;
-  }
-
-  if (isTutupBuku) {
+  const { tak, tglInv } = await getJenis(nomor);
+  if (await cekPeriodeClosed(tglInv, tak ? "INV TAKNORMAL" : "INV")) {
     return {
       bisaHapus: false,
       reason: "Transaksi tsb sudah close.\nTidak bisa dihapus.",
@@ -157,7 +162,36 @@ const cekBisaHapus = async (nomor) => {
 // Sesuai Delphi cxButton4Click
 // ═══════════════════════════════════════════════════════════
 const deleteData = async (nomor) => {
-  await db.query(`DELETE FROM tinv_hdr WHERE inv_nomor = ?`, [nomor]);
+  const { tak } = await getJenis(nomor);
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (tak) {
+      const [linked] = await conn.query(
+        `SELECT invf_normal FROM tinv_flag WHERE invf_taknormal = ?`,
+        [nomor],
+      );
+      for (const r of linked) {
+        await conn.query(
+          `UPDATE tinv_hdr SET inv_flag = 0 WHERE inv_nomor = ?`,
+          [r.invf_normal],
+        );
+        await conn.query(`UPDATE piutang_debet SET flag = 0 WHERE nota = ?`, [
+          r.invf_normal,
+        ]);
+      }
+      await conn.query(`DELETE FROM tinv_flag WHERE invf_taknormal = ?`, [
+        nomor,
+      ]);
+    }
+    await conn.query(`DELETE FROM tinv_hdr WHERE inv_nomor = ?`, [nomor]);
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -166,7 +200,8 @@ const deleteData = async (nomor) => {
 // Validasi tambahan: kalau sudah ada pelunasan, tidak bisa pengajuan
 // ═══════════════════════════════════════════════════════════
 const getPengajuanStatus = async (nomor) => {
-  // Cek sudah ada pelunasan
+  const { pinTrs } = await getJenis(nomor);
+
   const [[pelunasan]] = await db.query(
     `SELECT tanggal FROM piutang_kredit_detail pkd
      INNER JOIN piutang_kredit_header pkh ON pkd.nomor = pkh.nomor
@@ -174,33 +209,24 @@ const getPengajuanStatus = async (nomor) => {
      ORDER BY tanggal DESC LIMIT 1`,
     [nomor],
   );
-  if (pelunasan) {
-    throw new Error("Sudah ada pelunasan.");
-  }
+  if (pelunasan) throw new Error("Sudah ada pelunasan.");
 
   const [[row]] = await db.query(
     `SELECT pin_urut, pin_acc, pin_dipakai, pin_alasan
      FROM tspk_pin5
-     WHERE pin_trs = 'INV' AND pin_nomor = ?
+     WHERE pin_trs = ? AND pin_nomor = ?
      ORDER BY pin_urut DESC LIMIT 1`,
-    [nomor],
+    [pinTrs, nomor],
   );
   if (!row) return { urut: 1, alasan: "", canRequest: true };
-
-  if (!row.pin_dipakai) {
+  if (!row.pin_dipakai)
     return { urut: row.pin_urut, alasan: row.pin_alasan, canRequest: true };
-  }
   return { urut: row.pin_urut + 1, alasan: "", canRequest: true };
 };
 
 const cekPerluPengajuan = async (nomor) => {
-  const [[hdr]] = await db.query(
-    `SELECT inv_tanggal FROM tinv_hdr WHERE inv_nomor = ?`,
-    [nomor],
-  );
-  if (!hdr) throw new Error("Data tidak ditemukan.");
+  const { tak, tglInv } = await getJenis(nomor);
 
-  // Cek pelunasan dulu — sesuai Delphi
   const [[pelunasan]] = await db.query(
     `SELECT tanggal FROM piutang_kredit_detail pkd
      INNER JOIN piutang_kredit_header pkh ON pkd.nomor = pkh.nomor
@@ -208,37 +234,11 @@ const cekPerluPengajuan = async (nomor) => {
      ORDER BY tanggal DESC LIMIT 1`,
     [nomor],
   );
-  if (pelunasan) {
-    return { perlu: false, reason: "Sudah ada pelunasan." };
-  }
+  if (pelunasan) return { perlu: false, reason: "Sudah ada pelunasan." };
 
-  const tgl = new Date(hdr.inv_tanggal);
-  const zMonth = tgl.getMonth();
-  const zYear = tgl.getFullYear();
-
-  let ztglclose = 0;
-  const [verRows] = await db.query(
-    `SELECT tgl_close FROM tversi WHERE aplikasi = 'MANKSI' LIMIT 1`,
-  );
-  if (verRows.length > 0) ztglclose = parseInt(verRows[0].tgl_close, 10) || 0;
-
-  const limitDate = new Date(zYear, zMonth + 1, ztglclose);
-  limitDate.setHours(0, 0, 0, 0);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const zCloseManual = await tutupBukuService.getManualTutupBuku("INV");
-
-  let perlu = false;
-  if (zCloseManual) {
-    zCloseManual.setHours(0, 0, 0, 0);
-    if (tgl < zCloseManual) perlu = true;
-  } else {
-    if (limitDate < today) perlu = true;
-  }
-
-  return { perlu };
+  return {
+    perlu: await cekPeriodeClosed(tglInv, tak ? "INV TAKNORMAL" : "INV"),
+  };
 };
 
 const pengajuanUbah = async (
@@ -249,19 +249,17 @@ const pengajuanUbah = async (
   urut,
   userKode,
 ) => {
+  const { pinTrs } = await getJenis(nomor);
   await db.query(
     `INSERT INTO tspk_pin5
        (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket,
         pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ('INV', ?, ?, ?, ?, NOW(), ?, ?)
+     VALUES (?, ?, ?, ?, ?, NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
-       pin_tgl_trs    = ?,
-       pin_ket        = ?,
-       pin_acc        = '',
-       pin_tgl_minta  = NOW(),
-       pin_user_minta = ?,
-       pin_alasan     = ?`,
+       pin_tgl_trs = ?, pin_ket = ?, pin_acc = '',
+       pin_tgl_minta = NOW(), pin_user_minta = ?, pin_alasan = ?`,
     [
+      pinTrs,
       nomor,
       urut,
       tanggal,
@@ -309,27 +307,21 @@ const saveStatusUpdate = async (nomor, penerima, tglTerima, rencanaBayar) => {
 // ═══════════════════════════════════════════════════════════
 const cekBisaCetak = async (nomor) => {
   const [[row]] = await db.query(
-    `SELECT
-       IF(inv_sts_pro=0,'Normal', IF(inv_sts_pro=1,'Proforma','Tidak Normal')) AS Status,
-       inv_apvnosj AS ApvNoSJ
-     FROM tinv_hdr WHERE inv_nomor = ?`,
+    `SELECT inv_sts_pro, inv_apvnosj AS ApvNoSJ FROM tinv_hdr WHERE inv_nomor = ?`,
     [nomor],
   );
   if (!row) throw new Error("Data tidak ditemukan.");
+  const tak = Number(row.inv_sts_pro) === 2;
 
-  // if (row.Status === "Proforma") {
-  //   return { bisa: false, reason: "Silahkan cetak di invoice proforma." };
-  // }
-  if (row.Status === "Tidak Normal") {
-    return { bisa: false, reason: "Silahkan cetak di invoice tak normal." };
+  if (!tak) {
+    if (row.ApvNoSJ === "N")
+      return {
+        bisa: false,
+        reason: "DiApprove dulu untuk bisa cetak invoice.",
+      };
+    if (row.ApvNoSJ === "T") return { bisa: false, reason: "Tidak DiApprove." };
   }
-  if (row.ApvNoSJ === "N") {
-    return { bisa: false, reason: "DiApprove dulu untuk bisa cetak invoice." };
-  }
-  if (row.ApvNoSJ === "T") {
-    return { bisa: false, reason: "Tidak DiApprove." };
-  }
-  return { bisa: true, reason: null };
+  return { bisa: true, reason: null, tak };
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -337,26 +329,8 @@ const cekBisaCetak = async (nomor) => {
 // Sesuai Delphi cxButton3Click / cxButton1Click
 // ═══════════════════════════════════════════════════════════
 const cekBisaUbah = async (nomor) => {
-  const [[row]] = await db.query(
-    `SELECT
-       IF(inv_sts_pro=0,'Normal', IF(inv_sts_pro=1,'Proforma','Tidak Normal')) AS Status
-     FROM tinv_hdr WHERE inv_nomor = ?`,
-    [nomor],
-  );
-  if (!row) throw new Error("Data tidak ditemukan.");
-
-  // Blokade untuk Proforma DIHAPUS agar bisa lanjut di-edit di form Invoice Normal
-  /*
-  if (row.Status === "Proforma") {
-    return { bisa: false, reason: "Silahkan edit di invoice proforma." };
-  }
-  */
-
-  if (row.Status === "Tidak Normal") {
-    return { bisa: false, reason: "Silahkan edit di invoice tak normal." };
-  }
-
-  return { bisa: true, reason: null };
+  const { tak } = await getJenis(nomor);
+  return { bisa: true, reason: null, tak };
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -418,12 +392,12 @@ const getExportDetail = async (tglAwal, tglAkhir) => {
                IF(pin_acc='Y' AND pin_dipakai='Y','ACC - USED',
                  IF(pin_acc='N','REJECTED','')))),'')
          FROM tspk_pin5
-         WHERE pin_trs = 'INV' AND pin_nomor = a.inv_nomor
+         WHERE pin_trs = IF(a.inv_sts_pro = 2, 'INV TAKNORMAL', 'INV') AND pin_nomor = a.inv_nomor
          ORDER BY pin_urut DESC LIMIT 1
        ), '')                                           AS ACC_Edit,
        (
          SELECT pin_alasan FROM tspk_pin5
-         WHERE pin_trs = 'INV' AND pin_nomor = a.inv_nomor
+         WHERE pin_trs = IF(a.inv_sts_pro = 2, 'INV TAKNORMAL', 'INV') AND pin_nomor = a.inv_nomor
          ORDER BY pin_urut DESC LIMIT 1
        )                                                AS Alasan,
        d.invd_spk_nomor     AS Kode,

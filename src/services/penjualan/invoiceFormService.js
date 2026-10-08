@@ -46,7 +46,7 @@ const getById = async (nomor) => {
      LEFT JOIN tperusahaan_dtl pd
        ON pd.perushd_perush_kode = p.perush_kode
        AND pd.perushd_rekening = a.inv_rekening
-     WHERE a.inv_nomor = ?`,
+     WHERE a.inv_nomor = ? AND a.inv_sts_pro <> 2`,
     [nomor],
   );
   if (!hdr) throw new Error("Nomor tersebut belum ada.");
@@ -486,6 +486,13 @@ const save = async (data, userKode, isNew) => {
   // gate ini cuma relevan buat mencegah edit invoice lunas di periode
   // yang sudah closing dan belum diajukan perubahannya.
   if (!isNew) {
+    const [[jenis]] = await db.query(
+      `SELECT inv_sts_pro FROM tinv_hdr WHERE inv_nomor = ?`,
+      [NomorInv],
+    );
+    if (jenis && Number(jenis.inv_sts_pro) === 2)
+      throw new Error("Gunakan form Invoice Tak Normal.");
+
     const sudahLunas = await cekStatusPelunasan(NomorInv);
     if (sudahLunas && !tutupBuku.boleh) {
       throw new Error(
