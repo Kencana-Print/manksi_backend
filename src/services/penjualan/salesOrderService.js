@@ -941,6 +941,22 @@ const searchAvailableForSpk = async (
     WHERE s.so_aktif = 'Y'
       AND s.so_cmo <> ''
       AND (s.so_spk_ref IS NULL OR s.so_spk_ref = '')
+      AND (
+        s.so_divisi LIKE '3%'
+        OR EXISTS (
+          SELECT 1
+          FROM tpermintaan_desain pd
+          WHERE pd.pd_nomor IS NOT NULL
+            AND pd.pd_nomor <> ''
+            AND (
+              pd.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+              OR (
+                s.so_memo IS NOT NULL AND s.so_memo <> ''
+                AND pd.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4)
+              )
+            )
+        )
+      )
       AND DATE(s.so_tanggal) >= ? AND DATE(s.so_tanggal) <= ?
       AND (s.so_nomor LIKE ? OR s.so_nama LIKE ? OR c.cus_nama LIKE ?)
   `;
@@ -965,6 +981,13 @@ const searchAvailableForSpk = async (
        s.so_cus_kode AS KodeCustomer,
        ${custNameCol} AS Customer,
        s.so_memo AS MAP,
+       IFNULL(
+         (SELECT pd2.pd_nomor FROM tpermintaan_desain pd2
+          WHERE pd2.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+             OR (s.so_memo <> '' AND pd2.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4))
+          LIMIT 1),
+         ''
+       ) AS PdNomor,
        IFNULL(u.user_nama, s.user_create) AS MO,
        CASE
          WHEN s.so_memo IS NULL OR s.so_memo = '' THEN 'TANPA_MAP'
