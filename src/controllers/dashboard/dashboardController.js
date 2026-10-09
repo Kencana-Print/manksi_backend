@@ -1248,6 +1248,19 @@ const getOutstandingBeliList = async (req, res) => {
   }
 };
 
+const setCatatanOutstandingBeli = async (req, res) => {
+  try {
+    const { tab, nomor, nourut, catatan } = req.body;
+    await service.setCatatanOutstandingBeli(
+      { tab, nomor, nourut, catatan },
+      req.user,
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
@@ -1344,4 +1357,5 @@ module.exports = {
   getBufferKaosanList,
   getOutstandingBeliSummary,
   getOutstandingBeliList,
+  setCatatanOutstandingBeli,
 };

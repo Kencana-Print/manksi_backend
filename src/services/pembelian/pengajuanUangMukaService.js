@@ -389,10 +389,53 @@ const getPrintData = async (nomor) => {
   };
 };
 
+// ── Data cetak Penyerahan Dana Belanja (serah terima uang ke purchasing lapangan) ──
+const getPrintPenyerahan = async (nomor) => {
+  const [[hdr]] = await db.query(
+    `SELECT h.pum_nomor, h.pum_status,
+            DATE_FORMAT(h.pum_tanggal,'%d-%m-%Y') AS tanggal_fmt,
+            h.pum_keterangan, h.pum_cabang,
+            IFNULL(k.bon_nominal, h.pum_total_nominal) AS total,
+            IFNULL(uc.user_nama, h.pum_user_create) AS penyerah
+     FROM tpengajuan_uang_muka_hdr h
+     LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+     LEFT JOIN tuser uc ON uc.user_kode = h.pum_user_create
+     WHERE h.pum_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
+  if (hdr.pum_status !== "REALISASI") {
+    throw new Error(
+      "Penyerahan dana hanya untuk pengajuan yang sudah direalisasi.",
+    );
+  }
+
+  const [dtl] = await db.query(
+    `SELECT pumd_nama, pumd_satuan, pumd_qty
+     FROM tpengajuan_uang_muka_dtl
+     WHERE pumd_pum_nomor = ? ORDER BY pumd_id`,
+    [nomor],
+  );
+
+  return {
+    tanggal_fmt: hdr.tanggal_fmt,
+    keterangan: hdr.pum_keterangan || "",
+    cabang: hdr.pum_cabang,
+    penyerah: hdr.penyerah || "",
+    total: Number(hdr.total) || 0,
+    detail: dtl.map((d) => ({
+      uraian: d.pumd_nama,
+      satuan: d.pumd_satuan || "",
+      qty: Number(d.pumd_qty) || 0,
+    })),
+  };
+};
+
 module.exports = {
   createPengajuan,
   getBrowse,
   getDetail,
   ensurePermintaanDana,
   getPrintData,
+  getPrintPenyerahan,
 };

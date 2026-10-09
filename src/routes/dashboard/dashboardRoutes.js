@@ -222,6 +222,11 @@ router.get(
   verifyToken,
   controller.getOutstandingBeliList,
 );
+router.post(
+  "/outstanding-beli/catatan",
+  verifyToken,
+  controller.setCatatanOutstandingBeli,
+);
 router.get("/barang-jadi-metric", verifyToken, controller.getBarangJadiMetric);
 router.get(
   "/stok-barang-jadi-list",

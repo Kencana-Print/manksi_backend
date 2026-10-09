@@ -69,4 +69,21 @@ const getPrintData = async (req, res) => {
   }
 };
 
-module.exports = { create, getBrowse, getDetail, getPrintData };
+const getPrintPenyerahan = async (req, res) => {
+  try {
+    const data = await pengajuanUangMukaService.getPrintPenyerahan(
+      req.params.nomor,
+    );
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+module.exports = {
+  create,
+  getBrowse,
+  getDetail,
+  getPrintData,
+  getPrintPenyerahan,
+};

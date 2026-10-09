@@ -6286,6 +6286,69 @@ const loadOutstandingBeliAll = (cabang) => {
   return p;
 };
 
+const sumberCatatanBeli = (tab) => (tab === "PENGAJUAN_DANA" ? "PD" : "PP");
+
+const canEditCatatanBeli = (user) =>
+  ["PEMBELIAN", "FINANCE"].includes((user?.bagian || "").toUpperCase());
+
+const loadCatatanBeli = async (tab, nomorList) => {
+  const map = new Map();
+  const unik = [...new Set(nomorList)];
+  if (!unik.length) return map;
+  const [rows] = await db.query(
+    `SELECT ob_nomor, ob_nourut, ob_catatan
+     FROM tdashboard_ob_catatan
+     WHERE ob_sumber = ? AND ob_nomor IN (?)`,
+    [sumberCatatanBeli(tab), unik],
+  );
+  for (const r of rows) map.set(`${r.ob_nomor}|${r.ob_nourut}`, r.ob_catatan);
+  return map;
+};
+
+const setCatatanOutstandingBeli = async (
+  { tab, nomor, nourut, catatan },
+  user,
+) => {
+  if (!canEditCatatanBeli(user)) {
+    throw new Error(
+      "Hanya bagian Pembelian dan Finance yang dapat mengisi catatan.",
+    );
+  }
+  const key = String(tab || "").toUpperCase();
+  if (!OUTSTANDING_BELI_TABS.includes(key))
+    throw new Error("Tab tidak dikenali.");
+  const no = String(nomor || "").trim();
+  const urut = Number(nourut);
+  if (!no || !Number.isInteger(urut))
+    throw new Error("Data baris tidak valid.");
+
+  const teks = String(catatan || "")
+    .trim()
+    .slice(0, 255);
+  const sumber = sumberCatatanBeli(key);
+
+  if (!teks) {
+    await db.query(
+      `DELETE FROM tdashboard_ob_catatan
+       WHERE ob_sumber = ? AND ob_nomor = ? AND ob_nourut = ?`,
+      [sumber, no, urut],
+    );
+  } else {
+    await db.query(
+      `INSERT INTO tdashboard_ob_catatan
+         (ob_sumber, ob_nomor, ob_nourut, ob_catatan, user_modified, date_modified)
+       VALUES (?, ?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         ob_catatan = VALUES(ob_catatan),
+         user_modified = VALUES(user_modified),
+         date_modified = NOW()`,
+      [sumber, no, urut, teks, user.kode],
+    );
+  }
+  // list outstanding ter-cache; buang supaya catatan baru langsung terbaca
+  clearCache("getOutstandingBeliList|");
+};
+
 const getOutstandingBeliSummary = async (user) => {
   if (!isPembelianViewer(user)) return null;
   const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
@@ -6307,9 +6370,16 @@ const getOutstandingBeliList = async (
   }
   const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
   const rows = all[key];
-  const items = rows
-    .slice(Number(offset), Number(offset) + Number(limit))
-    .map((r) => ({ ...r, Kekurangan: Number(r.QtyMinta) - Number(r.QtyBeli) }));
+  const page = rows.slice(Number(offset), Number(offset) + Number(limit));
+  const catatan = await loadCatatanBeli(
+    key,
+    page.map((r) => r.Nomor),
+  );
+  const items = page.map((r) => ({
+    ...r,
+    Kekurangan: Number(r.QtyMinta) - Number(r.QtyBeli),
+    Catatan: catatan.get(`${r.Nomor}|${r.Nourut}`) || "",
+  }));
   return { tab: key, total: rows.length, items };
 };
 
@@ -6418,6 +6488,7 @@ module.exports = {
   getPiutangByCustomer,
   getOutstandingBeliSummary,
   getOutstandingBeliList,
+  setCatatanOutstandingBeli,
 };
 
 // ══════════════════════════════════════════════

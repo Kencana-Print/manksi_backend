@@ -669,6 +669,37 @@ const saveData = async (payload, user) => {
             d.no,
           ],
         );
+
+        // Item PERMINTAAN_PEMBELIAN di tkasbonitem tidak melewati trigger
+        // tkasbonitem2_after_insert, jadi stok Finance dicatat di sini
+        // dengan aturan yang sama (MB, qty<>0, verified=1).
+        if (d.mb && d.kdbrg) {
+          await conn.query(
+            `DELETE FROM finance.tmasterstok_finance
+             WHERE mst_noreferensi=? AND mst_mb_nomor=? AND mst_brg_kode=?`,
+            [nomor, d.mb, d.kdbrg],
+          );
+          if (v && Number(d.qty) !== 0) {
+            // Permintaan Garmen dari P01 secara bisnis diwakili sebagai HO-
+            const mstCab = cabang === "P01" ? "HO-" : cabang;
+            await conn.query(
+              `INSERT INTO finance.tmasterstok_finance
+                 (mst_jenis, mst_noreferensi, mst_mb_nomor, mst_brg_kode,
+                  mst_tanggal, mst_stok_in, mst_harga, mst_cab)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                d.jenis_item || "",
+                nomor,
+                d.mb,
+                d.kdbrg,
+                bonDb.bon_tanggal,
+                d.qty,
+                d.harga,
+                mstCab,
+              ],
+            );
+          }
+        }
       }
 
       if (d.ga === 0) {

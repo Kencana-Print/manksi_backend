@@ -25,6 +25,11 @@ router.get(
   verifyToken,
   pengajuanUangMukaController.getPrintData,
 );
+router.get(
+  "/:nomor/print-penyerahan",
+  verifyToken,
+  pengajuanUangMukaController.getPrintPenyerahan,
+);
 router.post(
   "/",
   checkPermission(MENU_ID, "insert"),

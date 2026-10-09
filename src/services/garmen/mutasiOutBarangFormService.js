@@ -321,8 +321,22 @@ const save = async (data, userKode, userBagian, isNewMode) => {
   }
 };
 
+const BAGIAN_CARI_PERMINTAAN = ["FINANCE", "PEMBELIAN", "AUDIT"];
+
+const STOK_TABLE_BY_JENIS = {
+  ACCESORIES: "tmasterstok_acc",
+  OBAT: "tmasterstok_obat",
+  SPAREPART: "tmasterstok_sparepart",
+};
+const getStokTable = (jenis) => STOK_TABLE_BY_JENIS[jenis] || "tmasterstok_atk";
+
 // --- CARI NO. PERMINTAAN (KHUSUS FINANCE) ---
-const searchPermintaanFinance = async (jenis, cabangTujuan, search) => {
+const searchPermintaanFinance = async (jenis, cabangTujuan, search, bagian) => {
+  if (!BAGIAN_CARI_PERMINTAAN.includes(String(bagian || "").toUpperCase())) {
+    throw new Error("Bagian Anda tidak berhak mencari No. Permintaan.");
+  }
+  const isFinance = String(bagian).toUpperCase() === "FINANCE";
+
   let sql = `
     SELECT 
       h.mb_jenis AS Jenis,
@@ -332,11 +346,15 @@ const searchPermintaanFinance = async (jenis, cabangTujuan, search) => {
       h.mb_cab AS Cab,
       h.user_create AS Peminta
     FROM tgarmenmintabeli_hdr h
-    WHERE h.mb_nomor IN (SELECT DISTINCT c.bond2_link FROM finance.tkasbonitem2 c WHERE LEFT(c.bond2_link, 2) = "MB")
-    AND h.mb_jenis = ?
+    WHERE h.mb_jenis = ?
     AND h.mb_cab = ?
   `;
   const params = [jenis, cabangTujuan];
+
+  // Finance: hanya permintaan yang sudah terhubung ke kasbon
+  if (isFinance) {
+    sql += ` AND h.mb_nomor IN (SELECT DISTINCT c.bond2_link FROM finance.tkasbonitem2 c WHERE LEFT(c.bond2_link, 2) = "MB")`;
+  }
 
   if (search) {
     sql += ` AND (h.mb_nomor LIKE ? OR h.mb_ket LIKE ?)`;
@@ -354,7 +372,43 @@ const getDetailPermintaanFinance = async (
   noPermintaan,
   cabangAsal,
   nomorMso,
+  bagian,
+  jenis,
 ) => {
+  if (!BAGIAN_CARI_PERMINTAAN.includes(String(bagian || "").toUpperCase())) {
+    throw new Error("Bagian Anda tidak berhak mengambil detail permintaan.");
+  }
+
+  // Pembelian / Audit: ambil langsung dari detail permintaan, stok dari tmasterstok_*
+  if (String(bagian).toUpperCase() !== "FINANCE") {
+    const stokTable = getStokTable(jenis);
+    const [rowsNF] = await db.query(
+      `SELECT 
+         d.mbd_nomor AS NoPermintaan,
+         d.mbd_brg_kode AS Kode,
+         IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
+         b.brg_satuan AS Satuan,
+         d.mbd_ket AS Spesifikasi,
+         d.mbd_jumlah AS QtyPermintaan,
+         IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM ${stokTable} m
+                 WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=d.mbd_brg_kode), 0) AS Stok
+       FROM tgarmenmintabeli_dtl d
+       LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+       WHERE d.mbd_nomor = ?`,
+      [cabangAsal, noPermintaan],
+    );
+    return rowsNF.map((r) => ({
+      NoPermintaan: r.NoPermintaan,
+      Kode: r.Kode,
+      Nama: r.Nama,
+      Satuan: r.Satuan,
+      Spesifikasi: r.Spesifikasi,
+      Stok: Number(r.Stok),
+      StokBelumDiterima: 0,
+      StokReal: 0,
+      Jumlah: Number(r.QtyPermintaan) || 0,
+    }));
+  }
   const sql = `
     SELECT 
       k.bond2_link AS NoPermintaan,

@@ -62,6 +62,7 @@ const searchPermintaanFinance = async (req, res) => {
       jenis,
       cabangTujuan,
       search,
+      req.user?.bagian,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -71,11 +72,13 @@ const searchPermintaanFinance = async (req, res) => {
 
 const getDetailPermintaanFinance = async (req, res) => {
   try {
-    const { noPermintaan, cabangAsal, nomorMso } = req.query;
+    const { noPermintaan, cabangAsal, nomorMso, jenis } = req.query;
     const data = await service.getDetailPermintaanFinance(
       noPermintaan,
       cabangAsal,
       nomorMso,
+      req.user?.bagian,
+      jenis,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {
