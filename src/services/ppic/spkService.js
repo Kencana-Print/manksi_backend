@@ -31,6 +31,7 @@ const getBrowseList = async (filters) => {
   // workshop tertentu. Tambah user lain di sini kalau perlu.
   const EXTRA_WORKSHOP_USERS = {
     MDI: ["P01"],
+    HERU: ["P05"],
   };
   const extraCabs =
     EXTRA_WORKSHOP_USERS[String(userKode || "").toUpperCase()] || [];
