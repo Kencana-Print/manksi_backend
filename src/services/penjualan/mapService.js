@@ -61,7 +61,7 @@ const getBrowseList = async (
       x.mspk_rencana_order AS Rencana, x.mspk_tipe AS Tipe, ${hargaCol}
       s.sal_nama AS Salesman, x.date_create AS Created, 
       x.mspk_revisi_no AS Revisi, x.mspk_referensi AS NoReferensi,
-      x.mspk_lhk_nomor AS LhkNomor,
+      IFNULL(pd.pd_nomor, "") AS PdNomor,
       IF(x.mspk_estimasijadi="1899-12-30", "", x.mspk_estimasijadi) AS EstimasiJadi, 
       x.mspk_close AS CloseStatus,
       IFNULL(
@@ -100,6 +100,8 @@ const getBrowseList = async (
       INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor)
       GROUP BY lprd_spk_nomor
     ) m ON m.lprd_spk_nomor = x.mspk_nomor
+    LEFT JOIN tpermintaan_desain pd
+      ON pd.pd_so_map_nomor = CONVERT(x.mspk_nomor USING utf8mb4)
     ${whereClause}
     ORDER BY x.date_create DESC
   `;

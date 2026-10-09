@@ -170,7 +170,7 @@ const getBrowseList = async (filters) => {
         y.spk_newdesign AS Design_Baru, y.spk_designdone AS Design_Done,
         y.spk_keterangan AS Keterangan, y.spk_invdc AS 'Pesanan/Invoice',
         y.spk_ketbatal AS StsPembatalan,
-        y.spk_lhk_nomor AS LhkNomor,
+        IFNULL(pdSo.pd_nomor, IFNULL(pdMap.pd_nomor, "")) AS PdNomor,
         IF(ppic.spk_nomor IS NOT NULL, 1, 0) AS HasSpkPpic,
         IF(sjChk.sjd_spk_nomor IS NOT NULL OR stbjChk.stbjd_spk_nomor IS NOT NULL, 1, 0) AS HasSj,
 
@@ -272,6 +272,12 @@ const getBrowseList = async (filters) => {
         INNER JOIN tstbj_hdr h ON h.stbj_nomor = d.STBJD_STBJ_Nomor
         WHERE h.stbj_tanggal >= ?
       ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
+
+      LEFT JOIN tpermintaan_desain pdSo
+        ON pdSo.pd_so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
+      LEFT JOIN tpermintaan_desain pdMap
+        ON y.spk_memo IS NOT NULL AND y.spk_memo <> ''
+        AND pdMap.pd_so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
       ${whereClause}
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC
