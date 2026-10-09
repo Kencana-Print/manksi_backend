@@ -407,8 +407,9 @@ const isPremiumWorkshop = (cab) => String(cab).toUpperCase() === "P04";
 // milik SPK sendiri (bisa beda dari alokasi SO sumbernya). ---
 const getAlokasi = async (spkNomor) => {
   const [rows] = await db.query(
-    `SELECT spka_urut AS urut, spka_alamat AS alamat, spka_kota AS kota,
-            spka_person AS person, spka_hp AS hp, spka_jumlah AS jumlah
+    `SELECT spka_urut AS urut, spka_alamat AS alamat, spka_toko AS toko,
+            spka_kota AS kota, spka_person AS person, spka_hp AS hp,
+            spka_jumlah AS jumlah
      FROM tspk_alokasi WHERE spka_spk_nomor = ? ORDER BY spka_urut`,
     [spkNomor],
   );
@@ -426,6 +427,7 @@ const saveAlokasi = async (conn, spkNomor, list) => {
     spkNomor,
     i + 1,
     item.alamat || "",
+    item.toko || "", // ← BARU
     item.kota || "",
     item.person || "",
     item.hp || "",
@@ -433,8 +435,8 @@ const saveAlokasi = async (conn, spkNomor, list) => {
   ]);
   await conn.query(
     `INSERT INTO tspk_alokasi
-       (spka_spk_nomor, spka_urut, spka_alamat, spka_kota, spka_person, spka_hp, spka_jumlah)
-     VALUES ?`,
+      (spka_spk_nomor, spka_urut, spka_alamat, spka_toko, spka_kota, spka_person, spka_hp, spka_jumlah)
+    VALUES ?`,
     [vals],
   );
 };
@@ -585,8 +587,8 @@ const saveBabaran = async (conn, spkNomor, list) => {
 // karena SO bisa hidup di tsalesorder (baru) atau tspk legacy. ---
 const getSoAlokasiReference = async (soNomor) => {
   const [newRows] = await db.query(
-    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_kota AS kota,
-            soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
+    `SELECT soa_urut AS urut, soa_alamat AS alamat, soa_toko AS toko,
+            soa_kota AS kota, soa_person AS person, soa_hp AS hp, soa_jumlah AS jumlah
      FROM tsalesorder_alokasi WHERE soa_so_nomor = ? ORDER BY soa_urut`,
     [soNomor],
   );
