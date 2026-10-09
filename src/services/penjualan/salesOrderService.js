@@ -942,7 +942,7 @@ const searchAvailableForSpk = async (
       AND s.so_cmo <> ''
       AND (s.so_spk_ref IS NULL OR s.so_spk_ref = '')
       AND (
-        s.so_divisi LIKE '3%'
+        (s.so_divisi LIKE '3%' OR s.so_divisi LIKE '4%')
         OR EXISTS (
           SELECT 1
           FROM tpermintaan_desain pd
