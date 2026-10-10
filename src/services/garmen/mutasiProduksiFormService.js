@@ -1274,6 +1274,12 @@ const save = async (data, userKode, isNewMode) => {
     return d.nama && tqty > 0;
   });
 
+  // setelah validDetail dibuat, sebelum insert/update header
+  const jumlahHeader = validDetail.reduce(
+    (s, d) => s + (Number(d.jumlah) || 0),
+    0,
+  );
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -1297,7 +1303,7 @@ const save = async (data, userKode, isNewMode) => {
           Cab,
           Keterangan,
           NomorSpk,
-          Jumlah,
+          jumlahHeader,
           GdgAsal,
           GdgTujuan,
           Kelompok,
@@ -1341,7 +1347,7 @@ const save = async (data, userKode, isNewMode) => {
           SupKode,
           QtyBerat,
           SatBerat,
-          Jumlah,
+          jumlahHeader,
           GdgAsal,
           GdgTujuan,
           Kelompok,
