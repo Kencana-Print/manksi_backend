@@ -1274,11 +1274,15 @@ const save = async (data, userKode, isNewMode) => {
     return d.nama && tqty > 0;
   });
 
-  // setelah validDetail dibuat, sebelum insert/update header
-  const jumlahHeader = validDetail.reduce(
-    (s, d) => s + (Number(d.jumlah) || 0),
-    0,
-  );
+  // total per komponen (kode bahan), ambil yang terbesar
+  const perKomponen = {};
+  for (const d of validDetail) {
+    perKomponen[d.kode] = (perKomponen[d.kode] || 0) + (Number(d.jumlah) || 0);
+  }
+  const jumlahDetail = Math.max(0, ...Object.values(perKomponen));
+
+  // hormati nilai dari frontend kalau sudah terisi, isi dari detail hanya saat 0
+  const jumlahHeader = Number(Jumlah) > 0 ? Number(Jumlah) : jumlahDetail;
 
   const conn = await db.getConnection();
   try {
