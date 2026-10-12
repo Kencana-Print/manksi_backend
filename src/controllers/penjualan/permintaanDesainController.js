@@ -33,11 +33,16 @@ const updateDesainer = async (req, res) => {
 
 const setStatusManual = async (req, res) => {
   try {
-    const data = await service.setStatusManual(req.params.nomor, {
-      status: req.body.status,
-      keterangan: req.body.keterangan,
-      referensi: req.body.referensi,
-    });
+    if (hanyaDesain(req, res)) return;
+    const data = await service.setStatusManual(
+      req.params.nomor,
+      {
+        status: req.body.status,
+        keterangan: req.body.keterangan,
+        referensi: req.body.referensi,
+      },
+      req.user,
+    );
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -46,7 +51,8 @@ const setStatusManual = async (req, res) => {
 
 const resumeStatus = async (req, res) => {
   try {
-    const data = await service.resumeStatus(req.params.nomor);
+    if (hanyaDesain(req, res)) return;
+    const data = await service.resumeStatus(req.params.nomor, req.user);
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

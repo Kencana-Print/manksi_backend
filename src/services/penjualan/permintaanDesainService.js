@@ -39,6 +39,20 @@ const kunciHeader = async (conn, nomor) => {
   return pd;
 };
 
+const cekBolehSetStatus = (pd, user) => {
+  const kode = String(user?.kode || "").trim();
+  const bagian = String(user?.bagian || "")
+    .toUpperCase()
+    .trim();
+  const isSuper = EDIT_SUPER_BAGIAN.includes(bagian);
+  if (isSuper) return;
+  if (bagian !== "DESAIN" || String(pd.pd_user_done || "") !== kode) {
+    throw new Error(
+      "Status hanya dapat diubah oleh tim desain yang menyelesaikan PD ini.",
+    );
+  }
+};
+
 const pastikanAuto = (pd) => {
   if (pd.pd_status === "CLOSE") {
     throw new Error(
@@ -262,7 +276,11 @@ const updateDesainer = async (nomor, { pd2Id, desainerKode } = {}) => {
 // ─────────────────────────────────────────────────────────
 // Set status manual — Pending / Cancel / Cancel Alt
 // ─────────────────────────────────────────────────────────
-const setStatusManual = async (nomor, { status, keterangan, referensi }) => {
+const setStatusManual = async (
+  nomor,
+  { status, keterangan, referensi },
+  user,
+) => {
   if (!MANUAL_STATUSES.includes(status)) {
     throw new Error("Status tidak valid.");
   }
@@ -270,64 +288,59 @@ const setStatusManual = async (nomor, { status, keterangan, referensi }) => {
     throw new Error("Keterangan wajib diisi.");
   }
 
-  const [[row]] = await db.query(
-    `SELECT pd_nomor FROM tpermintaan_desain WHERE pd_nomor = ?`,
-    [nomor],
-  );
-  if (!row) throw new Error("Permintaan Desain tidak ditemukan.");
-
-  const [[lhk]] = await db.query(
-    `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ?`,
-    [nomor],
-  );
-  if (lhk) {
-    throw new Error(
-      `PD ini sudah punya LHK Desain (${lhk.lhk_nomor}), status tidak bisa diubah.`,
-    );
-  }
-
-  let pdReferensi = null;
-  if (status === "CANCEL_ALT") {
-    if (!referensi || !referensi.trim()) {
-      throw new Error("PD terkait wajib diisi untuk status Cancel Alt.");
-    }
-    if (referensi.trim() === nomor) {
-      throw new Error("PD terkait tidak boleh menunjuk ke PD ini sendiri.");
-    }
-    const [[ref]] = await db.query(
-      `SELECT pd_nomor, pd_status FROM tpermintaan_desain WHERE pd_nomor = ?`,
-      [referensi.trim()],
-    );
-    if (!ref) throw new Error("PD terkait tidak ditemukan.");
-    if (!["DONE", "CLOSE"].includes(ref.pd_status)) {
+  return dalamTransaksi(async (conn) => {
+    const pd = await kunciHeader(conn, nomor);
+    if (pd.pd_status !== "DONE" && !MANUAL_STATUSES.includes(pd.pd_status)) {
       throw new Error(
-        "PD terkait harus berstatus Done/Close (semua desain selesai).",
+        "Status hanya dapat diubah setelah desain berstatus DONE.",
       );
     }
-    pdReferensi = referensi.trim();
-  }
+    cekBolehSetStatus(pd, user);
 
-  await db.query(
-    `UPDATE tpermintaan_desain
-     SET pd_status = ?, pd_status_keterangan = ?, pd_referensi = ?
-     WHERE pd_nomor = ?`,
-    [status, keterangan.trim(), pdReferensi, nomor],
-  );
+    let pdReferensi = null;
+    if (status === "CANCEL_ALT") {
+      if (!referensi || !referensi.trim()) {
+        throw new Error("PD terkait wajib diisi untuk status Cancel Alt.");
+      }
+      if (referensi.trim() === nomor) {
+        throw new Error("PD terkait tidak boleh menunjuk ke PD ini sendiri.");
+      }
+      const [[ref]] = await conn.query(
+        `SELECT pd_nomor, pd_status FROM tpermintaan_desain WHERE pd_nomor = ?`,
+        [referensi.trim()],
+      );
+      if (!ref) throw new Error("PD terkait tidak ditemukan.");
+      if (!["DONE", "CLOSE"].includes(ref.pd_status)) {
+        throw new Error(
+          "PD terkait harus berstatus Done/ACC (semua desain selesai).",
+        );
+      }
+      pdReferensi = referensi.trim();
+    }
 
-  return {
-    nomor,
-    status,
-    keterangan: keterangan.trim(),
-    referensi: pdReferensi,
-  };
+    await conn.query(
+      `UPDATE tpermintaan_desain
+       SET pd_status = ?, pd_status_keterangan = ?, pd_referensi = ?
+       WHERE pd_nomor = ?`,
+      [status, keterangan.trim(), pdReferensi, nomor],
+    );
+
+    return {
+      nomor,
+      status,
+      keterangan: keterangan.trim(),
+      referensi: pdReferensi,
+    };
+  });
 };
 
 // ─────────────────────────────────────────────────────────
 // Aktifkan Kembali — resume ke perhitungan status otomatis
 // ─────────────────────────────────────────────────────────
-const resumeStatus = async (nomor) =>
+const resumeStatus = async (nomor, user) =>
   dalamTransaksi(async (conn) => {
     const pd = await kunciHeader(conn, nomor);
+    cekBolehSetStatus(pd, user);
     if (!MANUAL_STATUSES.includes(pd.pd_status)) {
       throw new Error("PD ini tidak dalam status manual.");
     }
@@ -370,7 +383,7 @@ const getDesainerOptions = async () => {
   return rows;
 };
 
-const EDIT_SUPER_BAGIAN = ["EDP", "IT"];
+const EDIT_SUPER_BAGIAN = ["EDP", "IT", "AUDIT"];
 
 const hasLhk = async (conn, nomor) => {
   // GANTI: copy query cek LHK yang sama persis dari setStatusManual
@@ -523,20 +536,47 @@ const updateHeader = async (nomor, payload, user) => {
 // Close PD: DESAIN input nomor SO/MAP + path desain (1 PD = 1 SO/MAP)
 // ─────────────────────────────────────────────────────────
 const cariSoMap = async (conn, nomor) => {
-  const [so] = await conn.query(
-    `SELECT so_nomor AS nomor FROM tsalesorder WHERE so_nomor = ? AND so_aktif = 'Y'
-     UNION ALL
-     SELECT spk_nomor FROM tspk WHERE spk_nomor = ? AND spk_is_so = 1 AND spk_aktif = 'Y'`,
-    [nomor, nomor],
+  const [soBaru] = await conn.query(
+    `SELECT so_nomor AS nomor FROM tsalesorder WHERE so_nomor = ? AND so_aktif = 'Y'`,
+    [nomor],
   );
-  if (so.length) return { nomor: so[0].nomor, tipe: "SO" };
+  if (soBaru.length)
+    return { nomor: soBaru[0].nomor, tipe: "SO", tabel: "SO_BARU" };
+
+  const [soLama] = await conn.query(
+    `SELECT spk_nomor AS nomor FROM tspk
+     WHERE spk_nomor = ? AND spk_is_so = 1 AND spk_aktif = 'Y'`,
+    [nomor],
+  );
+  if (soLama.length)
+    return { nomor: soLama[0].nomor, tipe: "SO", tabel: "SO_LAMA" };
 
   const [map] = await conn.query(
     `SELECT mspk_nomor AS nomor FROM tmemospk WHERE mspk_nomor = ? AND mspk_aktif = 'Y'`,
     [nomor],
   );
-  if (map.length) return { nomor: map[0].nomor, tipe: "MAP" };
+  if (map.length) return { nomor: map[0].nomor, tipe: "MAP", tabel: "MAP" };
   return null;
+};
+
+// ACC PD ⇒ design SO/MAP terkait otomatis ditandai selesai (blok kuning hilang)
+const tandaiDesignDone = async (conn, target) => {
+  if (target.tabel === "SO_BARU") {
+    await conn.query(
+      `UPDATE tsalesorder SET so_designdone = 'Y' WHERE so_nomor = ?`,
+      [target.nomor],
+    );
+  } else if (target.tabel === "SO_LAMA") {
+    await conn.query(
+      `UPDATE tspk SET spk_designdone = 'Y' WHERE spk_nomor = ?`,
+      [target.nomor],
+    );
+  } else {
+    await conn.query(
+      `UPDATE tmemospk SET mspk_designdone = 'Y' WHERE mspk_nomor = ?`,
+      [target.nomor],
+    );
+  }
 };
 
 const closePD = async (nomor, payload, user) => {
@@ -554,8 +594,11 @@ const closePD = async (nomor, payload, user) => {
 
   return dalamTransaksi(async (conn) => {
     const pd = await kunciHeader(conn, nomor);
-    if (pd.pd_status !== "DONE")
-      throw new Error("Hanya PD berstatus DONE yang dapat di-close.");
+    if (pd.pd_status !== "DONE" && !MANUAL_STATUSES.includes(pd.pd_status))
+      throw new Error(
+        "Hanya PD berstatus DONE atau Pending/Cancel yang dapat di-ACC.",
+      );
+    cekBolehSetStatus(pd, user);
     if (!isSuper && String(pd.pd_user_done || "") !== kode)
       throw new Error(
         "Hanya desainer yang menyelesaikan PD ini yang dapat meng-close.",
@@ -576,7 +619,8 @@ const closePD = async (nomor, payload, user) => {
       await conn.query(
         `UPDATE tpermintaan_desain
          SET pd_status = 'CLOSE', pd_so_map_nomor = ?, pd_so_map_tipe = ?,
-             pd_path_desain = ?, pd_user_close = ?, pd_date_close = NOW()
+             pd_path_desain = ?, pd_user_close = ?, pd_date_close = NOW(),
+             pd_status_keterangan = NULL, pd_referensi = NULL
          WHERE pd_nomor = ?`,
         [target.nomor, target.tipe, path, kode, nomor],
       );
@@ -585,6 +629,9 @@ const closePD = async (nomor, payload, user) => {
         throw new Error(`${target.nomor} sudah dipakai PD lain.`);
       throw e;
     }
+
+    await tandaiDesignDone(conn, target);
+
     return {
       nomor,
       status: "CLOSE",
