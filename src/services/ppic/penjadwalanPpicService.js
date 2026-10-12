@@ -156,7 +156,6 @@ const getDetail = async (nomor) => {
        ON so_from_map.so_memo = d.pjwd_map_nomor
        AND so_from_map.so_aktif = 'Y'
        AND d.pjwd_so_nomor IS NULL
-       AND d.pjwd_tipe <> 'MAP'
        AND so_from_map.so_nomor = (
          SELECT MIN(x.so_nomor) FROM tsalesorder x
          WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y'

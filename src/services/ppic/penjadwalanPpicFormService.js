@@ -1150,7 +1150,7 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
     const [[map]] = await db.query(
       `SELECT mspk_nomor, mspk_nama, DATE_FORMAT(mspk_tgl_cmo, '%Y-%m-%d') AS tgl_approve,
               DATE_FORMAT(mspk_dateline, '%Y-%m-%d') AS tgl_dateline,
-              mspk_cab, mspk_divisi, mspk_jumlah
+              mspk_cab, mspk_divisi, mspk_jumlah, mspk_referensi
        FROM tmemospk WHERE mspk_nomor = ? AND mspk_aktif = 'Y'`,
       [mapNomor],
     );
@@ -1164,6 +1164,25 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
       [mapNomor],
     );
     if (existing) return;
+
+    // MAP revisi: arahkan baris MAP asal (tab SO maupun MAP/Sampel) ke MAP
+    // revisi ini. Rencana, Permintaan Kirim & Kesepakatan tetap; pesan_manual
+    // ikut jumlah revisi hanya untuk baris tipe MAP.
+    if (map.mspk_referensi) {
+      await db.query(
+        `UPDATE tpenjadwalan_ppic_dtl
+         SET pjwd_map_nomor = ?,
+             pjwd_pesan_manual = IF(pjwd_tipe = 'MAP', ?, pjwd_pesan_manual)
+         WHERE pjwd_map_nomor = ?`,
+        [mapNomor, Number(map.mspk_jumlah) || 0, map.mspk_referensi],
+      );
+      const [[sudahAda]] = await db.query(
+        `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
+         WHERE pjwd_map_nomor = ? AND pjwd_tipe = 'MAP' LIMIT 1`,
+        [mapNomor],
+      );
+      if (sudahAda) return;
+    }
 
     const [[periode]] = await db.query(
       `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
