@@ -84,6 +84,7 @@ const submitData = async (req, res) => {
     const data = await qcBahanService.submitQc(
       decodeURIComponent(req.params.nomor),
       req.user?.kode || "ADMIN",
+      req.body?.lanjut,
     );
     res.status(200).json({
       success: true,

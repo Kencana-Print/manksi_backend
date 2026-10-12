@@ -114,6 +114,7 @@ const getDetailLot = async (nomor) => {
       IFNULL(k.qck_user, '') AS KeputusanOleh,
       DATE_FORMAT(k.qck_tanggal, "%Y-%m-%d %H:%i") AS KeputusanTgl,
       IFNULL(k.qck_catatan, '') AS KeputusanCatatan,
+      IFNULL(k.qck_tahap, '') AS KeputusanTahap,
       IFNULL(k.qck_klien_kontak, '') AS KlienKontak,
       IF(b.bql_lot IS NULL, 0, 1) AS SudahBpb,
       IFNULL(rt.qty, 0) AS QtyRetur
@@ -171,11 +172,13 @@ const getRiwayat = async (nomor) => {
 };
 
 // payload: { kontak, items: [{ nourut, keputusan, catatan }] }
-// kontak  = kontak klien yang dikonfirmasi (wajib)
+// kontak  = nama kontak klien (opsional)
 // catatan = hasil konfirmasi klien per lot (wajib)
 // Lot yang keputusannya tidak berubah diabaikan.
 const saveKeputusan = async (nomor, payload, userKode) => {
-  const kontak = String(payload?.kontak || "").trim();
+  const kontak = String(payload?.kontak || "")
+    .trim()
+    .slice(0, 100);
   const items = Array.isArray(payload?.items) ? payload.items : [];
 
   if (items.length === 0) throw new Error("Tidak ada keputusan yang dikirim.");

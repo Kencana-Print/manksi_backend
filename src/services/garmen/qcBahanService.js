@@ -1,6 +1,7 @@
 const db = require("../../config/database");
 const fs = require("fs");
 const path = require("path");
+const qcBahanFormService = require("./qcBahanFormService");
 
 const STATUS_VALID = [
   "DRAFT",
@@ -29,6 +30,9 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
       h.qc_jenis_kain AS JenisKain,
       h.qc_vendor_celup AS VendorCelup,
       h.qc_status AS Status,
+      h.qc_qty_datang AS QtyDatang,
+      h.qc_jenis_cek AS JenisCek,
+      h.qc_keterangan AS Keterangan,
       h.qc_keterangan AS Keterangan,
       IFNULL(x.jml_lot, 0) AS JumlahLot,
       IFNULL(x.tot_kg, 0) AS TotalKg,
@@ -82,6 +86,7 @@ const getBrowseDetail = async (nomor) => {
       d.qcd_qty_kg AS Kg,
       IFNULL(NULLIF(pd.pod_bhn_satuan, ''), 'Kg') AS Satuan,
       d.qcd_qty_roll AS Roll,
+      d.qcd_roll_cek AS RollCek,
       d.qcd_gramasi_po AS GramasiPO,
       d.qcd_setting_po AS SettingPO,
       d.qcd_warna AS Warna,
@@ -122,6 +127,9 @@ const deleteQc = async (nomor) => {
     }
 
     await conn.query(`DELETE FROM tqc_bahan_lampiran WHERE qcl_qc_nomor = ?`, [
+      nomor,
+    ]);
+    await conn.query(`DELETE FROM tqc_bahan_roll WHERE qcr_qc_nomor = ?`, [
       nomor,
     ]);
     await conn.query(`DELETE FROM tqc_bahan_hasil WHERE qch_qc_nomor = ?`, [
@@ -204,71 +212,35 @@ const requestPinPerubahan = async (nomor, alasan, userKode) => {
   return true;
 };
 
-// Submit dokumen DRAFT -> MENUNGGU, validasi penuh dari data tersimpan
-const submitQc = async (nomor, userKode) => {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    const [cur] = await conn.query(
-      `SELECT qc_status FROM tqc_bahan_hdr WHERE qc_nomor = ? FOR UPDATE`,
-      [nomor],
-    );
-    if (cur.length === 0) throw new Error("Data QC Bahan tidak ditemukan.");
-    if (cur[0].qc_status !== "DRAFT") {
-      throw new Error("Hanya dokumen berstatus DRAFT yang dapat disubmit.");
-    }
-
-    const [rows] = await conn.query(
-      `SELECT qcd_lot, qcd_qty_kg, qcd_qty_roll, qcd_gramasi_cek, qcd_setting_cek, qcd_nilai,
-              qcd_nilai_saran, qcd_alasan_nilai
-       FROM tqc_bahan_dtl WHERE qcd_qc_nomor = ?`,
-      [nomor],
-    );
-    if (rows.length === 0) throw new Error("Dokumen belum memiliki lot.");
-
-    for (const r of rows) {
-      const nilai = Number(r.qcd_nilai) || 0;
-      const saran = Number(r.qcd_nilai_saran) || 0;
-      if (!(Number(r.qcd_qty_kg) > 0)) {
-        throw new Error(`Qty lot ${r.qcd_lot} wajib diisi.`);
-      }
-      if (!(Number(r.qcd_qty_roll) > 0)) {
-        throw new Error(`Roll lot ${r.qcd_lot} wajib diisi.`);
-      }
-      if (nilai <= 0) throw new Error(`Nilai lot ${r.qcd_lot} wajib diisi.`);
-      if (!(Number(r.qcd_gramasi_cek) > 0)) {
-        throw new Error(`Gramasi hasil cek lot ${r.qcd_lot} wajib diisi.`);
-      }
-      if (!String(r.qcd_setting_cek || "").trim()) {
-        throw new Error(`Setting hasil cek lot ${r.qcd_lot} wajib diisi.`);
-      }
-      if (
-        saran > 0 &&
-        nilai !== saran &&
-        !String(r.qcd_alasan_nilai || "").trim()
-      ) {
-        throw new Error(
-          `Nilai lot ${r.qcd_lot} berbeda dari saran sistem (${saran}). Alasan wajib diisi.`,
-        );
-      }
-    }
-
-    await conn.query(
-      `UPDATE tqc_bahan_hdr
-       SET qc_status = 'MENUNGGU', user_modified = ?, date_modified = NOW()
-       WHERE qc_nomor = ?`,
-      [userKode, nomor],
-    );
-
-    await conn.commit();
-    return { qc_nomor: nomor, status: "MENUNGGU" };
-  } catch (error) {
-    await conn.rollback();
-    throw error;
-  } finally {
-    conn.release();
+// Submit dokumen DRAFT. Validasi dan keputusan otomatis memakai logika saveData
+// supaya aturan hanya ada di satu tempat.
+const submitQc = async (nomor, userKode, lanjut = []) => {
+  const detail = await qcBahanFormService.getDetail(nomor);
+  if (detail.header.qc_status !== "DRAFT") {
+    throw new Error("Hanya dokumen berstatus DRAFT yang dapat disubmit.");
   }
+
+  return qcBahanFormService.saveData(
+    {
+      isEdit: true,
+      submit: true,
+      qc_nomor: nomor,
+      qc_tgl_datang: detail.header.qc_tgl_datang,
+      qc_keterangan: detail.header.qc_keterangan,
+      qc_qty_datang: detail.header.qc_qty_datang,
+      lanjut_gudang: Array.isArray(lanjut) ? lanjut : [],
+      dtl: detail.dtl.map((d) => ({
+        lot: d.lot,
+        qty_kg: d.qty_kg,
+        qty_roll: d.qty_roll,
+        warna: d.warna,
+        nilai: d.nilai,
+        alasan_nilai: d.alasan_nilai,
+        rolls: d.rolls,
+      })),
+    },
+    userKode,
+  );
 };
 
 module.exports = {
