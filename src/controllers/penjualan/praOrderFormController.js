@@ -1,6 +1,7 @@
 // controllers/penjualan/praOrderFormController.js
 const praOrderFormService = require("../../services/penjualan/praOrderFormService");
 const upload = require("../../middleware/uploadMiddleware");
+const fs = require("fs");
 
 const getInitGrids = async (req, res) => {
   try {
@@ -37,32 +38,38 @@ const save = async (req, res) => {
 };
 
 const uploadGambar = async (req, res) => {
+  const files = req.files || [];
+  const hapusTemp = () =>
+    files.forEach((f) => {
+      try {
+        if (f.path && fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      } catch (_) {}
+    });
+
   try {
-    const { nomor } = req.params;
-    const files = req.files || [];
     if (files.length === 0) {
       return res
         .status(400)
         .json({ success: false, message: "Tidak ada file yang diupload." });
     }
-    let urut = await praOrderFormService.getNextGambarUrut(nomor);
-    const results = [];
-    for (const file of files) {
-      const urlPath = await praOrderFormService.processGambar(
-        file.path,
-        nomor,
-        urut,
-      );
-      await praOrderFormService.addGambar(nomor, urlPath, "", urut);
-      results.push(urlPath);
-      urut++;
+    if (files.length > 1) {
+      hapusTemp();
+      return res.status(400).json({
+        success: false,
+        message: "Hanya satu gambar desain yang diperbolehkan.",
+      });
     }
+    const urlPath = await praOrderFormService.gantiGambar(
+      req.params.nomor,
+      files[0].path,
+    );
     res.status(200).json({
       success: true,
       message: "Gambar berhasil diupload.",
-      data: results,
+      data: [urlPath],
     });
   } catch (error) {
+    hapusTemp(); // aman dipanggil ulang, dicek existsSync
     res.status(400).json({ success: false, message: error.message });
   }
 };

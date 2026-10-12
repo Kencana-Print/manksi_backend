@@ -264,6 +264,79 @@ const addGambar = async (nomor, filePath, keterangan, urut) => {
   return true;
 };
 
+// Ganti seluruh gambar Pra Order dengan SATU gambar baru
+const gantiGambar = async (nomor, tempFilePath) => {
+  const [[hdr]] = await db.query(
+    `SELECT pro_tanggal FROM tpraorder_hdr WHERE pro_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    throw new Error("Pra Order tidak ditemukan.");
+  }
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  if (zdtClose && new Date(hdr.pro_tanggal) < zdtClose) {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    throw new Error("Periode sudah tutup buku, gambar tidak dapat diubah.");
+  }
+
+  // Nama file unik → URL berubah, jadi browser tidak menampilkan cache gambar lama
+  const finalFileName = `${nomor}-${Date.now()}.jpg`;
+  const folderPath = path.join("/mnt", "image", "praorder");
+  if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true });
+  const finalPath = path.join(folderPath, finalFileName);
+
+  try {
+    await sharp(tempFilePath)
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .toFormat("jpeg")
+      .jpeg({ quality: 90 })
+      .toFile(finalPath);
+  } catch (error) {
+    console.error("Gagal memproses gambar Pra Order:", error);
+    throw new Error("Gagal memproses gambar ke format JPG.");
+  } finally {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+  }
+
+  const urlPath = `/file-gambar/praorder/${finalFileName}`;
+  const conn = await db.getConnection();
+  let fileLama = [];
+  try {
+    await conn.beginTransaction();
+    const [lama] = await conn.query(
+      `SELECT prog_file_path FROM tpraorder_gambar WHERE prog_pro_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    fileLama = lama.map((r) => r.prog_file_path);
+    await conn.query(`DELETE FROM tpraorder_gambar WHERE prog_pro_nomor = ?`, [
+      nomor,
+    ]);
+    await conn.query(
+      `INSERT INTO tpraorder_gambar (prog_pro_nomor, prog_file_path, prog_keterangan, prog_urut) VALUES (?, ?, '', 1)`,
+      [nomor, urlPath],
+    );
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    if (fs.existsSync(finalPath)) fs.unlinkSync(finalPath); // buang file baru yang yatim
+    throw e;
+  } finally {
+    conn.release();
+  }
+
+  // Hapus file lama setelah commit (kegagalan di sini tidak menggagalkan upload)
+  for (const p of fileLama) {
+    try {
+      const fisik = path.join(folderPath, path.basename(p));
+      if (fisik !== finalPath && fs.existsSync(fisik)) fs.unlinkSync(fisik);
+    } catch (e) {
+      console.error("Gagal hapus gambar Pra Order lama:", e);
+    }
+  }
+  return urlPath;
+};
+
 // --- PPIC ACTIONS ---
 const setStatusBahan = async (prob_id, status) => {
   await db.query(
@@ -670,6 +743,7 @@ module.exports = {
   getNextGambarUrut,
   processGambar,
   addGambar,
+  gantiGambar,
   setStatusBahan,
   setStatusPpic,
   convertToMintaHarga,
