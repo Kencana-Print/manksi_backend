@@ -58,10 +58,13 @@ const tglCapaiMinggu = (idx, kunci, tgl1, tgl2, saldoAwal, target) => {
 
 /**
  * Keberhasilan Komitmen Kirim (per qty).
- *  - Realisasi per baris = rumus yang SAMA dengan penjadwalanPpicService.getDetail
- *    (MAP/manual = realisasi manual; P02 = SJ approved dalam minggu; cabang lain =
- *    STBJ minggu itu + sisa STBJ di luar minggu yang belum terkirim).
- *  - Tercapai per baris = MIN(Rencana, Realisasi).
+ *  - Realisasi per baris mengikuti penjadwalanPpicService.getDetail:
+ *    MAP = BAST (mspk_jumlah_jadi dari tkesesuaianmap); baris manual = realisasi manual;
+ *    SO cabang P02 = SJ approved dalam minggu; cabang lain = STBJ minggu itu +
+ *    sisa STBJ di luar minggu yang belum terkirim.
+ *  - Tercapai per baris = Realisasi apa adanya (tidak dibatasi Rencana, bisa >100%,
+ *    sesuai permintaan PPIC; direview lagi nanti).
+ *  - Baris tipe MAP tetap MAP sampai selesai (tidak diganti SO walau MAP-nya sudah punya SO).
  *  - Periode yang belum selesai (tgl2 >= hari ini) tidak ikut persen ringkasan kecuali includeBerjalan=1.
  * Query: startDate, endDate, cabang, tipe (SO|MAP), includeBerjalan
  */
@@ -111,6 +114,7 @@ const getKeberhasilanKomitmenKirim = async (query) => {
        ON sfm.so_memo = d.pjwd_map_nomor
        AND sfm.so_aktif = 'Y'
        AND d.pjwd_so_nomor IS NULL
+       AND d.pjwd_tipe <> 'MAP'
        AND sfm.so_nomor = (
          SELECT MIN(x.so_nomor) FROM tsalesorder x
          WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y'
