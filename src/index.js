@@ -74,10 +74,13 @@ const approveReturBahanRoutes = require("./routes/garmen/approveReturBahanRoutes
 const approveReturBahanFormRoutes = require("./routes/garmen/approveReturBahanFormRoutes");
 const koreksiStokBahanRoutes = require("./routes/garmen/koreksiStokBahanRoutes");
 const koreksiStokBahanFormRoutes = require("./routes/garmen/koreksiStokBahanFormRoutes");
+const qcBahanRoutes = require("./routes/garmen/qcBahanRoutes");
+const qcBahanFormRoutes = require("./routes/garmen/qcBahanFormRoutes");
 const bpbBahanRoutes = require("./routes/garmen/bpbBahanRoutes");
 const bpbBahanFormRoutes = require("./routes/garmen/bpbBahanFormRoutes");
 const returBeliBahanRoutes = require("./routes/garmen/returBeliBahanRoutes");
 const returBeliBahanFormRoutes = require("./routes/garmen/returBeliBahanFormRoutes");
+const returQcFormRoutes = require("./routes/garmen/returQcFormRoutes");
 const pembuatanBarcodeBahanRoutes = require("./routes/garmen/pembuatanBarcodeBahanRoutes");
 const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcodeBahanFormRoutes");
 
@@ -168,6 +171,7 @@ const uangMukaRealisasiRoutes = require("./routes/pembelian/uangMukaRealisasiRou
 const uangMukaPenyelesaianRoutes = require("./routes/pembelian/uangMukaPenyelesaianRoutes");
 const pengajuanTransferRoutes = require("./routes/pembelian/pengajuanTransferRoutes");
 const pengajuanTransferFormRoutes = require("./routes/pembelian/pengajuanTransferFormRoutes");
+const tindakLanjutQcRoutes = require("./routes/pembelian/tindakLanjutQcRoutes");
 
 // Penjualan Routes
 const mppbRoutes = require("./routes/penjualan/mppbRoutes");
@@ -479,6 +483,7 @@ app.use("/api/pembelian/uang-muka-realisasi", uangMukaRealisasiRoutes);
 app.use("/api/pembelian/uang-muka-penyelesaian", uangMukaPenyelesaianRoutes);
 app.use("/api/pembelian/pengajuan-transfer", pengajuanTransferRoutes);
 app.use("/api/pembelian/pengajuan-transfer-form", pengajuanTransferFormRoutes);
+app.use("/api/pembelian/tindak-lanjut-qc", tindakLanjutQcRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);
 app.use("/api/ppic/proof-form", proofFormRoutes);
@@ -508,6 +513,8 @@ app.use(
 );
 app.use("/api/garmen/bahan-baku/koreksi-stok", koreksiStokBahanRoutes);
 app.use("/api/garmen/bahan-baku/koreksi-stok/form", koreksiStokBahanFormRoutes);
+app.use("/api/garmen/bahan-baku/qc-bahan/form", qcBahanFormRoutes);
+app.use("/api/garmen/bahan-baku/qc-bahan", qcBahanRoutes);
 app.use("/api/garmen/bahan-baku/bpb-bahan", bpbBahanRoutes);
 app.use("/api/garmen/bahan-baku/bpb-bahan/form", bpbBahanFormRoutes);
 app.use("/api/garmen/bahan-baku/retur-pembelian-bahan", returBeliBahanRoutes);
@@ -515,6 +522,7 @@ app.use(
   "/api/garmen/bahan-baku/retur-pembelian-bahan/form",
   returBeliBahanFormRoutes,
 );
+app.use("/api/garmen/bahan-baku/retur-pembelian-bahan-qc", returQcFormRoutes);
 app.use(
   "/api/garmen/bahan-baku/pembuatan-barcode-bahan",
   pembuatanBarcodeBahanRoutes,

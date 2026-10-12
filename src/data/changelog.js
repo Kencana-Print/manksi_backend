@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.13",
+    date: "2026-10-12",
+    changes: [
+      {
+        type: "added",
+        text: "Modul baru QC Bahan untuk Gudang.",
+      },
+    ],
+  },
+  {
     version: "1.0.12",
     date: "2026-10-05",
     changes: [

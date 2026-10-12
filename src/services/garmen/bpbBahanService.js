@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService"); // Asumsi file ini ada di root services
+const { syncStatusClosePo } = require("./bpbBahanFormService");
 
 const getBrowse = async (
   startDate,
@@ -124,6 +125,17 @@ const deleteBpb = async (nomor) => {
       throw new Error("Transaksi tsb sudah close. Tidak bisa dihapus.");
     }
 
+    // 3b. BPB yang sudah divoucher tidak boleh dihapus
+    if (Number(hdr.bpb_status_inv) === 1) {
+      throw new Error(
+        "BPB ini sudah dibuat Voucher Pembayaran. Tidak bisa dihapus.",
+      );
+    }
+    const [dariQc] = await conn.query(
+      `SELECT 1 FROM tbpb_qc_lot WHERE bql_bpb_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+
     // 4. Eksekusi Hapus Sesuai Delphi
     await conn.query(`DELETE FROM tbpb_hdr WHERE bpb_nomor = ?`, [nomor]);
     await conn.query(`DELETE FROM tbahan_barcode_hdr WHERE bar_bpb = ?`, [
@@ -131,9 +143,21 @@ const deleteBpb = async (nomor) => {
     ]);
     // Tambahan safety untuk menghapus detailnya agar tidak jadi orphan data
     await conn.query(`DELETE FROM tbpb_dtl WHERE bpbd_bpb_nomor = ?`, [nomor]);
+    await conn.query(`DELETE FROM tbpb_dtl2 WHERE bpbd2_bpb_nomor = ?`, [
+      nomor,
+    ]);
+    await conn.query(`DELETE FROM tbpb_qc_lot WHERE bql_bpb_nomor = ?`, [
+      nomor,
+    ]);
 
     // 5. Update Status PO Induk Jika Ada
-    if (hdr.bpb_po_nomor && hdr.bpb_po_nomor.trim() !== "") {
+    if (
+      hdr.bpb_po_nomor &&
+      hdr.bpb_po_nomor.trim() !== "" &&
+      dariQc.length > 0
+    ) {
+      await syncStatusClosePo(conn, hdr.bpb_po_nomor);
+    } else if (hdr.bpb_po_nomor && hdr.bpb_po_nomor.trim() !== "") {
       const [recalc] = await conn.query(
         `
         SELECT SUM(x.po) as po, SUM(IF(x.bpb > x.po, x.po, x.bpb)) as bpb

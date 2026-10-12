@@ -32,6 +32,14 @@ router.post(
   bpbBahanFormController.saveData,
 );
 
+// Daftar QC Bahan yang siap dibuatkan BPB
+router.get(
+  "/qc-siap",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  bpbBahanFormController.getQcSiap,
+);
+
 // Endpoint Tarik Max Barcode
 router.get("/max-barcode", verifyToken, bpbBahanFormController.getMaxBarcode);
 

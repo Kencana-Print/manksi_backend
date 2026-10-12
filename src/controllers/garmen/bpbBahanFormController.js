@@ -58,9 +58,20 @@ const getMaxBarcode = async (req, res) => {
   }
 };
 
+const getQcSiap = async (req, res) => {
+  try {
+    const { po = "" } = req.query;
+    const data = await bpbBahanFormService.getQcSiap(po);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   validateField,
   getDetail,
   saveData,
   getMaxBarcode,
+  getQcSiap,
 };

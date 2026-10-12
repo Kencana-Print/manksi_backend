@@ -30,7 +30,7 @@ router.get(
 router.post(
   "/save",
   verifyToken,
-  checkPermission(menuId, "edit"),
+  checkPermission(menuId, "insert"),
   controller.save,
 );
 router.get(
