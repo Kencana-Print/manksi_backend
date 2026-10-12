@@ -56,7 +56,7 @@ const getOutstanding = async ({
               SELECT 1 FROM tpengajuan_uang_muka_dtl pd
               JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
               WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = a.pjh_nomor
-                AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+                AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
             )
         ), 0) AS Nominal
       FROM ga2.tpengajuan2_hdr a
@@ -76,7 +76,7 @@ const getOutstanding = async ({
             SELECT 1 FROM tpengajuan_uang_muka_dtl pd
             JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
             WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = a.pjh_nomor
-              AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+              AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
           )
       )
       ${startDate && endDate ? "AND a.pjh_tanggal BETWEEN ? AND ?" : ""}
@@ -216,7 +216,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            SELECT 1 FROM tpengajuan_uang_muka_dtl pd
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
            WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = ?
-           AND pd.pumd_item_nourut = a.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL')
+           AND pd.pumd_item_nourut = a.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
          )
        ORDER BY a.pjd_nourut`,
       [nomorHeader, nomorHeader],
