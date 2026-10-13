@@ -612,6 +612,7 @@ const saveData = async (payload, user) => {
   let approvedUbahPin = null; // khusus gate SPK PPIC (pin_jenis="UBAH")
   let approvedTutupBukuUrut = null; // khusus gate tutup buku (pin_jenis="TUTUPBUKU")
   let approvedInvoiceUrut = null;
+  let penLama = { nomor: "", id: "" };
   let ppicInfo = null;
 
   const conn = await db.getConnection();
@@ -797,11 +798,18 @@ const saveData = async (payload, user) => {
       ]);
     } else {
       const [existingRows] = await conn.query(
-        `SELECT so_acc_customer, so_cmo, so_harga, so_hargariil, so_hargafee
+        `SELECT so_acc_customer, so_cmo, so_harga, so_hargariil, so_hargafee,
+                so_pen_nomor, so_pen_id
          FROM tsalesorder WHERE so_nomor = ?`,
         [nomor],
       );
       const existingData = existingRows[0] || {};
+
+      // ← tempel di sini, tepat di bawah existingData
+      penLama = {
+        nomor: existingData.so_pen_nomor || "",
+        id: existingData.so_pen_id || "",
+      };
 
       // ==========================================
       // ⬅ GATE KERAS — SPK PPIC turunan masih Open.
@@ -1129,21 +1137,40 @@ const saveData = async (payload, user) => {
     }
 
     // ==========================================
-    // 7. UPDATE STATUS TRANSAKSI TERKAIT — tabel eksternal, TIDAK BERUBAH
+    // 7. UPDATE STATUS TRANSAKSI TERKAIT
     // ==========================================
-    if (!isEdit) {
-      if (header.spk_pen_nomor) {
-        await conn.query(
-          `UPDATE tpenawaran_dtl SET pend_status="CLOSE" WHERE pend_pen_nomor=? AND pend_id=?`,
-          [header.spk_pen_nomor, header.spk_pen_id || ""],
-        );
-      }
-      if (header.spk_memo) {
-        await conn.query(
-          `UPDATE tmemospk SET mspk_close="Y" WHERE mspk_nomor=?`,
-          [header.spk_memo],
-        );
-      }
+    const penBaru = {
+      nomor: header.spk_pen_nomor || "",
+      id: header.spk_pen_id || "",
+    };
+
+    // Edit: penawaran diganti/dikosongkan → buka kembali yang lama
+    if (
+      isEdit &&
+      penLama.nomor &&
+      (penLama.nomor !== penBaru.nomor || penLama.id !== penBaru.id)
+    ) {
+      await conn.query(
+        `UPDATE tpenawaran_dtl SET pend_status=""
+         WHERE pend_pen_nomor=? AND pend_id=?`,
+        [penLama.nomor, penLama.id],
+      );
+    }
+
+    // Create maupun edit: close penawaran yang dipakai
+    if (penBaru.nomor) {
+      await conn.query(
+        `UPDATE tpenawaran_dtl SET pend_status="CLOSE"
+         WHERE pend_pen_nomor=? AND pend_id=?`,
+        [penBaru.nomor, penBaru.id],
+      );
+    }
+
+    if (!isEdit && header.spk_memo) {
+      await conn.query(
+        `UPDATE tmemospk SET mspk_close="Y" WHERE mspk_nomor=?`,
+        [header.spk_memo],
+      );
     }
 
     // ==========================================
