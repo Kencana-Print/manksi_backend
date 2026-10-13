@@ -169,6 +169,16 @@ const getDetailForm = async (nomor) => {
   };
 };
 
+// SEMENTARA: pengecekan tutup buku BBK dimatikan sampai tanggal ini
+// (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-20";
+
+const bypassTutupBukuAktif = () => {
+  const n = new Date();
+  const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  return hariIni <= BYPASS_TUTUP_BUKU_SAMPAI;
+};
+
 // ── Simpan ────────────────────────────────────────────────────────────
 const saveData = async (payload, user) => {
   const {
@@ -205,8 +215,14 @@ const saveData = async (payload, user) => {
     if (limitDate < today) isTutupBuku = true;
   }
 
-  if (isTutupBuku)
-    throw new Error("Periode sudah ditutup. Tidak bisa disimpan.");
+  if (isTutupBuku) {
+    if (!bypassTutupBukuAktif()) {
+      throw new Error("Periode sudah ditutup. Tidak bisa disimpan.");
+    }
+    console.warn(
+      `[BBK] Bypass tutup buku sementara: user=${user.kode} tanggal=${tanggal} nomor=${nomor || "(baru)"}`,
+    );
+  }
 
   const conn = await db.getConnection();
   await conn.beginTransaction();
