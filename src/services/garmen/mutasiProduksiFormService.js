@@ -75,7 +75,7 @@ const getSpkInfo = async (nomorSpk) => {
     `SELECT spk_nomor, spk_nama, jo_nama, spk_jumlah, spk_divisi,
             spk_finishing, spk_pending, spk_accpending, spk_cmo,
             spk_tanggal AS spk_tanggal,
-            IF(spk_sablon='Y' OR spk_sublim='Y', 'Y', 'N') AS xcetak,
+            IF(spk_sablon='Y', 'Y', 'N') AS xcetak,
             spk_bordir AS xbordir,
             '' AS spk_kodek
      FROM tspk
@@ -847,8 +847,7 @@ const cekKomponen = async (nomorSpk, lini) => {
   }
 
   if (liniUpper === "CETAK" || liniUpper === "BORDIR") {
-    const kcbProses =
-      liniUpper === "CETAK" ? "('SABLON', 'SUBLIM')" : "('BORDIR')";
+    const kcbProses = liniUpper === "CETAK" ? "('SABLON')" : "('BORDIR')";
     const [[row]] = await db.query(
       `SELECT COUNT(*) AS jml FROM tspk_komponen_cetak_bordir
        WHERE kcb_nomor = ? AND kcb_proses IN ${kcbProses}`,
