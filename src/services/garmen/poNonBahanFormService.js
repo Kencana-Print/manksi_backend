@@ -91,7 +91,9 @@ const getDetailForm = async (nomor, user) => {
         m.mbd_kegunaan AS kegunaan,
         m.mbd_jumlah AS minta,
         IFNULL(d.pod_jumlah, 0) AS jumlah,
-        IFNULL(d.pod_harga, 0) AS harga
+        IFNULL(d.pod_jumlah, 0) AS jumlah,
+        IFNULL(d.pod_harga, 0) AS harga,
+        IFNULL(d.pod_ppn, 0) AS ppn
       FROM tgarmenmintabeli_dtl m
       INNER JOIN tgarmenpo_hdr h ON h.po_mb_nomor = m.mbd_nomor
       LEFT JOIN tgarmen_brg b ON b.brg_kode = m.mbd_brg_kode
@@ -142,6 +144,8 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
     r.belum = Number(r.minta || 0) - r.sudah;
     r.jumlah = r.belum; // Default jumlah PO = sisa yang belum di-PO
     r.harga = 0;
+    r.ppn = 0;
+    r.total = 0;
     r.total = 0;
     r.bpb = 0;
   }
@@ -245,6 +249,9 @@ const saveData = async (payload, user) => {
     if (totalQty === 0)
       throw new Error("Jumlah kosong semua, belum bisa disimpan.");
 
+    const ppn = Number(d.ppn || 0);
+    if (ppn < 0 || ppn > 100) throw new Error("PPN harus antara 0 sampai 100.");
+
     // 4. Eksekusi Header Upsert
     if (isEdit) {
       await conn.query(
@@ -261,18 +268,16 @@ const saveData = async (payload, user) => {
       );
     } else {
       await conn.query(
-        `INSERT INTO tgarmenpo_hdr (po_jenis, po_nomor, po_tanggal, po_mb_nomor, po_cab, po_kecab, po_sup_kode, po_bagian, po_ket, date_create, user_create) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+        `INSERT INTO tgarmenpo_dtl (pod_nomor, pod_brg_kode, pod_jumlah, pod_harga, pod_ppn, pod_ket, pod_kegunaan, pod_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          po_jenis,
           po_nomor,
-          po_tanggal,
-          po_mb_nomor,
-          user.cabang || "HO-",
-          po_kecab,
-          po_sup_kode,
-          user.bagian || "",
-          po_ket || "",
-          user.kode,
+          d.Kode,
+          Number(d.jumlah),
+          Number(d.harga),
+          Number(d.ppn || 0),
+          d.ket || "",
+          d.kegunaan || "",
+          nourut,
         ],
       );
     }

@@ -64,8 +64,10 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
 
   let selectBeli =
     Number(user.flags?.lihatBeli) === 1
-      ? `, d.pod_harga AS Harga, (d.pod_jumlah * d.pod_harga) AS Total`
-      : `, 0 AS Harga, 0 AS Total`;
+      ? `, d.pod_harga AS Harga,
+         IFNULL(d.pod_ppn, 0) AS Ppn,
+         (d.pod_jumlah * d.pod_harga * (1 + IFNULL(d.pod_ppn, 0) / 100)) AS Total`
+      : `, 0 AS Harga, 0 AS Ppn, 0 AS Total`;
 
   const queryDetail = `
     SELECT 
