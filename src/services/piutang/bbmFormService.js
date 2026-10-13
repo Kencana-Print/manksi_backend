@@ -1,6 +1,12 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// ── Bypass tutup buku SEMENTARA (sampai 2026-10-20, termasuk hari itu).
+// Hapus helper ini dan blok pemakainya di saveData setelah tanggal tsb.
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-20";
+const bypassTutupBukuAktif = () =>
+  new Date() <= new Date(`${BYPASS_TUTUP_BUKU_SAMPAI}T23:59:59`);
+
 // ── Account header BBM (A-112 atau rek_kol_id=12) ─────────────────────
 const getAccountOptions = async (cabang) => {
   let where;
@@ -158,8 +164,15 @@ const saveData = async (payload, user) => {
     if (limitDate < today) isTutupBuku = true;
   }
 
-  if (isTutupBuku)
-    throw new Error("Periode sudah ditutup. Tidak bisa disimpan.");
+  if (isTutupBuku) {
+    if (bypassTutupBukuAktif()) {
+      console.warn(
+        `[BBM] Bypass tutup buku sementara (simpan): nomor=${nomor || "(baru)"} tanggal=${tanggal}`,
+      );
+    } else {
+      throw new Error("Periode sudah ditutup. Tidak bisa disimpan.");
+    }
+  }
 
   // Delphi BBM: TIDAK ada cek cabang di F10 (berbeda dari BKM) — sengaja
   // tidak ada validasi cabang-vs-user di sini, sesuai perilaku asli.

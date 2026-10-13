@@ -1,6 +1,12 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// ── Bypass tutup buku SEMENTARA (sampai 2026-10-20, termasuk hari itu).
+// Hapus helper ini dan blok pemakainya di deleteData setelah tanggal tsb.
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-20";
+const bypassTutupBukuAktif = () =>
+  new Date() <= new Date(`${BYPASS_TUTUP_BUKU_SAMPAI}T23:59:59`);
+
 // ── Browse ────────────────────────────────────────────────────────────
 const getBrowse = async (startDate, endDate, cabang) => {
   let sql = `
@@ -114,8 +120,15 @@ const deleteData = async (nomor) => {
     if (limitDate < today) isTutupBuku = true;
   }
 
-  if (isTutupBuku)
-    throw new Error("Periode sudah ditutup. Tidak bisa dihapus.");
+  if (isTutupBuku) {
+    if (bypassTutupBukuAktif()) {
+      console.warn(
+        `[BBM] Bypass tutup buku sementara (hapus): nomor=${nomor} tanggal=${jurnal.jur_tanggal}`,
+      );
+    } else {
+      throw new Error("Periode sudah ditutup. Tidak bisa dihapus.");
+    }
+  }
 
   const conn = await db.getConnection();
   await conn.beginTransaction();
