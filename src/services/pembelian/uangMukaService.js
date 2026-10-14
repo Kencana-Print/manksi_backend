@@ -1,4 +1,19 @@
 const db = require("../../config/database");
+const {
+  BKK_P04_MULAI,
+  SQL_NOMINAL_BARIS_PO,
+  SQL_SUMBER_FEE,
+  SQL_NOMINAL_INSENTIF,
+} = require("./pengajuanUangMukaService");
+
+// PUM masih memegang sumber ini (sedang diajukan, atau direalisasi & di-ACC)
+const sqlPumAktif = (sumber, kolomNomor, kolomItem = null) => `
+  SELECT 1 FROM tpengajuan_uang_muka_dtl pd
+  JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+  WHERE pd.pumd_sumber = '${sumber}' AND pd.pumd_nomor_sumber = ${kolomNomor}
+    ${kolomItem ? `AND pd.pumd_item_nourut = ${kolomItem}` : ""}
+    AND (ph.pum_status = 'DIAJUKAN'
+         OR (ph.pum_status = 'REALISASI' AND pd.pumd_status_acc = 'ACC'))`;
 
 // ── OUTSTANDING (browse) ──
 const getOutstanding = async ({
@@ -11,18 +26,22 @@ const getOutstanding = async ({
 }) => {
   const searchParam = `%${search}%`;
 
-  // P04 dkk hanya lihat cabangnya sendiri. Cabang HO- statusnya setara
-  // Head Office, jadi juga boleh lihat pengajuan yang cabangnya P01.
+  // P01 dan HO- setara Head Office: lihat yang ditujukan ke HO- maupun P01,
+  // plus sumber khusus HO (insentif, PO Lain-lain, BKK kas kecil P04).
+  const isHO = cabang === "HO-" || cabang === "P01";
   const buildCabangClause = (kolom) => {
     if (!cabang) return "";
-    if (cabang === "HO-") return ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`;
+    if (isHO) return ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`;
     return ` AND ${kolom} = ?`;
   };
   const cabangClauseGA = buildCabangClause("a.pjh_ke");
   const cabangClauseMB = buildCabangClause("h.mb_mintake");
-  const cabangParams = cabang && cabang !== "HO-" ? [cabang] : [];
-
-  const unionSql = `
+  const cabangParams = cabang && !isHO ? [cabang] : [];
+  const tglSql = (kolom) =>
+    startDate && endDate
+      ? `AND ${kolom} >= ? AND ${kolom} < DATE_ADD(?, INTERVAL 1 DAY)`
+      : "";
+  const sqlPengajuanDana = `
     (
       SELECT
         'PENGAJUAN_DANA' AS Sumber,
@@ -83,7 +102,9 @@ const getOutstanding = async ({
       AND (a.pjh_nomor LIKE ? OR a.pjh_keterangan LIKE ?)
       ${cabangClauseGA}
     )
-    UNION ALL
+  `;
+
+  const sqlPermintaanPembelian = `
     (
       SELECT
         'PERMINTAAN_PEMBELIAN' AS Sumber,
@@ -161,17 +182,101 @@ const getOutstanding = async ({
     )
   `;
 
+  const sqlInsentif = `
+    (
+      SELECT
+        'INSENTIF' AS Sumber,
+        h.fee_nomor AS Nomor,
+        h.fee_tanggal AS Tanggal,
+        CONCAT('Insentif ', IFNULL(c.Cus_nama, '')) AS Keterangan,
+        h.user_create AS Pemohon,
+        '' AS Bagian,
+        'HO-' AS Cabang,
+        ${SQL_NOMINAL_INSENTIF} AS Nominal
+      FROM tpengajuan_fee h
+      LEFT JOIN tcustomer c ON c.Cus_kode = h.fee_cus_kode
+      WHERE h.fee_tgl_realisasi IS NULL
+        AND NOT EXISTS (${sqlPumAktif("INSENTIF", "h.fee_nomor")})
+        ${tglSql("h.fee_tanggal")}
+        AND (h.fee_nomor LIKE ? OR c.Cus_nama LIKE ?)
+    )
+  `;
+
+  const sqlPoLain = `
+    (
+      SELECT
+        'PO_LAIN_LAIN' AS Sumber,
+        h.po_nomor AS Nomor,
+        h.po_tanggal AS Tanggal,
+        IFNULL(h.po_keterangan, '') AS Keterangan,
+        IFNULL(h.user_create, '') AS Pemohon,
+        '' AS Bagian,
+        'HO-' AS Cabang,
+        ROUND(SUM(${SQL_NOMINAL_BARIS_PO}), 2) AS Nominal
+      FROM tpo_hdr h
+      JOIN tpo_dtl d ON d.pod_po_Nomor = h.po_nomor
+      WHERE h.po_jenis = 4
+        AND d.pod_bhn_kode <> ''
+        AND IFNULL(d.pod_sup_kode, '') <> ''
+        AND NOT EXISTS (${sqlPumAktif("PO_LAIN_LAIN", "h.po_nomor", "d.pod_nourut")})
+        AND NOT EXISTS (
+          SELECT 1 FROM finance.tpengajuan_transfer_dtl t
+          WHERE t.ptd_trs = h.po_nomor
+            AND t.ptd_sup_kode = d.pod_sup_kode
+            AND t.ptd_batal = ''
+        )
+        ${tglSql("h.po_tanggal")}
+        AND (h.po_nomor LIKE ? OR h.po_keterangan LIKE ?)
+      GROUP BY h.po_nomor, h.po_tanggal, h.po_keterangan, h.user_create
+    )
+  `;
+
+  const sqlBkkP04 = `
+    (
+      SELECT
+        'BKK_P04' AS Sumber,
+        h.jur_no AS Nomor,
+        h.jur_tanggal AS Tanggal,
+        h.jur_keterangan AS Keterangan,
+        h.jur_penerima AS Pemohon,
+        '' AS Bagian,
+        h.jur_cabang AS Cabang,
+        IFNULL((
+          SELECT SUM(i.jurd_debet) FROM finance.tjurnalitem i
+          WHERE i.jurd_jur_no = h.jur_no AND i.jurd_trs = 'BKK'
+        ), 0) AS Nominal
+      FROM finance.tjurnal h
+      WHERE h.jur_tipetransaksi = 'BKK'
+        AND h.jur_cabang = 'P04'
+        AND h.jur_otomatis = 0
+        AND LEFT(h.jur_rek_kode, 5) = 'A-111'
+        AND h.jur_tanggal >= '${BKK_P04_MULAI}'
+        AND NOT EXISTS (
+          SELECT 1 FROM finance.tkasbon k WHERE k.bon_jur_no = h.jur_no
+        )
+        AND NOT EXISTS (${sqlPumAktif("BKK_P04", "h.jur_no")})
+        ${tglSql("h.jur_tanggal")}
+        AND (h.jur_no LIKE ? OR h.jur_keterangan LIKE ?)
+    )
+  `;
+
   const dateParams = startDate && endDate ? [startDate, endDate] : [];
-  const baseParams = [
-    ...dateParams,
-    searchParam,
-    searchParam,
-    ...cabangParams,
-    ...dateParams,
-    searchParam,
-    searchParam,
-    ...cabangParams,
+  const paramsGaMb = [...dateParams, searchParam, searchParam, ...cabangParams];
+  const paramsHeader = [...dateParams, searchParam, searchParam];
+
+  const sumber = [
+    { sql: sqlPengajuanDana, params: paramsGaMb },
+    { sql: sqlPermintaanPembelian, params: paramsGaMb },
   ];
+  if (isHO) {
+    sumber.push(
+      { sql: sqlInsentif, params: paramsHeader },
+      { sql: sqlPoLain, params: paramsHeader },
+      { sql: sqlBkkP04, params: paramsHeader },
+    );
+  }
+  const unionSql = sumber.map((s) => s.sql).join(" UNION ALL ");
+  const baseParams = sumber.flatMap((s) => s.params);
 
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total FROM (${unionSql}) x`,
@@ -285,6 +390,58 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
     return rows;
   }
 
+  if (sumber === "INSENTIF") {
+    const [rows] = await db.query(
+      `SELECT d.feed_inv_nomor AS Invoice, i.INVD_Spk_Nomor AS Kode,
+              s.nama AS Nama, '' AS Satuan, i.INVD_Jumlah AS Qty,
+              s.hargafee AS Fee, (i.INVD_Jumlah * s.hargafee) AS Nominal
+       FROM tpengajuan_fee2 d
+       JOIN tinv_dtl i ON i.INVD_inv_nomor = d.feed_inv_nomor
+       JOIN ${SQL_SUMBER_FEE} s ON s.nomor = i.INVD_Spk_Nomor
+       WHERE d.feed_nomor = ? AND s.hargafee <> 0
+       ORDER BY d.feed_inv_nomor, i.INVD_Spk_Nomor`,
+      [nomorHeader],
+    );
+    return rows.map((r, i) => ({ ...r, ItemNourut: i + 1 }));
+  }
+
+  if (sumber === "BKK_P04") {
+    const [rows] = await db.query(
+      `SELECT i.jurd_nourut AS ItemNourut, i.jurd_uraian AS Nama,
+              '' AS Satuan, i.jurd_qty AS Qty, i.jurd_debet AS Nominal,
+              i.jurd_rek_kode AS Account
+       FROM finance.tjurnalitem i
+       WHERE i.jurd_jur_no = ? AND i.jurd_trs = 'BKK' AND i.jurd_debet <> 0
+       ORDER BY i.jurd_nourut`,
+      [nomorHeader],
+    );
+    return rows;
+  }
+
+  if (sumber === "PO_LAIN_LAIN") {
+    const [rows] = await db.query(
+      `SELECT d.pod_nourut AS ItemNourut, d.pod_bhn_kode AS Kode,
+              IF(IFNULL(d.pod_namaext, '') <> '', d.pod_namaext, d.pod_bhn_kode) AS Nama,
+              d.pod_bhn_satuan AS Satuan, d.pod_Jumlah AS Qty,
+              d.pod_sup_kode AS SupKode, IFNULL(s.sup_nama, '') AS Supplier,
+              ROUND(${SQL_NOMINAL_BARIS_PO}, 2) AS Nominal
+       FROM tpo_hdr h
+       JOIN tpo_dtl d ON d.pod_po_Nomor = h.po_nomor
+       LEFT JOIN tsupplier s ON s.sup_kode = d.pod_sup_kode
+       WHERE h.po_nomor = ? AND h.po_jenis = 4
+         AND d.pod_bhn_kode <> '' AND IFNULL(d.pod_sup_kode, '') <> ''
+         AND NOT EXISTS (${sqlPumAktif("PO_LAIN_LAIN", "h.po_nomor", "d.pod_nourut")})
+         AND NOT EXISTS (
+           SELECT 1 FROM finance.tpengajuan_transfer_dtl t
+           WHERE t.ptd_trs = h.po_nomor AND t.ptd_sup_kode = d.pod_sup_kode
+             AND t.ptd_batal = ''
+         )
+       ORDER BY d.pod_nourut`,
+      [nomorHeader],
+    );
+    return rows;
+  }
+
   throw new Error("Sumber tidak dikenali.");
 };
 
@@ -358,6 +515,31 @@ const deleteHistory = async (nomor) => {
         [nomor],
       );
     }
+    // PUM yang menghasilkan bon ini dibatalkan supaya sumbernya terlepas
+    // (BKK P04, Insentif, baris PO Lain-lain muncul lagi di Outstanding)
+    const [pumRows] = await conn.query(
+      `SELECT pum_nomor FROM tpengajuan_uang_muka_hdr
+       WHERE pum_bon_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    for (const p of pumRows) {
+      await conn.query(
+        `UPDATE tpengajuan_fee f
+         JOIN tpengajuan_uang_muka_dtl d ON d.pumd_nomor_sumber = f.fee_nomor
+         SET f.fee_tgl_realisasi = NULL
+         WHERE d.pumd_pum_nomor = ? AND d.pumd_sumber = 'INSENTIF'
+           AND d.pumd_status_acc = 'ACC'`,
+        [p.pum_nomor],
+      );
+      await conn.query(
+        `UPDATE tpengajuan_uang_muka_hdr SET pum_status = 'BATAL'
+         WHERE pum_nomor = ?`,
+        [p.pum_nomor],
+      );
+    }
+    await conn.query(`DELETE FROM finance.tkasbonitem WHERE bond_nomor = ?`, [
+      nomor,
+    ]);
     await conn.query(`DELETE FROM finance.tkasbon WHERE bon_nomor = ?`, [
       nomor,
     ]);

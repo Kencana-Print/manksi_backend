@@ -82,6 +82,21 @@ const getNotaDetail = async (kode, statusPpn = 0, type = null) => {
   const prefix = kode.substring(0, 3).toUpperCase();
   const resolvedType = type || prefix;
 
+  if (prefix === "PBG") {
+    const [[lain]] = await db.query(
+      `SELECT 1 AS x
+       FROM tbpb_hdr b
+       INNER JOIN tpo_hdr p ON p.po_nomor = b.bpb_po_nomor
+       WHERE b.bpb_nomor = ? AND p.po_jenis = 4`,
+      [kode],
+    );
+    if (lain) {
+      throw new Error(
+        "BPB dari PO Lain-lain dibayar lewat Pengajuan Transfer atau Uang Muka. Tidak bisa dibuat Voucher.",
+      );
+    }
+  }
+
   let sql = "";
   let params = [kode];
 
@@ -259,6 +274,10 @@ const searchNota = async (type, supKode, search = "") => {
            FROM tbpb_hdr
            INNER JOIN tsupplier ON sup_kode = bpb_sup_kode
            WHERE sup_kode = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM tpo_hdr px
+               WHERE px.po_nomor = bpb_po_nomor AND px.po_jenis = 4
+             )
              ${search ? "AND (bpb_nomor LIKE ? OR sup_nama LIKE ?)" : ""}
            ORDER BY bpb_tanggal DESC LIMIT 100`;
     params.push(supKode);
@@ -562,6 +581,24 @@ const save = async (payload, userKode) => {
   }
 
   if (!supKode) throw new Error("Supplier belum diisi.");
+
+  const daftarBpb = detail
+    .filter((d) => d.tipe === "BPB" && d.nomor)
+    .map((d) => d.nomor);
+  if (daftarBpb.length) {
+    const [lain] = await db.query(
+      `SELECT b.bpb_nomor
+       FROM tbpb_hdr b
+       INNER JOIN tpo_hdr p ON p.po_nomor = b.bpb_po_nomor
+       WHERE b.bpb_nomor IN (?) AND p.po_jenis = 4`,
+      [daftarBpb],
+    );
+    if (lain.length) {
+      throw new Error(
+        `BPB ${lain.map((r) => r.bpb_nomor).join(", ")} berasal dari PO Lain-lain dan dibayar lewat Pengajuan Transfer.`,
+      );
+    }
+  }
 
   // Hitung total — Delphi hitung():
   // BPB/BPJ/POE → += total, RET/PJG → -= total

@@ -46,11 +46,12 @@ const validateField = async (type, value, opts = {}) => {
   if (type === "po") {
     // 1. Cek Header PO
     const [hdr] = await db.query(
-      `SELECT h.po_nomor, h.po_tanggal, h.po_sup_kode, h.po_close, 
+      `SELECT h.po_nomor, h.po_tanggal, h.po_sup_kode, h.po_close, h.po_jenis,
               s.sup_nama, s.sup_alamat, s.sup_kota, s.sup_top
        FROM tpo_hdr h
-       INNER JOIN tsupplier s ON h.po_sup_kode = s.sup_kode
-       WHERE h.po_nomor = ? AND h.po_close NOT IN (1, 9) AND h.po_jenis <> 1`,
+       LEFT JOIN tsupplier s ON h.po_sup_kode = s.sup_kode
+       WHERE h.po_nomor = ? AND h.po_close NOT IN (1, 9) AND h.po_jenis <> 1
+         AND (h.po_jenis = 4 OR s.sup_kode IS NOT NULL)`,
       [value],
     );
 
@@ -68,6 +69,32 @@ const validateField = async (type, value, opts = {}) => {
     }
 
     if (!opts.lewatiQc) await pastikanPoTanpaQc(value);
+
+    // PO Lain-lain: supplier ada di baris PO. Hanya bisa lewat QC (supKode
+    // dikirim tarikDariQc), dan hanya baris milik supplier itu yang ditarik.
+    const isLainLain = Number(hdr[0].po_jenis) === 4;
+    let supFilter = "";
+    const supParams = [];
+    if (isLainLain) {
+      if (!opts.supKode) {
+        throw new Error(
+          "Supplier PO Lain-lain tidak diketahui. Tarik data melalui dokumen QC Bahan.",
+        );
+      }
+      const [sup] = await db.query(
+        `SELECT sup_kode, sup_nama, sup_alamat, sup_kota, sup_top
+         FROM tsupplier WHERE sup_kode = ?`,
+        [opts.supKode],
+      );
+      if (sup.length === 0) throw new Error("Supplier PO tidak ditemukan.");
+      hdr[0].po_sup_kode = sup[0].sup_kode;
+      hdr[0].sup_nama = sup[0].sup_nama;
+      hdr[0].sup_alamat = sup[0].sup_alamat;
+      hdr[0].sup_kota = sup[0].sup_kota;
+      hdr[0].sup_top = sup[0].sup_top;
+      supFilter = "AND d.pod_sup_kode = ?";
+      supParams.push(opts.supKode);
+    }
 
     // 2. Tarik Detail PO (Grid 2: Realisasi)
     // Sesuai Delphi: SELECT d.pod_bhn_kode, b.bhn_name ... dari tpo_dtl d
@@ -89,9 +116,9 @@ const validateField = async (type, value, opts = {}) => {
        LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
        LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor AND so.so_aktif = 'Y'
-       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> ''
+       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ${supFilter}
        ORDER BY d.pod_bhn_kode, d.pod_spk_nomor`,
-      [value],
+      [value, ...supParams],
     );
 
     const itemsGrid2 = poDetails.map((d) => ({
@@ -119,9 +146,9 @@ const validateField = async (type, value, opts = {}) => {
        FROM tpo_hdr h
        INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0 AND d.pod_bhn_kode <> ''
        LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
-       WHERE h.po_nomor = ?
+       WHERE h.po_nomor = ? ${supFilter}
        GROUP BY h.po_nomor, h.po_tanggal, d.pod_bhn_kode, d.pod_bhn_satuan, b.bhn_name, b.bhn_satuan, d.pod_hargabeli`,
-      [value],
+      [value, ...supParams],
     );
 
     // Hitung sisa/kurang untuk Grid 1
@@ -157,6 +184,7 @@ const getDetail = async (nomor) => {
       h.*, 
       IFNULL(s.sup_nama,"") AS nmsup, IFNULL(s.sup_alamat,"") AS alamat, IFNULL(s.sup_kota,"") AS kota,
       IFNULL(p.po_close, 0) AS po_close, DATE_FORMAT(p.po_tanggal, "%Y-%m-%d") AS dtpo,
+      p.po_jenis AS po_jenis,
       g.gdg_nama,
       (SELECT bar_nomor FROM tbahan_barcode_hdr WHERE bar_bpb = h.bpb_nomor LIMIT 1) AS no_buat_barcode
      FROM tbpb_hdr h
@@ -243,6 +271,10 @@ const getDetail = async (nomor) => {
 
   let poItems = [];
   if (poNomor && poNomor.trim() !== "") {
+    const filterSup =
+      Number(header.po_jenis) === 4 ? "AND d.pod_sup_kode = ?" : "";
+    const paramsGrid2 = [nomor, nomor, poNomor];
+    if (filterSup) paramsGrid2.push(header.bpb_sup_kode);
     const [grid2] = await db.query(
       `SELECT 
         d.pod_bhn_kode AS kode, b.bhn_name AS nama, d.pod_namaext AS namaext,
@@ -265,9 +297,9 @@ const getDetail = async (nomor) => {
        LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
        LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor AND so.so_aktif = 'Y'
-       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> ''
+       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ${filterSup}
        ORDER BY d.pod_bhn_kode, d.pod_spk_nomor`,
-      [nomor, nomor, poNomor],
+      paramsGrid2,
     );
 
     poItems = grid2.map((d) => ({
@@ -313,6 +345,12 @@ const saveData = async (payload, userKode) => {
         ]
       : [];
 
+  if (!isEdit && String(header?.bpb_po_nomor || "").trim() === "") {
+    throw new Error(
+      "BPB Non PO sudah dikunci. Buat BPB dari PO atau QC Bahan.",
+    );
+  }
+
   // PO yang sudah punya QC Bahan hanya boleh diterima lewat jalur QC
   if (
     !isEdit &&
@@ -339,6 +377,14 @@ const saveData = async (payload, userKode) => {
       if (gerbang.poNomor !== header.bpb_po_nomor) {
         throw new Error("Nomor PO pada BPB tidak sama dengan PO dokumen QC.");
       }
+      if (
+        gerbang.poJenis === 4 &&
+        String(header.bpb_sup_kode || "").trim() !== gerbang.supKode
+      ) {
+        throw new Error(
+          "Supplier BPB tidak sama dengan supplier pada dokumen QC.",
+        );
+      }
       lotQc = gerbang.lots;
     }
 
@@ -347,16 +393,40 @@ const saveData = async (payload, userKode) => {
     const isPO = !!(header.bpb_po_nomor && header.bpb_po_nomor.trim() !== "");
 
     // A. Validasi Invoice & Tutup Buku
+    let dariQc = daftarQc.length > 0;
     if (isEdit) {
       const [cekInv] = await conn.query(
-        `SELECT bpb_status_inv FROM tbpb_hdr WHERE bpb_nomor=?`,
+        `SELECT h.bpb_status_inv, h.bpb_po_nomor, h.bpb_sup_kode, p.po_jenis
+         FROM tbpb_hdr h
+         LEFT JOIN tpo_hdr p ON p.po_nomor = h.bpb_po_nomor
+         WHERE h.bpb_nomor=?`,
         [nomorBPB],
       );
-      if (cekInv.length > 0 && cekInv[0].bpb_status_inv === 1) {
+      if (cekInv.length === 0) {
+        throw new Error("BPB tidak ditemukan.");
+      }
+      if (cekInv[0].bpb_status_inv === 1) {
         throw new Error(
           "BPB ini sudah dibuat Voucher Pembayaran, tidak bisa di edit",
         );
       }
+      const poLama = String(cekInv[0].bpb_po_nomor || "").trim();
+      const poBaru = String(header.bpb_po_nomor || "").trim();
+      if (poLama !== poBaru) {
+        throw new Error("Nomor PO pada BPB tidak boleh diubah.");
+      }
+      if (
+        Number(cekInv[0].po_jenis) === 4 &&
+        String(cekInv[0].bpb_sup_kode || "").trim() !==
+          String(header.bpb_sup_kode || "").trim()
+      ) {
+        throw new Error("Supplier BPB PO Lain-lain tidak boleh diubah.");
+      }
+      const [qcLot] = await conn.query(
+        `SELECT 1 FROM tbpb_qc_lot WHERE bql_bpb_nomor = ? LIMIT 1`,
+        [nomorBPB],
+      );
+      dariQc = qcLot.length > 0;
     }
 
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
@@ -493,16 +563,22 @@ const saveData = async (payload, userKode) => {
         }
       }
 
-      // F. SINKRONISASI STATUS CLOSE PO (Mirip getQtyCelup di delete/simpan)
-      let poCloseStatus = 2; // ONPROSES
-      if (totalBpb >= totalPoSisa)
-        poCloseStatus = 1; // CLOSE
-      else if (totalBpb === 0) poCloseStatus = 0; // OPEN
+      // F. SINKRONISASI STATUS CLOSE PO
+      // BPB dari QC: dihitung dari DB untuk seluruh PO (PO Lain-lain multi-supplier
+      // tidak boleh CLOSE hanya karena satu supplier selesai).
+      if (dariQc) {
+        await syncStatusClosePo(conn, header.bpb_po_nomor);
+      } else {
+        let poCloseStatus = 2; // ONPROSES
+        if (totalBpb >= totalPoSisa)
+          poCloseStatus = 1; // CLOSE
+        else if (totalBpb === 0) poCloseStatus = 0; // OPEN
 
-      await conn.query(`UPDATE tpo_hdr SET po_close=? WHERE po_nomor=?`, [
-        poCloseStatus,
-        header.bpb_po_nomor,
-      ]);
+        await conn.query(`UPDATE tpo_hdr SET po_close=? WHERE po_nomor=?`, [
+          poCloseStatus,
+          header.bpb_po_nomor,
+        ]);
+      }
     }
 
     // Tandai lot QC yang sudah diterima di BPB ini
@@ -595,6 +671,16 @@ const getMaxBarcode = async (kode, tahun) => {
 // PO yang sudah punya dokumen QC Bahan wajib diterima lewat QC.
 // PO lama yang tidak punya QC tetap boleh lewat jalur PO.
 const pastikanPoTanpaQc = async (poNomor) => {
+  const [jns] = await db.query(
+    `SELECT po_jenis FROM tpo_hdr WHERE po_nomor = ?`,
+    [poNomor],
+  );
+  if (jns.length > 0 && Number(jns[0].po_jenis) === 4) {
+    throw new Error(
+      `PO ${poNomor} adalah PO Lain-lain. Buat BPB dari QC Bahan.`,
+    );
+  }
+
   const [rows] = await db.query(
     `SELECT qc_nomor FROM tqc_bahan_hdr WHERE qc_po_nomor = ? LIMIT 1`,
     [poNomor],
@@ -651,11 +737,14 @@ const muatLotQc = async (executor, daftarQc) => {
             d.qcd_gramasi_cek, d.qcd_setting_cek,
             p.pod_bhn_kode, p.pod_bhn_satuan, p.pod_hargabeli, p.pod_jumlah,
             p.pod_mkb_nomor, p.pod_spk_nomor,
-            b.bhn_name, b.bhn_satuan
+            b.bhn_name, b.bhn_satuan,
+            ph.po_jenis,
+            COALESCE(NULLIF(p.pod_sup_kode, ''), ph.po_sup_kode) AS sup_kode
      FROM tqc_bahan_hdr h
      INNER JOIN tqc_bahan_dtl d ON d.qcd_qc_nomor = h.qc_nomor
      INNER JOIN tpo_dtl p ON p.pod_po_nomor = h.qc_po_nomor
                          AND p.pod_nourut = h.qc_pod_nourut
+     LEFT JOIN tpo_hdr ph ON ph.po_nomor = h.qc_po_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = p.pod_bhn_kode
      LEFT JOIN tbpb_qc_lot x ON x.bql_qc_nomor = d.qcd_qc_nomor
                             AND x.bql_lot = d.qcd_lot
@@ -677,7 +766,20 @@ const muatLotQc = async (executor, daftarQc) => {
     throw new Error("QC yang digabung harus berasal dari PO yang sama.");
   }
 
-  return { poNomor: rows[0].qc_po_nomor, lots: rows };
+  const poJenis = Number(rows[0].po_jenis);
+  let supKode = "";
+  if (poJenis === 4) {
+    if (new Set(rows.map((r) => r.sup_kode || "")).size > 1) {
+      throw new Error(
+        "QC yang digabung harus berasal dari supplier yang sama.",
+      );
+    }
+    supKode = String(rows[0].sup_kode || "").trim();
+    if (!supKode) {
+      throw new Error("Supplier baris PO pada dokumen QC tidak terisi.");
+    }
+  }
+  return { poNomor: rows[0].qc_po_nomor, lots: rows, poJenis, supKode };
 };
 
 // Daftar QC yang siap dibuatkan BPB (untuk modal pencarian)
@@ -688,8 +790,10 @@ const getQcSiap = async (poNomor = "") => {
             h.qc_po_nomor AS po, h.qc_jenis_kain AS jenis,
             h.qc_vendor_greige AS vendor, h.qc_status AS status,
             COUNT(*) AS jml_lot, SUM(d.qcd_qty_kg) AS qty,
-            SUM(d.qcd_qty_roll) AS roll, MAX(p.pod_bhn_satuan) AS satuan
-     FROM tqc_bahan_hdr h
+            SUM(d.qcd_qty_roll) AS roll, MAX(p.pod_bhn_satuan) AS satuan,
+            COALESCE(NULLIF(p.pod_sup_kode, ''), ph.po_sup_kode) AS sup_kode,
+            IFNULL(sp.sup_nama, '') AS supplier
+            FROM tqc_bahan_hdr h
      INNER JOIN tpo_hdr ph ON ph.po_nomor = h.qc_po_nomor
                           AND ph.po_close NOT IN (1, 9)
                           AND ph.po_jenis <> 1
@@ -697,12 +801,15 @@ const getQcSiap = async (poNomor = "") => {
                                AND d.qcd_keputusan = 'LANJUT'
      INNER JOIN tpo_dtl p ON p.pod_po_nomor = h.qc_po_nomor
                          AND p.pod_nourut = h.qc_pod_nourut
+     LEFT JOIN tsupplier sp
+            ON sp.sup_kode = COALESCE(NULLIF(p.pod_sup_kode, ''), ph.po_sup_kode)
      LEFT JOIN tbpb_qc_lot x ON x.bql_qc_nomor = d.qcd_qc_nomor
                             AND x.bql_lot = d.qcd_lot
      WHERE x.bql_id IS NULL
        AND (? = '' OR h.qc_po_nomor = ?)
      GROUP BY h.qc_nomor, h.qc_tgl_datang, h.qc_po_nomor, h.qc_jenis_kain,
-              h.qc_vendor_greige, h.qc_status
+              h.qc_vendor_greige, h.qc_status,
+              COALESCE(NULLIF(p.pod_sup_kode, ''), ph.po_sup_kode), sp.sup_nama
      ORDER BY h.qc_nomor DESC`,
     [poNomor, poNomor],
   );
@@ -782,8 +889,8 @@ const tarikDariQc = async (value) => {
         .filter(Boolean),
     ),
   ];
-  const { poNomor, lots } = await muatLotQc(db, daftar);
-  const data = await validateField("po", poNomor, { lewatiQc: true });
+  const { poNomor, lots, supKode } = await muatLotQc(db, daftar);
+  const data = await validateField("po", poNomor, { lewatiQc: true, supKode });
   const hasil = ringkasHasilQc(lots);
   const spk = spkPerKode(data.poDetails);
 

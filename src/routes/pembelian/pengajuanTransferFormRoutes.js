@@ -69,6 +69,12 @@ router.get(
   ctrl.getBkkOptions,
 );
 router.get(
+  "/po-lain-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPoLainOptions,
+);
+router.get(
   "/detail",
   verifyToken,
   checkPermission(MENU_ID, "view"),

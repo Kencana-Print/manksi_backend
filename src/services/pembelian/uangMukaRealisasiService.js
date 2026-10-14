@@ -3,18 +3,22 @@ const db = require("../../config/database");
 // ── Lookup account (KAS/BANK) — ported, prefix finance. ──
 const getAccountOptions = async (jenis, cabang) => {
   const effectiveCabang = cabang === "HO-" ? "P01" : cabang;
+  const params = [];
   let whereClause;
   if (jenis === "KAS") {
-    whereClause = `LEFT(rek_kode,5)='A-111'`;
-    whereClause += ` AND rek_cabang = '${effectiveCabang && effectiveCabang !== "P01" ? effectiveCabang : "P01"}'`;
+    whereClause = `LEFT(rek_kode,5)='A-111' AND rek_cabang = ?`;
+    params.push(effectiveCabang || "P01");
   } else {
     whereClause = `(LEFT(rek_kode,5)='A-112' OR LEFT(rek_kode,5)='B-211')`;
-    if (effectiveCabang && effectiveCabang !== "P01")
-      whereClause += ` AND rek_cabang = '${effectiveCabang}'`;
+    if (effectiveCabang && effectiveCabang !== "P01") {
+      whereClause += ` AND rek_cabang = ?`;
+      params.push(effectiveCabang);
+    }
   }
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
      FROM finance.trekening WHERE ${whereClause} ORDER BY rek_kode`,
+    params,
   );
   return rows;
 };
@@ -262,6 +266,98 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           ],
         );
         nourut++;
+      }
+
+      // Sumber dokumen/PO: siapkan baris bon supaya Penyelesaian langsung
+      // terisi (nominal, akun, rekening). Data dibaca dari DB, bukan payload.
+      if (isAcc && ["BKK_P04", "INSENTIF", "PO_LAIN_LAIN"].includes(d.sumber)) {
+        const [[src]] = await conn.query(
+          `SELECT pumd_nomor_sumber, pumd_item_nourut, pumd_nama,
+                  pumd_satuan, pumd_nominal_sumber
+           FROM tpengajuan_uang_muka_dtl
+           WHERE pumd_id = ? AND pumd_pum_nomor = ?`,
+          [d.pumd_id, pumNomor],
+        );
+        if (!src) throw new Error("Baris pengajuan tidak ditemukan.");
+        const nominal = Number(src.pumd_nominal_sumber) || 0;
+        let rekKode = "";
+        let supKode = "";
+        let supNama = "";
+        let bank = "";
+        let rekening = "";
+        let atasnama = "";
+
+        if (d.sumber === "BKK_P04") {
+          // Ganti kas kecil: akun default = kas P04 pada BKK itu, supaya
+          // Penyelesaian mengisi kas (bukan membiayakan lagi).
+          const [[j]] = await conn.query(
+            `SELECT jur_rek_kode FROM finance.tjurnal WHERE jur_no = ?`,
+            [src.pumd_nomor_sumber],
+          );
+          rekKode = j?.jur_rek_kode || "";
+        } else if (d.sumber === "INSENTIF") {
+          const [[f]] = await conn.query(
+            `SELECT c.Cus_nama, f.fee_bank, f.fee_rekening, f.fee_atasnama
+             FROM tpengajuan_fee f
+             LEFT JOIN tcustomer c ON c.Cus_kode = f.fee_cus_kode
+             WHERE f.fee_nomor = ?`,
+            [src.pumd_nomor_sumber],
+          );
+          supNama = f?.Cus_nama || "";
+          bank = f?.fee_bank || "";
+          rekening = f?.fee_rekening || "";
+          atasnama = f?.fee_atasnama || "";
+        } else {
+          const [[p]] = await conn.query(
+            `SELECT d.pod_sup_kode, s.sup_nama
+             FROM tpo_dtl d
+             LEFT JOIN tsupplier s ON s.sup_kode = d.pod_sup_kode
+             WHERE d.pod_po_Nomor = ? AND d.pod_nourut = ?`,
+            [src.pumd_nomor_sumber, src.pumd_item_nourut],
+          );
+          supKode = p?.pod_sup_kode || "";
+          supNama = p?.sup_nama || "";
+        }
+
+        await conn.query(
+          `INSERT INTO finance.tkasbonitem
+            (bond_nomor, bond_nourut, bond_nama, bond_spesifikasi, bond_satuan,
+             bond_qty, bond_nominal, bond_qty_realisasi, bond_nominal_realisasi,
+             bond_verified, bond_ref_tipe, bond_ref_nomor, bond_ref_nourut,
+             bond_rek_kode, bond_sup_kode, bond_sup_nama,
+             bond_bank, bond_rekening, bond_atasnama)
+           VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            bonNomor,
+            nourut,
+            src.pumd_nama || src.pumd_nomor_sumber,
+            src.pumd_satuan || "",
+            Number(d.qty) || 1,
+            nominal,
+            Number(d.qty) || 1,
+            nominal,
+            d.sumber,
+            src.pumd_nomor_sumber,
+            src.pumd_item_nourut,
+            rekKode,
+            supKode,
+            supNama,
+            bank,
+            rekening,
+            atasnama,
+          ],
+        );
+        nourut++;
+      }
+
+      if (d.sumber === "INSENTIF" && isAcc) {
+        const [upd] = await conn.query(
+          `UPDATE tpengajuan_fee SET fee_tgl_realisasi = ?
+           WHERE fee_nomor = ? AND fee_tgl_realisasi IS NULL`,
+          [tanggal, d.nomor_header],
+        );
+        if (upd.affectedRows === 0)
+          throw new Error(`Insentif ${d.nomor_header} sudah direalisasi.`);
       }
 
       await conn.query(

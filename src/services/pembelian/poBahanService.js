@@ -12,16 +12,22 @@ const getBrowse = async (query, canLihatSup = false) => {
       .substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
-  // ⚠️ Kolom KodeSupplier/Supplier digated flag lihatSup (user_lihat_sup)
-  // — replikasi `if zLihatSup<>0` di ufrmBrowsePO.btnRefreshClick.
+  // PO Lain-lain (jenis 4): supplier ada di detail → digabung per PO.
+  const supDtl = (kolom) => `(
+      SELECT GROUP_CONCAT(DISTINCT x.${kolom} ORDER BY x.sup_kode SEPARATOR ", ")
+      FROM tpo_dtl dd
+      INNER JOIN tsupplier x ON x.sup_kode = dd.pod_sup_kode
+      WHERE dd.pod_po_nomor = h.po_nomor
+    )`;
   const supCols = canLihatSup
-    ? "s.sup_kode AS KodeSupplier, s.sup_nama AS Supplier,"
+    ? `IF(h.po_jenis = 4, ${supDtl("sup_kode")}, s.sup_kode) AS KodeSupplier,
+       IF(h.po_jenis = 4, ${supDtl("sup_nama")}, s.sup_nama) AS Supplier,`
     : "NULL AS KodeSupplier, NULL AS Supplier,";
 
   let sql = `
     SELECT DISTINCT 
       h.po_nomor AS Nomor,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", "BAHAN")) AS JenisPO,
+      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
       h.po_greige AS PoGreige,
       IFNULL((SELECT CAST(GROUP_CONCAT(hh.po_nomor SEPARATOR ", ") AS CHAR) FROM tpo_hdr hh WHERE hh.po_greige = h.po_nomor), "") AS PoCelup,
       h.po_tanggal AS Tanggal,
@@ -75,8 +81,9 @@ const getBrowse = async (query, canLihatSup = false) => {
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
-    INNER JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
     WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?
+      AND (h.po_jenis = 4 OR s.sup_kode IS NOT NULL)
   `;
 
   const params = [dStart, dEnd];
@@ -93,12 +100,16 @@ const getBrowse = async (query, canLihatSup = false) => {
 };
 
 // --- 2. GET BROWSE DETAIL (Sesuai SQLDetail Delphi) ---
-const getBrowseDetail = async (nomorPO, canLihatBeli = false) => {
-  // ⚠️ Kolom Harga/Disc digated flag lihatBeli (user_lihat_beli) —
-  // replikasi `if zLihatBeli=1` di ufrmBrowsePO.btnRefreshClick.
+const getBrowseDetail = async (
+  nomorPO,
+  canLihatBeli = false,
+  canLihatSup = false,
+) => {
   const hargaCols = canLihatBeli
     ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
     : "NULL AS Harga, NULL AS Disc,";
+  // Supplier per baris (PO Lain-lain); PO lain jatuh ke supplier header
+  const supCol = canLihatSup ? "sp.sup_nama AS Supplier," : "NULL AS Supplier,";
 
   const sql = `
     SELECT 
@@ -107,6 +118,7 @@ const getBrowseDetail = async (nomorPO, canLihatBeli = false) => {
       b.bhn_name AS Nama,
       d.pod_bhn_satuan AS Satuan,
       d.pod_jumlah AS Jumlah,
+      ${supCol},
       
       IFNULL((
         SELECT IFNULL(SUM(i.bpbd2_jumlah), 0)
@@ -131,6 +143,7 @@ const getBrowseDetail = async (nomorPO, canLihatBeli = false) => {
     FROM tpo_dtl d
     LEFT JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
+    LEFT JOIN tsupplier sp ON sp.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
     LEFT JOIN tspk s ON s.spk_nomor = d.pod_spk_nomor
     LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
     WHERE d.pod_po_nomor = ?
@@ -313,7 +326,7 @@ const getAllDetail = async (
       h.po_nomor AS Nomor,
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", "BAHAN")) AS JenisPO,
+      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
       ${supCols}
       d.pod_bhn_kode AS Kode,
       b.bhn_name AS Nama,
@@ -331,7 +344,7 @@ const getAllDetail = async (
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
-    INNER JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    INNER JOIN tsupplier s ON s.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
     LEFT JOIN tspk spk ON spk.spk_nomor = d.pod_spk_nomor
     LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
     WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?

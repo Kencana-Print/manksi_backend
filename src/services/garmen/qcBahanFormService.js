@@ -176,7 +176,7 @@ const loadPoLine = async (conn, poNomor, nourut) => {
     LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
     LEFT JOIN tbahan_warna w ON w.bw_kode = MID(d.pod_bhn_kode, 3, 3)
-    LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    LEFT JOIN tsupplier s ON s.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
     WHERE h.po_nomor = ? AND d.pod_nourut = ?
     `,
     [poNomor, Number(nourut)],
@@ -225,7 +225,7 @@ const lookupPo = async (query) => {
     `
     SELECT
       h.po_nomor AS PO,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", "BAHAN")) AS JenisPO,
+      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
       DATE_FORMAT(h.po_tanggal, "%Y-%m-%d") AS TanggalPO,
       s.sup_nama AS Supplier,
       d.pod_nourut AS Nourut,
@@ -239,7 +239,7 @@ const lookupPo = async (query) => {
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
     LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
-    LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+    LEFT JOIN tsupplier s ON s.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
     WHERE h.po_tanggal >= ? AND h.po_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
       AND h.po_close <> 9
       AND d.pod_status <> 2
@@ -306,7 +306,9 @@ const getPoSource = async (poNomor, nourut) => {
             ? "GREIGE"
             : Number(line.po_jenis) === 2
               ? "CELUP"
-              : "BAHAN",
+              : Number(line.po_jenis) === 4
+                ? "LAIN-LAIN"
+                : "BAHAN",
       },
       po: {
         qty: qtyPo,
@@ -705,6 +707,15 @@ const saveData = async (payload, userKode) => {
         hasil: x.hasil || {},
       }));
 
+      const evals = rolls.map((x) => x.ev);
+      const saran = hitungNilaiLot(evals, spec);
+      const alasan = String(r.alasan_nilai || "").trim();
+      let nilai = Math.round(num(r.nilai));
+      if (saran > 0 && !nilai) nilai = saran;
+      if (nilai !== 0 && ![1, 2, 3].includes(nilai)) {
+        throw new Error(`Nilai lot ${lot} harus 1, 2, atau 3.`);
+      }
+
       if (submit) {
         if (!nilai) throw new Error(`Nilai lot ${lot} wajib diisi.`);
         if (nilai === 3 && saran !== 3) {
@@ -723,36 +734,6 @@ const saveData = async (payload, userKode) => {
               ? `Lot ${lot}: spesifikasi PO tidak terbaca sehingga nilai diisi manual. Alasan wajib diisi.`
               : `Nilai lot ${lot} berbeda dari hasil hitung sistem (${saran}). Alasan wajib diisi.`,
           );
-        }
-      }
-
-      const evals = rolls.map((x) => x.ev);
-      const saran = hitungNilaiLot(evals, spec);
-      const alasan = String(r.alasan_nilai || "").trim();
-      let nilai = Math.round(num(r.nilai));
-      if (saran > 0 && !nilai) nilai = saran;
-      if (nilai !== 0 && ![1, 2, 3].includes(nilai)) {
-        throw new Error(`Nilai lot ${lot} harus 1, 2, atau 3.`);
-      }
-
-      if (submit) {
-        if (!nilai) throw new Error(`Nilai lot ${lot} wajib diisi.`);
-        if (nilai !== saran) {
-          if (saran === 0 && !alasan) {
-            throw new Error(
-              `Lot ${lot}: spesifikasi PO tidak terbaca sehingga nilai diisi manual. Alasan wajib diisi.`,
-            );
-          }
-          if (saran > 0 && !alasan) {
-            throw new Error(
-              `Nilai lot ${lot} berbeda dari hasil hitung sistem (${saran}). Alasan wajib diisi.`,
-            );
-          }
-          if (saran === 1 && nilai > 1) {
-            throw new Error(
-              `Lot ${lot}: semua roll yang dicek di luar toleransi (nilai 1), tidak dapat dinaikkan. Perbaiki data cek bila ada salah input.`,
-            );
-          }
         }
       }
 

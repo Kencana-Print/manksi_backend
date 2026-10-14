@@ -242,12 +242,17 @@ const getDataCetak = async (nomor) => {
 
   const [dtl] = await db.query(
     `SELECT
-       d.sjd_spk_nomor, d.sjd_ukuran, d.sjd_jumlah, d.sjd_koli, d.sjd_keterangan,
-       IFNULL(s.spk_nama, b.brg_name) AS nama_barang
-     FROM tsj_dtl_bayangan d
-     LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
-     LEFT JOIN tbarang b ON b.brg_kode = d.sjd_spk_nomor
-     WHERE d.sjd_sj_nomor = ?`,
+        d.sjd_spk_nomor, d.sjd_ukuran, d.sjd_jumlah, d.sjd_koli, d.sjd_keterangan,
+        COALESCE(
+          NULLIF(TRIM(so.so_nama2), ''),
+          NULLIF(TRIM(s.spk_nama2), ''),
+          s.spk_nama, b.brg_name
+        ) AS nama_barang
+      FROM tsj_dtl_bayangan d
+      LEFT JOIN tsalesorder so ON so.so_nomor = d.sjd_spk_nomor
+      LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+      LEFT JOIN tbarang b ON b.brg_kode = d.sjd_spk_nomor
+      WHERE d.sjd_sj_nomor = ?`,
     [nomor],
   );
 

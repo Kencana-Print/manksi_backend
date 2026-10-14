@@ -1642,7 +1642,7 @@ const isMoSalesUser = (user) => {
 const canViewPotensi = (user) =>
   isMoSalesUser(user) ||
   isCmoUser(user) ||
-  ["EDP", "DIREKSI", "OWNER", "AUDIT"].includes(
+  ["EDP", "DIREKSI", "OWNER", "AUDIT", "FINANCE"].includes(
     (user.bagian || "").toUpperCase(),
   );
 

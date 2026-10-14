@@ -64,6 +64,29 @@ const lhkMarkerRoutes = require("./routes/ppic/lhkMarkerRoutes");
 const lhkMarkerFormRoutes = require("./routes/ppic/lhkMarkerFormRoutes");
 const konfirmasiPraOrderRoutes = require("./routes/ppic/konfirmasiPraOrderRoutes");
 
+// Spanduk Routes
+const spandukMasterBahanRoutes = require("./routes/spanduk/daftar/masterBahanRoutes");
+const spandukBahanPenolongRoutes = require("./routes/spanduk/daftar/bahanPenolongRoutes");
+const spandukToleransiRoutes = require("./routes/spanduk/daftar/toleransiRoutes");
+const spandukLhkPlotterRoutes = require("./routes/spanduk/lhk/lhkPlotterRoutes");
+const spandukLhkPlotterFormRoutes = require("./routes/spanduk/lhk/lhkPlotterFormRoutes");
+const spandukLhkHapusPlankanRoutes = require("./routes/spanduk/lhk/lhkHapusPlankanRoutes");
+const spandukLhkHapusPlankanFormRoutes = require("./routes/spanduk/lhk/lhkHapusPlankanFormRoutes");
+const spandukLhkAfdrukRoutes = require("./routes/spanduk/lhk/lhkAfdrukRoutes");
+const spandukLhkAfdrukFormRoutes = require("./routes/spanduk/lhk/lhkAfdrukFormRoutes");
+const spandukLhkTintaRoutes = require("./routes/spanduk/lhk/lhkTintaRoutes");
+const spandukLhkTintaFormRoutes = require("./routes/spanduk/lhk/lhkTintaFormRoutes");
+const spandukLhkCetakRoutes = require("./routes/spanduk/lhk/lhkCetakRoutes");
+const spandukLhkCetakFormRoutes = require("./routes/spanduk/lhk/lhkCetakFormRoutes");
+const spandukLhkQuiringRoutes = require("./routes/spanduk/lhk/lhkQuiringRoutes");
+const spandukLhkQuiringFormRoutes = require("./routes/spanduk/lhk/lhkQuiringFormRoutes");
+const spandukLhkJahitRoutes = require("./routes/spanduk/lhk/lhkJahitRoutes");
+const spandukLhkJahitFormRoutes = require("./routes/spanduk/lhk/lhkJahitFormRoutes");
+const spandukLhkLipatRoutes = require("./routes/spanduk/lhk/lhkLipatRoutes");
+const spandukLhkLipatFormRoutes = require("./routes/spanduk/lhk/lhkLipatFormRoutes");
+const spandukMutasiProduksiRoutes = require("./routes/spanduk/mutasiProduksiSpandukRoutes");
+const spandukMutasiProduksiFormRoutes = require("./routes/spanduk/mutasiProduksiSpandukFormRoutes");
+
 // Garmen Routes
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
 const realisasiBahanRoutes = require("./routes/garmen/realisasiBahanRoutes");
@@ -497,6 +520,31 @@ app.use("/api/ppic/penjadwalan-form", penjadwalanPpicFormRoutes);
 app.use("/api/ppic/lhk-marker", lhkMarkerRoutes);
 app.use("/api/ppic/lhk-marker-form", lhkMarkerFormRoutes);
 app.use("/api/ppic/konfirmasi-pra-order", konfirmasiPraOrderRoutes);
+
+app.use("/api/spanduk/daftar/master-bahan", spandukMasterBahanRoutes);
+app.use("/api/spanduk/daftar/bahan-penolong", spandukBahanPenolongRoutes);
+app.use("/api/spanduk/daftar/toleransi", spandukToleransiRoutes);
+app.use("/api/spanduk/lhk/lhk-plotter", spandukLhkPlotterRoutes);
+app.use("/api/spanduk/lhk/lhk-plotter-form", spandukLhkPlotterFormRoutes);
+app.use("/api/spanduk/lhk/lhk-hapus-plankan", spandukLhkHapusPlankanRoutes);
+app.use(
+  "/api/spanduk/lhk/lhk-hapus-plankan-form",
+  spandukLhkHapusPlankanFormRoutes,
+);
+app.use("/api/spanduk/lhk/lhk-afdruk", spandukLhkAfdrukRoutes);
+app.use("/api/spanduk/lhk/lhk-afdruk-form", spandukLhkAfdrukFormRoutes);
+app.use("/api/spanduk/lhk/lhk-tinta", spandukLhkTintaRoutes);
+app.use("/api/spanduk/lhk/lhk-tinta-form", spandukLhkTintaFormRoutes);
+app.use("/api/spanduk/lhk/lhk-cetak", spandukLhkCetakRoutes);
+app.use("/api/spanduk/lhk/lhk-cetak-form", spandukLhkCetakFormRoutes);
+app.use("/api/spanduk/lhk/lhk-quiring", spandukLhkQuiringRoutes);
+app.use("/api/spanduk/lhk/lhk-quiring-form", spandukLhkQuiringFormRoutes);
+app.use("/api/spanduk/lhk/lhk-jahit", spandukLhkJahitRoutes);
+app.use("/api/spanduk/lhk/lhk-jahit-form", spandukLhkJahitFormRoutes);
+app.use("/api/spanduk/lhk/lhk-lipat", spandukLhkLipatRoutes);
+app.use("/api/spanduk/lhk/lhk-lipat-form", spandukLhkLipatFormRoutes);
+app.use("/api/spanduk/mutasi-produksi", spandukMutasiProduksiRoutes);
+app.use("/api/spanduk/mutasi-produksi-form", spandukMutasiProduksiFormRoutes);
 
 app.use("/api/garmen/bahan-baku/minta-bahan", mintaBahanRoutes);
 app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);

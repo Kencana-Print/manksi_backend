@@ -6,10 +6,12 @@ const generateNomorPO = async (jenisPO, tanggal) => {
   const dateObj = new Date(tanggal);
   const tahun = dateObj.getFullYear().toString();
 
-  let prefix = "PB"; // Default Bahan
+  let prefix = "PB"; // Default Bahan (jenis 0 & 3)
   if (jenisPO === 1)
     prefix = "PG"; // Greige
-  else if (jenisPO === 2) prefix = "PC"; // Celup
+  else if (jenisPO === 2)
+    prefix = "PC"; // Celup
+  else if (jenisPO === 4) prefix = "PL"; // Lain-lain
 
   const [rows] = await db.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(po_nomor, 4, 5) AS UNSIGNED)), 0) AS max_val 
@@ -167,6 +169,7 @@ const getDetail = async (nomor) => {
   const [items] = await db.query(
     `
       SELECT d.*, b.bhn_name, 
+            IFNULL(sp.sup_nama, '') as pod_sup_nama,
             IFNULL(j.bj_nama,"") as jenis, 
             IF(IFNULL(d.pod_gramasia, '') <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
             IF(IFNULL(d.pod_gramasia_awal, '') <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")) as gramasiAwal,
@@ -174,6 +177,7 @@ const getDetail = async (nomor) => {
       FROM tpo_dtl d
       INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
       LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
+      LEFT JOIN tsupplier sp ON sp.sup_kode = d.pod_sup_kode
       LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
@@ -235,7 +239,13 @@ const saveData = async (payload, userKode) => {
       payload;
 
     let nomorPO = header.po_nomor;
-    const jpo = Number(header.po_jenis); // 1: Greige, 2: Celup, 3: Bahan
+    const jpo = Number(header.po_jenis); // 0: PO Bahan lama, 1: Greige, 2: Celup, 3: Bahan, 4: Lain-lain
+    if (![0, 1, 2, 3, 4].includes(jpo))
+      throw new Error("Jenis PO tidak valid.");
+    const isLainLain = jpo === 4;
+    // PO Lain-lain: supplier ada di detail, header dibiarkan NULL
+    const supHeader = isLainLain ? null : header.po_sup_kode;
+    let jenisTersimpan = jpo; // bisa dipertahankan ke nilai lama saat edit (lihat bawah)
     let nomorBPB = header.no_bpb || "";
 
     // A. Validasi Tutup Buku Lanjutan
@@ -248,6 +258,36 @@ const saveData = async (payload, userKode) => {
       throw new Error(
         "Anda tidak boleh input/edit di tanggal periode yang sudah diclose.",
       );
+    }
+
+    // A2. Validasi khusus PO Lain-lain: supplier di level detail
+    if (isLainLain) {
+      const itemsValid = (items || []).filter(
+        (i) => i.kode && String(i.kode).trim() !== "",
+      );
+      if (itemsValid.length === 0)
+        throw new Error("Minimal satu bahan harus diisi.");
+
+      const kodeSet = new Set();
+      for (const it of itemsValid) {
+        if (!it.supKode || String(it.supKode).trim() === "")
+          throw new Error(`Supplier untuk bahan ${it.kode} wajib diisi.`);
+        if (kodeSet.has(it.kode))
+          throw new Error(
+            `Bahan ${it.kode} dobel di PO Lain-lain. Satu bahan hanya boleh satu baris.`,
+          );
+        kodeSet.add(it.kode);
+      }
+
+      const supList = [...new Set(itemsValid.map((i) => i.supKode))];
+      const [supRows] = await conn.query(
+        `SELECT sup_kode FROM tsupplier WHERE sup_kode IN (?)`,
+        [supList],
+      );
+      const ada = new Set(supRows.map((r) => r.sup_kode));
+      const tidakAda = supList.filter((k) => !ada.has(k));
+      if (tidakAda.length)
+        throw new Error(`Supplier tidak ditemukan: ${tidakAda.join(", ")}`);
     }
 
     // B. Header Eksekusi
@@ -266,7 +306,7 @@ const saveData = async (payload, userKode) => {
         header.po_tanggal,
         jpo,
         header.po_keterangan,
-        header.po_sup_kode,
+        supHeader,
         header.po_mppb_nomor,
         header.po_status_ppn,
         header.po_ppn,
@@ -298,15 +338,23 @@ const saveData = async (payload, userKode) => {
 
       // 1. Cek Status PO (Tidak Boleh Edit Jika Close/OnProses)
       const [cekStatus] = await conn.query(
-        `SELECT po_close FROM tpo_hdr WHERE po_nomor=?`,
+        `SELECT po_close, po_jenis FROM tpo_hdr WHERE po_nomor=?`,
         [nomorPO],
       );
-      if (cekStatus.length > 0) {
-        if (cekStatus[0].po_close === 1)
-          throw new Error("Sudah CLOSE. Tidak bisa disimpan.");
-        if (cekStatus[0].po_close === 2)
-          throw new Error("Sudah ONPROSES. Tidak bisa disimpan.");
-      }
+      if (cekStatus.length === 0) throw new Error("PO tidak ditemukan.");
+      if (cekStatus[0].po_close === 1)
+        throw new Error("Sudah CLOSE. Tidak bisa disimpan.");
+      if (cekStatus[0].po_close === 2)
+        throw new Error("Sudah ONPROSES. Tidak bisa disimpan.");
+
+      // Jenis 1/2/4 tidak boleh berpindah jenis (nomor, BPB & struktur detail
+      // berbeda). 0 <-> 3 dibolehkan, tapi nilai yang tersimpan dipertahankan
+      // supaya PO lama (0) tidak berubah jadi 3 diam-diam.
+      const jenisDb = Number(cekStatus[0].po_jenis);
+      if (jenisDb !== jpo && [jenisDb, jpo].some((j) => [1, 2, 4].includes(j)))
+        throw new Error("Jenis PO tidak boleh diubah saat edit.");
+      if ([0, 3].includes(jenisDb) && [0, 3].includes(jpo))
+        jenisTersimpan = jenisDb;
 
       // 2. Cek Sudah Link MKB (Migrasi ceksudahlink Delphi)
       const [cekMKB] = await conn.query(
@@ -328,9 +376,9 @@ const saveData = async (payload, userKode) => {
       `;
       await conn.query(updateHdr, [
         header.po_tanggal,
-        jpo,
+        jenisTersimpan,
         header.po_keterangan,
-        header.po_sup_kode,
+        supHeader,
         header.po_mppb_nomor,
         header.po_status_ppn,
         header.po_ppn,
@@ -375,8 +423,8 @@ const saveData = async (payload, userKode) => {
           `
             INSERT INTO tpo_dtl (
               pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomorPO,
@@ -393,6 +441,7 @@ const saveData = async (payload, userKode) => {
             item.harga || 0,
             item.spk || "",
             item.mkb || "",
+            isLainLain ? item.supKode : null,
           ],
         );
 
@@ -422,8 +471,8 @@ const saveData = async (payload, userKode) => {
       }
     }
 
-    // D. INSERT DETAIL 2 (Delivery Commitment - Hanya Bahan)
-    if (jpo === 3 && delivery && delivery.length > 0) {
+    // D. INSERT DETAIL 2 (Delivery Commitment - semua selain Greige & Celup)
+    if ([0, 3, 4].includes(jpo) && delivery && delivery.length > 0) {
       for (const d of delivery) {
         await conn.query(
           `

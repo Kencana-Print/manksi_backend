@@ -155,6 +155,151 @@ const getBkkOptions = async (search = "") => {
   return rows.map((r) => ({ ...r, nominal: Number(r.nominal) }));
 };
 
+// ── PO Lain-lain (F6) ─────────────────────────────────────────────────
+// Total per (PO, supplier): qty × harga × (100-disc)/100, + PPN kalau
+// po_status_ppn = 1. Rumus sama dengan BPB di voucherPembayaranFormService.
+// Dipakai di lookup dan validasi simpan supaya angkanya selalu sama.
+const SQL_TOTAL_PO_LAIN = `
+  ROUND(
+    SUM(d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100)
+    * IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1),
+  2)`;
+
+// excludeNomor = nomor pengajuan yang sedang diedit, supaya baris miliknya
+// sendiri tidak dihitung sebagai "sudah diajukan".
+const getPoLainOptions = async (search = "", excludeNomor = "") => {
+  const [rows] = await db.query(
+    `
+    SELECT x.nomor, x.tanggal, x.supKode, x.supplier,
+      x.total, x.sudah, ROUND(x.total - x.sudah, 2) AS nominal
+    FROM (
+      SELECT h.po_nomor AS nomor,
+        DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS tanggal,
+        d.pod_sup_kode AS supKode,
+        IFNULL(s.sup_nama,'') AS supplier,
+        ${SQL_TOTAL_PO_LAIN} AS total,
+        IFNULL((
+          SELECT SUM(t.ptd_nominal)
+          FROM finance.tpengajuan_transfer_dtl t
+          WHERE t.ptd_trs = h.po_nomor
+            AND t.ptd_sup_kode = d.pod_sup_kode
+            AND t.ptd_batal = ''
+            AND t.ptd_nomor <> ?
+        ), 0) AS sudah
+      FROM tpo_hdr h
+      INNER JOIN tpo_dtl d
+        ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
+      LEFT JOIN tsupplier s ON s.sup_kode = d.pod_sup_kode
+      WHERE h.po_jenis = 4
+        AND d.pod_sup_kode IS NOT NULL AND d.pod_sup_kode <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM tpengajuan_uang_muka_dtl pd
+          JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+          JOIN tpo_dtl x ON x.pod_po_Nomor = pd.pumd_nomor_sumber
+                        AND x.pod_nourut = pd.pumd_item_nourut
+          WHERE pd.pumd_sumber = 'PO_LAIN_LAIN'
+            AND pd.pumd_nomor_sumber = h.po_nomor
+            AND x.pod_sup_kode = d.pod_sup_kode
+            AND (ph.pum_status = 'DIAJUKAN'
+                 OR (ph.pum_status = 'REALISASI' AND pd.pumd_status_acc = 'ACC'))
+        )
+      GROUP BY h.po_nomor, h.po_tanggal, h.po_status_ppn, h.po_ppn,
+               d.pod_sup_kode, s.sup_nama
+    ) x
+    WHERE (x.total - x.sudah) > 0.005
+      AND (x.nomor LIKE ? OR x.supplier LIKE ?)
+    ORDER BY x.nomor DESC
+    LIMIT 200
+  `,
+    [excludeNomor || "", `%${search}%`, `%${search}%`],
+  );
+  return rows.map((r) => ({
+    ...r,
+    total: Number(r.total),
+    sudah: Number(r.sudah),
+    nominal: Number(r.nominal),
+  }));
+};
+
+// Validasi server: nomor PO bisa diketik manual di grid (kolom No.
+// Transaksi tidak readonly), jadi lookup saja tidak cukup. Dipanggil di
+// dalam transaksi SETELAH baris yang belum direalisasi dihapus, sehingga
+// "sudah diajukan" otomatis tidak ikut menghitung baris pengajuan ini.
+// Sekalian menormalkan d.trs ke penulisan nomor PO asli di database.
+const validasiPoLain = async (conn, detail) => {
+  const baris = detail.filter((d) => d.nama && d.trs && !d.jurnal && !d.batal);
+  if (!baris.length) return;
+
+  const daftarTrs = [...new Set(baris.map((d) => String(d.trs).trim()))];
+  const [lain] = await conn.query(
+    `SELECT po_nomor FROM tpo_hdr WHERE po_jenis = 4 AND po_nomor IN (?)`,
+    [daftarTrs],
+  );
+  if (!lain.length) return;
+  const kanonik = new Map(
+    lain.map((r) => [r.po_nomor.toUpperCase(), r.po_nomor]),
+  );
+
+  const grup = new Map();
+  for (const d of baris) {
+    const po = kanonik.get(String(d.trs).trim().toUpperCase());
+    if (!po) continue;
+    d.trs = po;
+    const sup = String(d.kode || "").trim();
+    const key = `${po}|${sup}`;
+    const g = grup.get(key) || { po, sup, nominal: 0 };
+    g.nominal += Number(d.nominal) || 0;
+    grup.set(key, g);
+  }
+
+  for (const g of grup.values()) {
+    const [[tot]] = await conn.query(
+      `SELECT ${SQL_TOTAL_PO_LAIN} AS total
+       FROM tpo_hdr h
+       INNER JOIN tpo_dtl d
+         ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
+       WHERE h.po_nomor = ? AND d.pod_sup_kode = ?
+       GROUP BY h.po_nomor, h.po_status_ppn, h.po_ppn`,
+      [g.po, g.sup],
+    );
+    if (!tot) {
+      throw new Error(
+        `Supplier ${g.sup || "(kosong)"} tidak ada pada PO ${g.po}.`,
+      );
+    }
+    const [[pum]] = await conn.query(
+      `SELECT 1 AS x
+       FROM tpengajuan_uang_muka_dtl pd
+       JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+       JOIN tpo_dtl x ON x.pod_po_Nomor = pd.pumd_nomor_sumber
+                     AND x.pod_nourut = pd.pumd_item_nourut
+       WHERE pd.pumd_sumber = 'PO_LAIN_LAIN'
+         AND pd.pumd_nomor_sumber = ? AND x.pod_sup_kode = ?
+         AND (ph.pum_status = 'DIAJUKAN'
+              OR (ph.pum_status = 'REALISASI' AND pd.pumd_status_acc = 'ACC'))
+       LIMIT 1`,
+      [g.po, g.sup],
+    );
+    if (pum) {
+      throw new Error(
+        `PO ${g.po} (supplier ${g.sup}) sudah diajukan lewat Uang Muka.`,
+      );
+    }
+    const [[sd]] = await conn.query(
+      `SELECT IFNULL(SUM(ptd_nominal), 0) AS sudah
+       FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_trs = ? AND ptd_sup_kode = ? AND ptd_batal = ''`,
+      [g.po, g.sup],
+    );
+    const sisa = Number(tot.total) - Number(sd.sudah);
+    if (g.nominal > sisa + 0.005) {
+      throw new Error(
+        `Nominal melebihi sisa PO ${g.po} (supplier ${g.sup}). Sisa: ${sisa.toLocaleString("id-ID")}.`,
+      );
+    }
+  }
+};
+
 const getAccountAll = async (search = "") => {
   const [rows] = await db.query(
     `
@@ -710,6 +855,8 @@ const saveData = async (payload, user) => {
       [actualNomor],
     );
 
+    await validasiPoLain(conn, detail);
+
     // Delphi: delete link voucher & po external lama
     await conn.query(`DELETE FROM tpoexternal_dtl2 WHERE poed2_link = ?`, [
       actualNomor,
@@ -873,6 +1020,7 @@ module.exports = {
   getPoExternalOptions,
   getPettyCashOptions,
   getBkkOptions,
+  getPoLainOptions,
   getDetailForm,
   saveData,
   getPrintData,

@@ -311,15 +311,20 @@ const getFormData = async (nomor) => {
 };
 
 const getAccountOptions = async (jenis, cabang) => {
+  const params = [];
   let where =
     jenis === "KAS"
       ? `LEFT(rek_kode,5)='A-111'`
       : `(LEFT(rek_kode,5)='A-112' OR LEFT(rek_kode,5)='B-211')`;
-  if (cabang && cabang !== "P01") where += ` AND rek_cabang = '${cabang}'`;
+  if (cabang && cabang !== "P01") {
+    where += ` AND rek_cabang = ?`;
+    params.push(cabang);
+  }
 
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
      FROM finance.trekening WHERE ${where} ORDER BY rek_kode`,
+    params,
   );
   return rows;
 };

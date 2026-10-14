@@ -3,6 +3,54 @@ const {
   getTanggalTutupBukuUntukTanggal,
 } = require("../../services/tutupBukuService");
 
+// ── Konstanta & fragmen SQL bersama (dipakai uangMukaService, Realisasi, dst.) ──
+const BKK_P04_MULAI = "2026-09-28";
+
+// Nilai satu baris PO Lain-lain (alias tabel: h = tpo_hdr, d = tpo_dtl)
+const SQL_NOMINAL_BARIS_PO = `
+  d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100
+  * IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1)`;
+
+// Sumber fee per SPK/SO — sama dengan query cetak Pengajuan Insentif
+const SQL_SUMBER_FEE = `
+  (SELECT spk_nomor AS nomor, spk_nama AS nama, spk_hargafee AS hargafee
+     FROM tspk WHERE spk_aktif = 'Y'
+   UNION ALL
+   SELECT so_nomor, so_nama, so_hargafee
+     FROM tsalesorder WHERE so_aktif = 'Y')`;
+
+// Nominal satu dokumen insentif (alias: h = tpengajuan_fee)
+const SQL_NOMINAL_INSENTIF = `
+  IFNULL((
+    SELECT SUM(i.INVD_Jumlah * s.hargafee)
+    FROM tpengajuan_fee2 d
+    JOIN tinv_dtl i ON i.INVD_inv_nomor = d.feed_inv_nomor
+    JOIN ${SQL_SUMBER_FEE} s ON s.nomor = i.INVD_Spk_Nomor
+    WHERE d.feed_nomor = h.fee_nomor AND s.hargafee <> 0
+  ), 0)`;
+
+// Sumber yang satu dokumennya = satu baris PUM
+const SUMBER_HEADER = ["INSENTIF", "BKK_P04"];
+
+// Sumber masih "dipegang" PUM: sedang diajukan, atau sudah direalisasi
+// dengan baris di-ACC. itemNourut = null berarti cek tingkat dokumen.
+const sumberSudahDipakai = async (conn, sumber, nomorSumber, itemNourut) => {
+  const [[row]] = await conn.query(
+    `SELECT 1 AS x
+     FROM tpengajuan_uang_muka_dtl pd
+     JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+     WHERE pd.pumd_sumber = ? AND pd.pumd_nomor_sumber = ?
+       ${itemNourut === null ? "" : "AND pd.pumd_item_nourut = ?"}
+       AND (ph.pum_status = 'DIAJUKAN'
+            OR (ph.pum_status = 'REALISASI' AND pd.pumd_status_acc = 'ACC'))
+     LIMIT 1`,
+    itemNourut === null
+      ? [sumber, nomorSumber]
+      : [sumber, nomorSumber, itemNourut],
+  );
+  return !!row;
+};
+
 const generateNomor = async (tanggal, conn) => {
   const year = new Date(tanggal).getFullYear();
   const prefix = `PUM.${year}.`;
@@ -99,6 +147,16 @@ const createPengajuan = async (
     throw new Error("Nominal yang diajukan wajib diisi.");
   }
 
+  // Sumber tingkat-dokumen: satu dokumen = satu baris PUM
+  const vistos = new Set();
+  const itemsFinal = items.filter((it) => {
+    if (!SUMBER_HEADER.includes(it.sumber)) return true;
+    const key = `${it.sumber}|${it.nomorSumber || it.nomorHeader}`;
+    if (vistos.has(key)) return false;
+    vistos.add(key);
+    return true;
+  });
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -106,9 +164,10 @@ const createPengajuan = async (
     const nomor = await generateNomor(tanggal, conn);
     const rowsToInsert = [];
 
-    for (const it of items) {
+    for (const it of itemsFinal) {
       let nominalSumber = 0;
       let pmtNomor = null;
+      let override = {};
       const nomorSumber = it.nomorSumber || it.nomorHeader;
 
       const [[dup]] = await conn.query(
@@ -145,12 +204,118 @@ const createPengajuan = async (
           [nomorSumber, it.itemNourut],
         );
         nominalSumber = Number(jml.total);
-      } else {
-        throw new Error(`Sumber tidak dikenali: ${it.sumber}`);
+      } else if (it.sumber === "INSENTIF") {
+        const [[fee]] = await conn.query(
+          `SELECT fee_tgl_realisasi FROM tpengajuan_fee WHERE fee_nomor = ? FOR UPDATE`,
+          [nomorSumber],
+        );
+        if (!fee)
+          throw new Error(`Pengajuan insentif ${nomorSumber} tidak ditemukan.`);
+        if (fee.fee_tgl_realisasi)
+          throw new Error(`Insentif ${nomorSumber} sudah direalisasi.`);
+        if (await sumberSudahDipakai(conn, "INSENTIF", nomorSumber, null))
+          throw new Error(
+            `Insentif ${nomorSumber} sudah ada di pengajuan uang muka lain.`,
+          );
+        const [[tot]] = await conn.query(
+          `SELECT ${SQL_NOMINAL_INSENTIF} AS total
+           FROM tpengajuan_fee h WHERE h.fee_nomor = ?`,
+          [nomorSumber],
+        );
+        nominalSumber = Number(tot.total);
+        if (nominalSumber <= 0)
+          throw new Error(`Insentif ${nomorSumber} tidak punya nominal fee.`);
+        override = {
+          itemNourut: 0,
+          nama: `Insentif ${nomorSumber}`,
+          satuan: "",
+          qty: 1,
+        };
+      } else if (it.sumber === "BKK_P04") {
+        const [[bkk]] = await conn.query(
+          `SELECT h.jur_cabang, h.jur_otomatis, h.jur_tanggal >= ? AS sesudahMulai,
+                  LEFT(h.jur_rek_kode, 5) AS pref,
+                  EXISTS(SELECT 1 FROM finance.tkasbon k WHERE k.bon_jur_no = h.jur_no) AS dariKasbon,
+                  IFNULL((
+                    SELECT SUM(i.jurd_debet) FROM finance.tjurnalitem i
+                    WHERE i.jurd_jur_no = h.jur_no AND i.jurd_trs = 'BKK'
+                  ), 0) AS total
+           FROM finance.tjurnal h
+           WHERE h.jur_no = ? AND h.jur_tipetransaksi = 'BKK'`,
+          [BKK_P04_MULAI, nomorSumber],
+        );
+        if (!bkk) throw new Error(`BKK ${nomorSumber} tidak ditemukan.`);
+        if (
+          bkk.jur_cabang !== "P04" ||
+          Number(bkk.jur_otomatis) !== 0 ||
+          bkk.pref !== "A-111" ||
+          !Number(bkk.sesudahMulai) ||
+          Number(bkk.dariKasbon)
+        ) {
+          throw new Error(
+            `BKK ${nomorSumber} tidak memenuhi syarat penggantian kas kecil P04.`,
+          );
+        }
+        if (await sumberSudahDipakai(conn, "BKK_P04", nomorSumber, null))
+          throw new Error(
+            `BKK ${nomorSumber} sudah ada di pengajuan uang muka lain.`,
+          );
+        nominalSumber = Number(bkk.total);
+        if (nominalSumber <= 0)
+          throw new Error(`BKK ${nomorSumber} tidak punya nominal.`);
+        override = {
+          itemNourut: 0,
+          nama: `Ganti kas kecil ${nomorSumber}`,
+          satuan: "",
+          qty: 1,
+        };
+      } else if (it.sumber === "PO_LAIN_LAIN") {
+        const [[ln]] = await conn.query(
+          `SELECT d.pod_bhn_kode AS kode, d.pod_namaext AS nama,
+                  d.pod_bhn_satuan AS satuan, d.pod_Jumlah AS qty,
+                  d.pod_sup_kode AS sup,
+                  ROUND(${SQL_NOMINAL_BARIS_PO}, 2) AS total
+           FROM tpo_hdr h
+           JOIN tpo_dtl d ON d.pod_po_Nomor = h.po_nomor
+           WHERE h.po_nomor = ? AND h.po_jenis = 4
+             AND d.pod_nourut = ? AND d.pod_bhn_kode <> ''`,
+          [nomorSumber, it.itemNourut],
+        );
+        if (!ln)
+          throw new Error(`Baris PO Lain-lain ${nomorSumber} tidak ditemukan.`);
+        if (!ln.sup)
+          throw new Error(`Baris PO ${nomorSumber} belum punya supplier.`);
+        if (
+          await sumberSudahDipakai(
+            conn,
+            "PO_LAIN_LAIN",
+            nomorSumber,
+            it.itemNourut,
+          )
+        )
+          throw new Error(
+            `Baris PO ${nomorSumber} sudah ada di pengajuan uang muka lain.`,
+          );
+        const [[trf]] = await conn.query(
+          `SELECT 1 AS x FROM finance.tpengajuan_transfer_dtl
+           WHERE ptd_trs = ? AND ptd_sup_kode = ? AND ptd_batal = '' LIMIT 1`,
+          [nomorSumber, ln.sup],
+        );
+        if (trf)
+          throw new Error(
+            `PO ${nomorSumber} (supplier ${ln.sup}) sudah diajukan lewat Pengajuan Transfer.`,
+          );
+        nominalSumber = Number(ln.total);
+        override = {
+          nama: ln.nama || ln.kode,
+          satuan: ln.satuan || "",
+          qty: Number(ln.qty) || 0,
+        };
       }
 
       rowsToInsert.push({
         ...it,
+        ...override,
         nomorSumber,
         nominal: nominalSumber,
         nominalSumber,
@@ -432,6 +597,10 @@ const getPrintPenyerahan = async (nomor) => {
 };
 
 module.exports = {
+  BKK_P04_MULAI,
+  SQL_NOMINAL_BARIS_PO,
+  SQL_SUMBER_FEE,
+  SQL_NOMINAL_INSENTIF,
   createPengajuan,
   getBrowse,
   getDetail,
