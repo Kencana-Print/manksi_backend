@@ -133,9 +133,12 @@ const getDetailForRealisasi = async (pumNomor) => {
   return { ...hdr, detail };
 };
 
+// Konvensi lama: cabang HO- memakai P01 untuk nomor bon/BKK/BBM
+const cabangDokumen = (cabang) => (cabang === "HO-" ? "P01" : cabang);
+
 // ── Generate nomor bon — ported, prefix finance. ──
 const getMaxNomor = async (cabang, conn) => {
-  const prefix = `${cabang}-BON.${new Date().getFullYear()}.`;
+  const prefix = `${cabangDokumen(cabang)}-BON.${new Date().getFullYear()}.`;
   const [[row]] = await (conn || db).query(
     `SELECT IFNULL(MAX(CAST(RIGHT(bon_nomor,5) AS UNSIGNED)),0) AS max_val
      FROM finance.tkasbon WHERE bon_nomor LIKE ?`,
@@ -192,7 +195,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           nota || "",
           totalNominal,
           penerima || "",
-          hdr.pum_cabang,
+          cabangDokumen(hdr.pum_cabang),
           rek_kode,
           keterangan || "",
           user.kode,

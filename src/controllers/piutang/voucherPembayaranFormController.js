@@ -20,12 +20,14 @@ const searchSupplier = async (req, res) => {
 
 const getNotaDetail = async (req, res) => {
   try {
-    const { kode, statusPpn, type } = req.query;
+    const { kode, statusPpn, type, supKode } = req.query;
     const data = await svc.getNotaDetail(
       kode,
       statusPpn ? Number(statusPpn) : 0,
       type || null,
+      supKode || "",
     );
+    res.json({ success: true, data });
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

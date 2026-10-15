@@ -185,6 +185,13 @@ const getPoLainOptions = async (search = "", excludeNomor = "") => {
             AND t.ptd_sup_kode = d.pod_sup_kode
             AND t.ptd_batal = ''
             AND t.ptd_nomor <> ?
+        ), 0)
+        + IFNULL((
+          SELECT SUM(v.voud_total)
+          FROM tvoucher_dtl v
+          INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+          WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POL'
+            AND vh.vou_sup_kode = d.pod_sup_kode
         ), 0) AS sudah
       FROM tpo_hdr h
       INNER JOIN tpo_dtl d
@@ -291,7 +298,14 @@ const validasiPoLain = async (conn, detail) => {
        WHERE ptd_trs = ? AND ptd_sup_kode = ? AND ptd_batal = ''`,
       [g.po, g.sup],
     );
-    const sisa = Number(tot.total) - Number(sd.sudah);
+    const [[vd]] = await conn.query(
+      `SELECT IFNULL(SUM(v.voud_total), 0) AS sudah
+       FROM tvoucher_dtl v
+       INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+       WHERE v.voud_nota = ? AND v.voud_type = 'POL' AND vh.vou_sup_kode = ?`,
+      [g.po, g.sup],
+    );
+    const sisa = Number(tot.total) - Number(sd.sudah) - Number(vd.sudah);
     if (g.nominal > sisa + 0.005) {
       throw new Error(
         `Nominal melebihi sisa PO ${g.po} (supplier ${g.sup}). Sisa: ${sisa.toLocaleString("id-ID")}.`,

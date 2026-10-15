@@ -51,6 +51,12 @@ router.get(
   checkPermission(menuId, "view"),
   controller.getFormData,
 );
+router.get(
+  "/:nomor/cek-batas",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.cekBatas,
+);
 router.post(
   "/:nomor/save",
   verifyToken,

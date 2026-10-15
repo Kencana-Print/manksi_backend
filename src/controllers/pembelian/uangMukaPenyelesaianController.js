@@ -155,6 +155,17 @@ const updateStatusFinance = async (req, res) => {
   }
 };
 
+const cekBatas = async (req, res) => {
+  try {
+    await service.cekBatasPenyelesaian(req.params.nomor);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res
+      .status(error.status || 500)
+      .json({ success: false, message: error.message });
+  }
+};
+
 const saveData = async (req, res) => {
   try {
     const data = await service.saveData(
@@ -188,4 +199,5 @@ module.exports = {
   createSupplier,
   updateStatusFinance,
   saveData,
+  cekBatas,
 };

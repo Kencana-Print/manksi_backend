@@ -305,6 +305,19 @@ const createPengajuan = async (
           throw new Error(
             `PO ${nomorSumber} (supplier ${ln.sup}) sudah diajukan lewat Pengajuan Transfer.`,
           );
+        const [[vouPol]] = await conn.query(
+          `SELECT 1 AS x
+           FROM tvoucher_dtl v
+           INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+           WHERE v.voud_nota = ? AND v.voud_type = 'POL'
+             AND vh.vou_sup_kode = ?
+           LIMIT 1`,
+          [nomorSumber, ln.sup],
+        );
+        if (vouPol)
+          throw new Error(
+            `PO ${nomorSumber} (supplier ${ln.sup}) sudah dibuatkan Voucher Pembayaran.`,
+          );
         nominalSumber = Number(ln.total);
         override = {
           nama: ln.nama || ln.kode,

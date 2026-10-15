@@ -1,6 +1,59 @@
 const db = require("../../config/database");
 const { ensurePermintaanDana } = require("./pengajuanUangMukaService");
 
+const TANGGAL_MULAI_SISA = "2026-10-22";
+const AMBANG_SISA = 100;
+const badRequest = (msg) => Object.assign(new Error(msg), { status: 400 });
+
+// ── Batas waktu Penyelesaian: maks 3 hari kerja sejak bon dibuat ──
+// Hanya berlaku untuk bon yang date_create-nya >= TANGGAL_MULAI_BATAS.
+const TANGGAL_MULAI_BATAS = "2026-10-22";
+const MAKS_HARI_KERJA = 3;
+const HARI_NON_KERJA = [0, 6]; // 0 = Minggu, 6 = Sabtu
+
+// Jumlah hari kerja SETELAH `dari` sampai `sampai` (inklusif), format YYYY-MM-DD
+const hitungHariKerja = (dari, sampai) => {
+  const d = new Date(`${dari}T00:00:00Z`);
+  const akhir = new Date(`${sampai}T00:00:00Z`);
+  let n = 0;
+  d.setUTCDate(d.getUTCDate() + 1);
+  while (d <= akhir) {
+    if (!HARI_NON_KERJA.includes(d.getUTCDay())) n++;
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return n;
+};
+
+const cekBatasPenyelesaian = async (nomorBon) => {
+  const [[row]] = await db.query(
+    `SELECT k.bon_selesai,
+            DATE_FORMAT(k.date_create, '%Y-%m-%d') AS tgl_buat,
+            DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hari_ini,
+            h.pum_nomor
+     FROM finance.tkasbon k
+     LEFT JOIN tpengajuan_uang_muka_hdr h ON h.pum_bon_nomor = k.bon_nomor
+     WHERE k.bon_nomor = ?`,
+    [nomorBon],
+  );
+  if (!row) throw new Error("Nomor kasbon tidak ditemukan.");
+
+  // Edit bon yang sudah selesai, kasbon lama tanpa PUM, dan bon sebelum
+  // tanggal mulai tidak dikenai batas.
+  if (Number(row.bon_selesai) !== 0) return;
+  if (!row.pum_nomor) return;
+  if (!row.tgl_buat || row.tgl_buat < TANGGAL_MULAI_BATAS) return;
+
+  const hari = hitungHariKerja(row.tgl_buat, row.hari_ini);
+  if (hari > MAKS_HARI_KERJA) {
+    const [y, m, d] = row.tgl_buat.split("-");
+    const err = new Error(
+      `Penyelesaian melewati batas ${MAKS_HARI_KERJA} hari kerja sejak bon ${nomorBon} dibuat (${d}-${m}-${y}). Sudah ${hari} hari kerja.`,
+    );
+    err.status = 400;
+    throw err;
+  }
+};
+
 // ── Load form penyelesaian — by nomor BON (kasbon), sama seperti alur lama ──
 const getFormData = async (nomor) => {
   const [[bon]] = await db.query(
@@ -10,6 +63,8 @@ const getFormData = async (nomor) => {
         k.bon_nota, k.bon_nominal, k.bon_penerima,
         k.bon_keterangan,
         k.bon_cabang, k.bon_byrvoucher,
+        k.bon_sisa_rek_kode, k.bon_sisa_nominal, k.bon_sisa_jur_no,
+        DATE_FORMAT(k.date_create,'%Y-%m-%d') AS tgl_buat,
         r.rek_nama,
         DATE_FORMAT(k.bon_tanggal,'%Y-%m-%d') AS bon_tanggal_fmt,
         DATE_FORMAT(t.jur_tanggal, '%Y-%m-%d') AS jur_tanggal_fmt,
@@ -307,6 +362,13 @@ const getFormData = async (nomor) => {
     detail,
     pum_user_create: bon.pum_user_create || "",
     pum_user_realisasi: bon.pum_user_realisasi || "",
+    sisa: {
+      wajib: !!bon.tgl_buat && bon.tgl_buat >= TANGGAL_MULAI_SISA,
+      ambang: AMBANG_SISA,
+      rek_kode: bon.bon_sisa_rek_kode || "",
+      nominal: Number(bon.bon_sisa_nominal) || 0,
+      jur_no: bon.bon_sisa_jur_no || "",
+    },
   };
 };
 
@@ -413,11 +475,14 @@ const saveData = async (payload, user) => {
 
   // Nilai krusial dibaca dari DB, bukan dari payload klien.
   const [[bonDb]] = await db.query(
-    `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang
+    `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang, bon_nominal,
+            DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_buat
      FROM finance.tkasbon WHERE bon_nomor = ?`,
     [nomor],
   );
   if (!bonDb) throw new Error("Nomor kasbon tidak ditemukan.");
+
+  await cekBatasPenyelesaian(nomor);
 
   const is_edit = Number(bonDb.bon_selesai) !== 0;
   const no_bkk_lama = bonDb.bon_jur_no || "";
@@ -443,13 +508,30 @@ const saveData = async (payload, user) => {
         throw new Error(`Account ${d.rekkode} pada "${d.uraian}" tidak aktif.`);
     }
   }
+  const totalTerpakai = detail.reduce(
+    (s, d) => s + (d.verified && d.total > 0 ? d.total : 0),
+    0,
+  );
+  const sisa =
+    Math.round((Number(bonDb.bon_nominal) - totalTerpakai) * 100) / 100;
+  const perluBukuSisa =
+    !!bonDb.tgl_buat &&
+    bonDb.tgl_buat >= TANGGAL_MULAI_SISA &&
+    sisa >= AMBANG_SISA;
+  if (perluBukuSisa) {
+    if (!sisa_rek_kode)
+      throw badRequest(
+        "Sisa kasbon harus dimasukkan ke Kas atau Bank. Pilih rekening tujuan sisa.",
+      );
+    const rekSisa = await getAccountByKode(sisa_rek_kode);
+    if (!rekSisa)
+      throw badRequest("Account tujuan sisa tidak ditemukan atau tidak aktif.");
+    if (!["A-111", "A-112", "B-211"].some((p) => sisa_rek_kode.startsWith(p)))
+      throw badRequest("Account tujuan sisa harus akun Kas atau Bank.");
+  }
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    const totalTerpakai = detail.reduce(
-      (s, d) => s + (d.verified && d.total > 0 ? d.total : 0),
-      0,
-    );
 
     let noBkk = no_bkk_lama || "";
 
@@ -508,6 +590,12 @@ const saveData = async (payload, user) => {
       );
     }
 
+    await conn.query(
+      `DELETE FROM finance.tjurnalitem WHERE jurd_jur_no IN (
+         SELECT jur_no FROM finance.tjurnal
+         WHERE jur_otomatis = 1 AND MID(jur_no,3,18) = ?)`,
+      [nomor],
+    );
     await conn.query(
       `DELETE FROM finance.tjurnal WHERE jur_otomatis=1 AND MID(jur_no,3,18)=?`,
       [nomor],
@@ -901,6 +989,54 @@ const saveData = async (payload, user) => {
         }
       }
     }
+
+    // ── Sisa kasbon → BKM/BBM otomatis ──
+    let sisaJurNo = "";
+    if (perluBukuSisa) {
+      const tipeSisa = sisa_rek_kode.startsWith("A-111") ? "BKM" : "BBM";
+      autoCounter++;
+      sisaJurNo = `${String(autoCounter).padStart(2, "0")}${nomor}`;
+      const uraianSisa = `SISA KASBON ${nomor}`;
+      await conn.query(
+        `INSERT INTO finance.tjurnal
+          (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang,
+           jur_penerima, jur_keterangan, jur_rek_kode,
+           jur_otomatis, date_create, user_create)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW(), ?)`,
+        [
+          sisaJurNo,
+          tgl_bkk,
+          tipeSisa,
+          cabang,
+          penerima,
+          `${tipeSisa} OTOMATIS: SISA KASBON`,
+          sisa_rek_kode,
+          user.kode,
+        ],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
+         VALUES (?, ?, ?, ?)`,
+        [sisaJurNo, sisa_rek_kode, sisa, uraianSisa],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem
+          (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        [sisaJurNo, tipeSisa, uraianSisa, sisa, rek_kode],
+      );
+    }
+    await conn.query(
+      `UPDATE finance.tkasbon
+       SET bon_sisa_rek_kode = ?, bon_sisa_nominal = ?, bon_sisa_jur_no = ?
+       WHERE bon_nomor = ?`,
+      [
+        perluBukuSisa ? sisa_rek_kode : "",
+        perluBukuSisa ? sisa : 0,
+        sisaJurNo,
+        nomor,
+      ],
+    );
 
     const affectedPmt = new Set(
       detail.filter((d) => d.pmt && d.uraian).map((d) => d.pmt),
@@ -1335,6 +1471,7 @@ module.exports = {
   getAccountOptions,
   getAllAccounts,
   saveData,
+  cekBatasPenyelesaian,
   getAccountByKode,
   getCostCenterOptions,
   getDcOptions,

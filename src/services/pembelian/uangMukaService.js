@@ -225,6 +225,12 @@ const getOutstanding = async ({
             AND t.ptd_sup_kode = d.pod_sup_kode
             AND t.ptd_batal = ''
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM tvoucher_dtl v
+          INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+          WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POL'
+            AND vh.vou_sup_kode = d.pod_sup_kode
+        )
         ${tglSql("h.po_tanggal")}
         AND (h.po_nomor LIKE ? OR h.po_keterangan LIKE ?)
       GROUP BY h.po_nomor, h.po_tanggal, h.po_keterangan, h.user_create
@@ -436,6 +442,12 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            WHERE t.ptd_trs = h.po_nomor AND t.ptd_sup_kode = d.pod_sup_kode
              AND t.ptd_batal = ''
          )
+         AND NOT EXISTS (
+          SELECT 1 FROM tvoucher_dtl v
+          INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+          WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POL'
+            AND vh.vou_sup_kode = d.pod_sup_kode
+        )
        ORDER BY d.pod_nourut`,
       [nomorHeader],
     );

@@ -63,6 +63,24 @@ const getHutangPoLainLain = async (startDate, endDate) => {
     [daftarPo],
   );
 
+  // Voucher Pembayaran tipe POL: Diajukan = nilai baris POL, Terealisasi =
+  // bila voucher tsb sudah punya pengajuan transfer yang terealisasi
+  // (realisasi per voucher utuh, sama seperti nota lain)
+  const [vouPol] = await db.query(
+    `SELECT v.voud_nota AS PoNomor, vh.vou_sup_kode AS SupKode,
+        SUM(v.voud_total) AS Diajukan,
+        SUM(IF(EXISTS (
+          SELECT 1 FROM finance.tpengajuan_transfer_dtl t
+          WHERE t.ptd_trs = v.voud_vou_nomor
+            AND t.ptd_batal = '' AND t.ptd_jur_no <> ''
+        ), v.voud_total, 0)) AS Terealisasi
+     FROM tvoucher_dtl v
+     INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+     WHERE v.voud_type = 'POL' AND v.voud_nota IN (?)
+     GROUP BY v.voud_nota, vh.vou_sup_kode`,
+    [daftarPo],
+  );
+
   const [pum] = await db.query(
     `SELECT d.pumd_nomor_sumber AS PoNomor, pd.pod_sup_kode AS SupKode,
         SUM(IF(a.Ada = 1, a.Aktual, d.pumd_nominal_sumber)) AS Diajukan,
@@ -76,7 +94,7 @@ const getHutangPoLainLain = async (startDate, endDate) => {
   const kunci = (po, sup) => `${po}|${String(sup).trim()}`;
   const bulat = (n) => Math.round(n * 100) / 100;
   const sisa = new Map();
-  for (const r of [...pengajuan, ...pum]) {
+  for (const r of [...pengajuan, ...pum, ...vouPol]) {
     const k = kunci(r.PoNomor, r.SupKode);
     const s = sisa.get(k) || { v: 0, b: 0 };
     s.v += Number(r.Diajukan) || 0;
@@ -110,8 +128,20 @@ const getBrowse = async (startDate, endDate) => {
         x.SupKode,
         x.Nama,
         x.Total,
-        IFNULL(v.TotalVoucher, 0) AS Voucher,
-        IFNULL(b.TotalBayar, 0) AS Bayar
+        IFNULL((
+          SELECT SUM(vd.voud_total)
+          FROM tvoucher_dtl vd
+          WHERE vd.voud_nota = x.Nomor
+        ), 0) AS Voucher,
+        IFNULL((
+          SELECT SUM(vd.voud_total)
+          FROM tvoucher_dtl vd
+          WHERE vd.voud_nota = x.Nomor
+            AND EXISTS (
+              SELECT 1 FROM bayar_debet_detail bd
+              WHERE bd.vou_nomor = vd.voud_vou_nomor
+            )
+        ), 0) AS Bayar
      FROM (
         -- 1. PBG (BPB dari PO)
         SELECT 
@@ -246,24 +276,6 @@ const getBrowse = async (startDate, endDate) => {
         WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?
         GROUP BY h.bpb_nomor
      ) x
-      LEFT JOIN (
-        -- Nota dianggap terbayar sebesar nilainya di voucher bila voucher
-        -- tsb sudah punya pembayaran (realisasi selalu utuh per voucher)
-        SELECT vd.voud_nota, SUM(vd.voud_total) AS TotalBayar
-        FROM tvoucher_dtl vd
-        WHERE EXISTS (
-          SELECT 1 FROM bayar_debet_detail bd
-          WHERE bd.vou_nomor = vd.voud_vou_nomor
-        )
-        GROUP BY vd.voud_nota
-     ) b ON b.voud_nota = x.Nomor
-     LEFT JOIN (
-        -- Hitung total realisasi pembayaran kas/bank dari voucher terkait
-        SELECT vd.voud_nota, SUM(bd.nilai) AS TotalBayar
-        FROM bayar_debet_detail bd
-        INNER JOIN tvoucher_dtl vd ON vd.voud_vou_nomor = bd.vou_nomor
-        GROUP BY vd.voud_nota
-     ) b ON b.voud_nota = x.Nomor
      ORDER BY x.Tanggal ASC, x.Nomor ASC`,
     [
       startDate,
@@ -284,10 +296,9 @@ const getBrowse = async (startDate, endDate) => {
       endDate, // BPG
     ],
   );
-  const gabung = [
-    ...rowsUtama,
-    ...(await getHutangPoLainLain(startDate, endDate)),
-  ];
+
+  const lain = await getHutangPoLainLain(startDate, endDate);
+  const gabung = [...rowsUtama, ...lain];
   gabung.sort(
     (a, b) =>
       String(a.Tanggal || "").localeCompare(String(b.Tanggal || "")) ||
@@ -305,11 +316,9 @@ const getDetail = async (startDate, endDate) => {
        DATE_FORMAT(vh.vou_tanggal, '%Y-%m-%d') AS TanggalVoucher,
        vd.voud_total AS Total,
        vh.vou_status_realisasi AS StatusRealisasi
-     FROM tvoucher_hdr vh
-     INNER JOIN .tvoucher_dtl vd ON vd.voud_vou_nomor = vh.vou_nomor
-     WHERE vd.voud_nota IN (
-       -- Ambil daftar semua nomor transaksi dalam rentang tanggal terkait
-       SELECT bpb_nomor FROM tbpb_hdr WHERE bpb_tanggal >= ? AND bpb_tanggal <= ?
+     FROM (
+       -- Daftar semua nomor transaksi dalam rentang tanggal terkait
+       SELECT bpb_nomor AS Nomor FROM tbpb_hdr WHERE bpb_tanggal >= ? AND bpb_tanggal <= ?
        UNION
        SELECT bpj_nomor FROM tbpj_hdr WHERE bpj_tanggal >= ? AND bpj_tanggal <= ?
        UNION
@@ -324,7 +333,9 @@ const getDetail = async (startDate, endDate) => {
        SELECT bpe_nomor FROM tbpbpoexternal_hdr WHERE bpe_tanggal >= ? AND bpe_tanggal <= ?
        UNION
        SELECT bpb_nomor FROM tgarmenbpb_hdr WHERE bpb_tanggal >= ? AND bpb_tanggal <= ?
-     )
+     ) n
+     INNER JOIN tvoucher_dtl vd ON vd.voud_nota = n.Nomor
+     INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = vd.voud_vou_nomor
      ORDER BY vd.voud_nota ASC, vh.vou_tanggal ASC`,
     [
       startDate,
@@ -384,7 +395,23 @@ const getDetail = async (startDate, endDate) => {
      WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?`,
     [startDate, endDate],
   );
-  return [...rows, ...rowsLain, ...rowsPum].sort(
+  // PO Lain-lain via Voucher Pembayaran (tipe POL)
+  const [rowsVouPol] = await db.query(
+    `SELECT h.bpb_nomor AS Nomor,
+        vh.vou_nomor AS NomorVoucher,
+        DATE_FORMAT(vh.vou_tanggal, '%Y-%m-%d') AS TanggalVoucher,
+        v.voud_total AS Total,
+        vh.vou_status_realisasi AS StatusRealisasi
+     FROM tbpb_hdr h
+     INNER JOIN tpo_hdr p ON p.po_nomor = h.bpb_po_nomor AND p.po_jenis = 4
+     INNER JOIN tvoucher_dtl v
+       ON v.voud_nota = h.bpb_po_nomor AND v.voud_type = 'POL'
+     INNER JOIN tvoucher_hdr vh
+       ON vh.vou_nomor = v.voud_vou_nomor AND vh.vou_sup_kode = h.bpb_sup_kode
+     WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?`,
+    [startDate, endDate],
+  );
+  return [...rows, ...rowsLain, ...rowsPum, ...rowsVouPol].sort(
     (a, b) =>
       String(a.Nomor).localeCompare(String(b.Nomor)) ||
       String(a.TanggalVoucher).localeCompare(String(b.TanggalVoucher)),
