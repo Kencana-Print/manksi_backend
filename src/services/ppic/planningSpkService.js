@@ -343,42 +343,24 @@ const getExportMaster = async (startDate, endDate) => {
 };
 
 // ─────────────────────────────────────────────
-// Export detail — flat per divisi
+// Export detail — memakai getDetail yang sama dengan expand di browse,
+// supaya angka (SMV, Resume, Actual, dll) identik dengan tampilan layar.
+// Per plan: { Nomor, TglAwal, TglAkhir, Cabang, cutting, sewing, koli }
 // ─────────────────────────────────────────────
 const getExportDetail = async (startDate, endDate) => {
-  const [rows] = await db.query(
-    `SELECT
-       h.pl_nomor        AS NomorPlan,
-       DATE_FORMAT(h.pl_tgl1, '%Y-%m-%d') AS TglAwal,
-       DATE_FORMAT(h.pl_tgl2, '%Y-%m-%d') AS TglAkhir,
-       h.pl_cab          AS Cabang,
-       d.plan_spk        AS NomorSPK,
-       s.spk_nama        AS NamaOrder,
-       s.spk_jumlah      AS QtySPK,
-       d.plan_divisi     AS Divisi,
-       DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
-       IF(d.plan_divisi = 'SEWING' AND d.plan_smv_sumber <> '', NULL, d.plan_wip)    AS Wip,
-       IF(d.plan_divisi = 'SEWING' AND d.plan_smv_sumber <> '', NULL, d.plan_qty_po) AS QtyPO,
-       d.plan_qty_jadwal AS QtyJadwal,
-       d.plan_line_kelompok AS LineKelompok,
-       d.plan_keterangan AS Keterangan,
-       -- Sewing format baru saja; selain itu NULL
-       IF(d.plan_smv_sumber <> '', d.plan_mp, NULL)   AS Mp,
-       IF(d.plan_smv_sumber <> '', d.plan_smv, NULL)  AS Smv,
-       IF(d.plan_smv_sumber <> '', d.plan_hari, NULL) AS Hari,
-       IF(d.plan_smv_sumber <> '', d.plan_jam, NULL)  AS Jam,
-       IF(d.plan_smv_sumber <> '', d.plan_hari * d.plan_jam * 60, NULL) AS WaktuProduksi,
-       IF(d.plan_smv_sumber <> '' AND d.plan_mp > 0 AND d.plan_smv > 0,
-          d.plan_target_output * d.plan_smv / d.plan_mp, NULL) AS Resume
-     FROM tplan_ppic_dtl2 d
-     INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
-     LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
-     WHERE h.pl_tgl1 BETWEEN ? AND ?
-     ORDER BY h.pl_nomor ASC, d.plan_divisi ASC,
-              d.plan_line_kelompok ASC, d.plan_tgl_jadwal ASC`,
-    [startDate, endDate],
-  );
-  return rows;
+  const plans = await getBrowse(startDate, endDate);
+  const hasil = [];
+  for (const p of plans) {
+    const detail = await getDetail(p.Nomor);
+    hasil.push({
+      Nomor: p.Nomor,
+      TglAwal: p.TglAwal,
+      TglAkhir: p.TglAkhir,
+      Cabang: p.Cabang,
+      ...detail,
+    });
+  }
+  return hasil;
 };
 
 module.exports = {
