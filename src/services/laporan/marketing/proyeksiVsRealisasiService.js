@@ -16,6 +16,7 @@ const buildB = (startDate) => ({
       SUM(mspk_rencana_order * mspk_harga) AS total_memo
     FROM tmemospk
     WHERE mspk_tanggal >= DATE_SUB(?, INTERVAL 90 DAY)
+      AND mspk_aktif = 'Y'
       AND mspk_nomor NOT IN (
         SELECT so_memo FROM tsalesorder
         WHERE so_aktif = 'Y' AND so_tanggal < ?
