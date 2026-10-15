@@ -189,8 +189,10 @@ const getDetail = async (nomor) => {
   // E. Get Grid 2 (Delivery Commitment - tpo_dtl2)
   const [delivery] = await db.query(
     `
-    SELECT a.*, b.bhn_name 
-    FROM tpo_dtl2 a LEFT JOIN tbahan b ON b.bhn_kode = a.pod2_bhn_kode
+    SELECT a.*, b.bhn_name, IFNULL(sp.sup_nama, '') AS pod2_sup_nama
+    FROM tpo_dtl2 a
+    LEFT JOIN tbahan b ON b.bhn_kode = a.pod2_bhn_kode
+    LEFT JOIN tsupplier sp ON sp.sup_kode = a.pod2_sup_kode
     WHERE a.pod2_nomor = ? ORDER BY a.pod2_tanggal
   `,
     [nomor],
@@ -227,6 +229,19 @@ const getDetail = async (nomor) => {
     urutPin,
     isTutupBuku,
   };
+};
+
+// Cek keberadaan nomor SPK / SO / MAP (memo SPK). Hasil: Set nomor (huruf besar).
+const cekNomorSpk = async (conn, daftar) => {
+  const [rows] = await conn.query(
+    `SELECT spk_nomor AS nomor FROM tspk WHERE spk_nomor IN (?)
+     UNION
+     SELECT so_nomor FROM tsalesorder WHERE so_aktif = 'Y' AND so_nomor IN (?)
+     UNION
+     SELECT MSPK_Nomor FROM tmemospk WHERE MSPK_Nomor IN (?)`,
+    [daftar, daftar, daftar],
+  );
+  return new Set(rows.map((r) => String(r.nomor).toUpperCase()));
 };
 
 // --- 3. SAVE DATA (INSERT & UPDATE MASSIVE TRANSACTION) ---
@@ -268,15 +283,24 @@ const saveData = async (payload, userKode) => {
       if (itemsValid.length === 0)
         throw new Error("Minimal satu bahan harus diisi.");
 
-      const kodeSet = new Set();
-      for (const it of itemsValid) {
-        if (!it.supKode || String(it.supKode).trim() === "")
-          throw new Error(`Supplier untuk bahan ${it.kode} wajib diisi.`);
-        if (kodeSet.has(it.kode))
+      const kunciSet = new Set();
+      for (const [idx, it] of itemsValid.entries()) {
+        const sup = String(it.supKode || "").trim();
+        const spk = String(it.spk || "").trim();
+        if (!sup)
           throw new Error(
-            `Bahan ${it.kode} dobel di PO Lain-lain. Satu bahan hanya boleh satu baris.`,
+            `Baris ${idx + 1}: Supplier untuk bahan ${it.kode} wajib diisi.`,
           );
-        kodeSet.add(it.kode);
+        if (!spk)
+          throw new Error(
+            `Baris ${idx + 1}: Nomor SPK/MAP untuk bahan ${it.kode} wajib diisi.`,
+          );
+        const kunci = `${it.kode}|${sup}|${spk.toUpperCase()}`;
+        if (kunciSet.has(kunci))
+          throw new Error(
+            `Baris ${idx + 1}: Bahan ${it.kode} dengan supplier ${sup} dan SPK/MAP ${spk} dobel.`,
+          );
+        kunciSet.add(kunci);
       }
 
       const supList = [...new Set(itemsValid.map((i) => i.supKode))];
@@ -288,6 +312,31 @@ const saveData = async (payload, userKode) => {
       const tidakAda = supList.filter((k) => !ada.has(k));
       if (tidakAda.length)
         throw new Error(`Supplier tidak ditemukan: ${tidakAda.join(", ")}`);
+
+      // SPK/MAP harus ada
+      const spkList = [
+        ...new Set(itemsValid.map((i) => String(i.spk || "").trim())),
+      ];
+      const spkAda = await cekNomorSpk(conn, spkList);
+      const spkTidakAda = spkList.filter((s) => !spkAda.has(s.toUpperCase()));
+      if (spkTidakAda.length)
+        throw new Error(
+          `Nomor SPK/MAP tidak ditemukan: ${spkTidakAda.join(", ")}`,
+        );
+
+      // Delivery Commitment: supplier wajib dan harus pasangan (bahan, supplier) yang ada di baris PO
+      const pasangan = new Set(
+        itemsValid.map((i) => `${i.kode}|${String(i.supKode).trim()}`),
+      );
+      for (const [idx, d] of (delivery || []).entries()) {
+        const sup = String(d.supKode || "").trim();
+        if (!sup)
+          throw new Error(`Delivery baris ${idx + 1}: Supplier wajib diisi.`);
+        if (!pasangan.has(`${d.kode}|${sup}`))
+          throw new Error(
+            `Delivery baris ${idx + 1}: Bahan ${d.kode} tidak dipesan ke supplier ${sup} di PO ini.`,
+          );
+      }
     }
 
     // B. Header Eksekusi
@@ -439,7 +488,7 @@ const saveData = async (payload, userKode) => {
             item.jumlah || 0,
             item.diskon || 0,
             item.harga || 0,
-            item.spk || "",
+            String(item.spk || "").trim(),
             item.mkb || "",
             isLainLain ? item.supKode : null,
           ],
@@ -476,10 +525,16 @@ const saveData = async (payload, userKode) => {
       for (const d of delivery) {
         await conn.query(
           `
-          INSERT INTO tpo_dtl2 (pod2_nomor, pod2_tanggal, pod2_jumlah, pod2_bhn_kode)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO tpo_dtl2 (pod2_nomor, pod2_tanggal, pod2_jumlah, pod2_bhn_kode, pod2_sup_kode)
+          VALUES (?, ?, ?, ?, ?)
         `,
-          [nomorPO, d.tanggal, d.jumlah || 0, d.kode],
+          [
+            nomorPO,
+            d.tanggal,
+            d.jumlah || 0,
+            d.kode,
+            isLainLain ? String(d.supKode).trim() : null,
+          ],
         );
       }
     }

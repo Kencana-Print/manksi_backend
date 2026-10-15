@@ -118,7 +118,7 @@ const getBrowseDetail = async (
       b.bhn_name AS Nama,
       d.pod_bhn_satuan AS Satuan,
       d.pod_jumlah AS Jumlah,
-      ${supCol},
+      ${supCol}
       
       IFNULL((
         SELECT IFNULL(SUM(i.bpbd2_jumlah), 0)
@@ -132,6 +132,7 @@ const getBrowseDetail = async (
         INNER JOIN tret_hdr j ON j.ret_nomor = i.retd_ret_nomor
         INNER JOIN tbpb_hdr f ON f.bpb_Nomor = j.ret_bpb_nomor 
         WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode
+          AND (h.po_jenis <> 4 OR f.bpb_sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode))
       ), 0) AS QtyRetur,
 
       ${hargaCols}
@@ -334,7 +335,7 @@ const getAllDetail = async (
       d.pod_jumlah AS Jumlah,
       
       IFNULL((SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tbpb_dtl2 i WHERE i.bpbd2_po_nomor = d.pod_po_nomor AND i.bpbd2_nourut = d.pod_nourut), 0) AS QtyBpb,
-      IFNULL((SELECT SUM(i.retd_jumlah) FROM tret_dtl i INNER JOIN tret_hdr j ON j.ret_nomor = i.retd_ret_nomor INNER JOIN tbpb_hdr f ON f.bpb_Nomor = j.ret_bpb_nomor WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode), 0) AS QtyRetur,
+      IFNULL((SELECT SUM(i.retd_jumlah) FROM tret_dtl i INNER JOIN tret_hdr j ON j.ret_nomor = i.retd_ret_nomor INNER JOIN tbpb_hdr f ON f.bpb_Nomor = j.ret_bpb_nomor WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode AND (h.po_jenis <> 4 OR f.bpb_sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode))), 0) AS QtyRetur,
       
       ${hargaCols}
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,

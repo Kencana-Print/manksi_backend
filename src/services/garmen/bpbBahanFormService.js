@@ -127,6 +127,9 @@ const validateField = async (type, value, opts = {}) => {
       kurang: Number(d.jumlahpo) - Number(d.sudah),
     }));
 
+    const terimaSup = isLainLain ? "AND hh.bpb_sup_kode = ?" : "";
+    const terimaParams = isLainLain ? [opts.supKode] : [];
+
     // 3. Tarik Rekapitulasi (Grid 1: Bahan)
     // Sesuai Delphi: SELECT ... GROUP BY PO_nomor,po_tanggal,pod_bhn_kode ...
     const [rekapDetails] = await db.query(
@@ -141,14 +144,14 @@ const validateField = async (type, value, opts = {}) => {
           SELECT SUM(dd.bpbd_jumlah) 
           FROM tbpb_dtl dd 
           INNER JOIN tbpb_hdr hh ON hh.bpb_nomor = dd.bpbd_bpb_nomor 
-          WHERE hh.bpb_po_nomor = h.po_nomor AND dd.bpbd_bhn_kode = d.pod_bhn_kode
+          WHERE hh.bpb_po_nomor = h.po_nomor AND dd.bpbd_bhn_kode = d.pod_bhn_kode ${terimaSup}
         ), 0) AS terima
        FROM tpo_hdr h
        INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0 AND d.pod_bhn_kode <> ''
        LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
        WHERE h.po_nomor = ? ${supFilter}
        GROUP BY h.po_nomor, h.po_tanggal, d.pod_bhn_kode, d.pod_bhn_satuan, b.bhn_name, b.bhn_satuan, d.pod_hargabeli`,
-      [value, ...supParams],
+      [...terimaParams, value, ...supParams],
     );
 
     // Hitung sisa/kurang untuk Grid 1
@@ -230,6 +233,10 @@ const getDetail = async (nomor) => {
     isTutupBuku = true;
   }
 
+  const lainLain = Number(header.po_jenis) === 4;
+  const filterPoSup = lainLain ? "AND dd.pod_sup_kode = h.bpb_sup_kode" : "";
+  const filterBpbSup = lainLain ? "AND hh.bpb_sup_kode = h.bpb_sup_kode" : "";
+
   // C. Grid 1: Items BPB Detail
   const [items] = await db.query(
     `SELECT 
@@ -240,8 +247,8 @@ const getDetail = async (nomor) => {
       d.bpbd_harga AS harga, d.bpbd_gramasi AS gramasi, d.bpbd_warna AS warna,
       d.bpbd_setting AS setting, d.bpbd_spk_nomor AS spk, IFNULL(COALESCE(k.spk_nama, so.so_nama), "") AS namaspk,
       IFNULL((SELECT t.pod_bhn_satuan FROM tpo_dtl t WHERE t.pod_bhn_kode=d.bpbd_bhn_kode AND t.pod_po_nomor=h.bpb_po_nomor LIMIT 1),"") AS satuanpo,
-      IFNULL((SELECT SUM(dd.pod_jumlah) FROM tpo_dtl dd WHERE dd.pod_po_nomor=h.bpb_po_nomor AND dd.pod_bhn_kode=d.bpbd_bhn_kode),0) AS totalpo,
-      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND dd.bpbd_bhn_kode=d.bpbd_bhn_kode),0) AS total_terima_all
+      IFNULL((SELECT SUM(dd.pod_jumlah) FROM tpo_dtl dd WHERE dd.pod_po_nomor=h.bpb_po_nomor AND dd.pod_bhn_kode=d.bpbd_bhn_kode ${filterPoSup}),0) AS totalpo,
+      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND dd.bpbd_bhn_kode=d.bpbd_bhn_kode ${filterBpbSup}),0) AS total_terima_all
      FROM tbpb_dtl d
      INNER JOIN tbpb_hdr h ON h.bpb_nomor = d.bpbd_bpb_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.bpbd_bhn_kode
