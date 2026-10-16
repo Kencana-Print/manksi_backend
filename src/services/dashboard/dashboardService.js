@@ -1158,6 +1158,10 @@ const toLocalDateStr = (d) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+// Pembayaran invoice bulan target dihitung seluruhnya (tanpa batas tanggal):
+// selama sudah terbayar, tetap terhitung sebagai pembayaran.
+const KREDIT_SAMPAI = "9999-12-31";
+
 const PILIH_NORMAL_FILTER = `
   AND NOT EXISTS (
     SELECT 1 FROM tinv_flag tf2 WHERE tf2.invf_taknormal = p.nota
@@ -1245,22 +1249,6 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
   const rangeEnd = toLocalDateStr(rangeEndDate);
   const targetBulanKey = `${targetThn}-${String(targetBln).padStart(2, "0")}`;
 
-  // cutoff = akhir bulan sebelum bulan yang dipilih (bln/thn) KHUSUS kalau
-  // bln/thn ini adalah bulan berjalan (bulan sekarang). Kalau yang dibuka
-  // laporan bulan yang sudah lewat, cutoff dilonggarkan ke hari ini supaya
-  // pembayaran yang telat dari akhir bulan tetap kehitung lunas.
-  let cutoffBln = bln - 1;
-  let cutoffThn = thn;
-  if (cutoffBln <= 0) {
-    cutoffBln += 12;
-    cutoffThn -= 1;
-  }
-  const isBulanBerjalan =
-    thn === now.getFullYear() && bln === now.getMonth() + 1;
-  const cutoff = isBulanBerjalan
-    ? toLocalDateStr(new Date(cutoffThn, cutoffBln, 0))
-    : toLocalDateStr(now);
-
   const NOT_DIKIRIM_FILTER = `
     AND p.nota NOT IN (SELECT x.inv_nomor FROM tinv_hdr x WHERE x.INV_Keterangan LIKE "%INV YG DIKIRIM%")
   `;
@@ -1315,7 +1303,7 @@ const getTargetCollectionSales = async (user, bulan, tahun) => {
       ${PILIH_NORMAL_FILTER}
       AND DATE_FORMAT(p.tanggal, '%Y-%m') = ?
     GROUP BY inv.sal_kode`,
-    [cutoff, targetBulanKey],
+    [KREDIT_SAMPAI, targetBulanKey],
   );
   const piutangBySales = {};
   for (const r of piutangRows) piutangBySales[r.sal_kode] = Number(r.Sisa) || 0;
@@ -1491,18 +1479,6 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
   const tglAwalTarget = `${targetBulanKey}-01`;
   const akhirBulanLalu = toLocalDateStr(new Date(thn, bln - 1, 0));
 
-  let cutoffBln = bln - 1;
-  let cutoffThn = thn;
-  if (cutoffBln <= 0) {
-    cutoffBln += 12;
-    cutoffThn -= 1;
-  }
-  const isBulanBerjalan =
-    thn === now.getFullYear() && bln === now.getMonth() + 1;
-  const cutoff = isBulanBerjalan
-    ? toLocalDateStr(new Date(cutoffThn, cutoffBln, 0))
-    : toLocalDateStr(now);
-
   const ATTR_SUBQUERY = `
     SELECT p.nota,
       IFNULL(inv.sal_kode, c.cus_sales) AS sal_kode
@@ -1587,7 +1563,7 @@ const getTargetCollectionDetail = async (user, salKode, bulan, tahun) => {
   const [rowsBaru, rowsLama] = await Promise.all([
     queryInvoice(
       "BARU",
-      cutoff,
+      KREDIT_SAMPAI,
       "DATE_FORMAT(p.tanggal, '%Y-%m') = ?",
       [targetBulanKey],
       "",
