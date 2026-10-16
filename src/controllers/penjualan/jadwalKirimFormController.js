@@ -30,6 +30,14 @@ const getSpkInfo = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Nomor SPK tidak ditemukan." });
 
+    if (req.query.gudang === svc.GUDANG_SPANDUK && svc.bukanSpkSpanduk(spk)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Gudang Jadi P2 hanya untuk SPK Spanduk (divisi 1), MAP tidak diperbolehkan.",
+      });
+    }
+
     // Validasi cross-divisi (sesuai Delphi edtnospkExit)
     const dUser = parseInt(divisiUser, 10);
     const dSpk = parseInt(spk.divisi, 10);

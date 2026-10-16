@@ -2,9 +2,15 @@ const svc = require("../../services/penjualan/approvalSjService");
 
 const getBrowse = async (req, res) => {
   try {
-    const { tglAwal, tglAkhir, cabang = "" } = req.query;
+    const { tglAwal, tglAkhir, cabang = "", gudang = "" } = req.query;
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
-    const data = await svc.getBrowse(tglAwal, tglAkhir, cabang);
+    const data = await svc.getBrowse(
+      tglAwal,
+      tglAkhir,
+      cabang,
+      canLihatCus,
+      gudang,
+    );
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -13,8 +19,20 @@ const getBrowse = async (req, res) => {
 
 const getBrowseDetail = async (req, res) => {
   try {
-    const { tglAwal, tglAkhir, cabang = "", nomor = "" } = req.query;
-    const data = await svc.getBrowseDetail(tglAwal, tglAkhir, cabang, nomor);
+    const {
+      tglAwal,
+      tglAkhir,
+      cabang = "",
+      nomor = "",
+      gudang = "",
+    } = req.query;
+    const data = await svc.getBrowseDetail(
+      tglAwal,
+      tglAkhir,
+      cabang,
+      nomor,
+      gudang,
+    );
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -23,8 +41,9 @@ const getBrowseDetail = async (req, res) => {
 
 const getAllNotApproved = async (req, res) => {
   try {
+    const { gudang = "" } = req.query;
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
-    const data = await svc.getAllNotApproved();
+    const data = await svc.getAllNotApproved(canLihatCus, gudang);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -63,8 +82,9 @@ const batalSj = async (req, res) => {
 
 const getBulkList = async (req, res) => {
   try {
-    const { divisi = "", cabang = "" } = req.query;
-    const data = await svc.getBulkList(divisi, cabang);
+    const { divisi = "", cabang = "", gudang = "" } = req.query;
+    const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
+    const data = await svc.getBulkList(divisi, cabang, canLihatCus, gudang);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -83,9 +103,15 @@ const approveBulk = async (req, res) => {
 
 const getExportData = async (req, res) => {
   try {
-    const { tglAwal, tglAkhir, cabang = "" } = req.query;
+    const { tglAwal, tglAkhir, cabang = "", gudang = "" } = req.query;
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
-    const data = await svc.getExportData(tglAwal, tglAkhir, cabang);
+    const data = await svc.getExportData(
+      tglAwal,
+      tglAkhir,
+      cabang,
+      canLihatCus,
+      gudang,
+    );
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -94,13 +120,14 @@ const getExportData = async (req, res) => {
 
 const getExportDetail = async (req, res) => {
   try {
-    const { tglAwal, tglAkhir, cabang = "" } = req.query;
+    const { tglAwal, tglAkhir, cabang = "", gudang = "" } = req.query;
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;
     const data = await svc.getExportDetail(
       tglAwal,
       tglAkhir,
       cabang,
       canLihatCus,
+      gudang,
     );
     res.json({ success: true, data });
   } catch (err) {

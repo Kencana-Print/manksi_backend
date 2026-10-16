@@ -54,6 +54,17 @@ const deleteBast = async (nomor, userKode) => {
   try {
     await conn.beginTransaction();
 
+    const [[map]] = await conn.query(
+      `SELECT mspk_divisi FROM tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!map) {
+      throw new Error(`MAP ${nomor} tidak ditemukan`);
+    }
+    if (![3, 4, 6].includes(Number(map.mspk_divisi))) {
+      throw new Error(`MAP ${nomor} bukan divisi Garmen/Kaosan`);
+    }
+
     // 1. Hapus dari tabel utama BAST
     await conn.query(`DELETE FROM tkesesuaianmap WHERE mspk_nomor = ?`, [
       nomor,

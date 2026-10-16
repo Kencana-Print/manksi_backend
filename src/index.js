@@ -84,6 +84,12 @@ const spandukLhkJahitRoutes = require("./routes/spanduk/lhk/lhkJahitRoutes");
 const spandukLhkJahitFormRoutes = require("./routes/spanduk/lhk/lhkJahitFormRoutes");
 const spandukLhkLipatRoutes = require("./routes/spanduk/lhk/lhkLipatRoutes");
 const spandukLhkLipatFormRoutes = require("./routes/spanduk/lhk/lhkLipatFormRoutes");
+const spandukLhkProofRoutes = require("./routes/spanduk/lhk/lhkProofRoutes");
+const spandukLhkProofFormRoutes = require("./routes/spanduk/lhk/lhkProofFormRoutes");
+const spandukBastMapRoutes = require("./routes/spanduk/bastMapSpandukRoutes");
+const spandukBastMapFormRoutes = require("./routes/spanduk/bastMapSpandukFormRoutes");
+const mutasiMarketingSpandukRoutes = require("./routes/spanduk/mutasiMarketingSpandukRoutes");
+const mutasiMarketingSpandukFormRoutes = require("./routes/spanduk/mutasiMarketingSpandukFormRoutes");
 const spandukMutasiProduksiRoutes = require("./routes/spanduk/mutasiProduksiSpandukRoutes");
 const spandukMutasiProduksiFormRoutes = require("./routes/spanduk/mutasiProduksiSpandukFormRoutes");
 
@@ -543,6 +549,12 @@ app.use("/api/spanduk/lhk/lhk-jahit", spandukLhkJahitRoutes);
 app.use("/api/spanduk/lhk/lhk-jahit-form", spandukLhkJahitFormRoutes);
 app.use("/api/spanduk/lhk/lhk-lipat", spandukLhkLipatRoutes);
 app.use("/api/spanduk/lhk/lhk-lipat-form", spandukLhkLipatFormRoutes);
+app.use("/api/spanduk/lhk/lhk-proof", spandukLhkProofRoutes);
+app.use("/api/spanduk/lhk/lhk-proof-form", spandukLhkProofFormRoutes);
+app.use("/api/spanduk/bast-map", spandukBastMapRoutes);
+app.use("/api/spanduk/bast-map-form", spandukBastMapFormRoutes);
+app.use("/api/spanduk/mutasi-marketing", mutasiMarketingSpandukRoutes);
+app.use("/api/spanduk/mutasi-marketing-form", mutasiMarketingSpandukFormRoutes);
 app.use("/api/spanduk/mutasi-produksi", spandukMutasiProduksiRoutes);
 app.use("/api/spanduk/mutasi-produksi-form", spandukMutasiProduksiFormRoutes);
 

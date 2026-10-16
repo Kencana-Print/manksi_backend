@@ -1,4 +1,5 @@
 const pengajuanUangMukaService = require("../../services/pembelian/pengajuanUangMukaService");
+const validasiService = require("../../services/pembelian/pengajuanUangMukaValidasiService");
 
 const create = async (req, res) => {
   try {
@@ -80,10 +81,87 @@ const getPrintPenyerahan = async (req, res) => {
   }
 };
 
+const getValidasi = async (req, res) => {
+  try {
+    const data = await validasiService.getStatus(req.params.nomor, req.user);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+const postValidasi = async (req, res) => {
+  try {
+    const data = await validasiService.validasi(req.params.nomor, req.user);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+const postBatalValidasi = async (req, res) => {
+  try {
+    const data = await validasiService.batalValidasi(
+      req.params.nomor,
+      req.body?.alasan,
+      req.user,
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+const getValidasiPenyelesaian = async (req, res) => {
+  try {
+    const data = await validasiService.getStatus(
+      req.params.bon,
+      req.user,
+      "PENYELESAIAN",
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+const postValidasiPenyelesaian = async (req, res) => {
+  try {
+    const data = await validasiService.validasi(
+      req.params.bon,
+      req.user,
+      "PENYELESAIAN",
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
+const postBatalValidasiPenyelesaian = async (req, res) => {
+  try {
+    const data = await validasiService.batalValidasi(
+      req.params.bon,
+      req.body?.alasan,
+      req.user,
+      "PENYELESAIAN",
+    );
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
 module.exports = {
   create,
   getBrowse,
   getDetail,
   getPrintData,
   getPrintPenyerahan,
+  getValidasi,
+  postValidasi,
+  postBatalValidasi,
+  getValidasiPenyelesaian,
+  postValidasiPenyelesaian,
+  postBatalValidasiPenyelesaian,
 };

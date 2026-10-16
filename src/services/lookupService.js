@@ -94,6 +94,9 @@ const searchSpk = async (
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "mutasi") {
+    // STBJ Garmen: hanya SPK (tspk), bukan MAP/memo SPK. Aktif dan sudah
+    // ber-CMO, selaras dengan F1 Delphi dan syarat getSpkDetail di
+    // stbjFormService. Divisi dikirim dari form (3,4,6).
     baseQuery = `
     FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_tanggal AS Tanggal,
@@ -102,13 +105,8 @@ const searchSpk = async (
              spk_cmo AS CMO, spk_aktif AS Aktif
       FROM tspk
       WHERE spk_aktif = 'Y'
-      UNION ALL
-      SELECT mspk_nomor, mspk_nama, mspk_tanggal,
-             mspk_jumlah, mspk_ukuran, mspk_kain, mspk_finishing,
-             mspk_divisi, mspk_cmo, 'Y'
-      FROM tmemospk
     ) a
-    WHERE Aktif = 'Y'
+    WHERE Aktif = 'Y' AND CMO <> ''
   `;
     if (divisi) {
       baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
@@ -116,6 +114,19 @@ const searchSpk = async (
     }
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
+  } else if (filterMode === "stbj-spanduk") {
+    // STBJ Spanduk P02: hanya SPK (bukan MAP/memo), divisi 1, aktif,
+    // dan sudah ber-CMO (selaras dengan syarat getSpkDetail di stbjFormService)
+    baseQuery = `
+      FROM tspk
+      WHERE spk_aktif = 'Y'
+        AND spk_cmo <> ''
+        AND spk_divisi = 1
+    `;
+    if (keyword) {
+      whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "spk-map") {
@@ -229,24 +240,20 @@ const searchSpk = async (
   );
   const total = countResult[0].total;
 
-  const selectClause =
-    filterMode === "spk-ppic" ||
-    filterMode === "sj" ||
-    filterMode === "po-external"
-      ? `SELECT spk_nomor AS Nomor, spk_nama AS Nama,
+  const kolomSpk = ["spk-ppic", "sj", "po-external", "stbj-spanduk"].includes(
+    filterMode,
+  );
+
+  const selectClause = kolomSpk
+    ? `SELECT spk_nomor AS Nomor, spk_nama AS Nama,
               spk_nama2 AS Nama2,
               DATE_FORMAT(spk_tanggal, '%Y-%m-%d') AS Tanggal,
               spk_jumlah AS Jumlah, spk_ukuran AS Ukuran,
               spk_kain AS Kain, spk_finishing AS Finishing,
               spk_divisi AS Divisi, spk_cmo AS CMO`
-      : `SELECT *`;
+    : `SELECT *`;
 
-  const orderByCol =
-    filterMode === "spk-ppic" ||
-    filterMode === "sj" ||
-    filterMode === "po-external"
-      ? "spk_tanggal"
-      : "Tanggal";
+  const orderByCol = kolomSpk ? "spk_tanggal" : "Tanggal";
 
   const dataQuery = `
     ${selectClause} ${baseQuery} ${whereSearch}
