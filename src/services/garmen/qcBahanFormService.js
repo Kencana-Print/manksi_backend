@@ -37,12 +37,17 @@ const parseSpec = (txt, { cmKeInci = false } = {}) => {
 const bacaSpec = (line) => {
   const g = parseSpec(line.pod_gramasia);
   const s = parseSpec(line.pod_setting, { cmKeInci: true });
+  const gramasiAda = g.min > 0 && g.max > 0;
+  // Gramasi PO benar-benar kosong ("" atau "-"): tidak dinilai, cukup setting
+  const gramasiKosong = !String(line.pod_gramasia ?? "").replace(/[-\s]/g, "");
+  const settingAda = s.min > 0 && s.max > 0;
   return {
     gMin: g.min,
     gMax: g.max,
     sMin: s.min,
     sMax: s.max,
-    terbaca: g.min > 0 && g.max > 0 && s.min > 0 && s.max > 0,
+    gramasiAda,
+    terbaca: settingAda && (gramasiAda || gramasiKosong),
   };
 };
 
@@ -90,7 +95,8 @@ const evalRoll = (rl, spec, p) => {
   const atas = num(rl.gramasi_atas);
   const bawah = num(rl.gramasi_bawah);
   const st = num(rl.setting_cek);
-  const terisi = atas > 0 && bawah > 0 && st > 0;
+  // PO tanpa gramasi: gramasi atas/bawah tidak wajib, roll dinilai dari setting saja
+  const terisi = st > 0 && (!spec.gramasiAda || (atas > 0 && bawah > 0));
   if (!terisi || !spec.terbaca)
     return { atas, bawah, st, terisi, sesuai: false };
   const okG = (v) =>
@@ -98,7 +104,8 @@ const evalRoll = (rl, spec, p) => {
   const okS =
     st >= spec.sMin - p.tolSetting - EPS &&
     st <= spec.sMax + p.tolSetting + EPS;
-  return { atas, bawah, st, terisi, sesuai: okG(atas) && okG(bawah) && okS };
+  const okGramasi = !spec.gramasiAda || (okG(atas) && okG(bawah));
+  return { atas, bawah, st, terisi, sesuai: okGramasi && okS };
 };
 
 // Semua roll sesuai -> 3, tidak ada -> 1, sebagian -> 2, tidak bisa dinilai -> 0
@@ -708,6 +715,24 @@ const saveData = async (payload, userKode) => {
       }));
 
       const evals = rolls.map((x) => x.ev);
+      if (submit) {
+        const idxKurang = rolls.findIndex((x) => !x.ev.terisi);
+        if (idxKurang >= 0) {
+          throw new Error(
+            `Lot ${lot}, baris roll ke-${idxKurang + 1}: ${spec.gramasiAda ? "gramasi atas, bawah, dan setting" : "setting"} harus diisi lengkap.`,
+          );
+        }
+        if (rolls.length < rollCek) {
+          throw new Error(
+            `Lot ${lot}: minimal ${rollCek} roll harus dicek (${persenCek}% dari ${roll} roll). Baru ${rolls.length}.`,
+          );
+        }
+        if (rolls.length > roll) {
+          throw new Error(
+            `Lot ${lot}: roll yang dicek (${rolls.length}) melebihi jumlah roll lot.`,
+          );
+        }
+      }
       const saran = hitungNilaiLot(evals, spec);
       const alasan = String(r.alasan_nilai || "").trim();
       let nilai = Math.round(num(r.nilai));
@@ -738,7 +763,9 @@ const saveData = async (payload, userKode) => {
       }
 
       const dicek = evals.filter((x) => x.terisi);
-      const bacaan = dicek.flatMap((x) => [x.atas, x.bawah]);
+      const bacaan = dicek
+        .flatMap((x) => [x.atas, x.bawah])
+        .filter((v) => v > 0);
       const gramasiRata = bacaan.length
         ? r2(bacaan.reduce((a, b) => a + b, 0) / bacaan.length)
         : 0;
