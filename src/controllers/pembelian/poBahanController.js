@@ -12,12 +12,14 @@ const getBrowse = async (req, res) => {
 
 const getBrowseDetail = async (req, res) => {
   try {
+    const canLihatSup = Number(req.user?.flags?.lihatSup) === 1;
     const canLihatBeli = Number(req.user?.flags?.lihatBeli) === 1;
     const data = await poBahanService.getBrowseDetail(
       req.params.nomor,
       canLihatBeli,
+      canLihatSup,
     );
-    res.status(200).json({ success: true, data, canLihatBeli });
+    res.status(200).json({ success: true, data, canLihatBeli, canLihatSup });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
