@@ -62,30 +62,35 @@ const lookupByBarcode = async (req, res) => {
 
 const previewPrint = async (req, res) => {
   try {
-    const data = await svc.previewUnits(req.body);
+    const data = await svc.previewUnits(req.body, req.user);
     res.json({ success: true, data });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(400).json({ success: false, message: err.message });
   }
 };
 
 const save = async (req, res) => {
   try {
-    if (!req.body.isEdit && !req.body.tanggal) {
+    // Jenis operasi ditentukan method (izin insert/edit sudah dicek di route),
+    // bukan dari body yang dikirim klien
+    const isEdit = req.method === "PUT";
+    const body = { ...req.body, isEdit };
+
+    if (!isEdit && !body.tanggal) {
       return res
         .status(400)
         .json({ success: false, message: "Tanggal wajib diisi." });
     }
-    if (req.body.isEdit && !req.body.nomor) {
+    if (isEdit && !body.nomor) {
       return res
         .status(400)
         .json({ success: false, message: "Nomor wajib diisi." });
     }
-    const result = await svc.saveData(req.body, req.user);
+    const result = await svc.saveData(body, req.user);
     res.json({
       success: true,
       data: result,
-      message: req.body.isEdit
+      message: isEdit
         ? "Berhasil diubah."
         : `Berhasil disimpan dengan nomor: ${result.nomor}`,
     });
