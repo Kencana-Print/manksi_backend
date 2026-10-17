@@ -54,7 +54,7 @@ const bacaSpec = (line) => {
 const getParam = async (conn) => {
   const [rows] = await conn.query(
     `SELECT qcm_kode, qcm_nilai FROM tqc_bahan_param
-     WHERE qcm_kode IN ('TOLERANSI_GRAMASI','TOLERANSI_SETTING','PERSEN_CEK_KAOSAN','PERSEN_CEK_CORPORATE')`,
+     WHERE qcm_kode IN ('TOLERANSI_GRAMASI','TOLERANSI_SETTING','PERSEN_CEK_KAOSAN','PERSEN_CEK_CORPORATE','PERSEN_CEK_KATUN','WARNA_BATAS_NILAI3','WARNA_BATAS_NILAI2')`,
   );
   const m = {};
   rows.forEach((r) => {
@@ -63,58 +63,174 @@ const getParam = async (conn) => {
   return {
     tolGramasi: m.TOLERANSI_GRAMASI ?? 5,
     tolSetting: m.TOLERANSI_SETTING ?? 0.5,
-    persenKaosan: m.PERSEN_CEK_KAOSAN ?? 30,
+    persenKaosan: m.PERSEN_CEK_KAOSAN ?? 50,
     persenCorporate: m.PERSEN_CEK_CORPORATE ?? 20,
+    persenKatun: m.PERSEN_CEK_KATUN ?? 30,
+    warnaBatas3: m.WARNA_BATAS_NILAI3 ?? 1.5,
+    warnaBatas2: m.WARNA_BATAS_NILAI2 ?? 2,
   };
 };
 
 // KAOSAN bila project bahan = 'KAOSAN', selain itu CORPORATE
+// Persen sampling. Prioritas: KAOSAN 50 > PE 20 > katun/drill 30 > lainnya 20.
+const KATUN_COMBED = ["CM16", "CM20", "CM24", "CM30"]; // sama dengan COMBED_GROUP di MkbFormView
+
 const getJenisCek = async (conn, bhnKode, p) => {
   const [rows] = await conn.query(
-    `SELECT IFNULL(pr.project, 'REGULER') AS project
+    `SELECT IFNULL(pr.project, 'REGULER') AS project,
+            IFNULL(j.bj_nama, '') AS nama_jenis,
+            IFNULL(b.Bhn_Name, '') AS nama_bahan
      FROM tbahan b
      LEFT JOIN tbahan_project pr ON pr.kode = MID(b.Bhn_kode, 10, 1)
+     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(b.Bhn_kode, 2)
      WHERE b.Bhn_kode = ?`,
     [bhnKode],
   );
-  const kaosan =
-    String(rows[0]?.project || "")
+  const up = (s) =>
+    String(s || "")
       .trim()
-      .toUpperCase() === "KAOSAN";
-  return kaosan
-    ? { jenis: "KAOSAN", persen: p.persenKaosan }
-    : { jenis: "CORPORATE", persen: p.persenCorporate };
+      .toUpperCase();
+  const r = rows[0] || {};
+
+  if (up(r.project) === "KAOSAN") {
+    return { jenis: "KAOSAN", persen: p.persenKaosan };
+  }
+
+  const jenis = up(r.nama_jenis);
+  const kataPertama = up(r.nama_bahan).split(/\s+/)[0];
+  const adaPe = /(^|[^A-Z])PE/.test(jenis); // kata berawalan PE
+  const katunDrill =
+    jenis.includes("KATUN") ||
+    jenis.includes("DRILL") ||
+    KATUN_COMBED.includes(kataPertama);
+
+  if (!adaPe && katunDrill) {
+    return { jenis: "CORPORATE", persen: p.persenKatun };
+  }
+  return { jenis: "CORPORATE", persen: p.persenCorporate };
 };
 
 // Dibulatkan ke atas, minimal 1 roll
 const hitungRollCek = (roll, persen) =>
   roll > 0 ? Math.max(1, Math.ceil((roll * persen) / 100)) : 0;
 
-// Satu roll: sesuai bila gramasi atas, bawah, dan setting masuk rentang PO +/- toleransi
+const OK_NO = ["OK", "NO"];
+const okNo = (v) =>
+  String(v ?? "")
+    .trim()
+    .toUpperCase();
+
+// null = kosong, NaN = bukan angka
+const parseWarna = (v) => {
+  const s = String(v ?? "")
+    .trim()
+    .replace(",", ".");
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n >= 0 ? n : NaN;
+};
+
+const nilaiWarna = (w, p) =>
+  w <= p.warnaBatas3 + EPS ? 3 : w <= p.warnaBatas2 + EPS ? 2 : 1;
+
+const arahSpec = (v, min, max, tol) =>
+  v < min - tol - EPS ? "RENDAH" : v > max + tol + EPS ? "TINGGI" : "";
+
+// Satu roll. Nilai roll = nilai terendah dari semua parameter.
+// Gramasi dan setting hanya dinilai bila spesifikasi PO terbaca.
 const evalRoll = (rl, spec, p) => {
   const atas = num(rl.gramasi_atas);
   const bawah = num(rl.gramasi_bawah);
   const st = num(rl.setting_cek);
-  // PO tanpa gramasi: gramasi atas/bawah tidak wajib, roll dinilai dari setting saja
-  const terisi = st > 0 && (!spec.gramasiAda || (atas > 0 && bawah > 0));
-  if (!terisi || !spec.terbaca)
-    return { atas, bawah, st, terisi, sesuai: false };
+  const h = rl.hasil || {};
+  const warna = parseWarna(h.warna);
+  const hf = okNo(h.handfeel);
+  const bw = okNo(h.bowing);
+  const sh = okNo(h.shrinkage);
+  const kl = okNo(h.kelunturan);
+  const warnaValid = warna !== null && !Number.isNaN(warna);
+
+  const kurang = [];
+  if (spec.gramasiAda) {
+    if (!(atas > 0)) kurang.push("gramasi atas");
+    if (!(bawah > 0)) kurang.push("gramasi bawah");
+  }
+  if (!(st > 0)) kurang.push("setting");
+  if (!warnaValid) kurang.push("warna");
+  if (!OK_NO.includes(hf)) kurang.push("handfeel");
+  if (!OK_NO.includes(bw)) kurang.push("bowing");
+  if (!OK_NO.includes(sh)) kurang.push("shrinkage");
+  if (!OK_NO.includes(kl)) kurang.push("kelunturan");
+  const terisi = kurang.length === 0;
+
   const okG = (v) =>
     v >= spec.gMin - p.tolGramasi - EPS && v <= spec.gMax + p.tolGramasi + EPS;
   const okS =
     st >= spec.sMin - p.tolSetting - EPS &&
     st <= spec.sMax + p.tolSetting + EPS;
-  const okGramasi = !spec.gramasiAda || (okG(atas) && okG(bawah));
-  return { atas, bawah, st, terisi, sesuai: okGramasi && okS };
+
+  let nilai = 0;
+  if (terisi) {
+    const skor = [
+      nilaiWarna(warna, p),
+      hf === "OK" ? 3 : 2,
+      bw === "OK" ? 3 : 1,
+      sh === "OK" ? 3 : 1,
+      kl === "OK" ? 3 : 1,
+    ];
+    if (spec.terbaca) {
+      if (spec.gramasiAda) skor.push(okG(atas) && okG(bawah) ? 3 : 1);
+      skor.push(okS ? 3 : 1);
+    }
+    nilai = Math.min(...skor);
+  }
+
+  // Teks hasil gramasi/setting untuk kolom qcr_h_* (dipakai Cetak)
+  let gramasiTxt = "-";
+  let settingTxt = "-";
+  if (spec.terbaca && spec.gramasiAda && atas > 0 && bawah > 0) {
+    const arah = [
+      ...new Set(
+        [
+          arahSpec(atas, spec.gMin, spec.gMax, p.tolGramasi),
+          arahSpec(bawah, spec.gMin, spec.gMax, p.tolGramasi),
+        ].filter(Boolean),
+      ),
+    ].join("/");
+    gramasiTxt = arah || "OK";
+  }
+  if (spec.terbaca && st > 0) {
+    settingTxt = arahSpec(st, spec.sMin, spec.sMax, p.tolSetting) || "OK";
+  }
+
+  return {
+    atas,
+    bawah,
+    st,
+    terisi,
+    kurang,
+    nilai,
+    sesuai: nilai === 3,
+    hf,
+    bw,
+    sh,
+    kl,
+    warnaTxt: warnaValid
+      ? String(warna)
+      : String(h.warna ?? "")
+          .trim()
+          .slice(0, 100),
+    gramasiTxt,
+    settingTxt,
+  };
 };
 
-// Semua roll sesuai -> 3, tidak ada -> 1, sebagian -> 2, tidak bisa dinilai -> 0
-const hitungNilaiLot = (rollsEval, spec) => {
+// Semua roll bernilai 3 -> 3; semua bernilai 1 -> 1; selain itu 2; belum ada roll lengkap -> 0
+const hitungNilaiLot = (rollsEval) => {
   const dicek = rollsEval.filter((x) => x.terisi);
-  if (!spec.terbaca || dicek.length === 0) return 0;
-  const ok = dicek.filter((x) => x.sesuai).length;
-  if (ok === dicek.length) return 3;
-  if (ok === 0) return 1;
+  if (dicek.length === 0) return 0;
+  if (dicek.every((x) => x.nilai === 3)) return 3;
+  if (dicek.every((x) => x.nilai === 1)) return 1;
   return 2;
 };
 
@@ -331,7 +447,12 @@ const getPoSource = async (poNomor, nourut) => {
         spec_terbaca: spec.terbaca,
         warna: line.nama_warna || line.nama_kain || "",
       },
-      toleransi: { gramasi: p.tolGramasi, setting: p.tolSetting },
+      toleransi: {
+        gramasi: p.tolGramasi,
+        setting: p.tolSetting,
+        warna_nilai3: p.warnaBatas3,
+        warna_nilai2: p.warnaBatas2,
+      },
     };
   } finally {
     conn.release();
@@ -387,6 +508,7 @@ const getDetail = async (nomor) => {
       gramasi_bawah: Number(x.qcr_gramasi_bawah),
       setting_cek: Number(x.qcr_setting_cek),
       sesuai: Number(x.qcr_sesuai) === 1,
+      nilai: Number(x.qcr_nilai) || 0,
       catatan: x.qcr_catatan,
       hasil: {
         gramasi: x.qcr_h_gramasi,
@@ -471,7 +593,12 @@ const getDetail = async (nomor) => {
           }
         : null,
       pengesah,
-      toleransi: { gramasi: p.tolGramasi, setting: p.tolSetting },
+      toleransi: {
+        gramasi: p.tolGramasi,
+        setting: p.tolSetting,
+        warna_nilai3: p.warnaBatas3,
+        warna_nilai2: p.warnaBatas2,
+      },
     };
   } finally {
     conn.release();
@@ -612,16 +739,26 @@ const saveData = async (payload, userKode) => {
     let podNourut = Number(payload.qc_pod_nourut);
     let oldStatus = "DRAFT";
     let pinUrut = null;
+    let jenisTersimpan = "";
+    let persenTersimpan = 0;
 
     if (isEdit) {
       const [cur] = await conn.query(
-        `SELECT qc_status, qc_po_nomor, qc_pod_nourut FROM tqc_bahan_hdr WHERE qc_nomor = ? FOR UPDATE`,
+        `SELECT qc_status, qc_po_nomor, qc_pod_nourut, qc_jenis_cek, qc_persen_cek, qc_versi_nilai
+         FROM tqc_bahan_hdr WHERE qc_nomor = ? FOR UPDATE`,
         [nomor],
       );
       if (cur.length === 0) throw new Error("Data QC Bahan tidak ditemukan.");
       oldStatus = cur[0].qc_status;
       poNomor = cur[0].qc_po_nomor;
       podNourut = Number(cur[0].qc_pod_nourut);
+      jenisTersimpan = cur[0].qc_jenis_cek || "";
+      persenTersimpan = Number(cur[0].qc_persen_cek) || 0;
+      if (Number(cur[0].qc_versi_nilai) === 1 && oldStatus !== "DRAFT") {
+        throw new Error(
+          "Dokumen ini dibuat dengan aturan penilaian lama dan tidak dapat diubah.",
+        );
+      }
 
       const [sudahDiterima] = await conn.query(
         `SELECT 1 FROM tbpb_qc_lot WHERE bql_qc_nomor = ? LIMIT 1`,
@@ -667,11 +804,15 @@ const saveData = async (payload, userKode) => {
     const line = await loadPoLine(conn, poNomor, podNourut);
     const p = await getParam(conn);
     const spec = bacaSpec(line);
-    const { jenis: jenisCek, persen: persenCek } = await getJenisCek(
+    let { jenis: jenisCek, persen: persenCek } = await getJenisCek(
       conn,
       line.pod_bhn_kode,
       p,
     );
+    if (isEdit && persenTersimpan > 0) {
+      jenisCek = jenisTersimpan || jenisCek;
+      persenCek = persenTersimpan;
+    }
     const qtyPo = Number(line.pod_Jumlah) || 0;
     const qtyDatang = num(payload.qc_qty_datang);
 
@@ -719,7 +860,7 @@ const saveData = async (payload, userKode) => {
         const idxKurang = rolls.findIndex((x) => !x.ev.terisi);
         if (idxKurang >= 0) {
           throw new Error(
-            `Lot ${lot}, baris roll ke-${idxKurang + 1}: ${spec.gramasiAda ? "gramasi atas, bawah, dan setting" : "setting"} harus diisi lengkap.`,
+            `Lot ${lot}, baris roll ke-${idxKurang + 1}: ${rolls[idxKurang].ev.kurang.join(", ")} harus diisi lengkap.`,
           );
         }
         if (rolls.length < rollCek) {
@@ -733,33 +874,15 @@ const saveData = async (payload, userKode) => {
           );
         }
       }
-      const saran = hitungNilaiLot(evals, spec);
-      const alasan = String(r.alasan_nilai || "").trim();
-      let nilai = Math.round(num(r.nilai));
-      if (saran > 0 && !nilai) nilai = saran;
-      if (nilai !== 0 && ![1, 2, 3].includes(nilai)) {
-        throw new Error(`Nilai lot ${lot} harus 1, 2, atau 3.`);
-      }
+      // Nilai dihitung server dan dikunci. Nilai dari client diabaikan.
+      const saran = hitungNilaiLot(evals);
+      const nilai = saran;
+      const alasan = "";
 
-      if (submit) {
-        if (!nilai) throw new Error(`Nilai lot ${lot} wajib diisi.`);
-        if (nilai === 3 && saran !== 3) {
-          throw new Error(
-            `Lot ${lot}: nilai 3 hanya berasal dari hasil hitung sistem. Untuk melanjutkan lot bernilai 2, gunakan Tindakan > Submit di browse.`,
-          );
-        }
-        if (saran > 0 && nilai > saran) {
-          throw new Error(
-            `Lot ${lot}: nilai tidak boleh lebih tinggi dari hasil hitung sistem (${saran}).`,
-          );
-        }
-        if (nilai !== saran && !alasan) {
-          throw new Error(
-            saran === 0
-              ? `Lot ${lot}: spesifikasi PO tidak terbaca sehingga nilai diisi manual. Alasan wajib diisi.`
-              : `Nilai lot ${lot} berbeda dari hasil hitung sistem (${saran}). Alasan wajib diisi.`,
-          );
-        }
+      if (submit && !nilai) {
+        throw new Error(
+          `Lot ${lot}: belum ada roll yang dicek lengkap sehingga nilai belum dapat dihitung.`,
+        );
       }
 
       const dicek = evals.filter((x) => x.terisi);
@@ -857,8 +980,8 @@ const saveData = async (payload, userKode) => {
           qc_nomor, qc_tgl_datang, qc_po_nomor, qc_bhn_kode, qc_pod_nourut,
           qc_vendor_greige, qc_jenis_kain, qc_vendor_celup,
           qc_qty_datang, qc_jml_lot, qc_jenis_cek, qc_persen_cek,
-          qc_status, qc_keterangan, user_create, date_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          qc_status, qc_keterangan, qc_versi_nilai, user_create, date_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, NOW())
         `,
         [
           nomor,
@@ -882,7 +1005,7 @@ const saveData = async (payload, userKode) => {
       await conn.query(
         `
         UPDATE tqc_bahan_hdr
-        SET qc_tgl_datang = ?, qc_keterangan = ?, qc_status = ?,
+        SET qc_tgl_datang = ?, qc_keterangan = ?, qc_status = ?, qc_versi_nilai = 2,
             qc_qty_datang = ?, qc_jml_lot = ?, qc_jenis_cek = ?, qc_persen_cek = ?,
             user_modified = ?, date_modified = NOW()
         WHERE qc_nomor = ?
@@ -948,7 +1071,7 @@ const saveData = async (payload, userKode) => {
           INSERT INTO tqc_bahan_roll (
             qcr_qc_nomor, qcr_lot_nourut, qcr_lot, qcr_nourut, qcr_no_roll,
             qcr_qty, qcr_gramasi_atas, qcr_gramasi_bawah, qcr_setting_cek,
-            qcr_sesuai, qcr_h_gramasi, qcr_h_setting, qcr_h_warna,
+            qcr_sesuai, qcr_nilai, qcr_h_gramasi, qcr_h_setting, qcr_h_warna,
             qcr_h_handfeel, qcr_h_bowing, qcr_h_shrinkage, qcr_h_kelunturan,
             qcr_catatan
           ) VALUES ?
@@ -965,13 +1088,14 @@ const saveData = async (payload, userKode) => {
               x.ev.bawah,
               x.ev.st,
               x.ev.sesuai ? 1 : 0,
-              x.hasil.gramasi || "",
-              x.hasil.setting || "",
-              x.hasil.warna || "",
-              x.hasil.handfeel || "",
-              x.hasil.bowing || "",
-              x.hasil.shrinkage || "",
-              x.hasil.kelunturan || "",
+              x.ev.nilai,
+              x.ev.gramasiTxt,
+              x.ev.settingTxt,
+              x.ev.warnaTxt,
+              x.ev.hf,
+              x.ev.bw,
+              x.ev.sh,
+              x.ev.kl,
               x.catatan,
             ]),
           ],

@@ -33,7 +33,6 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
       h.qc_qty_datang AS QtyDatang,
       h.qc_jenis_cek AS JenisCek,
       h.qc_keterangan AS Keterangan,
-      h.qc_keterangan AS Keterangan,
       IFNULL(x.jml_lot, 0) AS JumlahLot,
       IFNULL(x.tot_kg, 0) AS TotalKg,
       IFNULL(x.tot_roll, 0) AS TotalRoll,
@@ -71,6 +70,26 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
     `,
     params,
   );
+  if (rows.length > 0) {
+    const [lots] = await db.query(
+      `SELECT qcd_qc_nomor, qcd_lot, qcd_nilai, qcd_keputusan
+       FROM tqc_bahan_dtl
+       WHERE qcd_qc_nomor IN (?)
+       ORDER BY qcd_qc_nomor, qcd_nourut`,
+      [rows.map((r) => r.Nomor)],
+    );
+    const lotMap = {};
+    lots.forEach((l) => {
+      (lotMap[l.qcd_qc_nomor] ||= []).push({
+        Lot: l.qcd_lot,
+        Nilai: Number(l.qcd_nilai) || 0,
+        Keputusan: l.qcd_keputusan || "",
+      });
+    });
+    rows.forEach((r) => {
+      r.Lots = lotMap[r.Nomor] || [];
+    });
+  }
 
   return rows;
 };
@@ -93,8 +112,6 @@ const getBrowseDetail = async (nomor) => {
       d.qcd_gramasi_cek AS GramasiCek,
       d.qcd_setting_cek AS SettingCek,
       d.qcd_nilai AS Nilai,
-      d.qcd_nilai_saran AS Saran,
-      d.qcd_alasan_nilai AS AlasanNilai,
       d.qcd_keputusan AS Keputusan
     FROM tqc_bahan_dtl d
     INNER JOIN tqc_bahan_hdr h ON h.qc_nomor = d.qcd_qc_nomor
@@ -105,6 +122,51 @@ const getBrowseDetail = async (nomor) => {
     ORDER BY d.qcd_nourut
     `,
     [nomor],
+  );
+  return rows;
+};
+
+// Semua lot pada rentang tanggal (untuk Export Detail). Filter sama dengan getBrowse.
+const getBrowseAllDetail = async (startDate, endDate, status = "ALL") => {
+  const params = [startDate, endDate];
+  let statusFilter = "";
+  if (status && status !== "ALL" && STATUS_VALID.includes(status)) {
+    statusFilter = "AND h.qc_status = ?";
+    params.push(status);
+  }
+
+  const [rows] = await db.query(
+    `
+    SELECT
+      h.qc_nomor AS Nomor,
+      DATE_FORMAT(h.qc_tgl_datang, "%Y-%m-%d") AS TglDatang,
+      h.qc_status AS Status,
+      h.qc_po_nomor AS Nomor_PO,
+      h.qc_jenis_kain AS JenisKain,
+      h.qc_vendor_greige AS VendorGreige,
+      h.qc_vendor_celup AS VendorCelup,
+      d.qcd_lot AS Lot,
+      d.qcd_qty_kg AS Kg,
+      IFNULL(NULLIF(pd.pod_bhn_satuan, ''), 'Kg') AS Satuan,
+      d.qcd_qty_roll AS Roll,
+      d.qcd_roll_cek AS RollCek,
+      d.qcd_gramasi_po AS GramasiPO,
+      d.qcd_setting_po AS SettingPO,
+      d.qcd_warna AS Warna,
+      d.qcd_gramasi_cek AS GramasiCek,
+      d.qcd_setting_cek AS SettingCek,
+      d.qcd_nilai AS Nilai,
+      d.qcd_keputusan AS Keputusan
+    FROM tqc_bahan_hdr h
+    INNER JOIN tqc_bahan_dtl d ON d.qcd_qc_nomor = h.qc_nomor
+    LEFT JOIN tpo_dtl pd
+      ON pd.pod_po_nomor = h.qc_po_nomor
+     AND pd.pod_nourut = h.qc_pod_nourut
+    WHERE h.qc_tgl_datang BETWEEN ? AND ?
+      ${statusFilter}
+    ORDER BY h.qc_nomor DESC, d.qcd_nourut
+    `,
+    params,
   );
   return rows;
 };
@@ -246,6 +308,7 @@ const submitQc = async (nomor, userKode, lanjut = []) => {
 module.exports = {
   getBrowse,
   getBrowseDetail,
+  getBrowseAllDetail,
   deleteQc,
   requestPinPerubahan,
   submitQc,

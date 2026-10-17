@@ -24,6 +24,14 @@ router.get(
   qcBahanController.getBrowseDetail,
 );
 
+// Export Detail: semua lot pada rentang tanggal
+router.get(
+  "/all-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  qcBahanController.getBrowseAllDetail,
+);
+
 // Delete Data (hanya status DRAFT, dicek di service)
 router.delete(
   "/delete/:nomor",
