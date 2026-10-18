@@ -419,6 +419,7 @@ const saveData = async (payload, userKode) => {
     // A. Validasi Invoice & Tutup Buku
     let dariQc = daftarQc.length > 0;
     const kodeLama = new Map();
+    const jumlahLama = new Map();
     if (isEdit) {
       const [cekInv] = await conn.query(
         `SELECT h.bpb_status_inv, h.bpb_po_nomor, h.bpb_sup_kode, p.po_jenis
@@ -455,12 +456,19 @@ const saveData = async (payload, userKode) => {
 
       if (dariQc) {
         const [lama] = await conn.query(
-          `SELECT bpbd_bhn_kode, bpbd_bhn_kode_old FROM tbpb_dtl WHERE bpbd_bpb_nomor = ?`,
+          `SELECT bpbd_bhn_kode, bpbd_bhn_kode_old, bpbd_jumlah FROM tbpb_dtl WHERE bpbd_bpb_nomor = ?`,
           [nomorBPB],
         );
-        lama.forEach((r) =>
-          kodeLama.set(r.bpbd_bhn_kode, r.bpbd_bhn_kode_old || ""),
-        );
+        lama.forEach((r) => {
+          kodeLama.set(r.bpbd_bhn_kode, r.bpbd_bhn_kode_old || "");
+          jumlahLama.set(
+            r.bpbd_bhn_kode,
+            bulat2(
+              (jumlahLama.get(r.bpbd_bhn_kode) || 0) +
+                Number(r.bpbd_jumlah || 0),
+            ),
+          );
+        });
       }
     }
 
@@ -572,6 +580,24 @@ const saveData = async (payload, userKode) => {
           );
         }
       }
+      // Jumlah dikunci: harus sama dengan total qty lot QC per kode dan per baris PO
+      for (const item of validItemsToInsert) {
+        const harus = bulat2(usulan.qtyPerKode.get(item.kode) || 0);
+        if (Math.abs(Number(item.jumlah || 0) - harus) > 0.005) {
+          throw new Error(
+            `Jumlah ${item.kode} harus ${harus} (total lot QC), bukan ${Number(item.jumlah || 0)}.`,
+          );
+        }
+      }
+      for (const n of nourutQcSet) {
+        const harus = bulat2(usulan.qtyPerNourut.get(n) || 0);
+        const baris = (poItems || []).find((p) => Number(p.nourut) === n);
+        if (!baris || Math.abs(Number(baris.terima || 0) - harus) > 0.005) {
+          throw new Error(
+            `Realisasi PO baris ${n} harus ${harus} (total lot QC).`,
+          );
+        }
+      }
       for (const k of usulan.kodeBaru) {
         const baris = validItemsToInsert.find((i) => i.kode === k.kode);
         if (!baris || !(Number(baris.jumlah) > 0)) {
@@ -582,9 +608,21 @@ const saveData = async (payload, userKode) => {
       }
     }
     if (isEdit && dariQc) {
+      const jumlahBaru = new Map();
       for (const item of validItemsToInsert) {
         if (!kodeLama.has(item.kode)) {
           throw new Error("Kode bahan pada BPB dari QC tidak boleh diubah.");
+        }
+        jumlahBaru.set(
+          item.kode,
+          bulat2((jumlahBaru.get(item.kode) || 0) + Number(item.jumlah || 0)),
+        );
+      }
+      for (const [kode, lama] of jumlahLama) {
+        if (Math.abs((jumlahBaru.get(kode) || 0) - lama) > 0.005) {
+          throw new Error(
+            `Jumlah kode ${kode} pada BPB dari QC tidak boleh diubah.`,
+          );
         }
       }
     }
@@ -607,6 +645,10 @@ const saveData = async (payload, userKode) => {
       // Baris kode baru: kode lama PO disimpan, harga/spesifikasi dari server
       const baru = usulanByKode.get(item.kode);
       const kodeOld = baru ? baru.kodePo : kodeLama.get(item.kode) || "";
+      const yard =
+        usulan && item.satuan === "MTR"
+          ? bulat2(Number(item.jumlah || 0) / YARD_TO_METER)
+          : item.jumlahyard || 0;
 
       await conn.query(
         `
@@ -620,7 +662,7 @@ const saveData = async (payload, userKode) => {
           nomorBPB,
           item.kode,
           kodeOld,
-          item.jumlahyard || 0,
+          yard,
           item.jumlah || 0,
           item.roll || 0,
           baru ? baru.harga : item.harga || 0,
@@ -960,6 +1002,15 @@ const TOLERANSI_GRAMASI = 5;
 const TOLERANSI_SETTING = 0.5;
 
 const keLot = (l) => `${l.qc_nomor}|${l.qcd_lot}`;
+const YARD_TO_METER = 0.9144;
+const bulat2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Bahan MTR: meter = jumlah, yard dihitung. Satuan lain: 0.
+const hitungYard = (satuan, jumlah) =>
+  satuan === "MTR"
+    ? { jumlahmeter: jumlah, jumlahyard: bulat2(jumlah / YARD_TO_METER) }
+    : { jumlahmeter: 0, jumlahyard: 0 };
+
 const angka = (s) => Number(String(s).replace(",", "."));
 
 // Gramasi: hanya master berbentuk rentang ("160-170").
@@ -1080,10 +1131,17 @@ const susunUsulanKode = async (executor, lots, poNomor) => {
   const masalah = [];
   const perLot = new Map();
   const grup = new Map();
+  const qtyPerKode = new Map();
+  const qtyPerNourut = new Map();
 
   for (const l of lots) {
     const e = evaluasiLot(l, master);
     perLot.set(keLot(l), e);
+    const qtyLot = Number(l.qcd_qty_kg) || 0;
+    const sebelum = qtyPerKode.get(e.kode) || 0;
+    qtyPerKode.set(e.kode, sebelum + qtyLot);
+    const urutPo = Number(l.qc_pod_nourut);
+    qtyPerNourut.set(urutPo, (qtyPerNourut.get(urutPo) || 0) + qtyLot);
     masalah.push(...e.masalah);
     if (e.masalah.length > 0 || e.kode === e.kodePo) continue;
 
@@ -1172,7 +1230,14 @@ const susunUsulanKode = async (executor, lots, poNomor) => {
     });
   }
 
-  return { perLot, masalah: [...new Set(masalah)], kodeDiPo, kodeBaru };
+  return {
+    perLot,
+    masalah: [...new Set(masalah)],
+    kodeDiPo,
+    kodeBaru,
+    qtyPerKode,
+    qtyPerNourut,
+  };
 };
 
 // Master kode baru = salinan master bahan kode PO: satuan, jenis barang, dan
@@ -1257,24 +1322,32 @@ const tarikDariQc = async (value) => {
   });
   const hasil = ringkasHasilQc(tetap);
 
-  // Hanya baris PO milik dokumen QC yang dipilih (satu QC = satu baris PO)
+  // Hanya baris PO milik dokumen QC yang dipilih (satu QC = satu baris PO).
+  // Terima = total qty lot pada baris itu (dikunci, bukan diketik).
   const nourutQc = new Set(lots.map((l) => Number(l.qc_pod_nourut)));
-  const poDetails = data.poDetails.filter((p) =>
-    nourutQc.has(Number(p.nourut)),
-  );
+  const poDetails = data.poDetails
+    .filter((p) => nourutQc.has(Number(p.nourut)))
+    .map((p) => ({
+      ...p,
+      terima: bulat2(usulan.qtyPerNourut.get(Number(p.nourut)) || 0),
+    }));
   const kodeTetap = new Set(tetap.map((l) => l.pod_bhn_kode));
   const spk = spkPerKode(poDetails);
 
   const kodeBaru = usulan.kodeBaru.map((k) => {
     const induk = data.items.find((d) => d.kode === k.kodePo) || {};
+    const satuan = induk.satuan ?? k.satuan;
+    const jumlah = bulat2(usulan.qtyPerKode.get(k.kode) || 0);
     return {
       ...k,
-      satuan: induk.satuan ?? k.satuan,
+      satuan,
       satuanpo: induk.satuanpo ?? k.satuanpo,
       harga: induk.harga ?? k.harga,
       totalpo: induk.totalpo ?? 0,
       terima: induk.terima ?? 0,
       kurang: induk.kurang ?? 0,
+      jumlah,
+      ...hitungYard(satuan, jumlah),
       ...(spk.get(k.kodePo) || {}),
     };
   });
@@ -1284,11 +1357,16 @@ const tarikDariQc = async (value) => {
     poDetails,
     items: data.items
       .filter((d) => kodeTetap.has(d.kode))
-      .map((d) => ({
-        ...d,
-        ...(hasil.get(d.kode) || {}),
-        ...(spk.get(d.kode) || {}),
-      })),
+      .map((d) => {
+        const jumlah = bulat2(usulan.qtyPerKode.get(d.kode) || 0);
+        return {
+          ...d,
+          ...(hasil.get(d.kode) || {}),
+          ...(spk.get(d.kode) || {}),
+          jumlah,
+          ...hitungYard(d.satuan, jumlah),
+        };
+      }),
     kodeBaru,
     qcNomor: daftar,
   };
