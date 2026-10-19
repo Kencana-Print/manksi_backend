@@ -7,6 +7,7 @@ const getBrowseList = async (req, res) => {
       endDate: req.query.endDate,
       cabang: req.user.cabang,
       isKaosan: req.user.cabKaos,
+      userKode: req.user.kode,
     };
 
     const canLihatCus = Number(req.user?.flags?.lihatCus) === 1;

@@ -25,6 +25,8 @@ const getBrowseList = async (
 
   if (restrictClause && userKode === "MDI") {
     whereClause += ` AND (1=1${restrictClause} OR x.mspk_workshop = 'P01')`;
+  } else if (restrictClause && userKode === "DONADONG") {
+    whereClause += ` AND (1=1${restrictClause} OR (x.mspk_divisi = 4 AND x.mspk_cab IN ('P01','P04')))`;
   } else {
     whereClause += restrictClause;
   }
