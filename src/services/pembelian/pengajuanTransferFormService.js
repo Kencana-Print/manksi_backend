@@ -547,7 +547,8 @@ const saveData = async (payload, user) => {
               ],
             );
 
-            // Update BBK header
+            // Update BBK header (jur_rek_kode = rekening bank header pengajuan,
+            // sama dengan saat BBK dibuat pertama kali)
             await conn.query(
               `
               UPDATE finance.tjurnal SET
@@ -556,7 +557,7 @@ const saveData = async (payload, user) => {
                 jur_rek_kode   = ?
               WHERE jur_no = ?
             `,
-              [d.tglRealisasi, d.ket || "", d.rekkode || "", d.jurnal],
+              [d.tglRealisasi, d.ket || "", rek_kode, d.jurnal],
             );
 
             // Rebuild BBK detail
