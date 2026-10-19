@@ -303,6 +303,13 @@ const save = async (data, userKode, isNewMode) => {
 
     const isDivisi3 = String(data.Divisi).charAt(0) === "3";
 
+    if (
+      String(data.Divisi).charAt(0) === "4" &&
+      !String(data.RencanaSize || "").trim()
+    ) {
+      throw new Error("Rencana Size wajib dipilih untuk divisi ini.");
+    }
+
     if (isNewMode) {
       if (!isDivisi3) {
         if (data.AccCustomer !== "Y") {

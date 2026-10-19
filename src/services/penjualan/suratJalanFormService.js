@@ -621,13 +621,17 @@ const cekPiutang = async (spkNomor, cusKode, invPro = "") => {
   const [rows] = await db.query(query, params);
   if (!rows.length) return { lunas: true, korporasi: false };
 
+  // flag/flag2 bertipe INT dari view (mysql2 mengembalikan number) -> bandingkan
+  // sebagai angka. 0 = lunas. flag2 bisa NULL (tidak ada nota tak-normal) dan
+  // NULL BUKAN lunas, jadi jangan pakai Number(null) === 0.
+  const barisLunas = (r) =>
+    Number(r.flag) === 0 ||
+    (r.flag2 !== null && r.flag2 !== undefined && Number(r.flag2) === 0);
+
   // Kalau tanpa invPro dan ada beberapa baris, ambil yang PALING
   // KETAT (kalau ADA satu saja yang belum lunas, anggap belum lunas) —
   // lebih aman daripada ambil baris pertama secara acak.
-  const anyUnpaid = rows.some((r) => r.flag !== "0" && r.flag2 !== "0");
-  const lunas = invPro
-    ? rows[0].flag === "0" || rows[0].flag2 === "0"
-    : !anyUnpaid;
+  const lunas = invPro ? barisLunas(rows[0]) : rows.every(barisLunas);
 
   return { lunas, korporasi: false };
 };

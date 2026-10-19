@@ -404,7 +404,13 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
           IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
         ) AS Terpakai,
         DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
-        k.user_create AS DibuatOleh
+        k.user_create AS DibuatOleh,
+        (SELECT v.val_aksi FROM tpengajuan_uang_muka_validasi v
+          WHERE v.val_pum_nomor = h.pum_nomor AND v.val_jenis = 'PENGAJUAN'
+          ORDER BY v.val_id DESC LIMIT 1) AS ValAksi,
+        (SELECT v.val_aksi FROM tpengajuan_uang_muka_validasi v
+          WHERE v.val_pum_nomor = h.pum_nomor AND v.val_jenis = 'PENYELESAIAN'
+          ORDER BY v.val_id DESC LIMIT 1) AS ValAksiSelesai
       FROM tpengajuan_uang_muka_hdr h
       LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
@@ -441,7 +447,9 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
           IFNULL((SELECT SUM(d.jurd_kredit) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = k.bon_jur_no), 0)
         ) AS Terpakai,
         DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
-        k.user_create AS DibuatOleh
+        k.user_create AS DibuatOleh,
+        NULL AS ValAksi,
+        NULL AS ValAksiSelesai
       FROM finance.tkasbon k
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
       WHERE NOT EXISTS (

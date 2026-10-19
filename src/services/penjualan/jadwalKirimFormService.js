@@ -1,5 +1,10 @@
 const db = require("../../config/database");
 
+const GUDANG_SPANDUK = "WH002";
+
+// Spanduk: hanya SPK (bukan MAP) divisi 1
+const bukanSpkSpanduk = (spk) => spk.src !== "SPK" || Number(spk.divisi) !== 1;
+
 // ─────────────────────────────────────────────────────────
 // GENERATE NOMOR
 // Format Delphi: KRM.YYMM.XXXX (4 digit urut per bulan)
@@ -29,15 +34,15 @@ const generateNomor = async (tanggal) => {
 const getSpkInfo = async (nomorSpk) => {
   const query = `
     SELECT a.spk_nomor, a.spk_nama, a.spk_ukuran, a.spk_cus_kode,
-           a.divisi, a.spk_jumlah,
+           a.divisi, a.spk_jumlah, a.src,
            b.Cus_nama, b.Cus_alamat
     FROM (
       SELECT spk_nomor, spk_nama, spk_ukuran, spk_cus_kode,
-             spk_divisi AS divisi, spk_jumlah
+             spk_divisi AS divisi, spk_jumlah, 'SPK' AS src
       FROM tspk WHERE spk_aktif = 'Y'
       UNION ALL
       SELECT mspk_nomor, mspk_nama, mspk_ukuran, mspk_cus_kode,
-             mspk_divisi AS divisi, mspk_jumlah
+             mspk_divisi AS divisi, mspk_jumlah, 'MAP' AS src
       FROM tmemospk
     ) a
     LEFT JOIN tcustomer b ON b.Cus_kode = a.spk_cus_kode
@@ -293,6 +298,11 @@ const save = async (data, userKode, isNewMode) => {
   const sudah = await getSudahDijadwalkan(NomorSpk, excludeNomor);
   const spkInfo = await getSpkInfo(NomorSpk);
   if (!spkInfo) throw new Error("Nomor SPK tidak ditemukan.");
+  if (Gudang.trim() === GUDANG_SPANDUK && bukanSpkSpanduk(spkInfo)) {
+    throw new Error(
+      "Gudang Jadi P2 hanya untuk SPK Spanduk (divisi 1), MAP tidak diperbolehkan.",
+    );
+  }
 
   const jumlahSpk = Number(spkInfo.spk_jumlah) || 0;
   const belum = jumlahSpk - sudah;
@@ -408,6 +418,8 @@ const save = async (data, userKode, isNewMode) => {
 };
 
 module.exports = {
+  GUDANG_SPANDUK,
+  bukanSpkSpanduk,
   generateNomor,
   getSpkInfo,
   getSudahDijadwalkan,

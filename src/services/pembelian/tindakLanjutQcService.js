@@ -108,12 +108,11 @@ const getDetailLot = async (nomor) => {
       d.qcd_gramasi_cek AS GramasiCek,
       d.qcd_setting_cek AS SettingCek,
       d.qcd_nilai AS Nilai,
-      d.qcd_nilai_saran AS Saran,
-      d.qcd_alasan_nilai AS AlasanNilai,
       IFNULL(d.qcd_keputusan, '') AS Keputusan,
       IFNULL(k.qck_user, '') AS KeputusanOleh,
       DATE_FORMAT(k.qck_tanggal, "%Y-%m-%d %H:%i") AS KeputusanTgl,
       IFNULL(k.qck_catatan, '') AS KeputusanCatatan,
+      IFNULL(k.qck_atas_nama, '') AS KeputusanAtasNama,
       IFNULL(k.qck_tahap, '') AS KeputusanTahap,
       IFNULL(k.qck_klien_kontak, '') AS KlienKontak,
       IF(b.bql_lot IS NULL, 0, 1) AS SudahBpb,
@@ -171,9 +170,10 @@ const getRiwayat = async (nomor) => {
   return rows;
 };
 
-// payload: { kontak, items: [{ nourut, keputusan, catatan }] }
-// kontak  = nama kontak klien (opsional)
-// catatan = hasil konfirmasi klien per lot (wajib)
+// payload: { kontak, items: [{ nourut, keputusan, catatan, atas_nama }] }
+// kontak    = nama kontak klien (opsional)
+// catatan   = hasil konfirmasi klien per lot (wajib)
+// atas_nama = nama orang internal yang menyetujui keputusan lot (wajib)
 // Lot yang keputusannya tidak berubah diabaikan.
 const saveKeputusan = async (nomor, payload, userKode) => {
   const kontak = String(payload?.kontak || "")
@@ -182,7 +182,6 @@ const saveKeputusan = async (nomor, payload, userKode) => {
   const items = Array.isArray(payload?.items) ? payload.items : [];
 
   if (items.length === 0) throw new Error("Tidak ada keputusan yang dikirim.");
-  if (!kontak) throw new Error("Kontak klien yang dikonfirmasi wajib diisi.");
 
   const conn = await db.getConnection();
   try {
@@ -235,6 +234,14 @@ const saveKeputusan = async (nomor, payload, userKode) => {
           `Hasil konfirmasi klien lot ${lot.qcd_lot} wajib diisi.`,
         );
       }
+      const atasNama = String(it.atas_nama || "")
+        .trim()
+        .slice(0, 100);
+      if (!atasNama) {
+        throw new Error(
+          `Atas nama yang menyetujui lot ${lot.qcd_lot} wajib diisi.`,
+        );
+      }
       if (lotDiterima.has(lot.qcd_lot)) {
         throw new Error(
           `Lot ${lot.qcd_lot} sudah diterima di BPB. Hapus BPB-nya dulu sebelum mengubah keputusan.`,
@@ -247,7 +254,7 @@ const saveKeputusan = async (nomor, payload, userKode) => {
       }
       if (["LANJUT", "REJECT"].includes(lot.qcd_keputusan)) butuhPin = true;
 
-      perubahan.push({ lot, kep, catatan });
+      perubahan.push({ lot, kep, catatan, atasNama });
     }
 
     if (perubahan.length === 0) {
@@ -274,7 +281,7 @@ const saveKeputusan = async (nomor, payload, userKode) => {
       pinUrut = pin[0].pin_urut;
     }
 
-    for (const { lot, kep, catatan } of perubahan) {
+    for (const { lot, kep, catatan, atasNama } of perubahan) {
       await conn.query(
         `UPDATE tqc_bahan_dtl SET qcd_keputusan = ?
          WHERE qcd_qc_nomor = ? AND qcd_nourut = ?`,
@@ -283,9 +290,9 @@ const saveKeputusan = async (nomor, payload, userKode) => {
       await conn.query(
         `INSERT INTO tqc_bahan_keputusan
            (qck_qc_nomor, qck_lot, qck_tahap, qck_keputusan, qck_catatan,
-            qck_klien_kontak, qck_user)
-         VALUES (?, ?, 'PEMBELIAN', ?, ?, ?, ?)`,
-        [nomor, lot.qcd_lot, kep, catatan, kontak, userKode],
+            qck_klien_kontak, qck_atas_nama, qck_user)
+         VALUES (?, ?, 'PEMBELIAN', ?, ?, ?, ?, ?)`,
+        [nomor, lot.qcd_lot, kep, catatan, kontak, atasNama, userKode],
       );
       lot.qcd_keputusan = kep;
     }

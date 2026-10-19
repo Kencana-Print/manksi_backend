@@ -169,6 +169,21 @@ const saveRealisasi = async (pumNomor, payload, user) => {
     const accRows = detail.filter((d) => d.status_acc === "ACC");
     const isFullTolak = accRows.length === 0;
 
+    if (
+      !isFullTolak &&
+      ["HO-", "P01"].includes(String(hdr.pum_cabang).trim().toUpperCase())
+    ) {
+      const [[v]] = await conn.query(
+        `SELECT val_aksi FROM tpengajuan_uang_muka_validasi
+         WHERE val_pum_nomor = ? ORDER BY val_id DESC LIMIT 1`,
+        [pumNomor],
+      );
+      if (!v || v.val_aksi !== "VALIDASI")
+        throw new Error(
+          "Pengajuan cabang HO-/P01 harus divalidasi dulu sebelum direalisasi.",
+        );
+    }
+
     let bonNomor = null;
     let totalNominal = 0;
 
@@ -405,12 +420,15 @@ const getPrintData = async (pumNomor) => {
   const [[hdr]] = await db.query(
     `SELECT h.pum_nomor, h.pum_bon_nomor, h.pum_total_nominal,
             h.pum_user_create, h.pum_user_realisasi,
+            DATE_FORMAT(h.pum_date_realisasi, '%d-%m-%Y %H:%i') AS realisasi_fmt,
+            IFNULL(ur.user_nama, h.pum_user_realisasi) AS kasir_nama,
             DATE_FORMAT(h.pum_tanggal, '%d-%m-%Y') AS tanggal_fmt,
             h.pum_keterangan, h.pum_cabang,
             k.bon_tanggal, DATE_FORMAT(k.bon_tanggal, '%d-%m-%Y') AS bon_tanggal_fmt,
             k.bon_nota, k.bon_penerima, k.bon_keterangan, k.bon_pjh_nomor
      FROM tpengajuan_uang_muka_hdr h
      LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+     LEFT JOIN tuser ur ON ur.user_kode = h.pum_user_realisasi
      WHERE h.pum_nomor = ?`,
     [pumNomor],
   );
@@ -465,6 +483,12 @@ const getPrintData = async (pumNomor) => {
     penerima: hdr.pum_user_create || "",
     kasir: hdr.pum_user_realisasi || "",
     gtotal,
+    kasir_stempel:
+      ["HO-", "P01"].includes(String(hdr.pum_cabang).trim().toUpperCase()) &&
+      hdr.pum_user_realisasi &&
+      hdr.realisasi_fmt
+        ? { nama: hdr.kasir_nama, tanggal_fmt: hdr.realisasi_fmt }
+        : null,
   };
 };
 

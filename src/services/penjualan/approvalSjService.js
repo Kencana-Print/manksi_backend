@@ -10,6 +10,10 @@ const CABANG_GUDANG_MAP = {
   P05: "WH-010",
 };
 
+// Parameter gudang (pintu Spanduk) menggantikan pemetaan cabang
+const resolveGudang = (cabang = "", gudang = "") =>
+  gudang || CABANG_GUDANG_MAP[cabang] || "";
+
 // ═══════════════════════════════════════════════════════════
 // BROWSE
 // Sesuai Delphi btnRefreshClick — filter gudang berdasar cabang user
@@ -19,11 +23,12 @@ const getBrowse = async (
   tglAkhir,
   cabang = "",
   canLihatCus = false,
+  gudang = "",
 ) => {
   let gudangFilter = "";
   const params = [tglAwal, tglAkhir];
 
-  const gdgKode = CABANG_GUDANG_MAP[cabang];
+  const gdgKode = resolveGudang(cabang, gudang);
   if (gdgKode) {
     gudangFilter = ` AND h.sj_gdg_kode = ?`;
     params.push(gdgKode);
@@ -65,20 +70,28 @@ const getBrowse = async (
   return rows;
 };
 
-const getBrowseDetail = async (tglAwal, tglAkhir, cabang = "", nomor = "") => {
-  let gudangFilter = "";
-  const params = [tglAwal, tglAkhir];
+const getBrowseDetail = async (
+  tglAwal,
+  tglAkhir,
+  cabang = "",
+  nomor = "",
+  gudang = "",
+) => {
+  const params = [];
+  let filter = "";
 
-  const gdgKode = CABANG_GUDANG_MAP[cabang];
-  if (gdgKode) {
-    gudangFilter = ` AND h.sj_gdg_kode = ?`;
-    params.push(gdgKode);
-  }
-
-  let nomorFilter = "";
   if (nomor) {
-    nomorFilter = ` AND d.sjd_sj_nomor = ?`;
+    // Detail satu SJ: tanpa filter periode/gudang (mode Show All memuat SJ di luar periode)
+    filter = ` AND d.sjd_sj_nomor = ?`;
     params.push(nomor);
+  } else {
+    filter = ` AND h.sj_tanggal >= ? AND h.sj_tanggal <= ?`;
+    params.push(tglAwal, tglAkhir);
+    const gdgKode = resolveGudang(cabang, gudang);
+    if (gdgKode) {
+      filter += ` AND h.sj_gdg_kode = ?`;
+      params.push(gdgKode);
+    }
   }
 
   const [rows] = await db.query(
@@ -96,10 +109,7 @@ const getBrowseDetail = async (tglAwal, tglAkhir, cabang = "", nomor = "") => {
      LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
      WHERE h.sj_status_otomatis = 0
        AND h.date_create >= '2020-08-24'
-       AND h.sj_tanggal >= ?
-       AND h.sj_tanggal <= ?
-       ${gudangFilter}
-       ${nomorFilter}
+       ${filter}
      ORDER BY d.sjd_sj_nomor`,
     params,
   );
@@ -110,7 +120,7 @@ const getBrowseDetail = async (tglAwal, tglAkhir, cabang = "", nomor = "") => {
 // SHOW ALL NOT APPROVED
 // Sesuai Delphi btnShowClick — tanpa filter gudang/cabang, tanpa filter tanggal
 // ═══════════════════════════════════════════════════════════
-const getAllNotApproved = async (canLihatCus = false) => {
+const getAllNotApproved = async (canLihatCus = false, gudang = "") => {
   const custCols = canLihatCus
     ? `h.sj_cus_kode AS KodeCustomer,
        c.cus_nama AS Customer,
@@ -120,6 +130,13 @@ const getAllNotApproved = async (canLihatCus = false) => {
        "" AS Customer,
        "" AS Alamat,
        "" AS Kota,`;
+
+  const params = [];
+  let gudangFilter = "";
+  if (gudang) {
+    gudangFilter = ` AND h.sj_gdg_kode = ?`;
+    params.push(gudang);
+  }
 
   const [rows] = await db.query(
     `SELECT
@@ -139,7 +156,9 @@ const getAllNotApproved = async (canLihatCus = false) => {
      WHERE h.sj_status_otomatis <> 1
        AND h.sj_approve = 0
        AND h.date_create >= '2020-08-24'
+       ${gudangFilter}
      ORDER BY h.sj_nomor`,
+    params,
   );
   return rows;
 };
@@ -219,19 +238,19 @@ const approveSingle = async (nomor) => {
 // Sesuai Delphi Pending1Click
 // ═══════════════════════════════════════════════════════════
 const setPending = async (nomor) => {
-  const [[hdr]] = await db.query(
-    `SELECT sj_nomor, sj_approve FROM tsj_hdr WHERE sj_nomor = ?`,
-    [nomor],
-  );
-  if (!hdr) throw new Error("Data tidak ditemukan.");
-  if (hdr.sj_approve === 0)
-    throw new Error("Status belum di approve.\nTidak perlu dibatalkan.");
-  if (hdr.sj_approve !== 1)
-    throw new Error("Hanya SJ berstatus Sudah yang bisa di-pending.");
-
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [[hdr]] = await conn.query(
+      `SELECT sj_nomor, sj_approve FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!hdr) throw new Error("Data tidak ditemukan.");
+    if (hdr.sj_approve === 0)
+      throw new Error("Status belum di approve.\nTidak perlu dibatalkan.");
+    if (hdr.sj_approve !== 1)
+      throw new Error("Hanya SJ berstatus Sudah yang bisa di-pending.");
 
     const [dtl] = await conn.query(
       `SELECT COUNT(*) AS n FROM tsj_dtl WHERE sjd_sj_nomor = ?`,
@@ -241,9 +260,8 @@ const setPending = async (nomor) => {
       `DELETE FROM tsj_approve WHERE sja_nomor = ?`,
       [nomor],
     );
-    // ⬆ Trigger tsj_approve_before_delete otomatis jalan:
-    // spk_jumlah_kirim -= X, spk_prasj += X (qty "pindah" balik ke
-    // prasj — di titik ini total Sudah belum berkurang).
+    // Trigger tsj_approve_before_delete otomatis: spk_jumlah_kirim -= X,
+    // spk_prasj += X, brg_stok += X
 
     if (delResult.affectedRows === 0 && dtl[0].n > 0) {
       throw new Error(
@@ -252,11 +270,7 @@ const setPending = async (nomor) => {
       );
     }
 
-    // ── FULL RELEASE: kurangi manual spk_prasj (sama pola seperti
-    // batalSj) — supaya qty ini beneran lepas & bisa dipakai SJ lain.
-    // Cuma berlaku untuk SPK PPIC legacy (tspk); SO baru (tsalesorder)
-    // tidak punya kolom setara "prasj", jadi tidak ada koreksi di
-    // sana (konsisten dengan batalSj yang juga cuma menyentuh tspk).
+    // FULL RELEASE: kurangi manual spk_prasj supaya qty ini benar-benar lepas
     await conn.query(
       `UPDATE tspk s
        SET s.spk_prasj = s.spk_prasj - IFNULL((
@@ -289,31 +303,28 @@ const setPending = async (nomor) => {
 // Sesuai Delphi BatalSJ1Click
 // ═══════════════════════════════════════════════════════════
 const batalSj = async (nomor) => {
-  const [[hdr]] = await db.query(
-    `SELECT sj_nomor, sj_approve, sj_prasj_released FROM tsj_hdr WHERE sj_nomor = ?`,
-    [nomor],
-  );
-  if (!hdr) throw new Error("Data tidak ditemukan.");
-  if (hdr.sj_approve === 1) {
-    throw new Error(
-      "Sudah di approve.\nSilahkan di Pending utk membatalkan Approve, baru di batalkan.",
-    );
-  }
-  if (hdr.sj_approve === 2) throw new Error("SJ ini sudah batal.");
-
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [[hdr]] = await conn.query(
+      `SELECT sj_nomor, sj_approve, sj_prasj_released FROM tsj_hdr WHERE sj_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!hdr) throw new Error("Data tidak ditemukan.");
+    if (hdr.sj_approve === 1) {
+      throw new Error(
+        "Sudah di approve.\nSilahkan di Pending utk membatalkan Approve, baru di batalkan.",
+      );
+    }
+    if (hdr.sj_approve === 2) throw new Error("SJ ini sudah batal.");
 
     await conn.query(`UPDATE tsj_hdr SET sj_approve = 2 WHERE sj_nomor = ?`, [
       nomor,
     ]);
 
-    // ── Kalau qty-nya SUDAH pernah di-release lewat Pending
-    // (sj_prasj_released=1), spk_prasj sudah bersih — jangan
-    // dikurangi lagi (bisa minus/double-subtract). Cuma kurangi
-    // manual kalau ini Batal langsung dari status pending yang
-    // BELUM pernah di-approve sama sekali (jalur normal lama). ──
+    // Kalau qty sudah pernah di-release lewat Pending (sj_prasj_released=1),
+    // spk_prasj sudah bersih — jangan dikurangi lagi.
     if (hdr.sj_prasj_released !== 1) {
       await conn.query(
         `UPDATE tspk s
@@ -342,7 +353,12 @@ const batalSj = async (nomor) => {
 // BULK APPROVAL (dialog terpisah — ufrmSJapv2)
 // ═══════════════════════════════════════════════════════════
 
-const getBulkList = async (divisi = "", cabang = "") => {
+const getBulkList = async (
+  divisi = "",
+  cabang = "",
+  canLihatCus = false,
+  gudang = "",
+) => {
   let where = `h.sj_status_otomatis = 0 AND h.sj_approve = 0 AND h.date_create >= '2020-08-24'`;
   const params = [];
 
@@ -351,8 +367,12 @@ const getBulkList = async (divisi = "", cabang = "") => {
     params.push(divisi);
   }
 
-  // Filter gudang khusus divisi 4 (garmen) sesuai Delphi
-  if (divisi === "4") {
+  if (gudang) {
+    // Pintu Spanduk: gudang dikunci
+    where += ` AND h.sj_gdg_kode = ?`;
+    params.push(gudang);
+  } else if (divisi === "4") {
+    // Filter gudang khusus divisi 4 (garmen) sesuai Delphi
     if (cabang === "P01") {
       where += ` AND h.sj_gdg_kode = 'GJ002'`;
     } else if (cabang === "P04") {
@@ -360,16 +380,23 @@ const getBulkList = async (divisi = "", cabang = "") => {
     }
   }
 
+  const custCols = canLihatCus
+    ? `h.sj_cus_kode AS KdCus,
+       c.cus_nama    AS Nama,
+       c.cus_alamat  AS Alamat,
+       c.cus_kota    AS Kota,`
+    : `"" AS KdCus,
+       "" AS Nama,
+       "" AS Alamat,
+       "" AS Kota,`;
+
   const [rows] = await db.query(
     `SELECT
        v.divisi                              AS Divisi,
        h.sj_nomor                            AS Nomor,
        DATE_FORMAT(h.sj_tanggal,'%Y-%m-%d')  AS Tanggal,
        g.gdg_nama                             AS Gudang,
-       h.sj_cus_kode                          AS KdCus,
-       c.cus_nama                              AS Nama,
-       c.cus_alamat                            AS Alamat,
-       c.cus_kota                              AS Kota,
+       ${custCols}
        h.sj_gdg_kode                           AS KodeGdg
      FROM tsj_hdr h
      INNER JOIN tgudang g ON g.gdg_kode = h.sj_gdg_kode
@@ -396,6 +423,7 @@ const approveBulk = async (nomorList) => {
     await conn.beginTransaction();
 
     for (const nomor of nomorList) {
+      await conn.query("SAVEPOINT sj_item");
       try {
         const [[hdr]] = await conn.query(
           `SELECT sj_nomor, sj_gdg_kode, sj_approve, sj_prasj_released
@@ -455,8 +483,11 @@ const approveBulk = async (nomorList) => {
           );
         }
 
+        await conn.query("RELEASE SAVEPOINT sj_item");
         results.success.push(nomor);
       } catch (e) {
+        // Batalkan semua tulisan SJ ini saja (UPDATE hdr + INSERT approve parsial)
+        await conn.query("ROLLBACK TO SAVEPOINT sj_item");
         results.failed.push({ nomor, reason: e.message });
       }
     }
@@ -479,7 +510,8 @@ const getExportData = async (
   tglAkhir,
   cabang = "",
   canLihatCus = false,
-) => getBrowse(tglAwal, tglAkhir, cabang, canLihatCus);
+  gudang = "",
+) => getBrowse(tglAwal, tglAkhir, cabang, canLihatCus, gudang);
 // ═══════════════════════════════════════════════════════════
 // EXPORT DETAIL — flat per baris detail, TAPI ikut sertakan semua
 // kolom header (sama seperti getBrowse) supaya FE bisa kelompokkan
@@ -490,11 +522,12 @@ const getExportDetail = async (
   tglAkhir,
   cabang = "",
   canLihatCus = false,
+  gudang = "",
 ) => {
   let gudangFilter = "";
   const params = [tglAwal, tglAkhir];
 
-  const gdgKode = CABANG_GUDANG_MAP[cabang];
+  const gdgKode = resolveGudang(cabang, gudang);
   if (gdgKode) {
     gudangFilter = ` AND h.sj_gdg_kode = ?`;
     params.push(gdgKode);

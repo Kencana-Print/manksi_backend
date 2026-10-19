@@ -144,7 +144,7 @@ const validateField = async (type, value, opts = {}) => {
           SELECT SUM(dd.bpbd_jumlah) 
           FROM tbpb_dtl dd 
           INNER JOIN tbpb_hdr hh ON hh.bpb_nomor = dd.bpbd_bpb_nomor 
-          WHERE hh.bpb_po_nomor = h.po_nomor AND dd.bpbd_bhn_kode = d.pod_bhn_kode ${terimaSup}
+          WHERE hh.bpb_po_nomor = h.po_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old, ''), dd.bpbd_bhn_kode) = d.pod_bhn_kode ${terimaSup}
         ), 0) AS terima
        FROM tpo_hdr h
        INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0 AND d.pod_bhn_kode <> ''
@@ -240,15 +240,15 @@ const getDetail = async (nomor) => {
   // C. Grid 1: Items BPB Detail
   const [items] = await db.query(
     `SELECT 
-      d.bpbd_bhn_kode AS kode, b.bhn_name AS nama, d.bpbd_mkb AS mkb,
+      d.bpbd_bhn_kode AS kode, d.bpbd_bhn_kode_old AS kodepo, b.bhn_name AS nama, d.bpbd_mkb AS mkb,
       d.bpbd_bhn_satuan AS satuan, d.bpbd_jumlahyard AS jumlahyard,
       d.bpbd_jumlah AS jumlah, d.bpbd_roll AS roll, d.bpbd_roll AS rollx,
       d.bpbd_nourut AS nourut_bpb,
       d.bpbd_harga AS harga, d.bpbd_gramasi AS gramasi, d.bpbd_warna AS warna,
       d.bpbd_setting AS setting, d.bpbd_spk_nomor AS spk, IFNULL(COALESCE(k.spk_nama, so.so_nama), "") AS namaspk,
-      IFNULL((SELECT t.pod_bhn_satuan FROM tpo_dtl t WHERE t.pod_bhn_kode=d.bpbd_bhn_kode AND t.pod_po_nomor=h.bpb_po_nomor LIMIT 1),"") AS satuanpo,
-      IFNULL((SELECT SUM(dd.pod_jumlah) FROM tpo_dtl dd WHERE dd.pod_po_nomor=h.bpb_po_nomor AND dd.pod_bhn_kode=d.bpbd_bhn_kode ${filterPoSup}),0) AS totalpo,
-      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND dd.bpbd_bhn_kode=d.bpbd_bhn_kode ${filterBpbSup}),0) AS total_terima_all
+      IFNULL((SELECT t.pod_bhn_satuan FROM tpo_dtl t WHERE t.pod_bhn_kode=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) AND t.pod_po_nomor=h.bpb_po_nomor LIMIT 1),"") AS satuanpo,
+      IFNULL((SELECT SUM(dd.pod_jumlah) FROM tpo_dtl dd WHERE dd.pod_po_nomor=h.bpb_po_nomor AND dd.pod_bhn_kode=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterPoSup}),0) AS totalpo,
+      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND hh.bpb_nomor<>h.bpb_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old,''), dd.bpbd_bhn_kode)=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterBpbSup}),0) AS total_terima_lain
      FROM tbpb_dtl d
      INNER JOIN tbpb_hdr h ON h.bpb_nomor = d.bpbd_bpb_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.bpbd_bhn_kode
@@ -264,13 +264,17 @@ const getDetail = async (nomor) => {
      FROM tbpb_qc_lot WHERE bql_bpb_nomor = ? ORDER BY bql_nourut`,
     [nomor],
   );
-  const lotByUrut = new Map(qcLots.map((l) => [Number(l.nourut), l.lot]));
+  const lotByUrut = new Map();
+  for (const l of qcLots) {
+    const k = Number(l.nourut);
+    lotByUrut.set(k, [...(lotByUrut.get(k) || []), l.lot]);
+  }
 
   const mappedItems = items.map((d) => ({
     ...d,
-    lot: lotByUrut.get(Number(d.nourut_bpb)) || "",
-    terima: Number(d.total_terima_all) - Number(d.jumlah),
-    kurang: Number(d.totalpo) - Number(d.total_terima_all) + Number(d.jumlah),
+    lot: (lotByUrut.get(Number(d.nourut_bpb)) || []).join(", "),
+    terima: Number(d.total_terima_lain),
+    kurang: Number(d.totalpo) - Number(d.total_terima_lain),
   }));
 
   // D. Grid 2: Items PO Detail (Realisasi)
@@ -375,6 +379,7 @@ const saveData = async (payload, userKode) => {
     // Gerbang QC: dokumen dikunci, harus punya lot LANJUT yang belum diterima,
     // dan PO-nya harus sama dengan PO pada BPB
     let lotQc = [];
+    let usulan = null;
     if (daftarQc.length > 0) {
       await conn.query(
         `SELECT qc_nomor FROM tqc_bahan_hdr WHERE qc_nomor IN (?) FOR UPDATE`,
@@ -393,6 +398,18 @@ const saveData = async (payload, userKode) => {
         );
       }
       lotQc = gerbang.lots;
+
+      // Usulan kode dihitung ulang di server; hasil kiriman klien tidak dipercaya
+      usulan = await susunUsulanKode(conn, lotQc, gerbang.poNomor);
+      if (usulan.masalah.length > 0) {
+        throw new Error(usulan.masalah.join("\n"));
+      }
+      if (usulan.kodeBaru.length > 0 && !payload.kodeDisetujui) {
+        throw new Error(
+          "Kode bahan baru dari hasil QC belum disetujui gudang.",
+        );
+      }
+      await buatMasterKode(conn, usulan.kodeBaru, userKode);
     }
 
     const { items, poItems, barcodes, statusNgedit } = payload;
@@ -401,6 +418,8 @@ const saveData = async (payload, userKode) => {
 
     // A. Validasi Invoice & Tutup Buku
     let dariQc = daftarQc.length > 0;
+    const kodeLama = new Map();
+    const jumlahLama = new Map();
     if (isEdit) {
       const [cekInv] = await conn.query(
         `SELECT h.bpb_status_inv, h.bpb_po_nomor, h.bpb_sup_kode, p.po_jenis
@@ -434,6 +453,23 @@ const saveData = async (payload, userKode) => {
         [nomorBPB],
       );
       dariQc = qcLot.length > 0;
+
+      if (dariQc) {
+        const [lama] = await conn.query(
+          `SELECT bpbd_bhn_kode, bpbd_bhn_kode_old, bpbd_jumlah FROM tbpb_dtl WHERE bpbd_bpb_nomor = ?`,
+          [nomorBPB],
+        );
+        lama.forEach((r) => {
+          kodeLama.set(r.bpbd_bhn_kode, r.bpbd_bhn_kode_old || "");
+          jumlahLama.set(
+            r.bpbd_bhn_kode,
+            bulat2(
+              (jumlahLama.get(r.bpbd_bhn_kode) || 0) +
+                Number(r.bpbd_jumlah || 0),
+            ),
+          );
+        });
+      }
     }
 
     const zdtClose = await tutupBukuService.getTanggalTutupBuku();
@@ -515,7 +551,84 @@ const saveData = async (payload, userKode) => {
       (item) => item.kode && String(item.kode).trim() !== "",
     );
 
+    const usulanByKode = new Map(
+      (usulan ? usulan.kodeBaru : []).map((k) => [k.kode, k]),
+    );
+    if (usulan) {
+      // Kode induk yang boleh ada = kode PO dari lot yang tetap di kode PO
+      const kodeTetapSet = new Set(
+        lotQc
+          .filter((l) => {
+            const e = usulan.perLot.get(keLot(l));
+            return e.kode === e.kodePo;
+          })
+          .map((l) => l.pod_bhn_kode),
+      );
+      const nourutQcSet = new Set(lotQc.map((l) => Number(l.qc_pod_nourut)));
+
+      for (const item of validItemsToInsert) {
+        if (!usulanByKode.has(item.kode) && !kodeTetapSet.has(item.kode)) {
+          throw new Error(
+            `Kode ${item.kode} tidak termasuk lot QC yang dipilih.`,
+          );
+        }
+      }
+      for (const po of poItems || []) {
+        if (Number(po.terima) > 0 && !nourutQcSet.has(Number(po.nourut))) {
+          throw new Error(
+            `Baris PO ${po.nourut} tidak termasuk dokumen QC yang dipilih.`,
+          );
+        }
+      }
+      // Jumlah dikunci: harus sama dengan total qty lot QC per kode dan per baris PO
+      for (const item of validItemsToInsert) {
+        const harus = bulat2(usulan.qtyPerKode.get(item.kode) || 0);
+        if (Math.abs(Number(item.jumlah || 0) - harus) > 0.005) {
+          throw new Error(
+            `Jumlah ${item.kode} harus ${harus} (total lot QC), bukan ${Number(item.jumlah || 0)}.`,
+          );
+        }
+      }
+      for (const n of nourutQcSet) {
+        const harus = bulat2(usulan.qtyPerNourut.get(n) || 0);
+        const baris = (poItems || []).find((p) => Number(p.nourut) === n);
+        if (!baris || Math.abs(Number(baris.terima || 0) - harus) > 0.005) {
+          throw new Error(
+            `Realisasi PO baris ${n} harus ${harus} (total lot QC).`,
+          );
+        }
+      }
+      for (const k of usulan.kodeBaru) {
+        const baris = validItemsToInsert.find((i) => i.kode === k.kode);
+        if (!baris || !(Number(baris.jumlah) > 0)) {
+          throw new Error(
+            `Kode bahan baru ${k.kode} (${k.nama}) belum diisi jumlahnya.`,
+          );
+        }
+      }
+    }
+    if (isEdit && dariQc) {
+      const jumlahBaru = new Map();
+      for (const item of validItemsToInsert) {
+        if (!kodeLama.has(item.kode)) {
+          throw new Error("Kode bahan pada BPB dari QC tidak boleh diubah.");
+        }
+        jumlahBaru.set(
+          item.kode,
+          bulat2((jumlahBaru.get(item.kode) || 0) + Number(item.jumlah || 0)),
+        );
+      }
+      for (const [kode, lama] of jumlahLama) {
+        if (Math.abs((jumlahBaru.get(kode) || 0) - lama) > 0.005) {
+          throw new Error(
+            `Jumlah kode ${kode} pada BPB dari QC tidak boleh diubah.`,
+          );
+        }
+      }
+    }
+
     let nourut1 = 1;
+    const nourutByKode = new Map();
     let totalPoSisa = 0;
     let totalBpb = 0;
 
@@ -529,30 +642,40 @@ const saveData = async (payload, userKode) => {
         totalBpb += jmlTrmPlusBpb;
       }
 
+      // Baris kode baru: kode lama PO disimpan, harga/spesifikasi dari server
+      const baru = usulanByKode.get(item.kode);
+      const kodeOld = baru ? baru.kodePo : kodeLama.get(item.kode) || "";
+      const yard =
+        usulan && item.satuan === "MTR"
+          ? bulat2(Number(item.jumlah || 0) / YARD_TO_METER)
+          : item.jumlahyard || 0;
+
       await conn.query(
         `
         INSERT INTO tbpb_dtl (
-          bpbd_bpb_nomor, bpbd_bhn_kode, bpbd_jumlahyard, bpbd_jumlah, bpbd_roll, 
+          bpbd_bpb_nomor, bpbd_bhn_kode, bpbd_bhn_kode_old, bpbd_jumlahyard, bpbd_jumlah, bpbd_roll, 
           bpbd_harga, bpbd_bhn_satuan, bpbd_gramasi, bpbd_warna, bpbd_setting, 
           bpbd_mkb, bpbd_spk_nomor, bpbd_nourut
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           nomorBPB,
           item.kode,
-          item.jumlahyard || 0,
+          kodeOld,
+          yard,
           item.jumlah || 0,
           item.roll || 0,
-          item.harga || 0,
+          baru ? baru.harga : item.harga || 0,
           item.satuan || "",
-          item.gramasi || "",
-          item.warna || "",
-          item.setting || "",
+          baru ? baru.gramasi : item.gramasi || "",
+          baru ? baru.warna : item.warna || "",
+          baru ? baru.setting : item.setting || "",
           item.mkb || "",
           item.spk || "",
           nourut1,
         ],
       );
+      if (!nourutByKode.has(item.kode)) nourutByKode.set(item.kode, nourut1);
       nourut1++;
     }
 
@@ -588,8 +711,16 @@ const saveData = async (payload, userKode) => {
       }
     }
 
-    // Tandai lot QC yang sudah diterima di BPB ini
-    for (const [i, l] of lotQc.entries()) {
+    // Tandai lot QC yang sudah diterima di BPB ini.
+    // bql_nourut = nomor urut baris BPB tempat lot itu masuk.
+    for (const l of lotQc) {
+      const kodeHasil = usulan.perLot.get(keLot(l)).kode;
+      const urut = nourutByKode.get(kodeHasil);
+      if (!urut) {
+        throw new Error(
+          `Baris BPB untuk kode ${kodeHasil} tidak ditemukan (QC ${l.qc_nomor} lot ${l.qcd_lot}).`,
+        );
+      }
       await conn.query(
         `INSERT INTO tbpb_qc_lot
            (bql_bpb_nomor, bql_qc_nomor, bql_lot, bql_nourut, bql_qty, bql_qty_roll)
@@ -598,7 +729,7 @@ const saveData = async (payload, userKode) => {
           nomorBPB,
           l.qc_nomor,
           l.qcd_lot,
-          i + 1,
+          urut,
           Number(l.qcd_qty_kg) || 0,
           Number(l.qcd_qty_roll) || 0,
         ],
@@ -866,6 +997,285 @@ const ringkasHasilQc = (lots) => {
   );
 };
 
+// ===================== KODE BAHAN BARU DARI HASIL QC =====================
+const TOLERANSI_GRAMASI = 5;
+const TOLERANSI_SETTING = 0.5;
+
+const keLot = (l) => `${l.qc_nomor}|${l.qcd_lot}`;
+const YARD_TO_METER = 0.9144;
+const bulat2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// Bahan MTR: meter = jumlah, yard dihitung. Satuan lain: 0.
+const hitungYard = (satuan, jumlah) =>
+  satuan === "MTR"
+    ? { jumlahmeter: jumlah, jumlahyard: bulat2(jumlah / YARD_TO_METER) }
+    : { jumlahmeter: 0, jumlahyard: 0 };
+
+const angka = (s) => Number(String(s).replace(",", "."));
+
+// Gramasi: hanya master berbentuk rentang ("160-170").
+// Setting: hanya master berbentuk inci (36", 29'').
+const muatMasterKode = async (executor) => {
+  const [gram] = await executor.query(
+    `SELECT bg_kode, bg_nama FROM tbahan_gramasi`,
+  );
+  const [sett] = await executor.query(
+    `SELECT bs_kode, bs_nama FROM tbahan_setting`,
+  );
+
+  const gramasiList = [];
+  const gramasiByKode = new Map();
+  for (const g of gram) {
+    const nama = String(g.bg_nama || "").trim();
+    const m = nama.match(/^(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)$/);
+    const item = {
+      kode: String(g.bg_kode).trim(),
+      nama,
+      bawah: m ? angka(m[1]) : null,
+      atas: m ? angka(m[2]) : null,
+    };
+    gramasiByKode.set(item.kode, item);
+    if (m) gramasiList.push(item);
+  }
+
+  const settingByKode = new Map();
+  const settingByInch = new Map();
+  for (const s of sett) {
+    const nama = String(s.bs_nama || "").trim();
+    const m = nama.match(/^(\d+(?:[.,]\d+)?)\s*(?:"|''|”)$/);
+    const item = {
+      kode: String(s.bs_kode).trim(),
+      nama,
+      inci: m ? angka(m[1]) : null,
+    };
+    settingByKode.set(item.kode, item);
+    if (m) {
+      const daftar = settingByInch.get(item.inci) || [];
+      daftar.push(item);
+      settingByInch.set(item.inci, daftar);
+    }
+  }
+  return { gramasiList, gramasiByKode, settingByKode, settingByInch };
+};
+
+// Nilai ganda (mis. 42" = kode 42 dan 2K): pilih kode yang sama dengan angkanya
+const pilihSettingInci = (master, inci) => {
+  const daftar = master.settingByInch.get(inci);
+  if (!daftar || daftar.length === 0) return null;
+  return (
+    daftar.find((x) => x.kode === String(inci)) ||
+    [...daftar].sort((a, b) => a.kode.localeCompare(b.kode))[0]
+  );
+};
+
+// Struktur kode: jenis(1-2) warna(3-5) gramasi(6-7) setting(8-9) project(10)
+const evaluasiLot = (lot, master) => {
+  const kodePo = String(lot.pod_bhn_kode || "");
+  const hasil = { kodePo, kode: kodePo, masalah: [] };
+  if (kodePo.length < 9) return hasil;
+
+  const label = `QC ${lot.qc_nomor} lot ${lot.qcd_lot}`;
+  const gKode = kodePo.substr(5, 2);
+  const sKode = kodePo.substr(7, 2);
+  let gBaru = gKode;
+  let sBaru = sKode;
+
+  const g = Number(lot.qcd_gramasi_cek) || 0;
+  const bandPo = master.gramasiByKode.get(gKode);
+  if (g > 0 && bandPo && bandPo.bawah !== null) {
+    const diLuar =
+      g < bandPo.bawah - TOLERANSI_GRAMASI ||
+      g > bandPo.atas + TOLERANSI_GRAMASI;
+    if (diLuar) {
+      const band = master.gramasiList.find((b) => g >= b.bawah && g < b.atas);
+      if (band) gBaru = band.kode;
+      else
+        hasil.masalah.push(
+          `${label}: gramasi ${g} tidak punya kode di master gramasi.`,
+        );
+    }
+  }
+
+  const s = Number(lot.qcd_setting_cek) || 0;
+  const settingPo = master.settingByKode.get(sKode);
+  const inciPo = settingPo ? settingPo.inci : null;
+  if (
+    s > 0 &&
+    inciPo !== null &&
+    Math.abs(s - inciPo) > TOLERANSI_SETTING + 1e-9
+  ) {
+    const pilih = pilihSettingInci(master, Math.round(s));
+    if (pilih) sBaru = pilih.kode;
+    else
+      hasil.masalah.push(
+        `${label}: setting ${s} inci tidak ada di master setting.`,
+      );
+  }
+
+  if (hasil.masalah.length === 0) {
+    hasil.kode = kodePo.substr(0, 5) + gBaru + sBaru + kodePo.substr(9);
+  }
+  return hasil;
+};
+
+// Usulan kode baru untuk seluruh lot QC yang ditarik
+const susunUsulanKode = async (executor, lots, poNomor) => {
+  const master = await muatMasterKode(executor);
+  const [poKode] = await executor.query(
+    `SELECT DISTINCT pod_bhn_kode AS kode FROM tpo_dtl
+     WHERE pod_po_nomor = ? AND pod_bhn_kode <> ''`,
+    [poNomor],
+  );
+  const kodeDiPo = new Set(poKode.map((r) => r.kode));
+
+  const masalah = [];
+  const perLot = new Map();
+  const grup = new Map();
+  const qtyPerKode = new Map();
+  const qtyPerNourut = new Map();
+
+  for (const l of lots) {
+    const e = evaluasiLot(l, master);
+    perLot.set(keLot(l), e);
+    const qtyLot = Number(l.qcd_qty_kg) || 0;
+    const sebelum = qtyPerKode.get(e.kode) || 0;
+    qtyPerKode.set(e.kode, sebelum + qtyLot);
+    const urutPo = Number(l.qc_pod_nourut);
+    qtyPerNourut.set(urutPo, (qtyPerNourut.get(urutPo) || 0) + qtyLot);
+    masalah.push(...e.masalah);
+    if (e.masalah.length > 0 || e.kode === e.kodePo) continue;
+
+    if (kodeDiPo.has(e.kode)) {
+      masalah.push(
+        `QC ${l.qc_nomor} lot ${l.qcd_lot}: kode hasil QC ${e.kode} sudah dipakai baris lain di PO ini.`,
+      );
+      continue;
+    }
+
+    let g = grup.get(e.kode);
+    if (!g) {
+      g = {
+        kode: e.kode,
+        kodePo: e.kodePo,
+        poNourut: Number(l.qc_pod_nourut),
+        satuan: l.bhn_satuan || "",
+        satuanpo: l.pod_bhn_satuan || "",
+        harga: Number(l.pod_hargabeli) || 0,
+        warna: new Set(),
+        qty: 0,
+        roll: 0,
+        lots: [],
+      };
+      grup.set(e.kode, g);
+    } else if (g.poNourut !== Number(l.qc_pod_nourut)) {
+      masalah.push(
+        `Kode baru ${e.kode} dihasilkan dari lebih dari satu baris PO. Buat BPB terpisah per dokumen QC.`,
+      );
+    }
+    const w = String(l.qcd_warna || "").trim();
+    if (w) g.warna.add(w);
+    g.qty += Number(l.qcd_qty_kg) || 0;
+    g.roll += Number(l.qcd_qty_roll) || 0;
+    g.lots.push({
+      qc: l.qc_nomor,
+      lot: l.qcd_lot,
+      qty: Number(l.qcd_qty_kg) || 0,
+      roll: Number(l.qcd_qty_roll) || 0,
+    });
+  }
+
+  // Kode hasil yang sudah ada di master: aktif dipakai, nonaktif diblokir
+  const ada = new Map();
+  if (grup.size > 0) {
+    const [rows] = await executor.query(
+      `SELECT Bhn_kode, bhn_aktif FROM tbahan WHERE Bhn_kode IN (?)`,
+      [[...grup.keys()]],
+    );
+    rows.forEach((r) => ada.set(r.Bhn_kode, Number(r.bhn_aktif)));
+  }
+
+  const kodeBaru = [];
+  for (const g of grup.values()) {
+    if (ada.get(g.kode) === 1) {
+      masalah.push(`Kode bahan ${g.kode} sudah ada di master tetapi nonaktif.`);
+      continue;
+    }
+    const pKode = g.kode.substr(9, 1);
+    const [[n]] = await executor.query(
+      `SELECT IFNULL((SELECT bj_nama FROM tbahan_jenis WHERE bj_kode = ?), '') AS jenis,
+              IFNULL((SELECT bw_nama FROM tbahan_warna WHERE bw_kode = ?), '') AS warna,
+              IFNULL((SELECT project FROM tbahan_project WHERE kode = ?), '') AS project`,
+      [g.kode.substr(0, 2), g.kode.substr(2, 3), pKode],
+    );
+    const gr = master.gramasiByKode.get(g.kode.substr(5, 2));
+    const st = master.settingByKode.get(g.kode.substr(7, 2));
+    const nama = [
+      n.jenis,
+      n.warna,
+      gr ? gr.nama : "",
+      st ? st.nama : "",
+      pKode ? n.project : "",
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+      .join(" ");
+
+    kodeBaru.push({
+      ...g,
+      nama,
+      gramasi: gr ? gr.nama : "",
+      setting: st ? st.nama : "",
+      warna: [...g.warna].join(", "),
+      sudahAda: ada.has(g.kode),
+    });
+  }
+
+  return {
+    perLot,
+    masalah: [...new Set(masalah)],
+    kodeDiPo,
+    kodeBaru,
+    qtyPerKode,
+    qtyPerNourut,
+  };
+};
+
+// Master kode baru = salinan master bahan kode PO: satuan, jenis barang, dan
+// flag proses ikut disalin. Identitas, stok, harga, dan ket dibuat baru.
+const buatMasterKode = async (conn, daftar, userKode) => {
+  for (const k of daftar) {
+    if (k.sudahAda) continue;
+    const [r] = await conn.query(
+      `INSERT INTO tbahan (
+         Bhn_kode, Bhn_Name, Bhn_satuan, Bhn_jb_kode, Bhn_stok, bhn_buffer,
+         Bhn_hargabeli, Bhn_avgcost, bhn_dead, date_create, user_create,
+         bhn_GRAMASI, bhn_setting, bhn_ket, bhn_aktif,
+         bhn_bordir, potong, qcpotong, cetak, hotpres, qccetak, jahit, lipat
+       )
+       SELECT ?, ?, Bhn_satuan, Bhn_jb_kode, 0, 0,
+              ?, ?, 0, NOW(), ?,
+              ?, ?, '', 0,
+              bhn_bordir, potong, qcpotong, cetak, hotpres, qccetak, jahit, lipat
+       FROM tbahan WHERE Bhn_kode = ?`,
+      [
+        k.kode,
+        k.nama,
+        k.harga,
+        k.harga,
+        userKode,
+        k.gramasi,
+        k.setting,
+        k.kodePo,
+      ],
+    );
+    if (r.affectedRows !== 1) {
+      throw new Error(
+        `Master bahan PO ${k.kodePo} tidak ditemukan, kode ${k.kode} gagal dibuat.`,
+      );
+    }
+  }
+};
+
 // SPK per kode bahan dari baris PO: dipakai kalau semua baris sekode
 // yang punya SPK, SPK-nya sama. Kalau berbeda dibiarkan kosong.
 const spkPerKode = (poDetails) => {
@@ -897,17 +1307,67 @@ const tarikDariQc = async (value) => {
     ),
   ];
   const { poNomor, lots, supKode } = await muatLotQc(db, daftar);
+
+  const usulan = await susunUsulanKode(db, lots, poNomor);
+  if (usulan.masalah.length > 0) {
+    throw new Error(usulan.masalah.join("\n"));
+  }
+
   const data = await validateField("po", poNomor, { lewatiQc: true, supKode });
-  const hasil = ringkasHasilQc(lots);
-  const spk = spkPerKode(data.poDetails);
+
+  // Baris kode PO hanya dirata-ratakan dari lot yang tetap di kode PO
+  const tetap = lots.filter((l) => {
+    const e = usulan.perLot.get(keLot(l));
+    return e.kode === e.kodePo;
+  });
+  const hasil = ringkasHasilQc(tetap);
+
+  // Hanya baris PO milik dokumen QC yang dipilih (satu QC = satu baris PO).
+  // Terima = total qty lot pada baris itu (dikunci, bukan diketik).
+  const nourutQc = new Set(lots.map((l) => Number(l.qc_pod_nourut)));
+  const poDetails = data.poDetails
+    .filter((p) => nourutQc.has(Number(p.nourut)))
+    .map((p) => ({
+      ...p,
+      terima: bulat2(usulan.qtyPerNourut.get(Number(p.nourut)) || 0),
+    }));
+  const kodeTetap = new Set(tetap.map((l) => l.pod_bhn_kode));
+  const spk = spkPerKode(poDetails);
+
+  const kodeBaru = usulan.kodeBaru.map((k) => {
+    const induk = data.items.find((d) => d.kode === k.kodePo) || {};
+    const satuan = induk.satuan ?? k.satuan;
+    const jumlah = bulat2(usulan.qtyPerKode.get(k.kode) || 0);
+    return {
+      ...k,
+      satuan,
+      satuanpo: induk.satuanpo ?? k.satuanpo,
+      harga: induk.harga ?? k.harga,
+      totalpo: induk.totalpo ?? 0,
+      terima: induk.terima ?? 0,
+      kurang: induk.kurang ?? 0,
+      jumlah,
+      ...hitungYard(satuan, jumlah),
+      ...(spk.get(k.kodePo) || {}),
+    };
+  });
 
   return {
     ...data,
-    items: data.items.map((d) => ({
-      ...d,
-      ...(hasil.get(d.kode) || {}),
-      ...(spk.get(d.kode) || {}),
-    })),
+    poDetails,
+    items: data.items
+      .filter((d) => kodeTetap.has(d.kode))
+      .map((d) => {
+        const jumlah = bulat2(usulan.qtyPerKode.get(d.kode) || 0);
+        return {
+          ...d,
+          ...(hasil.get(d.kode) || {}),
+          ...(spk.get(d.kode) || {}),
+          jumlah,
+          ...hitungYard(d.satuan, jumlah),
+        };
+      }),
+    kodeBaru,
     qcNomor: daftar,
   };
 };

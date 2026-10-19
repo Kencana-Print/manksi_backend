@@ -43,12 +43,13 @@ router.get(
   ctrl.lookupByBarcode,
 );
 
-router.post(
-  "/preview-print",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  ctrl.previewPrint,
-);
+// Preview BS membuat kode di retail → wajib izin tambah/ubah. Preview biasa tetap "view".
+const izinPreview = (req, res, next) => {
+  const aksi = req.body?.bs ? (req.body?.nomor ? "edit" : "insert") : "view";
+  return checkPermission(MENU_ID, aksi)(req, res, next);
+};
+
+router.post("/preview-print", verifyToken, izinPreview, ctrl.previewPrint);
 
 router.post(
   "/save",

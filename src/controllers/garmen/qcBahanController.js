@@ -33,6 +33,20 @@ const getBrowseDetail = async (req, res) => {
   }
 };
 
+const getBrowseAllDetail = async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    const data = await qcBahanService.getBrowseAllDetail(
+      startDate,
+      endDate,
+      status || "ALL",
+    );
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const deleteData = async (req, res) => {
   try {
     if (!bolehGudang(req.user)) return tolakHak(res);
@@ -99,6 +113,7 @@ const submitData = async (req, res) => {
 module.exports = {
   browseData,
   getBrowseDetail,
+  getBrowseAllDetail,
   deleteData,
   requestPin,
   submitData,
