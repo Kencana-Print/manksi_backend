@@ -13,7 +13,7 @@ const db = require("../../config/database");
 const getBrowseData = async (startDate, endDate, spkFilter, user) => {
   // ⚠️ FIX: "HO-" adalah fallback backend utk cabang kosong, disamakan
   // perlakuannya dgn frmMenu.CAB='' di Delphi (tidak dikunci cabang)
-  const CABANG_LIHAT_SEMUA = ["P01", "HO-"];
+  const CABANG_LIHAT_SEMUA = ["P01", "P05", "HO-"];
   const cabUser = String(user.cabang || "")
     .trim()
     .toUpperCase();
