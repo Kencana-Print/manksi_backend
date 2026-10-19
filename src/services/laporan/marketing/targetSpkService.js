@@ -25,43 +25,44 @@ const SO_CUTOFF = "2026-08-06";
 // idivisi + filter tipe per opsi dropdown — replikasi cabang if/else
 // cbDivisi.Text di Delphi
 const DIVISI_CONFIG = {
-  SPANDUK: { idivisi: "1", tipe: null },
-  KAOSAN: { idivisi: "3", tipe: null },
-  GARMEN_MEDIUM: { idivisi: "4", tipe: "MEDIUM" },
-  GARMEN_PREMIUM: { idivisi: "4", tipe: "PREMIUM" },
-  MMT: { idivisi: "5", tipe: null },
-  FIT_U: { idivisi: "6", tipe: null },
-  // ALL DIVISI Delphi: idivisi='1,3,4,5', TANPA filter tipe (digabung
-  // medium+premium jadi satu, KAOSAN ikut, FIT_U TIDAK ikut)
-  ALL: { idivisi: "1,3,4,5", tipe: null },
+    SPANDUK: { idivisi: "1", tipe: null },
+    KAOSAN: { idivisi: "3", tipe: null },
+    GARMEN_MEDIUM: { idivisi: "4", tipe: "MEDIUM" },
+    GARMEN_PREMIUM: { idivisi: "4", tipe: "PREMIUM" },
+    MMT: { idivisi: "5", tipe: null },
+    FIT_U: { idivisi: "6", tipe: null },
+    // ALL DIVISI Delphi: idivisi='1,3,4,5', TANPA filter tipe (digabung
+    // medium+premium jadi satu, KAOSAN ikut, FIT_U TIDAK ikut)
+    ALL: { idivisi: "1,3,4,5", tipe: null },
 };
 
 const buildPeriods = (startDate, endDate) => {
-  const sd = new Date(startDate);
-  const ed = new Date(endDate);
-  const tahun = sd.getFullYear();
-  if (ed.getFullYear() !== tahun) {
-    throw new Error("Periode tahun harus sama.");
-  }
-  const pad = (n) => String(n).padStart(2, "0");
-  const mkDate = (year, month, day) => `${year}-${pad(month + 1)}-${pad(day)}`;
-  const nDay = sd.getDate();
-  const nMonth = sd.getMonth();
-  const nDay2 = ed.getDate();
-  const nMonth2 = ed.getMonth();
-  const n3 = tahun - 3;
-  const n2 = tahun - 2;
-  const n1 = tahun - 1;
-  return {
-    tahun,
-    n3,
-    n2,
-    n1,
-    p0: [startDate, endDate], // tahun dipilih — pakai tanggal asli
-    p1: [mkDate(n1, nMonth, nDay), mkDate(n1, nMonth2, nDay2)],
-    p2: [mkDate(n2, nMonth, nDay), mkDate(n2, nMonth2, nDay2)],
-    p3: [mkDate(n3, nMonth, nDay), mkDate(n3, nMonth2, nDay2)],
-  };
+    const sd = new Date(startDate);
+    const ed = new Date(endDate);
+    const tahun = sd.getFullYear();
+    if (ed.getFullYear() !== tahun) {
+        throw new Error("Periode tahun harus sama.");
+    }
+    const pad = (n) => String(n).padStart(2, "0");
+    const mkDate = (year, month, day) =>
+        `${year}-${pad(month + 1)}-${pad(day)}`;
+    const nDay = sd.getDate();
+    const nMonth = sd.getMonth();
+    const nDay2 = ed.getDate();
+    const nMonth2 = ed.getMonth();
+    const n3 = tahun - 3;
+    const n2 = tahun - 2;
+    const n1 = tahun - 1;
+    return {
+        tahun,
+        n3,
+        n2,
+        n1,
+        p0: [startDate, endDate], // tahun dipilih — pakai tanggal asli
+        p1: [mkDate(n1, nMonth, nDay), mkDate(n1, nMonth2, nDay2)],
+        p2: [mkDate(n2, nMonth, nDay), mkDate(n2, nMonth2, nDay2)],
+        p3: [mkDate(n3, nMonth, nDay), mkDate(n3, nMonth2, nDay2)],
+    };
 };
 
 // Bangun 1 blok subquery "thX" — UNION ALL tspk(<cutoff) + tsalesorder(>=cutoff),
@@ -69,11 +70,11 @@ const buildPeriods = (startDate, endDate) => {
 // Delphi asli GROUP BY spk_cus_kode saja (bukan strict), MySQL modern
 // (ONLY_FULL_GROUP_BY) butuh pembungkus itu biar gak error.
 const buildThSubquery = (idivisi, tipe, dateRange) => {
-  const [dStart, dEnd] = dateRange;
-  const tipeSpk = tipe ? ` AND spk_tipe = '${tipe}'` : "";
-  const tipeSo = tipe ? ` AND so_tipe = '${tipe}'` : "";
-  return {
-    sql: `
+    const [dStart, dEnd] = dateRange;
+    const tipeSpk = tipe ? ` AND spk_tipe = '${tipe}'` : "";
+    const tipeSo = tipe ? ` AND so_tipe = '${tipe}'` : "";
+    return {
+        sql: `
       SELECT spk_cus_kode, MAX(spk_sal_kode) AS spk_sal_kode,
              MAX(sal_nama) AS sal_nama, SUM(spk_total) AS spk_total
       FROM (
@@ -97,47 +98,53 @@ const buildThSubquery = (idivisi, tipe, dateRange) => {
       ) thx
       GROUP BY spk_cus_kode
     `,
-    params: [dStart, dEnd, dStart, dEnd],
-  };
+        params: [dStart, dEnd, dStart, dEnd],
+    };
 };
 
 const getBrowse = async (query) => {
-  const {
-    startDate,
-    endDate,
-    divisi = "ALL",
-    salesKode = "",
-    cusKode = "",
-  } = query;
+    const {
+        startDate,
+        endDate,
+        divisi = "ALL",
+        salesKode = "",
+        cusKode = "",
+    } = query;
 
-  if (!startDate || !endDate) {
-    throw new Error("Periode tanggal wajib diisi.");
-  }
-  const cfg = DIVISI_CONFIG[divisi];
-  if (!cfg) throw new Error(`Divisi "${divisi}" tidak dikenal.`);
+    if (!startDate || !endDate) {
+        throw new Error("Periode tanggal wajib diisi.");
+    }
+    const cfg = DIVISI_CONFIG[divisi];
+    if (!cfg) throw new Error(`Divisi "${divisi}" tidak dikenal.`);
 
-  const periods = buildPeriods(startDate, endDate);
-  const th = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p0);
-  const th1 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p1);
-  const th2 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p2);
-  const th3 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p3);
+    const periods = buildPeriods(startDate, endDate);
+    const th = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p0);
+    const th1 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p1);
+    const th2 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p2);
+    const th3 = buildThSubquery(cfg.idivisi, cfg.tipe, periods.p3);
 
-  const targetTipeFilter = cfg.tipe ? ` AND cust_spktipe = '${cfg.tipe}'` : "";
+    const targetTipeFilter = cfg.tipe
+        ? ` AND cust_spktipe = '${cfg.tipe}'`
+        : "";
 
-  let extraWhere = "";
-  const extraParams = [];
-  if (salesKode) {
-    extraWhere += " AND c.cus_sales = ?";
-    extraParams.push(salesKode);
-  }
-  if (cusKode) {
-    extraWhere += " AND c.cus_kode = ?";
-    extraParams.push(cusKode);
-  }
+    let extraWhere = "";
+    const extraParams = [];
+    if (salesKode) {
+        extraWhere += " AND c.cus_sales = ?";
+        extraParams.push(salesKode);
+    }
+    if (cusKode) {
+        extraWhere += " AND c.cus_kode = ?";
+        extraParams.push(cusKode);
+    }
 
-  const sql = `
+    const sql = `
     SELECT
       c.cus_kode AS Kode, c.cus_nama AS Customer, c.cus_alamat AS Alamat,
+      IF(th.sal_nama IS NOT NULL, th.sal_nama,
+        IF(th1.sal_nama IS NOT NULL, th1.sal_nama,
+          IF(th2.sal_nama IS NOT NULL, th2.sal_nama,
+            IF(th3.sal_nama IS NOT NULL, th3.sal_nama, '')))) AS Sales,
       IF(th.sal_nama IS NOT NULL, th.sal_nama,
         IF(th1.sal_nama IS NOT NULL, th1.sal_nama,
           IF(th2.sal_nama IS NOT NULL, th2.sal_nama,
@@ -179,26 +186,26 @@ const getBrowse = async (query) => {
     ORDER BY Average DESC
   `;
 
-  const params = [
-    periods.tahun,
-    ...th.params,
-    ...th1.params,
-    ...th2.params,
-    ...th3.params,
-    ...extraParams,
-  ];
+    const params = [
+        periods.tahun,
+        ...th.params,
+        ...th1.params,
+        ...th2.params,
+        ...th3.params,
+        ...extraParams,
+    ];
 
-  const [rows] = await db.query(sql, params);
+    const [rows] = await db.query(sql, params);
 
-  return {
-    meta: {
-      tahun: periods.tahun,
-      n3: periods.n3,
-      n2: periods.n2,
-      n1: periods.n1,
-    },
-    rows,
-  };
+    return {
+        meta: {
+            tahun: periods.tahun,
+            n3: periods.n3,
+            n2: periods.n2,
+            n1: periods.n1,
+        },
+        rows,
+    };
 };
 
 // ─────────────────────────────────────────────────────────
@@ -209,18 +216,18 @@ const getBrowse = async (query) => {
 // itu — lihat pertanyaan sebelumnya).
 // ─────────────────────────────────────────────────────────
 const DIVISI_MAP = {
-  SPANDUK: { filter: "s.spk_divisi = 1", suffix: "1" },
-  KAOSAN: { filter: "s.spk_divisi = 3", suffix: "3" },
-  GARMEN_MEDIUM: {
-    filter: "s.spk_divisi = 4 AND UPPER(s.spk_tipe) = 'MEDIUM'",
-    suffix: "4M",
-  },
-  GARMEN_PREMIUM: {
-    filter: "s.spk_divisi = 4 AND UPPER(s.spk_tipe) = 'PREMIUM'",
-    suffix: "4P",
-  },
-  MMT: { filter: "s.spk_divisi = 5", suffix: "5" },
-  FIT_U: { filter: "s.spk_divisi = 6", suffix: "6" },
+    SPANDUK: { filter: "s.spk_divisi = 1", suffix: "1" },
+    KAOSAN: { filter: "s.spk_divisi = 3", suffix: "3" },
+    GARMEN_MEDIUM: {
+        filter: "s.spk_divisi = 4 AND UPPER(s.spk_tipe) = 'MEDIUM'",
+        suffix: "4M",
+    },
+    GARMEN_PREMIUM: {
+        filter: "s.spk_divisi = 4 AND UPPER(s.spk_tipe) = 'PREMIUM'",
+        suffix: "4P",
+    },
+    MMT: { filter: "s.spk_divisi = 5", suffix: "5" },
+    FIT_U: { filter: "s.spk_divisi = 6", suffix: "6" },
 };
 
 // ─────────────────────────────────────────────────────────
@@ -233,12 +240,12 @@ const DIVISI_MAP = {
 // diputuskan & disamakan sebelum fitur Setting ini reliable dipakai.
 // ─────────────────────────────────────────────────────────
 const buildXQuerySettingByYear = (divisiKey, tahun, extraWhere, params) => {
-  const { filter, suffix } = DIVISI_MAP[divisiKey];
-  const targetCol = `cus_${tahun}${suffix}`;
-  const n3 = tahun - 3;
-  const n2 = tahun - 2;
-  const n1 = tahun - 1;
-  const sql = `
+    const { filter, suffix } = DIVISI_MAP[divisiKey];
+    const targetCol = `cus_${tahun}${suffix}`;
+    const n3 = tahun - 3;
+    const n2 = tahun - 2;
+    const n1 = tahun - 1;
+    const sql = `
     SELECT c.cus_kode AS Kode, c.cus_nama AS Customer, c.cus_alamat AS Alamat,
       IFNULL((
         SELECT e.sal_nama FROM tspk s
@@ -270,7 +277,7 @@ const buildXQuerySettingByYear = (divisiKey, tahun, extraWhere, params) => {
     WHERE c.cus_iscabang = 0 AND c.cus_aktif = 0
     ${extraWhere}
   `;
-  return sql;
+    return sql;
 };
 
 const wrapYZ = (xSql) => `
@@ -291,110 +298,110 @@ const wrapYZ = (xSql) => `
 `;
 
 const getSettingList = async (
-  tahun,
-  divisiKey,
-  salesKode = "",
-  cusKode = "",
-) => {
-  if (!DIVISI_MAP[divisiKey]) {
-    throw new Error(`Divisi "${divisiKey}" tidak dikenal.`);
-  }
-  const tahunNum = Number(tahun);
-  if (!tahunNum || tahunNum < 2000 || tahunNum > 2100) {
-    throw new Error("Tahun tidak valid.");
-  }
-  let extraWhere = "";
-  const params = [];
-  if (salesKode) {
-    extraWhere += " AND c.cus_sales = ?";
-    params.push(salesKode);
-  }
-  if (cusKode) {
-    extraWhere += " AND c.cus_kode = ?";
-    params.push(cusKode);
-  }
-  const xSql = buildXQuerySettingByYear(
+    tahun,
     divisiKey,
-    tahunNum,
-    extraWhere,
-    params,
-  );
-  const finalSql = `
+    salesKode = "",
+    cusKode = "",
+) => {
+    if (!DIVISI_MAP[divisiKey]) {
+        throw new Error(`Divisi "${divisiKey}" tidak dikenal.`);
+    }
+    const tahunNum = Number(tahun);
+    if (!tahunNum || tahunNum < 2000 || tahunNum > 2100) {
+        throw new Error("Tahun tidak valid.");
+    }
+    let extraWhere = "";
+    const params = [];
+    if (salesKode) {
+        extraWhere += " AND c.cus_sales = ?";
+        params.push(salesKode);
+    }
+    if (cusKode) {
+        extraWhere += " AND c.cus_kode = ?";
+        params.push(cusKode);
+    }
+    const xSql = buildXQuerySettingByYear(
+        divisiKey,
+        tahunNum,
+        extraWhere,
+        params,
+    );
+    const finalSql = `
     SELECT z.Kode, z.Customer, z.Alamat, z.Sales,
       z.Spk3, z.Spk2, z.Spk1, z.Average, z.Target, z.KodeSales, z.NamaSales
     FROM (${wrapYZ(xSql)}) z
     ORDER BY z.Kode
   `;
-  try {
-    const [rows] = await db.query(finalSql, params);
-    const n3 = tahunNum - 3;
-    const n2 = tahunNum - 2;
-    const n1 = tahunNum - 1;
-    return { meta: { tahun: tahunNum, n3, n2, n1 }, rows };
-  } catch (err) {
-    if (err.code === "ER_BAD_FIELD_ERROR") {
-      const { suffix } = DIVISI_MAP[divisiKey];
-      throw new Error(
-        `Kolom target untuk tahun ${tahunNum} (cus_${tahunNum}${suffix}) belum ada di tabel tcustomer. Hubungi admin untuk menambahkan kolom ini.`,
-      );
+    try {
+        const [rows] = await db.query(finalSql, params);
+        const n3 = tahunNum - 3;
+        const n2 = tahunNum - 2;
+        const n1 = tahunNum - 1;
+        return { meta: { tahun: tahunNum, n3, n2, n1 }, rows };
+    } catch (err) {
+        if (err.code === "ER_BAD_FIELD_ERROR") {
+            const { suffix } = DIVISI_MAP[divisiKey];
+            throw new Error(
+                `Kolom target untuk tahun ${tahunNum} (cus_${tahunNum}${suffix}) belum ada di tabel tcustomer. Hubungi admin untuk menambahkan kolom ini.`,
+            );
+        }
+        throw err;
     }
-    throw err;
-  }
 };
 
 const updateTarget = async (kode, tahun, divisiKey, targetValue) => {
-  if (!DIVISI_MAP[divisiKey]) {
-    throw new Error(`Divisi "${divisiKey}" tidak dikenal.`);
-  }
-  const tahunNum = Number(tahun);
-  if (!tahunNum) throw new Error("Tahun tidak valid.");
-  const nilai = Number(targetValue);
-  if (Number.isNaN(nilai)) throw new Error("Target harus berupa angka.");
-  const { suffix } = DIVISI_MAP[divisiKey];
-  const targetCol = `cus_${tahunNum}${suffix}`;
-  try {
-    await db.query(`UPDATE tcustomer SET ${targetCol} = ? WHERE cus_kode = ?`, [
-      nilai,
-      kode,
-    ]);
-  } catch (err) {
-    if (err.code === "ER_BAD_FIELD_ERROR") {
-      throw new Error(
-        `Kolom ${targetCol} belum ada di tabel tcustomer. Hubungi admin untuk menambahkan kolom ini sebelum bisa set Target tahun ${tahunNum}.`,
-      );
+    if (!DIVISI_MAP[divisiKey]) {
+        throw new Error(`Divisi "${divisiKey}" tidak dikenal.`);
     }
-    throw err;
-  }
-  return { kode, tahun: tahunNum, divisi: divisiKey, target: nilai };
+    const tahunNum = Number(tahun);
+    if (!tahunNum) throw new Error("Tahun tidak valid.");
+    const nilai = Number(targetValue);
+    if (Number.isNaN(nilai)) throw new Error("Target harus berupa angka.");
+    const { suffix } = DIVISI_MAP[divisiKey];
+    const targetCol = `cus_${tahunNum}${suffix}`;
+    try {
+        await db.query(
+            `UPDATE tcustomer SET ${targetCol} = ? WHERE cus_kode = ?`,
+            [nilai, kode],
+        );
+    } catch (err) {
+        if (err.code === "ER_BAD_FIELD_ERROR") {
+            throw new Error(
+                `Kolom ${targetCol} belum ada di tabel tcustomer. Hubungi admin untuk menambahkan kolom ini sebelum bisa set Target tahun ${tahunNum}.`,
+            );
+        }
+        throw err;
+    }
+    return { kode, tahun: tahunNum, divisi: divisiKey, target: nilai };
 };
 
 const updateKodeSales = async (kode, kodeSalesBaru) => {
-  const [[sales]] = await db.query(
-    `SELECT sal_kode, sal_nama, sal_aktif FROM tsales WHERE sal_kode = ?`,
-    [kodeSalesBaru],
-  );
-  if (!sales) {
-    throw new Error("Sales tsb tidak ada.");
-  }
-  if (String(sales.sal_aktif) !== "Y") {
-    throw new Error("Status sales tsb pasif.");
-  }
-  await db.query(`UPDATE tcustomer SET cus_sales = ? WHERE cus_kode = ?`, [
-    kodeSalesBaru.toUpperCase(),
-    kode,
-  ]);
-  return {
-    kode,
-    kodeSales: kodeSalesBaru.toUpperCase(),
-    namaSales: sales.sal_nama,
-  };
+    const [[sales]] = await db.query(
+        `SELECT sal_kode, sal_nama, sal_aktif FROM tsales WHERE sal_kode = ?`,
+        [kodeSalesBaru],
+    );
+    if (!sales) {
+        throw new Error("Sales tsb tidak ada.");
+    }
+    if (String(sales.sal_aktif) !== "Y") {
+        throw new Error("Status sales tsb pasif.");
+    }
+    await db.query(`UPDATE tcustomer SET cus_sales = ? WHERE cus_kode = ?`, [
+        kodeSalesBaru.toUpperCase(),
+        kode,
+    ]);
+    return {
+        kode,
+        kodeSales: kodeSalesBaru.toUpperCase(),
+        namaSales: sales.sal_nama,
+    };
 };
 
 module.exports = {
-  getBrowse,
-  DIVISI_CONFIG,
-  getSettingList,
-  updateTarget,
-  updateKodeSales,
-  DIVISI_MAP,
+    getBrowse,
+    DIVISI_CONFIG,
+    getSettingList,
+    updateTarget,
+    updateKodeSales,
+    DIVISI_MAP,
 };

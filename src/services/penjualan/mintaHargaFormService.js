@@ -279,15 +279,32 @@ const getById = async (nomor, currentUser) => {
   // 2. Ambil Data Kalkulasi (Jika Ada)
   if (data.mh_nomor_kalkulasi) {
     const kalNo = data.mh_nomor_kalkulasi;
+    const isKals = String(kalNo).toUpperCase().startsWith("KALS");
+    const tblPrefix = isKals ? "tkalkulasi" : "tkalkulasi2";
+
     const [kalHdr] = await db.query(
       `SELECT h.*, 
         IF(h.date_modified IS NOT NULL, DATE_FORMAT(h.date_modified,"%d-%m-%Y %T"), DATE_FORMAT(h.date_create,"%d-%m-%Y %T")) as tglFormat 
-       FROM kalkulasi.tkalkulasi2_hdr h WHERE h.kal_nomor = ?`,
+       FROM kalkulasi.${tblPrefix}_hdr h WHERE h.kal_nomor = ?`,
       [kalNo],
     );
 
     if (kalHdr.length > 0) {
       const h = kalHdr[0];
+
+      // Fallback jika KALS dan kal_rpsesuai masih 0 / belum terisi tetapi ada kal_rpsales / kal_rpsistem / mh_harga_kalkulasi
+      if (isKals) {
+        if (Number(h.kal_rpsesuai || 0) === 0) {
+          h.kal_rpsesuai = Number(
+            h.kal_rpsales || h.kal_rpsistem || data.mh_harga_kalkulasi || 0,
+          );
+        }
+        if (Number(h.kal_rpsesuaippn || 0) === 0) {
+          h.kal_rpsesuaippn = Number(
+            h.kal_rpsales || h.kal_rpsistem || data.mh_harga_kalkulasi || 0,
+          );
+        }
+      }
 
       // --- LOGIKA CREATOR & MODIFIER ---
       let cusra = h.user_create || "";
@@ -318,37 +335,62 @@ const getById = async (nomor, currentUser) => {
     }
 
     const [kalDtl] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_dtl WHERE kald_nomor = ?`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_dtl WHERE kald_nomor = ?`,
       [kalNo],
     );
     const [kalCtk] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_cetak WHERE kald_nomor = ?`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_cetak WHERE kald_nomor = ?`,
       [kalNo],
     );
     const [kalBordir] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_bordir WHERE kald_nomor = ?`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_bordir WHERE kald_nomor = ?`,
       [kalNo],
     );
     const [kalDtf] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_dtf WHERE kald_nomor = ?`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_dtf WHERE kald_nomor = ?`,
       [kalNo],
     );
 
     const [gridKomponen] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_komponen WHERE kk_nomor = ? ORDER BY kk_nourut`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_komponen WHERE kk_nomor = ? ORDER BY kk_nourut`,
       [kalNo],
     );
 
     const bodyKomp = gridKomponen.find((k) => k.kk_komponen === "BODY");
 
-    const [gridCetak] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_ctk WHERE kc_nomor = ? ORDER BY kc_nourut`,
+    let [gridCetak] = await db.query(
+      `SELECT * FROM kalkulasi.${tblPrefix}_ctk WHERE kc_nomor = ? ORDER BY kc_nourut`,
       [kalNo],
     );
     const [gridAksesoris] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_aksesories WHERE ka_nomor = ? ORDER BY ka_nourut`,
+      `SELECT * FROM kalkulasi.${tblPrefix}_aksesories WHERE ka_nomor = ? ORDER BY ka_nourut`,
       [kalNo],
     );
+
+    // Khusus jika KALS: jika gridCetak kosong di tkalkulasi_ctk tapi ada nilai di kald_rpcetak atau kald_rpsublim
+    if (isKals && (!gridCetak || gridCetak.length === 0)) {
+      const ctkVal = Number(kalCtk[0]?.kald_rpcetak || 0);
+      const subVal = Number(kalDtl[0]?.kald_rpsublim || 0);
+      if (ctkVal > 0) {
+        gridCetak = [
+          {
+            kc_nomor: kalNo,
+            kc_nourut: 1,
+            kc_ket: "CETAK / SABLON",
+            kc_biaya: ctkVal,
+          },
+        ];
+      } else if (subVal > 0) {
+        gridCetak = [
+          {
+            kc_nomor: kalNo,
+            kc_nourut: 1,
+            kc_ket: "SUBLIM",
+            kc_biaya: subVal,
+          },
+        ];
+      }
+    }
 
     data.Kalkulasi = {
       Header: kalHdr[0] || {},
@@ -357,7 +399,7 @@ const getById = async (nomor, currentUser) => {
       Bordir: kalBordir[0] || {},
       Dtf: kalDtf[0] || {},
       GridKomponen: gridKomponen,
-      GridCetak: gridCetak,
+      GridCetak: gridCetak || [],
       GridAksesoris: gridAksesoris,
       LoadedJenisKain: bodyKomp ? bodyKomp.kk_jeniskain : "",
       LoadedWarna: bodyKomp ? bodyKomp.kk_warna : "MUDA",

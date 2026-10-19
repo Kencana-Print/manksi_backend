@@ -710,15 +710,83 @@ const getKomponenKain = async (model, jenisKain, warna, qty = null) => {
   }
 };
 
-const getCetakOptions = async () => {
+const getCetakOptions = async (options = {}) => {
+  const { jenisKain = "", kategori = "" } =
+    typeof options === "object" ? options : {};
+
+  let resolvedKtg = String(kategori || "")
+    .toUpperCase()
+    .trim();
+  const normJenisKain = String(jenisKain || "").trim();
+
+  if (!resolvedKtg && normJenisKain) {
+    const [kainRows] = await db.query(
+      `SELECT mhk_ktg FROM tmintaharga_kain 
+       WHERE LOWER(TRIM(mhk_jeniskain)) = LOWER(TRIM(?)) 
+       LIMIT 1`,
+      [normJenisKain],
+    );
+    if (kainRows.length > 0 && kainRows[0].mhk_ktg) {
+      resolvedKtg = kainRows[0].mhk_ktg.toUpperCase().trim();
+    }
+  }
+
+  const jkUpper = normJenisKain.toUpperCase();
+  const isLacost =
+    resolvedKtg.includes("LACOST") ||
+    jkUpper.includes("LACOST") ||
+    jkUpper.includes("PIQUE");
+  const isPe =
+    resolvedKtg.includes("PE") ||
+    resolvedKtg.includes("HYGIT") ||
+    resolvedKtg.includes("DRYFIT") ||
+    jkUpper.includes("PE ") ||
+    jkUpper.includes("HYGIT") ||
+    jkUpper.includes("DRYFIT");
+
+  const targetKategori = isLacost ? "LACOST" : isPe ? "PE" : "COTTON";
+
   const query = `
     SELECT mhb_jenis, mhb_ket, mhb_biaya 
     FROM tmintaharga_biaya 
-    WHERE mhb_biaya <> 0 AND mhb_jenis IN ("CETAK", "SUBLIM") 
-    ORDER BY mhb_jenis, mhb_ket
+    WHERE mhb_biaya <> 0 AND mhb_jenis IN ('SABLON', 'SUBLIM', 'CETAK') 
+    ORDER BY 
+      CASE 
+        WHEN mhb_jenis = 'SABLON' THEN 1
+        WHEN mhb_jenis = 'SUBLIM' THEN 2
+        ELSE 3
+      END,
+      mhb_ket
   `;
   const [rows] = await db.query(query);
-  return rows;
+
+  const filteredRows = rows.filter((r) => {
+    const j = String(r.mhb_jenis || "").toUpperCase();
+    if (j !== "SABLON") return true;
+
+    const ketUpper = String(r.mhb_ket || "")
+      .toUpperCase()
+      .trim();
+    const hasCotton =
+      ketUpper.endsWith("COTTON") || ketUpper.includes(" COTTON");
+    const hasPe = ketUpper.endsWith("PE") || ketUpper.includes(" PE");
+    const hasLacost =
+      ketUpper.endsWith("LACOST") ||
+      ketUpper.includes(" LACOST") ||
+      ketUpper.includes(" LACOSTE");
+
+    if (targetKategori === "LACOST") {
+      return hasLacost;
+    } else if (targetKategori === "PE") {
+      return hasPe;
+    } else {
+      if (hasCotton) return true;
+      if (hasPe || hasLacost) return false;
+      return !ketUpper.startsWith("RUBBER");
+    }
+  });
+
+  return filteredRows;
 };
 
 const getTambahanOptions = async () => {

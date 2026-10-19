@@ -50,11 +50,15 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
         ORDER BY m.date_create DESC LIMIT 1
       ) AS HargaMAP, 
       h.mh_harga_kalkulasi AS HargaKalkulasi, 
-      IF(k.date_modified IS NOT NULL, DATE_FORMAT(k.date_modified, '%Y-%m-%d'), DATE_FORMAT(k.date_create, '%Y-%m-%d')) AS TglKalkulasi, 
+      IF(
+        h.mh_nomor_kalkulasi LIKE 'KALS%',
+        IF(l.date_modified IS NOT NULL, DATE_FORMAT(l.date_modified, '%Y-%m-%d'), DATE_FORMAT(l.date_create, '%Y-%m-%d')),
+        IF(k.date_modified IS NOT NULL, DATE_FORMAT(k.date_modified, '%Y-%m-%d'), DATE_FORMAT(k.date_create, '%Y-%m-%d'))
+      ) AS TglKalkulasi, 
       h.mh_nomor_kalkulasi AS NoKalkulasi, 
       h.mh_ket_kalkulasi AS KeteranganKalkulasi, 
-      k.user_create AS KalCreated, 
-      k.user_modified AS KalModified,
+      IF(h.mh_nomor_kalkulasi LIKE 'KALS%', l.user_create, k.user_create) AS KalCreated, 
+      IF(h.mh_nomor_kalkulasi LIKE 'KALS%', l.user_modified, k.user_modified) AS KalModified,
       IFNULL(l.kal_nomor,"") AS NoKals,  
       h.mh_status AS Status,
       DATE_FORMAT(h.mh_apv, '%d-%m-%Y %H:%i:%s') AS Approved, 
@@ -79,7 +83,11 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     LEFT JOIN tdivisi v ON v.kode = h.mh_divisi 
     LEFT JOIN tsales s ON s.sal_kode = h.mh_sal_kode 
     LEFT JOIN kalkulasi.tkalkulasi2_hdr k ON k.kal_nomor = h.mh_nomor_kalkulasi
-    LEFT JOIN kalkulasi.tkalkulasi_hdr l ON l.kal_mh_nomor = h.mh_nomor 
+    LEFT JOIN kalkulasi.tkalkulasi_hdr l ON (
+      (h.mh_nomor_kalkulasi LIKE 'KALS%' AND l.kal_nomor = h.mh_nomor_kalkulasi)
+      OR
+      (h.mh_nomor_kalkulasi NOT LIKE 'KALS%' AND l.kal_nomor = (SELECT kal_nomor FROM kalkulasi.tkalkulasi_hdr WHERE kal_mh_nomor = h.mh_nomor ORDER BY date_create DESC LIMIT 1))
+    )
     WHERE h.mh_tanggal >= ? AND h.mh_tanggal <= ?
   `;
 
