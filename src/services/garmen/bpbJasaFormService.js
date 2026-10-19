@@ -446,15 +446,6 @@ const save = async (data, userKode, isNew) => {
     throw new Error("Jumlah Terima masih kosong.");
   if (!GdgpKode) throw new Error("Nama Gudang produksi harus diisi.");
 
-  // Validasi cek status inv jika edit
-  if (!isNew && data.Nomor) {
-    const sudahInv = await cekStatusInv(data.Nomor);
-    if (sudahInv)
-      throw new Error(
-        "Transaksi ini sudah dibuat Voucher Pembayaran, tidak bisa di edit.",
-      );
-  }
-
   // Validasi komponen (sesuai Delphi, pakai tgl cutoff 01-12-2024)
   const CUTOFF_DATE = new Date("2024-12-01");
   const tglSpk = data.TglSpk ? new Date(data.TglSpk) : null;
