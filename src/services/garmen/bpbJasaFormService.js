@@ -497,11 +497,86 @@ const save = async (data, userKode, isNew) => {
       throw new Error("Babaran < Babaran standar. Alasan harus diisi.");
   }
 
+  // Kalau sudah ada voucher: hanya boleh ubah data berat/babaran.
+  // Jumlah terima & detail harus identik dengan yang tersimpan.
+  let hanyaUbahBerat = false;
+  if (!isNew && data.Nomor && (await cekStatusInv(data.Nomor))) {
+    const [[lama]] = await db.query(
+      `SELECT bpj_jumlah, bpj_po_nomor, bpj_sup_kode
+       FROM tbpj_hdr WHERE bpj_nomor = ?`,
+      [data.Nomor],
+    );
+    if (
+      !lama ||
+      Number(lama.bpj_jumlah) !== Number(JumlahTerima) ||
+      lama.bpj_po_nomor !== PoNomor ||
+      lama.bpj_sup_kode !== SupKode
+    ) {
+      throw new Error(
+        "Sudah dibuat Voucher Pembayaran. Jumlah terima, PO, dan supplier tidak bisa diubah.",
+      );
+    }
+
+    const [dtlLama] = await db.query(
+      `SELECT bpjd_bhn_kode AS kode, bpjd_jumlah AS jumlah
+       FROM tbpj_dtl WHERE bpjd_bpj_nomor = ?`,
+      [data.Nomor],
+    );
+    const mapLama = new Map(dtlLama.map((r) => [r.kode, Number(r.jumlah)]));
+    const mapBaru = new Map(
+      Detail.filter((r) => r.kode && Number(r.jumlah) > 0).map((r) => [
+        r.kode,
+        Number(r.jumlah),
+      ]),
+    );
+    const sama =
+      mapLama.size === mapBaru.size &&
+      [...mapLama].every(([k, v]) => mapBaru.get(k) === v);
+    if (!sama) {
+      throw new Error(
+        "Sudah dibuat Voucher Pembayaran. Jumlah terima per komponen tidak bisa diubah.",
+      );
+    }
+    hanyaUbahBerat = true;
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
     let nomor = isNew ? await generateNomor(Tanggal, conn) : data.Nomor;
+
+    if (hanyaUbahBerat) {
+      await conn.query(
+        `UPDATE tbpj_hdr SET
+           bpj_nomaterial = ?, bpj_bhn_kode = ?,
+           bpj_qty_berat  = ?, bpj_sat_berat = ?,
+           bpj_komponen   = ?, bpj_alasan    = ?,
+           date_modified  = NOW(), user_modified = ?
+         WHERE bpj_nomor = ?`,
+        [
+          NoMaterial,
+          BhnKode,
+          Number(QtyBerat),
+          SatBerat,
+          Komponen,
+          Alasan,
+          userKode,
+          nomor,
+        ],
+      );
+
+      if (pin5Status === "ACC" && pin5Urut) {
+        await conn.query(
+          `UPDATE tspk_pin5 SET pin_dipakai = 'Y'
+           WHERE pin_trs = 'BPB JASA' AND pin_nomor = ? AND pin_urut = ?`,
+          [nomor, pin5Urut],
+        );
+      }
+
+      await conn.commit();
+      return nomor;
+    }
 
     if (isNew) {
       await conn.query(
