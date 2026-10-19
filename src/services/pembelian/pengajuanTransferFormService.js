@@ -110,21 +110,18 @@ const getPettyCashOptions = async (search = "") => {
       h.pck_total AS nominal
     FROM retail.tpettycash_klaim_hdr h
     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pck_cab
-    WHERE h.pck_nomor NOT IN (
-      SELECT d.ptd_trs FROM finance.tpengajuan_transfer_dtl d
-      WHERE d.ptd_trs <> ''
-    )
-    AND EXISTS (
-      SELECT 1 FROM retail.tpettycash_hdr pc
-      WHERE pc.pck_nomor = h.pck_nomor 
-      AND pc.pc_status = 'ACC'
-    )
-    AND (h.pck_nomor LIKE ? OR h.pck_cab LIKE ?)
-    ORDER BY h.pck_nomor 
+    WHERE h.pck_status = 'APPROVED'
+      AND IFNULL(h.pck_pth_nomor, '') = ''
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_trs = h.pck_nomor
+      )
+      AND (h.pck_nomor LIKE ? OR h.pck_cab LIKE ?)
+    ORDER BY h.pck_nomor
   `,
     [`%${search}%`, `%${search}%`],
   );
-  return rows;
+  return rows.map((r) => ({ ...r, nominal: Number(r.nominal) }));
 };
 
 // ── BKK (F1) — cari nomor BKK yang mau dipanggil ke Pengajuan Transfer.
