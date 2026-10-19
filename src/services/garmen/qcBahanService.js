@@ -123,7 +123,28 @@ const getBrowseDetail = async (nomor) => {
     `,
     [nomor],
   );
-  return rows;
+
+  const [rolls] = await db.query(
+    `SELECT qcr_lot_nourut AS LotNourut, qcr_nourut AS Nourut,
+            qcr_no_roll AS NoRoll, qcr_qty AS Qty,
+            qcr_gramasi_atas AS GramasiAtas, qcr_gramasi_bawah AS GramasiBawah,
+            qcr_setting_cek AS SettingCek,
+            qcr_h_gramasi AS HGramasi, qcr_h_setting AS HSetting,
+            qcr_h_warna AS Warna, qcr_h_handfeel AS Handfeel,
+            qcr_h_bowing AS Bowing, qcr_h_shrinkage AS Shrinkage,
+            qcr_h_kelunturan AS Kelunturan,
+            qcr_nilai AS Nilai, qcr_catatan AS Catatan
+     FROM tqc_bahan_roll
+     WHERE qcr_qc_nomor = ?
+     ORDER BY qcr_lot_nourut, qcr_nourut`,
+    [nomor],
+  );
+  const rollMap = {};
+  rolls.forEach(({ LotNourut, ...r }) => {
+    (rollMap[LotNourut] ||= []).push(r);
+  });
+
+  return rows.map((r) => ({ ...r, Rolls: rollMap[r.Nourut] || [] }));
 };
 
 // Semua lot pada rentang tanggal (untuk Export Detail). Filter sama dengan getBrowse.
@@ -156,15 +177,31 @@ const getBrowseAllDetail = async (startDate, endDate, status = "ALL") => {
       d.qcd_gramasi_cek AS GramasiCek,
       d.qcd_setting_cek AS SettingCek,
       d.qcd_nilai AS Nilai,
-      d.qcd_keputusan AS Keputusan
+      d.qcd_keputusan AS Keputusan,
+      d.qcd_nourut AS LotNourut,
+      r.qcr_nourut AS RollNourut,
+      r.qcr_no_roll AS NoRoll,
+      r.qcr_qty AS RollQty,
+      r.qcr_gramasi_atas AS GramasiAtas,
+      r.qcr_gramasi_bawah AS GramasiBawah,
+      r.qcr_setting_cek AS SettingRoll,
+      r.qcr_h_warna AS WarnaMeter,
+      r.qcr_h_handfeel AS Handfeel,
+      r.qcr_h_bowing AS Bowing,
+      r.qcr_h_shrinkage AS Shrinkage,
+      r.qcr_h_kelunturan AS Kelunturan,
+      r.qcr_nilai AS NilaiRoll,
+      r.qcr_catatan AS CatatanRoll
     FROM tqc_bahan_hdr h
     INNER JOIN tqc_bahan_dtl d ON d.qcd_qc_nomor = h.qc_nomor
+    LEFT JOIN tqc_bahan_roll r
+      ON r.qcr_qc_nomor = d.qcd_qc_nomor AND r.qcr_lot_nourut = d.qcd_nourut
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor
      AND pd.pod_nourut = h.qc_pod_nourut
     WHERE h.qc_tgl_datang BETWEEN ? AND ?
       ${statusFilter}
-    ORDER BY h.qc_nomor DESC, d.qcd_nourut
+    ORDER BY h.qc_nomor DESC, d.qcd_nourut, r.qcr_nourut
     `,
     params,
   );

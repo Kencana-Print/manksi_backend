@@ -295,6 +295,14 @@ const saveData = async (payload, userKode) => {
           throw new Error(
             `Baris ${idx + 1}: Nomor SPK/MAP untuk bahan ${it.kode} wajib diisi.`,
           );
+        if ((Number(it.roll) || 0) <= 0)
+          throw new Error(
+            `Baris ${idx + 1}: Roll untuk bahan ${it.kode} wajib diisi.`,
+          );
+        if ((Number(it.harga) || 0) <= 0 && (Number(it.hargaRoll) || 0) <= 0)
+          throw new Error(
+            `Baris ${idx + 1}: Harga Beli atau Harga Roll untuk bahan ${it.kode} wajib diisi.`,
+          );
         const kunci = `${it.kode}|${sup}|${spk.toUpperCase()}`;
         if (kunciSet.has(kunci))
           throw new Error(
@@ -413,6 +421,18 @@ const saveData = async (payload, userKode) => {
       if (cekMKB[0].total > 0) {
         throw new Error("PO ini sudah link di MKB, tidak bisa di edit");
       }
+      if (jenisDb === 2) {
+        const [cekVoucher] = await conn.query(
+          `SELECT voud_vou_nomor FROM tvoucher_dtl
+           WHERE voud_nota = ? AND voud_type = 'PCL' LIMIT 1`,
+          [nomorPO],
+        );
+        if (cekVoucher.length > 0) {
+          throw new Error(
+            `PO Celup ini sudah dibayar di Voucher ${cekVoucher[0].voud_vou_nomor}, tidak bisa di edit.`,
+          );
+        }
+      }
 
       // ====================================================
 
@@ -472,8 +492,8 @@ const saveData = async (payload, userKode) => {
           `
             INSERT INTO tpo_dtl (
               pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_hargaroll, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomorPO,
@@ -488,6 +508,7 @@ const saveData = async (payload, userKode) => {
             item.jumlah || 0,
             item.diskon || 0,
             item.harga || 0,
+            isLainLain ? Number(item.hargaRoll) || 0 : 0,
             String(item.spk || "").trim(),
             item.mkb || "",
             isLainLain ? item.supKode : null,

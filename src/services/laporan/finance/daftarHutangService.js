@@ -117,6 +117,81 @@ const getHutangPoLainLain = async (startDate, endDate) => {
   return hasil;
 };
 
+// ── PO Celup via Voucher Pembayaran (tipe PCL) ──────────────────────────
+// Satu PO Celup bisa punya banyak BPB. Voucher PCL dibagi ke BPB tertua dulu,
+// masing-masing maksimal sebesar total BPB-nya. Semua BPB PO dihitung (termasuk
+// di luar rentang tanggal), hanya yang dalam rentang yang dikembalikan.
+// Relasi BPB ke PO: bpb_po_nomor (Delphi/manual) atau bpb_keterangan (auto-BPB web).
+const getAlokasiPcl = async (startDate, endDate) => {
+  const [vou] = await db.query(
+    `SELECT v.voud_nota AS Po, vh.vou_nomor AS NomorVoucher,
+            DATE_FORMAT(vh.vou_tanggal, '%Y-%m-%d') AS TanggalVoucher,
+            v.voud_total AS Total,
+            vh.vou_status_realisasi AS StatusRealisasi,
+            EXISTS (
+              SELECT 1 FROM bayar_debet_detail bd
+              WHERE bd.vou_nomor = vh.vou_nomor
+            ) AS Bayar
+     FROM tvoucher_dtl v
+     INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
+     WHERE v.voud_type = 'PCL'
+     ORDER BY v.voud_nota, vh.vou_tanggal, vh.vou_nomor`,
+  );
+  if (!vou.length) return { perBpb: new Map(), detail: [] };
+
+  const poList = [...new Set(vou.map((v) => v.Po))];
+  const [bpb] = await db.query(
+    `SELECT h.bpb_nomor AS Bpb, c.po_nomor AS Po,
+            (h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?) AS DalamRentang,
+            ROUND(SUM((d.bpbd_harga * (100 - d.bpbd_disc) / 100) * d.bpbd_jumlah
+              * IF(p.po_status_ppn = 1, (100 + p.po_ppn) / 100, 1)), 2) AS Total
+     FROM tbpb_hdr h
+     INNER JOIN tpo_hdr c
+       ON c.po_jenis = 2 AND c.po_nomor IN (h.bpb_po_nomor, h.bpb_keterangan)
+     INNER JOIN tbpb_dtl d ON d.bpbd_bpb_nomor = h.bpb_nomor
+     INNER JOIN tpo_hdr p ON p.po_nomor = h.bpb_po_nomor
+     WHERE c.po_nomor IN (?)
+     GROUP BY h.bpb_nomor, c.po_nomor, h.bpb_tanggal
+     ORDER BY c.po_nomor, h.bpb_tanggal, h.bpb_nomor`,
+    [startDate, endDate, poList],
+  );
+
+  const bulat = (n) => Math.round(n * 100) / 100;
+  const antrian = {};
+  vou.forEach((v) => {
+    (antrian[v.Po] ||= []).push({ ...v, sisa: Number(v.Total) || 0 });
+  });
+
+  const perBpb = new Map();
+  const detail = [];
+  for (const b of bpb) {
+    let butuh = Number(b.Total) || 0;
+    const alok = { v: 0, b: 0 };
+    for (const v of antrian[b.Po] || []) {
+      if (butuh <= 0.005) break;
+      if (v.sisa <= 0.005) continue;
+      const ambil = bulat(Math.min(butuh, v.sisa));
+      v.sisa = bulat(v.sisa - ambil);
+      butuh = bulat(butuh - ambil);
+      alok.v += ambil;
+      if (Number(v.Bayar) === 1) alok.b += ambil;
+      if (Number(b.DalamRentang)) {
+        detail.push({
+          Nomor: b.Bpb,
+          NomorVoucher: v.NomorVoucher,
+          TanggalVoucher: v.TanggalVoucher,
+          Total: ambil,
+          StatusRealisasi: v.StatusRealisasi,
+        });
+      }
+    }
+    if (Number(b.DalamRentang)) {
+      perBpb.set(b.Bpb, { v: bulat(alok.v), b: bulat(alok.b) });
+    }
+  }
+  return { perBpb, detail };
+};
+
 // ── Master: Daftar Seluruh Jenis BPB / Nota Hutang ─────────────────────
 const getBrowse = async (startDate, endDate) => {
   const [rowsUtama] = await db.query(
@@ -297,6 +372,15 @@ const getBrowse = async (startDate, endDate) => {
     ],
   );
 
+  const { perBpb } = await getAlokasiPcl(startDate, endDate);
+  rowsUtama.forEach((r) => {
+    const a = r.Tipe === "PBG" ? perBpb.get(r.Nomor) : null;
+    if (a) {
+      r.Voucher = Number(r.Voucher) + a.v;
+      r.Bayar = Number(r.Bayar) + a.b;
+    }
+  });
+
   const lain = await getHutangPoLainLain(startDate, endDate);
   const gabung = [...rowsUtama, ...lain];
   gabung.sort(
@@ -411,7 +495,9 @@ const getDetail = async (startDate, endDate) => {
      WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?`,
     [startDate, endDate],
   );
-  return [...rows, ...rowsLain, ...rowsPum, ...rowsVouPol].sort(
+
+  const { detail: rowsVouPcl } = await getAlokasiPcl(startDate, endDate);
+  return [...rows, ...rowsLain, ...rowsPum, ...rowsVouPol, ...rowsVouPcl].sort(
     (a, b) =>
       String(a.Nomor).localeCompare(String(b.Nomor)) ||
       String(a.TanggalVoucher).localeCompare(String(b.TanggalVoucher)),

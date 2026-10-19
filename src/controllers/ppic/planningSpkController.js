@@ -63,6 +63,19 @@ const deleteData = async (req, res) => {
   }
 };
 
+const updateKeterangan = async (req, res) => {
+  try {
+    const data = await svc.updateKeteranganDetail(req.params.nomor, req.body);
+    res.json({
+      success: true,
+      message: "Keterangan berhasil disimpan.",
+      data,
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 const exportMaster = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -114,6 +127,7 @@ module.exports = {
   getDetail,
   getDetailAktual,
   toggleClose,
+  updateKeterangan,
   deleteData,
   exportMaster,
   exportDetail,

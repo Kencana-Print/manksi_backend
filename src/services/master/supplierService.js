@@ -1,17 +1,40 @@
 const db = require("../../config/database");
 
-const getBrowse = async () => {
+// Bagian yang boleh melihat rekening bank supplier. Dibandingkan UPPERCASE
+// dengan req.user.bagian. ADMIN sengaja TIDAK dibypass.
+const BAGIAN_LIHAT_REKENING = ["PEMBELIAN", "FINANCE", "EDP", "DIR", "AUDIT"];
+
+const bolehLihatRekening = (user) =>
+  BAGIAN_LIHAT_REKENING.includes(String(user?.bagian || "").toUpperCase());
+
+const getBrowse = async (user) => {
+  const lihatRek = bolehLihatRekening(user);
+
+  // Rekening hanya di-JOIN untuk yang berhak: satu baris per rekening.
+  // User lain tetap satu baris per supplier dan datanya tidak ikut terkirim.
+  const kolomRek = lihatRek
+    ? `, i.supd_bank AS Bank, i.supd_atasnama AS AtasNama, i.supd_rekening AS Rekening`
+    : "";
+  const joinRek = lihatRek
+    ? `LEFT JOIN tsupplieritem i ON i.supd_kode = s.sup_kode`
+    : "";
+  const urutRek = lihatRek ? `, i.supd_rekening ASC` : "";
+
   const query = `
     SELECT 
-      sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota, 
-      sup_fax AS Fax, sup_telp AS Telp, sup_cp AS Contact, sup_hp AS HP, 
-      sup_targetmitra AS TargetMitra, sup_ket AS Keterangan, sup_aktif AS Aktif, 
-      user_create AS Usr, DATE_FORMAT(date_create, '%d/%m/%Y %H:%i:%s') AS Created
-    FROM tsupplier 
-    ORDER BY sup_nama ASC
+      s.sup_kode AS Kode, s.sup_nama AS Nama, s.sup_alamat AS Alamat, s.sup_kota AS Kota, 
+      s.sup_fax AS Fax, s.sup_telp AS Telp, s.sup_cp AS Contact, s.sup_hp AS HP, 
+      s.sup_targetmitra AS TargetMitra, s.sup_ket AS Keterangan, s.sup_aktif AS Aktif, 
+      s.user_create AS Usr, DATE_FORMAT(s.date_create, '%d/%m/%Y %H:%i:%s') AS Created
+      ${kolomRek}
+    FROM tsupplier s
+    ${joinRek}
+    ORDER BY s.sup_nama ASC, s.sup_kode ASC ${urutRek}
   `;
   const [rows] = await db.query(query);
-  return rows;
+
+  // Key unik per baris (Kode berulang kalau supplier punya >1 rekening)
+  return rows.map((r, i) => ({ RowId: i + 1, ...r }));
 };
 
 const getById = async (kode) => {

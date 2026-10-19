@@ -894,15 +894,19 @@ const resolveSoRef = async (nomorSpk) => {
 // Sesuai Delphi — cek per jenis lini di tplan_ppic_dtl2
 // ─────────────────────────────────────────────────────────
 const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
-  const [[row]] = await db.query(
-    `SELECT COUNT(*) AS jml
-     FROM tplan_ppic_dtl2 d
-     INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
-     WHERE h.pl_close = 'N' AND d.plan_spk = ? AND d.plan_divisi = ?
-       AND d.plan_qty_jadwal <> 0`,
-    [nomorSpk, ppicDivisi],
-  );
-  if (Number(row.jml) > 0) return true;
+  // BORDIR tidak punya divisi di Planning SPK PPIC, jadi hanya divalidasi
+  // lewat Planning per SPK (tplanningspk).
+  if (ppicDivisi !== "BORDIR") {
+    const [[row]] = await db.query(
+      `SELECT COUNT(*) AS jml
+       FROM tplan_ppic_dtl2 d
+       INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
+       WHERE h.pl_close = 'N' AND d.plan_spk = ? AND d.plan_divisi = ?
+         AND d.plan_qty_jadwal <> 0`,
+      [nomorSpk, ppicDivisi],
+    );
+    if (Number(row.jml) > 0) return true;
+  }
 
   const kolom = DIVISI_TO_KOLOM_PLANSPK[planSpkKolom || ppicDivisi];
   if (!kolom) return false;
@@ -1583,7 +1587,10 @@ const getDataCetak = async (nomor) => {
 // getPlanningPpic yang selalu "" utk ketiganya), jadi validasi ini
 // tidak relevan buat mereka.
 // ─────────────────────────────────────────────────────────
-const JENIS_TANPA_VALIDASI_PLANNING = ["2", "3", "4"];
+// Jenis 2, 3, 4 secara struktural tidak punya planning PPIC.
+// Jenis 6 (Lipat ke Koli) menyusul: divisi Koli sudah dihapus dari
+// Planning SPK PPIC, jadi tidak ada lagi planning yang bisa divalidasi.
+const JENIS_TANPA_VALIDASI_PLANNING = ["2", "3", "4", "6"];
 
 // Gudang TUJUAN yang secara struktural tidak pernah punya planning PPIC,
 // terlepas dari gudang ASAL-nya atau lewat tombol preset Jenis Mutasi

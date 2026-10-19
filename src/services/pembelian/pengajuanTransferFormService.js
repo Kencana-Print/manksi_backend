@@ -51,6 +51,7 @@ const getVoucherOptions = async (search = "") => {
     `
     SELECT h.vou_nomor AS nomor,
       DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
+      h.vou_sup_kode AS supKode,
       s.sup_nama AS supplier,
       h.vou_total - IFNULL((
         SELECT SUM(voud2_harga * voud2_jumlah)

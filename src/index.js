@@ -382,6 +382,8 @@ const relationshipMapRoutes = require("./routes/tools/relationshipMapRoutes");
 const informasiBahanRoutes = require("./routes/tools/informasiBahanRoutes");
 const agendaKerjaRoutes = require("./routes/tools/agendaKerjaRoutes");
 const agendaPicRoutes = require("./routes/tools/agendaPicRoutes");
+const notulensiMeetingRoutes = require("./routes/tools/notulensiMeetingRoutes");
+const notulensiMeetingFormRoutes = require("./routes/tools/notulensiMeetingFormRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
 const settingHargaBahanRoutes = require("./routes/pembelian/settingHargaBahanRoutes");
@@ -961,6 +963,8 @@ app.use("/api/tools/relationship-map", relationshipMapRoutes);
 app.use("/api/tools/sistem-informasi-bahan", informasiBahanRoutes);
 app.use("/api/tools/agenda-kerja", agendaKerjaRoutes);
 app.use("/api/tools/agenda-pic", agendaPicRoutes);
+app.use("/api/tools/notulensi-meeting", notulensiMeetingRoutes);
+app.use("/api/tools/notulensi-meeting-form", notulensiMeetingFormRoutes);
 
 app.use("/api/system/version", versionRoutes);
 

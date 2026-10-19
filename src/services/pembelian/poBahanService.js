@@ -106,8 +106,8 @@ const getBrowseDetail = async (
   canLihatSup = false,
 ) => {
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS Disc,";
+    ? "d.pod_hargabeli AS Harga, d.pod_hargaroll AS HargaRoll, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS HargaRoll, NULL AS Disc,";
   // Supplier per baris (PO Lain-lain); PO lain jatuh ke supplier header
   const supCol = canLihatSup ? "sp.sup_nama AS Supplier," : "NULL AS Supplier,";
 
@@ -118,6 +118,7 @@ const getBrowseDetail = async (
       b.bhn_name AS Nama,
       d.pod_bhn_satuan AS Satuan,
       d.pod_jumlah AS Jumlah,
+      d.pod_roll AS Roll,
       ${supCol}
       
       IFNULL((
@@ -180,6 +181,17 @@ const deleteData = async (nomor) => {
 
     if (header.po_close === 1 || header.po_close === 9) {
       throw new Error("PO Sudah di-Close. Tidak bisa dihapus.");
+    }
+
+    const [cekVoucher] = await conn.query(
+      `SELECT voud_vou_nomor FROM tvoucher_dtl
+       WHERE voud_nota = ? AND voud_type = 'PCL' LIMIT 1`,
+      [nomor],
+    );
+    if (cekVoucher.length > 0) {
+      throw new Error(
+        `PO ini sudah dibayar di Voucher ${cekVoucher[0].voud_vou_nomor}, tidak bisa dihapus.`,
+      );
     }
 
     if (header.po_jenis === 2 && header.po_greige) {
@@ -319,8 +331,8 @@ const getAllDetail = async (
     : "NULL AS KodeSupplier, NULL AS Supplier,";
 
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS Disc,";
+    ? "d.pod_hargabeli AS Harga, d.pod_hargaroll AS HargaRoll, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS HargaRoll, NULL AS Disc,";
 
   let sql = `
     SELECT 
@@ -333,6 +345,7 @@ const getAllDetail = async (
       b.bhn_name AS Nama,
       d.pod_bhn_satuan AS Satuan,
       d.pod_jumlah AS Jumlah,
+      d.pod_roll AS Roll,
       
       IFNULL((SELECT IFNULL(SUM(i.bpbd2_jumlah), 0) FROM tbpb_dtl2 i WHERE i.bpbd2_po_nomor = d.pod_po_nomor AND i.bpbd2_nourut = d.pod_nourut), 0) AS QtyBpb,
       IFNULL((SELECT SUM(i.retd_jumlah) FROM tret_dtl i INNER JOIN tret_hdr j ON j.ret_nomor = i.retd_ret_nomor INNER JOIN tbpb_hdr f ON f.bpb_Nomor = j.ret_bpb_nomor WHERE f.bpb_po_Nomor = h.po_Nomor AND i.retd_bhn_kode = d.pod_bhn_kode AND (h.po_jenis <> 4 OR f.bpb_sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode))), 0) AS QtyRetur,

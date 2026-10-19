@@ -241,6 +241,42 @@ const saveBastData = async (payload, userKode, userCabang) => {
     } = payload;
     const nomorMap = header.mspk_nomor || header.MSPK_Nomor;
 
+    // Rencana Size = BRAKEDOWN SIZE → Babaran per Size wajib diisi.
+    // Dibaca dari DB (bukan dari payload) supaya tidak bisa dilewati lewat request manual.
+    const [[mapRs]] = await conn.query(
+      `SELECT mspk_rencana_size FROM tmemospk WHERE mspk_nomor = ?`,
+      [nomorMap],
+    );
+    if (!mapRs) throw new Error("Data MAP tidak ditemukan.");
+
+    if (
+      String(mapRs.mspk_rencana_size || "")
+        .trim()
+        .toUpperCase() === "BRAKEDOWN SIZE"
+    ) {
+      const namaKomponen = [
+        ...new Set(
+          komponen.map((k) => String(k.komponen || "").trim()).filter(Boolean),
+        ),
+      ];
+      const kurang = namaKomponen.filter((nm) => {
+        const rows = sizeBreakdown.filter(
+          (s) => String(s.komponen || "").trim() === nm,
+        );
+        return (
+          rows.length === 0 ||
+          rows.some(
+            (s) => !String(s.size || "").trim() || !(Number(s.babaran) > 0),
+          )
+        );
+      });
+      if (kurang.length > 0) {
+        throw new Error(
+          `Rencana Size MAP ini BRAKEDOWN SIZE. Babaran per Size wajib diisi (> 0) untuk komponen: ${kurang.join(", ")}.`,
+        );
+      }
+    }
+
     // 1. Update tmemospk (Header MAP)
     await conn.query(
       `UPDATE tmemospk SET 
