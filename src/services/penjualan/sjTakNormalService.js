@@ -61,7 +61,7 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
     `SELECT
        d.sjd_sj_nomor   AS Nomor,
        d.sjd_spk_nomor  AS Kode,
-       s.spk_nama       AS Nama,
+       IFNULL(s.spk_nama, b.brg_name) AS Nama,
        s.spk_ukuran     AS Ukuran,
        s.spk_panjang    AS Panjang,
        s.spk_lebar      AS Lebar,
@@ -69,7 +69,8 @@ const getBrowseDetail = async (tglAwal, tglAkhir, nomor = "") => {
        d.sjd_keterangan AS Keterangan
      FROM tsj_hdr_bayangan h
      INNER JOIN tsj_dtl_bayangan d ON d.sjd_sj_nomor = h.sj_nomor
-     INNER JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     LEFT JOIN tbarang b ON b.brg_kode = d.sjd_spk_nomor
      WHERE ${where}
      ORDER BY d.sjd_sj_nomor`,
     params,
@@ -158,7 +159,7 @@ const getExportDetail = async (tglAwal, tglAkhir, canLihatCus = false) => {
        g.gdg_nama                                       AS Gudang,
        DATE_FORMAT(a.date_create,'%d-%m-%Y %T')         AS Created,
        d.sjd_spk_nomor  AS Kode,
-       s.spk_nama       AS Nama,
+       IFNULL(s.spk_nama, b.brg_name) AS Nama,
        s.spk_ukuran     AS Ukuran,
        s.spk_panjang    AS Panjang,
        s.spk_lebar      AS Lebar,
@@ -166,7 +167,8 @@ const getExportDetail = async (tglAwal, tglAkhir, canLihatCus = false) => {
        d.sjd_keterangan AS KetDetail
      FROM tsj_hdr_bayangan a
      INNER JOIN tsj_dtl_bayangan d ON d.sjd_sj_nomor = a.sj_nomor
-     INNER JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     LEFT JOIN tspk s ON s.spk_nomor = d.sjd_spk_nomor
+     LEFT JOIN tbarang b ON b.brg_kode = d.sjd_spk_nomor
      INNER JOIN tgudang g ON g.gdg_kode = a.sj_gdg_kode
      LEFT JOIN tcustomer c ON c.cus_kode = a.sj_cus_kode
      LEFT JOIN tdivisi v ON v.kode = a.sj_divisi
