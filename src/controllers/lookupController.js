@@ -156,7 +156,7 @@ const getKomponenKain = async (req, res) => {
 
 const getCetakOptions = async (req, res) => {
   try {
-    const data = await lookupService.getCetakOptions();
+    const data = await lookupService.getCetakOptions(req.query);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

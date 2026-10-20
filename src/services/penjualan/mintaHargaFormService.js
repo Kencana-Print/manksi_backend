@@ -276,18 +276,59 @@ const getById = async (nomor, currentUser) => {
   data.isKalkulasiLocked = false;
   data.KalkulasiInfo = ""; // Untuk menampung string "Created: X, Modified: Y"
 
-  // 2. Ambil Data Kalkulasi (Jika Ada)
-  if (data.mh_nomor_kalkulasi) {
-    const kalNo = data.mh_nomor_kalkulasi;
+  // 2. Ambil Data Kalkulasi (Mengecek 2 Sumber: No. Kalkulasi Finance dan No. Kalkulasi Sales)
+  let kalNoFinance = String(data.mh_nomor_kalkulasi || "").trim();
+  // Jika mh_nomor_kalkulasi terisi KALS (data lama), pisahkan agar dianggap kalkulasi sales
+  let kalNoSalesLegacy = "";
+  if (kalNoFinance.toUpperCase().startsWith("KALS")) {
+    kalNoSalesLegacy = kalNoFinance;
+    kalNoFinance = "";
+  }
+
+  // Cari No. Kalkulasi Sales di tkalkulasi_hdr berdasarkan kal_mh_nomor
+  let kalNoSales = kalNoSalesLegacy;
+  const [salesRows] = await db.query(
+    `SELECT kal_nomor FROM kalkulasi.tkalkulasi_hdr WHERE kal_mh_nomor = ? ORDER BY date_create DESC LIMIT 1`,
+    [nomor],
+  );
+  if (salesRows.length > 0 && salesRows[0].kal_nomor) {
+    kalNoSales = salesRows[0].kal_nomor;
+  }
+
+  data.NoKalkulasi = kalNoFinance;
+  data.NoKals = kalNoSales;
+
+  // Tentukan nomor kalkulasi aktif yang akan dimuat ke Tab 2 (Get Price):
+  // Prioritas 1: Jika Finance sudah membuat kalkulasi (ada No. Kalkulasi KAL), ambil dari tkalkulasi2_*
+  // Prioritas 2: Jika Finance belum membuat kalkulasi, tetapi ada No. Kalkulasi Sales (KALS), ambil dari tkalkulasi_*
+  const activeKalNo = kalNoFinance || kalNoSales;
+  const isKals = !kalNoFinance && String(kalNoSales).toUpperCase().startsWith("KALS");
+  const tblPrefix = isKals ? "tkalkulasi" : "tkalkulasi2";
+
+  if (activeKalNo) {
     const [kalHdr] = await db.query(
       `SELECT h.*, 
         IF(h.date_modified IS NOT NULL, DATE_FORMAT(h.date_modified,"%d-%m-%Y %T"), DATE_FORMAT(h.date_create,"%d-%m-%Y %T")) as tglFormat 
-       FROM kalkulasi.tkalkulasi2_hdr h WHERE h.kal_nomor = ?`,
-      [kalNo],
+       FROM kalkulasi.${tblPrefix}_hdr h WHERE h.kal_nomor = ?`,
+      [activeKalNo],
     );
 
     if (kalHdr.length > 0) {
       const h = kalHdr[0];
+
+      // Fallback jika KALS dan kal_rpsesuai masih 0 / belum terisi tetapi ada kal_rpsales / kal_rpsistem / mh_harga_kalkulasi
+      if (isKals) {
+        if (Number(h.kal_rpsesuai || 0) === 0) {
+          h.kal_rpsesuai = Number(
+            h.kal_rpsales || h.kal_rpsistem || data.mh_harga_kalkulasi || 0,
+          );
+        }
+        if (Number(h.kal_rpsesuaippn || 0) === 0) {
+          h.kal_rpsesuaippn = Number(
+            h.kal_rpsales || h.kal_rpsistem || data.mh_harga_kalkulasi || 0,
+          );
+        }
+      }
 
       // --- LOGIKA CREATOR & MODIFIER ---
       let cusra = h.user_create || "";
@@ -318,49 +359,113 @@ const getById = async (nomor, currentUser) => {
     }
 
     const [kalDtl] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_dtl WHERE kald_nomor = ?`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_dtl WHERE kald_nomor = ?`,
+      [activeKalNo],
     );
     const [kalCtk] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_cetak WHERE kald_nomor = ?`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_cetak WHERE kald_nomor = ?`,
+      [activeKalNo],
     );
     const [kalBordir] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_bordir WHERE kald_nomor = ?`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_bordir WHERE kald_nomor = ?`,
+      [activeKalNo],
     );
     const [kalDtf] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_dtf WHERE kald_nomor = ?`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_dtf WHERE kald_nomor = ?`,
+      [activeKalNo],
+    );
+    const [kalSublim] = await db.query(
+      `SELECT * FROM kalkulasi.${tblPrefix}_sublim WHERE kald_nomor = ?`,
+      [activeKalNo],
     );
 
     const [gridKomponen] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_komponen WHERE kk_nomor = ? ORDER BY kk_nourut`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_komponen WHERE kk_nomor = ? ORDER BY kk_nourut`,
+      [activeKalNo],
     );
 
     const bodyKomp = gridKomponen.find((k) => k.kk_komponen === "BODY");
 
-    const [gridCetak] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_ctk WHERE kc_nomor = ? ORDER BY kc_nourut`,
-      [kalNo],
+    let [gridCetak] = await db.query(
+      `SELECT * FROM kalkulasi.${tblPrefix}_ctk WHERE kc_nomor = ? ORDER BY kc_nourut`,
+      [activeKalNo],
     );
     const [gridAksesoris] = await db.query(
-      `SELECT * FROM kalkulasi.tkalkulasi2_aksesories WHERE ka_nomor = ? ORDER BY ka_nourut`,
-      [kalNo],
+      `SELECT * FROM kalkulasi.${tblPrefix}_aksesories WHERE ka_nomor = ? ORDER BY ka_nourut`,
+      [activeKalNo],
     );
+
+    // Khusus jika gridCetak kosong di tkalkulasi_ctk (misal pada KALS atau data lama):
+    // Rekonstruksi otomatis dari tabel cetak, sublim, dtf, dan bordir
+    if (!gridCetak || gridCetak.length === 0) {
+      const fallbackCetak = [];
+      let noUrut = 1;
+
+      const ctkVal = Number(kalCtk[0]?.kald_rpcetak || 0);
+      if (ctkVal > 0) {
+        fallbackCetak.push({
+          kc_nomor: activeKalNo,
+          kc_nourut: noUrut++,
+          kc_ket: "CETAK / SABLON",
+          kc_biaya: ctkVal,
+        });
+      }
+
+      const subVal = Number(kalSublim[0]?.kald_rpsublim || 0);
+      if (subVal > 0) {
+        fallbackCetak.push({
+          kc_nomor: activeKalNo,
+          kc_nourut: noUrut++,
+          kc_ket: "SUBLIM",
+          kc_biaya: subVal,
+        });
+      }
+
+      const dtfVal = Number(kalDtf[0]?.kald_rpdtf || 0);
+      if (dtfVal > 0) {
+        const p = Number(kalDtf[0]?.kald_dtfp1 || 0);
+        const l = Number(kalDtf[0]?.kald_dtfl1 || 0);
+        const ketDtf = p > 0 && l > 0 ? `DTF ${p}x${l} cm` : "DTF";
+        fallbackCetak.push({
+          kc_nomor: activeKalNo,
+          kc_nourut: noUrut++,
+          kc_ket: ketDtf,
+          kc_biaya: dtfVal,
+        });
+      }
+
+      const borVal = Number(kalBordir[0]?.kald_rpbordir || 0);
+      if (borVal > 0) {
+        const p = Number(kalBordir[0]?.kald_bordirp1 || 0);
+        const l = Number(kalBordir[0]?.kald_bordirl1 || 0);
+        const ketBor = p > 0 && l > 0 ? `BORDIR ${p}x${l} cm` : "BORDIR";
+        fallbackCetak.push({
+          kc_nomor: activeKalNo,
+          kc_nourut: noUrut++,
+          kc_ket: ketBor,
+          kc_biaya: borVal,
+        });
+      }
+
+      if (fallbackCetak.length > 0) {
+        gridCetak = fallbackCetak;
+      }
+    }
 
     data.Kalkulasi = {
       Header: kalHdr[0] || {},
       Detail: kalDtl[0] || {},
       Cetak: kalCtk[0] || {},
+      Sublim: kalSublim[0] || {},
       Bordir: kalBordir[0] || {},
       Dtf: kalDtf[0] || {},
       GridKomponen: gridKomponen,
-      GridCetak: gridCetak,
+      GridCetak: gridCetak || [],
       GridAksesoris: gridAksesoris,
       LoadedJenisKain: bodyKomp ? bodyKomp.kk_jeniskain : "",
       LoadedWarna: bodyKomp ? bodyKomp.kk_warna : "MUDA",
+      ActiveNomor: activeKalNo,
+      SumberKalkulasi: isKals ? "SALES" : (kalNoFinance ? "FINANCE" : ""),
     };
   }
 
@@ -463,7 +568,11 @@ const save = async (data, userKode, userCabang, isNewMode) => {
         data.ProNomor || null,
         userKode,
       ];
-      if (["BELUM", "MINTA", "CANCEL"].includes(data.Status)) {
+      if (
+        ["BELUM", "MINTA", "CANCEL", "NEGO", "DONE", "WAIT"].includes(
+          data.Status,
+        )
+      ) {
         updateMh += `, mh_status=? `;
         updateParams.push(data.Status);
       }
@@ -528,7 +637,9 @@ const saveKalkulasi = async (
     }
 
     let nomorKal = kal.NomorKalkulasi;
-    if (!nomorKal) {
+    const isExistingFinance =
+      nomorKal && !String(nomorKal).toUpperCase().startsWith("KALS");
+    if (!isExistingFinance) {
       nomorKal = await generateKalkulasiNomor(mhRow.mh_tanggal);
       await conn.query(
         `
