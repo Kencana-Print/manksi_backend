@@ -7,6 +7,7 @@
 const dashboardService = require("../dashboard/dashboardService");
 const mutasiProduksiService = require("../laporan/gudang-garmen/laporanMutasiProduksiService");
 const realisasiPenjualanService = require("../laporan/marketing/realisasiPenjualanService");
+const targetVsAchievementService = require("../laporan/marketing/targetVsAchievementService");
 
 const parseTanggalID = (str) => {
   const [d, m, y] = String(str).split("-").map(Number);
@@ -479,6 +480,86 @@ const tools = [
             ? `Hanya menampilkan ${limit} sales teratas dari total ${ranking.length}.`
             : undefined,
         rankingSales: ranking.slice(0, limit),
+      };
+    },
+  },
+  {
+    definition: {
+      name: "get_target_vs_achievement",
+      description:
+        "Target vs realisasi (omset) marketing PER DIVISI — Garmen Prem, Garmen Med, Digital Print, Spanduk Kain — plus total semua divisi. Sumber: laporan Monitoring Target vs Achievement. Pakai untuk pertanyaan soal 'target tahun X', 'omset vs target per divisi', 'achievement/capaian target', atau perbandingan target & realisasi antar tahun (misal 2025 vs 2026) — termasuk sebagai bahan menyusun target tahun depan. Data target tersedia untuk tahun 2023 ke atas.",
+      input_schema: {
+        type: "object",
+        properties: {
+          tahun: {
+            type: "number",
+            description:
+              "Tahun laporan. Default tahun berjalan. Isi sesuai tahun yang ditanyakan user (misal 2025, 2026).",
+          },
+          bulanAwal: {
+            type: "number",
+            description:
+              "Bulan awal (1-12). Default 1 (Januari). HANYA isi kalau user menyebut bulan/rentang bulan eksplisit.",
+          },
+          bulanAkhir: {
+            type: "number",
+            description:
+              "Bulan akhir (1-12). Default 12 (Desember). Kalau user cuma menyebut 1 bulan, isi bulanAwal DAN bulanAkhir dengan bulan itu.",
+          },
+        },
+      },
+    },
+    handler: async (input) => {
+      const tahun = Number(input.tahun) || new Date().getFullYear();
+      const clamp = (n, d) => Math.min(12, Math.max(1, Number(n) || d));
+      const bulanAwal = clamp(input.bulanAwal, 1);
+      const bulanAkhir = Math.max(bulanAwal, clamp(input.bulanAkhir, 12));
+
+      const rows = await targetVsAchievementService.getByDivisi(
+        tahun,
+        bulanAwal,
+        bulanAkhir,
+      );
+
+      if (rows.length === 0) {
+        return {
+          tahun,
+          periodeBulan: `${String(bulanAwal).padStart(2, "0")} s.d ${String(bulanAkhir).padStart(2, "0")}`,
+          jumlahBaris: 0,
+          catatan:
+            "Belum ada data target untuk periode ini — target marketing belum diinput di sistem.",
+        };
+      }
+
+      // mysql2 balikin DECIMAL sebagai string → normalisasi + hitung ulang
+      // Ach% (SUM realisasi / SUM target), bukan rata-rata kolom Ach.
+      const divisi = rows.map((r) => ({
+        divisi: r.Divisi,
+        target: Number(r.Target) || 0,
+        realisasi: Number(r.Realisasi) || 0,
+        achPct:
+          Number(r.Target) > 0
+            ? Math.round(((Number(r.Realisasi) || 0) / Number(r.Target)) * 10000) /
+              100
+            : null,
+      }));
+      const totalTarget = divisi.reduce((s, r) => s + r.target, 0);
+      const totalRealisasi = divisi.reduce((s, r) => s + r.realisasi, 0);
+
+      return {
+        tahun,
+        periodeBulan: `${String(bulanAwal).padStart(2, "0")} s.d ${String(bulanAkhir).padStart(2, "0")}`,
+        divisi,
+        total: {
+          target: totalTarget,
+          realisasi: totalRealisasi,
+          achPct:
+            totalTarget > 0
+              ? Math.round((totalRealisasi / totalTarget) * 10000) / 100
+              : null,
+        },
+        catatan:
+          "Ach% = realisasi / target. Realisasi diambil dari SPK + SO (untuk transaksi setelah 06-08-2026 pakai SO), jadi tahun berjalan baru sampai bulan yang sudah berjalan.",
       };
     },
   },
