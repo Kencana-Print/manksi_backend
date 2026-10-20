@@ -51,15 +51,15 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       ) AS HargaMAP, 
       h.mh_harga_kalkulasi AS HargaKalkulasi, 
       IF(
-        h.mh_nomor_kalkulasi LIKE 'KALS%',
-        IF(l.date_modified IS NOT NULL, DATE_FORMAT(l.date_modified, '%Y-%m-%d'), DATE_FORMAT(l.date_create, '%Y-%m-%d')),
-        IF(k.date_modified IS NOT NULL, DATE_FORMAT(k.date_modified, '%Y-%m-%d'), DATE_FORMAT(k.date_create, '%Y-%m-%d'))
+        IFNULL(k.kal_nomor, '') != '',
+        IF(k.date_modified IS NOT NULL, DATE_FORMAT(k.date_modified, '%Y-%m-%d'), DATE_FORMAT(k.date_create, '%Y-%m-%d')),
+        IF(l.date_modified IS NOT NULL, DATE_FORMAT(l.date_modified, '%Y-%m-%d'), DATE_FORMAT(l.date_create, '%Y-%m-%d'))
       ) AS TglKalkulasi, 
-      h.mh_nomor_kalkulasi AS NoKalkulasi, 
+      IF(h.mh_nomor_kalkulasi LIKE 'KAL-%', h.mh_nomor_kalkulasi, '') AS NoKalkulasi, 
       h.mh_ket_kalkulasi AS KeteranganKalkulasi, 
-      IF(h.mh_nomor_kalkulasi LIKE 'KALS%', l.user_create, k.user_create) AS KalCreated, 
-      IF(h.mh_nomor_kalkulasi LIKE 'KALS%', l.user_modified, k.user_modified) AS KalModified,
-      IFNULL(l.kal_nomor,"") AS NoKals,  
+      IF(IFNULL(k.kal_nomor, '') != '', k.user_create, l.user_create) AS KalCreated, 
+      IF(IFNULL(k.kal_nomor, '') != '', k.user_modified, l.user_modified) AS KalModified,
+      IFNULL(l.kal_nomor, '') AS NoKals,  
       h.mh_status AS Status,
       DATE_FORMAT(h.mh_apv, '%d-%m-%Y %H:%i:%s') AS Approved, 
       h.mh_apv_usr AS diApvOleh, 
@@ -82,11 +82,11 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     FROM tmintaharga h 
     LEFT JOIN tdivisi v ON v.kode = h.mh_divisi 
     LEFT JOIN tsales s ON s.sal_kode = h.mh_sal_kode 
-    LEFT JOIN kalkulasi.tkalkulasi2_hdr k ON k.kal_nomor = h.mh_nomor_kalkulasi
-    LEFT JOIN kalkulasi.tkalkulasi_hdr l ON (
-      (h.mh_nomor_kalkulasi LIKE 'KALS%' AND l.kal_nomor = h.mh_nomor_kalkulasi)
-      OR
-      (h.mh_nomor_kalkulasi NOT LIKE 'KALS%' AND l.kal_nomor = (SELECT kal_nomor FROM kalkulasi.tkalkulasi_hdr WHERE kal_mh_nomor = h.mh_nomor ORDER BY date_create DESC LIMIT 1))
+    LEFT JOIN kalkulasi.tkalkulasi2_hdr k ON k.kal_nomor = h.mh_nomor_kalkulasi AND h.mh_nomor_kalkulasi LIKE 'KAL-%'
+    LEFT JOIN kalkulasi.tkalkulasi_hdr l ON l.kal_nomor = IF(
+      h.mh_nomor_kalkulasi LIKE 'KALS%',
+      h.mh_nomor_kalkulasi,
+      (SELECT kal_nomor FROM kalkulasi.tkalkulasi_hdr WHERE kal_mh_nomor = h.mh_nomor ORDER BY date_create DESC, kal_nomor DESC LIMIT 1)
     )
     WHERE h.mh_tanggal >= ? AND h.mh_tanggal <= ?
   `;
