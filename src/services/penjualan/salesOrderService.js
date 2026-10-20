@@ -107,12 +107,13 @@ const getBrowseList = async (filters) => {
         : 0;
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     const isDonaExtraCab = userKode === "DONADONG" ? 1 : 0;
+    const isDonaDivisi4 = userKode === "DONADONG" ? 1 : 0;
     const isMdiP01 = userKode === "MDI" ? 1 : 0;
 
     if (isGudang) {
-      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR y.spk_cab IN ('P01','P04') OR (y.spk_cab = 'P05' AND ? = 1) OR (TRIM(y.spk_workshop) = 'P01' AND ? = 1))`;
+      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR y.spk_cab IN ('P01','P04') OR (y.spk_cab = 'P05' AND ? = 1) OR (TRIM(y.spk_workshop) = 'P01' AND ? = 1) OR (LEFT(y.spk_divisi, 1) = '4' AND y.spk_cab IN ('P01','P04') AND ? = 1))`;
     } else {
-      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR (y.spk_cab = 'P05' AND ? = 1) OR (TRIM(y.spk_workshop) = 'P01' AND ? = 1))`;
+      whereClause += ` AND (y.spk_cab = ? OR y.spk_cab = "" OR y.spk_cab IS NULL OR y.user_create = ? OR (LEFT(y.spk_divisi, 1) = '3' AND ? = 1) OR (y.spk_cab = 'P05' AND ? = 1) OR (TRIM(y.spk_workshop) = 'P01' AND ? = 1) OR (LEFT(y.spk_divisi, 1) = '4' AND y.spk_cab IN ('P01','P04') AND ? = 1))`;
     }
     params.push(
       userCabang,
@@ -120,6 +121,7 @@ const getBrowseList = async (filters) => {
       isCmoDivisi3,
       isDonaExtraCab,
       isMdiP01,
+      isDonaDivisi4,
     );
   }
 

@@ -335,12 +335,10 @@ const cekGudangAsal = async (req, res) => {
         GP015: "CUTTING",
         GP002: "SEWING",
         GP017: "SEWING",
-        GP014: "KOLI",
-        GP016: "KOLI", // bordir
+        GP014: "BORDIR",
+        GP016: "BORDIR", // bordir
         GP003: "SEWING",
         GP018: "SEWING",
-        GP004: "KOLI",
-        GP019: "KOLI",
       };
       // ⚠️ FIX: token spesifik utk fallback ke tplanningspk — "SEWING" generik
       // dipecah jadi CETAK (GP002/GP017) vs JAHIT (GP003/GP018), supaya cek
@@ -354,8 +352,6 @@ const cekGudangAsal = async (req, res) => {
         GP016: "BORDIR",
         GP003: "JAHIT",
         GP018: "JAHIT",
-        GP004: "KOLI",
-        GP019: "KOLI",
       };
       const planningDivisi = planningMap[gdgAsal];
       if (planningDivisi) {
@@ -374,8 +370,6 @@ const cekGudangAsal = async (req, res) => {
             GP016: "bordir",
             GP003: "jahit",
             GP018: "jahit",
-            GP004: "finishing",
-            GP019: "finishing",
           };
           return res.status(400).json({
             success: false,

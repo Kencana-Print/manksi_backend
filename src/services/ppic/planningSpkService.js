@@ -1,6 +1,8 @@
 // services/ppic/planningSpkService.js
 const db = require("../../config/database");
 const { enrichSewing } = require("./planningSpkFormService");
+const { withWipBahan } = require("./wipBahanHelper");
+const { withCuttingOutput } = require("./cuttingOutputHelper");
 
 // ─────────────────────────────────────────────
 // Generate nomor
@@ -27,13 +29,13 @@ const getBrowse = async (startDate, endDate) => {
        DATE_FORMAT(h.pl_tgl2, '%Y-%m-%d') AS TglAkhir,
        h.pl_cab        AS Cabang,
        h.pl_close      AS Close,
-       h.pl_keterangan AS Keterangan,
        COUNT(DISTINCT d.plan_spk) AS JumlahSPK
      FROM tplan_ppic_hdr h
-     LEFT JOIN tplan_ppic_dtl2 d ON d.plan_pl_nomor = h.pl_nomor
+     LEFT JOIN tplan_ppic_dtl2 d
+       ON d.plan_pl_nomor = h.pl_nomor AND d.plan_divisi <> 'KOLI'
      WHERE h.pl_tgl1 BETWEEN ? AND ?
      GROUP BY h.pl_nomor, h.pl_tgl1, h.pl_tgl2,
-              h.pl_cab, h.pl_close, h.pl_keterangan
+              h.pl_cab, h.pl_close
      ORDER BY h.pl_nomor ASC`,
     [startDate, endDate],
   );
@@ -52,6 +54,7 @@ const getDetail = async (nomor) => {
         d.plan_spk             AS NomorSPK,
         s.spk_nama             AS NamaSPK,
         DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
+        DATE_FORMAT(d.plan_tanggal, '%Y-%m-%d') AS KeyTanggal,
         d.plan_wip             AS Wip,
         d.plan_qty_po          AS QtyPo,
         d.plan_qty_jadwal      AS QtyJadwal,
@@ -80,6 +83,7 @@ const getDetail = async (nomor) => {
         d.plan_spk             AS NomorSPK,
         s.spk_nama             AS NamaSPK,
         DATE_FORMAT(d.plan_tgl_jadwal, '%Y-%m-%d') AS TglJadwal,
+        DATE_FORMAT(d.plan_tanggal, '%Y-%m-%d') AS KeyTanggal,
         d.plan_wip             AS Wip,
         d.plan_qty_po          AS QtyPo,
         d.plan_qty_jadwal      AS QtyJadwal,
@@ -104,6 +108,7 @@ const getDetail = async (nomor) => {
       NomorSPK: r.NomorSPK,
       NamaSPK: r.NamaSPK,
       TglJadwal: r.TglJadwal,
+      KeyTanggal: r.KeyTanggal,
       Wip: r.Wip,
       QtyPo: r.QtyPo,
       QtyJadwal: r.QtyJadwal,
@@ -130,13 +135,68 @@ const getDetail = async (nomor) => {
     ];
   };
 
-  const [cutting, sewing, koli] = await Promise.all([
+  const [cuttingRaw, sewing] = await Promise.all([
     loadDivisi("CUTTING"),
     loadSewing(),
-    loadDivisi("KOLI"),
   ]);
+  const [[hdrTgl]] = await db.query(
+    `SELECT DATE_FORMAT(pl_tgl1, '%Y-%m-%d') AS tgl1,
+          DATE_FORMAT(pl_tgl2, '%Y-%m-%d') AS tgl2
+   FROM tplan_ppic_hdr WHERE pl_nomor = ?`,
+    [nomor],
+  );
+  const cutting = hdrTgl
+    ? await withCuttingOutput(
+        await withWipBahan(cuttingRaw),
+        hdrTgl.tgl1,
+        hdrTgl.tgl2,
+        "LineKelompok",
+      )
+    : [];
 
-  return { cutting, sewing, koli };
+  return { cutting, sewing };
+};
+
+// ─────────────────────────────────────────────
+// updateKeteranganDetail — ubah keterangan 1 baris dari browse
+// Kunci baris = primary key tplan_ppic_dtl2.
+// ─────────────────────────────────────────────
+const DIVISI_VALID = ["CUTTING", "SEWING"];
+
+const updateKeteranganDetail = async (nomor, body) => {
+  const { divisi, spk, tanggal, line = "", keterangan = "" } = body || {};
+  if (!DIVISI_VALID.includes(divisi)) throw new Error("Divisi tidak dikenali.");
+  if (!spk || !tanggal) throw new Error("Data baris tidak lengkap.");
+
+  const ket = String(keterangan).trim();
+  if (ket.length > 200) throw new Error("Keterangan maksimal 200 karakter.");
+
+  const kunci = [nomor, divisi, spk, tanggal, line];
+
+  const [[row]] = await db.query(
+    `SELECT h.pl_close
+     FROM tplan_ppic_dtl2 d
+     INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
+     WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ? AND d.plan_spk = ?
+       AND d.plan_tanggal = ? AND d.plan_line_kelompok = ?`,
+    kunci,
+  );
+  if (!row) {
+    throw new Error(
+      "Baris tidak ditemukan. Planning ini mungkin baru diubah dari form, muat ulang data.",
+    );
+  }
+  if (row.pl_close === "Y") {
+    throw new Error("Planning sudah Close, keterangan tidak bisa diubah.");
+  }
+
+  await db.query(
+    `UPDATE tplan_ppic_dtl2 SET plan_keterangan = ?
+     WHERE plan_pl_nomor = ? AND plan_divisi = ? AND plan_spk = ?
+       AND plan_tanggal = ? AND plan_line_kelompok = ?`,
+    [ket, ...kunci],
+  );
+  return { keterangan: ket };
 };
 
 // ─────────────────────────────────────────────
@@ -368,6 +428,7 @@ module.exports = {
   getBrowse,
   getDetail,
   getDetailAktual,
+  updateKeteranganDetail,
   toggleClose,
   deleteData,
   getExportMaster,

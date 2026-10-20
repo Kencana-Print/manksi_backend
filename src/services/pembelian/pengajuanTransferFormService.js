@@ -51,6 +51,7 @@ const getVoucherOptions = async (search = "") => {
     `
     SELECT h.vou_nomor AS nomor,
       DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
+      h.vou_sup_kode AS supKode,
       s.sup_nama AS supplier,
       h.vou_total - IFNULL((
         SELECT SUM(voud2_harga * voud2_jumlah)
@@ -547,7 +548,8 @@ const saveData = async (payload, user) => {
               ],
             );
 
-            // Update BBK header
+            // Update BBK header (jur_rek_kode = rekening bank header pengajuan,
+            // sama dengan saat BBK dibuat pertama kali)
             await conn.query(
               `
               UPDATE finance.tjurnal SET
@@ -556,7 +558,7 @@ const saveData = async (payload, user) => {
                 jur_rek_kode   = ?
               WHERE jur_no = ?
             `,
-              [d.tglRealisasi, d.ket || "", d.rekkode || "", d.jurnal],
+              [d.tglRealisasi, d.ket || "", rek_kode, d.jurnal],
             );
 
             // Rebuild BBK detail

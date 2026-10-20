@@ -1,5 +1,7 @@
 // services/ppic/planningSpkFormService.js
 const db = require("../../config/database");
+const { getWipBahanBySpk, withWipBahan } = require("./wipBahanHelper");
+const { withCuttingOutput } = require("./cuttingOutputHelper");
 
 // ─────────────────────────────────────────────
 // Generate nomor: PL/PPIC/00001/2026
@@ -186,9 +188,11 @@ const getSewingReferensi = async ({
   };
 };
 
-// waktu produksi = hari x jam x 60 ; resume = target x SMV / MP (menit per operator)
+// waktu produksi per line (menit-orang) = MP x hari x jam x 60 ;
+// resume = target x SMV / MP (menit per operator)
 const hitungSewing = ({ hari, jam, target, smv, mp }) => {
-  const waktuProduksi = (Number(hari) || 0) * (Number(jam) || 0) * 60;
+  const waktuProduksi =
+    (Number(mp) || 0) * (Number(hari) || 0) * (Number(jam) || 0) * 60;
   const resume = mp > 0 && smv > 0 ? ((Number(target) || 0) * smv) / mp : null;
   return { waktuProduksi, resume };
 };
@@ -303,18 +307,20 @@ const getFormDetail = async (nomor) => {
     return rows;
   };
 
-  const [cutting, sewing, koli] = await Promise.all([
+  const [cuttingRaw, sewing] = await Promise.all([
     loadDivisi("CUTTING"),
     loadDivisi("SEWING"),
-    loadDivisi("KOLI"),
   ]);
-
+  const cutting = await withCuttingOutput(
+    await withWipBahan(cuttingRaw),
+    hdr.pl_tgl1,
+    hdr.pl_tgl2,
+  );
   // Riwayat: semua planning lain yang punya SPK yang sama
   // dengan SPK yang ada di salah satu tab
   const allSpk = [
     ...cutting.map((r) => r.NomorSPK),
     ...sewing.map((r) => r.NomorSPK),
-    ...koli.map((r) => r.NomorSPK),
   ].filter(Boolean);
   const uniqueSpk = [...new Set(allSpk)];
 
@@ -325,7 +331,7 @@ const getFormDetail = async (nomor) => {
 
   return {
     header: hdr,
-    detail: { cutting, sewing: sewingItems, koli },
+    detail: { cutting, sewing: sewingItems },
     riwayat,
   };
 };
@@ -351,6 +357,7 @@ const getRiwayatBySpkList = async (spkList, excludeNomor = "") => {
      INNER JOIN tplan_ppic_dtl2 d ON d.plan_pl_nomor = h.pl_nomor
      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
      WHERE d.plan_spk IN (${placeholders})
+       AND d.plan_divisi <> 'KOLI'
        AND h.pl_nomor <> ?
      ORDER BY h.pl_nomor ASC`,
     [...spkList, excludeNomor],
@@ -389,7 +396,14 @@ const getSpkInfo = async (spkNomor) => {
     [spkNomor],
   );
   if (!rows.length) return null;
-  return rows[0];
+  const w = (await getWipBahanBySpk([spkNomor]))[spkNomor];
+  return {
+    ...rows[0],
+    WipBahan: w ? w.wip : 0,
+    WipQty: w ? w.qty : 0,
+    WipSatuan: w ? w.satuan : "",
+    WipCatatan: w ? w.catatan : "",
+  };
 };
 
 // ─────────────────────────────────────────────
@@ -400,14 +414,12 @@ const getSpkInfo = async (spkNomor) => {
 //               (sewing) plan_hari, plan_jam, plan_target_output }
 // MP dari client (default dari DB, boleh diedit). SMV tetap di-stamp server
 // ─────────────────────────────────────────────
-const saveData = async (payload, userKode) => {
+const saveData = async (payload, userKode, userCabang) => {
   const {
     pl_nomor,
     pl_tgl1,
     pl_tgl2,
-    pl_cab,
-    pl_keterangan,
-    detail = { cutting: [], sewing: [], koli: [] },
+    detail = { cutting: [], sewing: [] },
   } = payload;
 
   if (!pl_tgl1 || !pl_tgl2) throw new Error("Periode planning wajib diisi.");
@@ -501,6 +513,14 @@ const saveData = async (payload, userKode) => {
     sewingStamp[key] = { mp, smv, sumber };
   }
 
+  for (const r of (detail.cutting || []).filter((x) => x.NomorSPK)) {
+    if (!["MANUAL", "MESIN"].includes(r.plan_line_kelompok)) {
+      throw new Error(
+        `Proses Produksi untuk SPK ${r.NomorSPK} wajib dipilih (MANUAL / MESIN).`,
+      );
+    }
+  }
+
   const conn = await db.getConnection();
   let fase = "header";
   try {
@@ -515,12 +535,10 @@ const saveData = async (payload, userKode) => {
         `UPDATE tplan_ppic_hdr SET
            pl_tgl1       = ?,
            pl_tgl2       = ?,
-           pl_cab        = ?,
-           pl_keterangan = ?,
            user_modified = ?,
            date_modified = NOW()
          WHERE pl_nomor = ?`,
-        [pl_tgl1, pl_tgl2, pl_cab || "", pl_keterangan || "", userKode, nomor],
+        [pl_tgl1, pl_tgl2, userKode, nomor],
       );
     } else {
       // INSERT header — kolom pl_spk_nomor sudah tidak ada secara
@@ -530,15 +548,17 @@ const saveData = async (payload, userKode) => {
         `INSERT INTO tplan_ppic_hdr
            (pl_nomor, pl_tgl1, pl_tgl2, pl_cab,
             pl_keterangan, user_create, date_create)
-         VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-        [nomor, pl_tgl1, pl_tgl2, pl_cab || "", pl_keterangan || "", userKode],
+         VALUES (?, ?, ?, ?, '', ?, NOW())`,
+        [nomor, pl_tgl1, pl_tgl2, userCabang || "", userKode],
       );
     }
 
-    // Hapus semua detail lama lalu insert ulang
-    await conn.query(`DELETE FROM tplan_ppic_dtl2 WHERE plan_pl_nomor = ?`, [
-      nomor,
-    ]);
+    // Baris KOLI lama (divisi sudah dihapus) sengaja dibiarkan demi histori
+    await conn.query(
+      `DELETE FROM tplan_ppic_dtl2
+       WHERE plan_pl_nomor = ? AND plan_divisi <> 'KOLI'`,
+      [nomor],
+    );
     await conn.query(`DELETE FROM tplan_ppic_dtl WHERE pld_nomor = ?`, [nomor]);
 
     fase = "detail";
@@ -548,9 +568,7 @@ const saveData = async (payload, userKode) => {
       for (const row of rows) {
         // Sewing tidak punya tanggal per baris (granularitas mingguan):
         // tanggal jadwal = awal periode, supaya tetap terbaca getPlanningPpic
-        const tgl = isSewing
-          ? row.plan_tgl_jadwal || pl_tgl1
-          : row.plan_tgl_jadwal;
+        const tgl = isSewing ? row.plan_tgl_jadwal || pl_tgl1 : pl_tgl1;
         if (!row.NomorSPK || !tgl) continue;
 
         // Supplier cuma relevan buat Sewing dengan Line Eksternal
@@ -588,10 +606,10 @@ const saveData = async (payload, userKode) => {
             tgl,
             tgl,
             Number(row.plan_wip) || 0,
-            Number(row.plan_qty_po) || 0,
+            divisi === "CUTTING" ? 0 : Number(row.plan_qty_po) || 0,
             qtyJadwal,
-            divisi === "KOLI" ? "" : row.plan_line_kelompok || "",
-            row.plan_keterangan || "",
+            row.plan_line_kelompok || "",
+            divisi === "CUTTING" ? "" : row.plan_keterangan || "",
             isExternal ? row.supplierKode || "" : "",
             isExternal ? row.supplierNama || "" : "",
             hari,
@@ -607,7 +625,6 @@ const saveData = async (payload, userKode) => {
 
     await insertDivisi(detail.cutting || [], "CUTTING");
     await insertDivisi(detail.sewing || [], "SEWING");
-    await insertDivisi(detail.koli || [], "KOLI");
 
     await conn.commit();
     return { nomor };

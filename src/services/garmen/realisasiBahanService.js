@@ -8,6 +8,7 @@ const getBrowse = async (startDate, endDate) => {
     SELECT 
       h.promin_nomor AS Nomor, 
       DATE_FORMAT(h.promin_tanggal, '%Y-%m-%d') AS Tanggal, 
+      DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam,
       h.promin_minta AS NoMinta,
       g.gdg_nama AS Gudang, 
       gp.gdgp_cab AS GdgProduksi, 
@@ -54,6 +55,7 @@ const getBrowse = async (startDate, endDate) => {
     SELECT
       h.min_nomor AS Nomor,
       DATE_FORMAT(h.min_tanggal, '%Y-%m-%d') AS Tanggal,
+      DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam,
       h.min_nomor AS NoMinta,
       '' AS Gudang,
       '' AS GdgProduksi,

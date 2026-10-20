@@ -2,7 +2,7 @@ const supplierService = require("../../services/master/supplierService");
 
 const getBrowse = async (req, res) => {
   try {
-    const data = await supplierService.getBrowse();
+    const data = await supplierService.getBrowse(req.user);
     res.status(200).json({ success: true, data: data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

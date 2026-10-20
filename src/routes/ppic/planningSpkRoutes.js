@@ -37,6 +37,15 @@ router.patch(
   ctrl.toggleClose,
 );
 
+// PATCH /api/ppic/planning-spk/:nomor/keterangan
+// body: { divisi, spk, tanggal, line, keterangan }
+router.patch(
+  "/:nomor/keterangan",
+  verifyToken,
+  checkPermission(MENU_ID, "edit"),
+  ctrl.updateKeterangan,
+);
+
 // DELETE /api/ppic/planning-spk/:nomor
 router.delete(
   "/:nomor",

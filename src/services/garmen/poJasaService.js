@@ -378,7 +378,7 @@ const pengajuanUbah = async (nomor, tanggal, keterangan, alasan, userKode) => {
     `INSERT INTO tspk_pin5
        (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_jenis,
         pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ('PO JASA HAPUS', ?, ?, ?, ?, 'HAPUS', NOW(), ?, ?)
+     VALUES ('PO JASA', ?, ?, ?, ?, 'UBAH', NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        pin_tgl_trs = ?, pin_ket = ?,
        pin_acc = '', pin_tgl_minta = NOW(),
@@ -416,7 +416,7 @@ const pengajuanHapus = async (nomor, tanggal, keterangan, alasan, userKode) => {
     `INSERT INTO tspk_pin5
        (pin_trs, pin_nomor, pin_urut, pin_tgl_trs, pin_ket, pin_jenis,
         pin_tgl_minta, pin_user_minta, pin_alasan)
-     VALUES ('HAPUS PO JASA', ?, ?, ?, ?, 'HAPUS', NOW(), ?, ?)
+     VALUES ('PO JASA HAPUS', ?, ?, ?, ?, 'HAPUS', NOW(), ?, ?)
      ON DUPLICATE KEY UPDATE
        pin_tgl_trs = ?, pin_ket = ?,
        pin_acc = '', pin_tgl_minta = NOW(),

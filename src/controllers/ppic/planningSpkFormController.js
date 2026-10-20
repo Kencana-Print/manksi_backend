@@ -54,7 +54,8 @@ const getRiwayatSpk = async (req, res) => {
 const saveData = async (req, res) => {
   try {
     const userKode = req.user?.kode || req.user?.username || "SYSTEM";
-    const result = await svc.saveData(req.body, userKode);
+    const userCabang = req.user?.cabangGarmen || "P04";
+    const result = await svc.saveData(req.body, userKode, userCabang);
     res.json({
       success: true,
       message: "Planning berhasil disimpan.",

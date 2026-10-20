@@ -71,6 +71,70 @@ const recalcBpbLink = async (conn, mkbNomor) => {
   }
 };
 
+// Breakdown size = INFORMASI SAJA (tidak masuk perhitungan).
+// Babaran dari tkesesuaianmap_size (BAST MAP), qty dari tsalesorder_size.
+// Komponen hanya dikembalikan kalau minimal satu size punya babaran > 0.
+const getBreakdownSize = async (memo, nomorSo) => {
+  if (!memo || !nomorSo || String(nomorSo).startsWith("MAP")) return [];
+
+  const [ksRows] = await db.query(
+    `SELECT ks_komponen AS komponen, ks_size AS size, ks_babaran AS babaran
+     FROM tkesesuaianmap_size
+     WHERE ks_nomor = ?
+     ORDER BY ks_urut`,
+    [memo],
+  );
+  if (ksRows.length === 0) return [];
+
+  const [soRows] = await db.query(
+    `SELECT sos_size AS size, sos_qty AS qty
+     FROM tsalesorder_size
+     WHERE sos_so_nomor = ?
+     ORDER BY sos_id`,
+    [nomorSo],
+  );
+
+  const key = (s) =>
+    String(s || "")
+      .trim()
+      .toUpperCase();
+  const qtyBySize = new Map(
+    soRows.map((r) => [key(r.size), Number(r.qty) || 0]),
+  );
+
+  // kelompokkan per komponen (urutan ks_urut dipertahankan)
+  const byKomponen = new Map();
+  for (const r of ksRows) {
+    const komponen = String(r.komponen || "").trim();
+    if (!komponen) continue;
+    if (!byKomponen.has(komponen)) byKomponen.set(komponen, []);
+    byKomponen.get(komponen).push({
+      size: String(r.size || "").trim(),
+      qty: qtyBySize.has(key(r.size)) ? qtyBySize.get(key(r.size)) : null,
+      babaran: Number(r.babaran) || 0,
+    });
+  }
+
+  const result = [];
+  for (const [komponen, sizes] of byKomponen) {
+    if (!sizes.some((s) => s.babaran > 0)) continue; // semua 0 => tidak ditampilkan
+
+    // size yang ada di SO tapi tidak ada di breakdown ditambahkan (babaran 0 => "-")
+    const sudah = new Set(sizes.map((s) => key(s.size)));
+    for (const r of soRows) {
+      if (!sudah.has(key(r.size))) {
+        sizes.push({
+          size: String(r.size || "").trim(),
+          qty: Number(r.qty) || 0,
+          babaran: 0,
+        });
+      }
+    }
+    result.push({ komponen, sizes });
+  }
+  return result;
+};
+
 // --- GET DATA FORM (MODE EDIT) ---
 const getDetailForm = async (nomor) => {
   // Tambahan JOIN ke tsalesorder (SO baru) — sebelumnya cuma tspk
@@ -114,7 +178,12 @@ const getDetailForm = async (nomor) => {
     [header.spk_memo || ""],
   );
 
-  return { header, dtlBahan, dtlLink, dtlPlan, dtlMap };
+  const breakdownSize = await getBreakdownSize(
+    header.spk_memo,
+    header.mkb_spk_nomor || header.MKB_SPK_NOMOR,
+  );
+
+  return { header, dtlBahan, dtlLink, dtlPlan, dtlMap, breakdownSize };
 };
 
 // --- SIMPAN TRANSAKSI ---
@@ -382,7 +451,9 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
     bastKomponen = rows;
   }
 
-  return { info: spkRows[0], planning: planRows, bastKomponen };
+  const breakdownSize = await getBreakdownSize(memo, nomorSpk);
+
+  return { info: spkRows[0], planning: planRows, bastKomponen, breakdownSize };
 };
 
 const getLinkablePo = async (kodeBahan, mkbNomor) => {

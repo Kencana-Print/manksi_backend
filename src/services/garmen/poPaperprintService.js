@@ -13,7 +13,12 @@ const db = require("../../config/database");
 const getBrowseData = async (startDate, endDate, spkFilter, user) => {
   // ⚠️ FIX: "HO-" adalah fallback backend utk cabang kosong, disamakan
   // perlakuannya dgn frmMenu.CAB='' di Delphi (tidak dikunci cabang)
-  const userCab = user.cabang && user.cabang !== "HO-" ? user.cabang : "";
+  const CABANG_LIHAT_SEMUA = ["P01", "P05", "HO-"];
+  const cabUser = String(user.cabang || "")
+    .trim()
+    .toUpperCase();
+  const userCab =
+    cabUser && !CABANG_LIHAT_SEMUA.includes(cabUser) ? cabUser : "";
   const hasSpkFilter = spkFilter && spkFilter.trim() !== "";
 
   let joinDtl = "";

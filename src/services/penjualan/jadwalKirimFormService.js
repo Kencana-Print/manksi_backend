@@ -106,6 +106,7 @@ const getPlanningPpic = async (nomorSpk) => {
     INNER JOIN tplan_ppic_hdr h ON h.pl_nomor = d.plan_pl_nomor
     WHERE h.pl_close = 'N'
       AND d.plan_spk = ?
+      AND d.plan_divisi <> 'KOLI'
       AND d.plan_qty_jadwal <> 0
     ORDER BY d.plan_tgl_jadwal, d.plan_divisi
   `;
