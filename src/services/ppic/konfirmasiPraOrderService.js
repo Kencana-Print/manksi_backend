@@ -14,6 +14,7 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
   const params = [];
   const phDivisi = DIVISI_TANPA_KONFIRMASI.map(() => "?").join(", ");
   let where = `WHERE UPPER(IFNULL(v.Divisi, '')) NOT IN (${phDivisi})`;
+  params.push(...DIVISI_TANPA_KONFIRMASI);
 
   if (startDate && endDate) {
     where += ` AND h.pro_tanggal BETWEEN ? AND ?`;
