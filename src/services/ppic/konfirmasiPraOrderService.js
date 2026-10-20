@@ -7,7 +7,7 @@ const praOrderFormService = require("../penjualan/praOrderFormService");
 // convertToMintaHarga. Pra Order dari divisi ini otomatis
 // dikecualikan dari antrian konfirmasi.
 // ─────────────────────────────────────────────────────────
-const DIVISI_TANPA_KONFIRMASI = ["SPANDUK", "MMT"];
+const DIVISI_TANPA_KONFIRMASI = ["MMT"];
 
 // --- BROWSE: daftar Pra Order yang butuh/sudah dikonfirmasi PPIC ---
 const getBrowse = async ({ startDate, endDate, divisi, status }) => {

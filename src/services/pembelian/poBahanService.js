@@ -106,8 +106,8 @@ const getBrowseDetail = async (
   canLihatSup = false,
 ) => {
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_hargaroll AS HargaRoll, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS HargaRoll, NULL AS Disc,";
+    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS Disc,";
   // Supplier per baris (PO Lain-lain); PO lain jatuh ke supplier header
   const supCol = canLihatSup ? "sp.sup_nama AS Supplier," : "NULL AS Supplier,";
 
@@ -331,8 +331,8 @@ const getAllDetail = async (
     : "NULL AS KodeSupplier, NULL AS Supplier,";
 
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_hargaroll AS HargaRoll, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS HargaRoll, NULL AS Disc,";
+    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
+    : "NULL AS Harga, NULL AS Disc,";
 
   let sql = `
     SELECT 
