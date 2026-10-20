@@ -12,8 +12,8 @@ const DIVISI_TANPA_KONFIRMASI = ["MMT"];
 // --- BROWSE: daftar Pra Order yang butuh/sudah dikonfirmasi PPIC ---
 const getBrowse = async ({ startDate, endDate, divisi, status }) => {
   const params = [];
-  let where = `WHERE UPPER(IFNULL(v.Divisi, '')) NOT IN (?, ?)`;
-  params.push(...DIVISI_TANPA_KONFIRMASI);
+  const phDivisi = DIVISI_TANPA_KONFIRMASI.map(() => "?").join(", ");
+  let where = `WHERE UPPER(IFNULL(v.Divisi, '')) NOT IN (${phDivisi})`;
 
   if (startDate && endDate) {
     where += ` AND h.pro_tanggal BETWEEN ? AND ?`;
