@@ -35,9 +35,10 @@ const getQcRejectSiap = async () => {
       GROUP BY qrd_qc_nomor, qrd_lot
     ) r ON r.qrd_qc_nomor = d.qcd_qc_nomor AND r.qrd_lot = d.qcd_lot
     LEFT JOIN tpo_hdr p ON p.po_nomor = h.qc_po_nomor
-    LEFT JOIN tsupplier s ON s.sup_kode = p.po_sup_kode
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor AND pd.pod_nourut = h.qc_pod_nourut
+    LEFT JOIN tsupplier s
+      ON s.sup_kode = IFNULL(NULLIF(pd.pod_sup_kode, ''), p.po_sup_kode)
     WHERE h.qc_status <> 'DRAFT'
       AND d.qcd_qty_kg - IFNULL(r.qty, 0) > 0
     GROUP BY h.qc_nomor, h.qc_tgl_datang, h.qc_po_nomor, h.qc_jenis_kain, s.sup_nama
@@ -53,10 +54,14 @@ const getLotReject = async (qcNomor, excludeRetur = "") => {
   const [hdr] = await db.query(
     `
     SELECT h.qc_nomor, h.qc_status, h.qc_po_nomor, h.qc_jenis_kain,
-           p.po_sup_kode, s.sup_nama, s.sup_alamat
+           IFNULL(NULLIF(pd.pod_sup_kode, ''), p.po_sup_kode) AS po_sup_kode,
+           s.sup_nama, s.sup_alamat
     FROM tqc_bahan_hdr h
     LEFT JOIN tpo_hdr p ON p.po_nomor = h.qc_po_nomor
-    LEFT JOIN tsupplier s ON s.sup_kode = p.po_sup_kode
+    LEFT JOIN tpo_dtl pd
+      ON pd.pod_po_nomor = h.qc_po_nomor AND pd.pod_nourut = h.qc_pod_nourut
+    LEFT JOIN tsupplier s
+      ON s.sup_kode = IFNULL(NULLIF(pd.pod_sup_kode, ''), p.po_sup_kode)
     WHERE h.qc_nomor = ?
     `,
     [qcNomor],
@@ -167,18 +172,25 @@ const siapkan = async (conn, payload, excludeRetur) => {
 
   // Kunci per dokumen QC agar dua retur bersamaan tidak melebihi qty lot
   const [qc] = await conn.query(
-    `SELECT h.qc_status, h.qc_po_nomor, p.po_sup_kode
-     FROM tqc_bahan_hdr h
-     LEFT JOIN tpo_hdr p ON p.po_nomor = h.qc_po_nomor
-     WHERE h.qc_nomor = ? FOR UPDATE`,
+    `SELECT qc_status FROM tqc_bahan_hdr WHERE qc_nomor = ? FOR UPDATE`,
     [qcNomor],
   );
   if (qc.length === 0) throw new Error("Dokumen QC tidak ditemukan.");
   if (qc[0].qc_status === "DRAFT") throw new Error("Dokumen QC masih DRAFT.");
-  if (!qc[0].po_sup_kode) {
+
+  const [sup] = await conn.query(
+    `SELECT IFNULL(NULLIF(pd.pod_sup_kode, ''), p.po_sup_kode) AS sup_kode
+     FROM tqc_bahan_hdr h
+     LEFT JOIN tpo_hdr p ON p.po_nomor = h.qc_po_nomor
+     LEFT JOIN tpo_dtl pd
+       ON pd.pod_po_nomor = h.qc_po_nomor AND pd.pod_nourut = h.qc_pod_nourut
+     WHERE h.qc_nomor = ?`,
+    [qcNomor],
+  );
+  const supKode = sup[0]?.sup_kode || "";
+  if (!supKode) {
     throw new Error("Supplier PO dokumen QC ini tidak ditemukan.");
   }
-
   const [lots] = await conn.query(
     `
     SELECT d.qcd_lot, d.qcd_bhn_kode, d.qcd_keputusan, d.qcd_qty_kg, d.qcd_qty_roll,
@@ -236,7 +248,7 @@ const siapkan = async (conn, payload, excludeRetur) => {
     };
   });
 
-  return { tanggal, qcNomor, supKode: qc[0].po_sup_kode, rows };
+  return { tanggal, qcNomor, supKode, rows };
 };
 
 const insertRows = async (conn, nomor, qcNomor, rows) => {
