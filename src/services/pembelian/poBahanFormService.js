@@ -295,13 +295,13 @@ const saveData = async (payload, userKode) => {
           throw new Error(
             `Baris ${idx + 1}: Nomor SPK/MAP untuk bahan ${it.kode} wajib diisi.`,
           );
-        if ((Number(it.roll) || 0) <= 0)
-          throw new Error(
-            `Baris ${idx + 1}: Roll untuk bahan ${it.kode} wajib diisi.`,
-          );
         if ((Number(it.harga) || 0) <= 0 && (Number(it.hargaRoll) || 0) <= 0)
           throw new Error(
             `Baris ${idx + 1}: Harga Beli atau Harga Roll untuk bahan ${it.kode} wajib diisi.`,
+          );
+        if ((Number(it.hargaRoll) || 0) > 0 && (Number(it.roll) || 0) <= 0)
+          throw new Error(
+            `Baris ${idx + 1}: Roll untuk bahan ${it.kode} wajib diisi jika Harga Roll diisi.`,
           );
         const kunci = `${it.kode}|${sup}|${spk.toUpperCase()}`;
         if (kunciSet.has(kunci))
