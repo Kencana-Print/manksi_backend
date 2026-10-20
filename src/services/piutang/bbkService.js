@@ -71,7 +71,7 @@ const getBrowseDetail = async (startDate, endDate, cabang) => {
 
 // SEMENTARA: pengecekan tutup buku BBK dimatikan sampai tanggal ini
 // (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-20";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-22";
 const bypassTutupBukuAktif = () => {
   const n = new Date();
   const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
