@@ -47,7 +47,8 @@ const bacaSpec = (line) => {
     sMin: s.min,
     sMax: s.max,
     gramasiAda,
-    terbaca: settingAda && (gramasiAda || gramasiKosong),
+    settingAda,
+    terbaca: gramasiAda || settingAda,
   };
 };
 
@@ -178,17 +179,15 @@ const evalRoll = (rl, spec, p) => {
       sh === "OK" ? 3 : 1,
       kl === "OK" ? 3 : 1,
     ];
-    if (spec.terbaca) {
-      if (spec.gramasiAda) skor.push(okG(atas) && okG(bawah) ? 3 : 1);
-      skor.push(okS ? 3 : 1);
-    }
+    if (spec.gramasiAda) skor.push(okG(atas) && okG(bawah) ? 3 : 1);
+    if (spec.settingAda) skor.push(okS ? 3 : 1);
     nilai = Math.min(...skor);
   }
 
   // Teks hasil gramasi/setting untuk kolom qcr_h_* (dipakai Cetak)
   let gramasiTxt = "-";
   let settingTxt = "-";
-  if (spec.terbaca && spec.gramasiAda && atas > 0 && bawah > 0) {
+  if (spec.gramasiAda && atas > 0 && bawah > 0) {
     const arah = [
       ...new Set(
         [
@@ -199,7 +198,7 @@ const evalRoll = (rl, spec, p) => {
     ].join("/");
     gramasiTxt = arah || "OK";
   }
-  if (spec.terbaca && st > 0) {
+  if (spec.settingAda && st > 0) {
     settingTxt = arahSpec(st, spec.sMin, spec.sMax, p.tolSetting) || "OK";
   }
 
