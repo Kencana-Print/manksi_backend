@@ -51,9 +51,9 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       ) AS HargaMAP, 
       h.mh_harga_kalkulasi AS HargaKalkulasi, 
       IF(
-        IFNULL(k.kal_nomor, '') != '',
-        IF(k.date_modified IS NOT NULL, DATE_FORMAT(k.date_modified, '%Y-%m-%d'), DATE_FORMAT(k.date_create, '%Y-%m-%d')),
-        IF(l.date_modified IS NOT NULL, DATE_FORMAT(l.date_modified, '%Y-%m-%d'), DATE_FORMAT(l.date_create, '%Y-%m-%d'))
+        k.date_modified IS NOT NULL,
+        DATE_FORMAT(k.date_modified, '%Y-%m-%d'),
+        DATE_FORMAT(k.date_create, '%Y-%m-%d')
       ) AS TglKalkulasi, 
       IF(h.mh_nomor_kalkulasi LIKE 'KAL-%', h.mh_nomor_kalkulasi, '') AS NoKalkulasi, 
       h.mh_ket_kalkulasi AS KeteranganKalkulasi, 
