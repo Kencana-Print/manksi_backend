@@ -59,6 +59,16 @@ const getSupplierDetail = async (req, res) => {
   }
 };
 
+const getRekapVoucherOptions = async (req, res) => {
+  try {
+    const { search } = req.query;
+    const data = await svc.getRekapVoucherOptions(search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getVoucherOptions = async (req, res) => {
   try {
     const { search } = req.query;
@@ -177,6 +187,7 @@ module.exports = {
   getDcOptions,
   getSupplierOptions,
   getSupplierDetail,
+  getRekapVoucherOptions,
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,

@@ -26,6 +26,11 @@ router.get(
   ctrl.getPumOptions,
 );
 router.get("/print/:nomor", verifyToken, ctrl.getPrintData);
+router.post(
+  "/:bonNomor/konfirmasi-terima",
+  checkPermission(MENU_ID, "view"),
+  ctrl.konfirmasiTerima,
+);
 router.get("/:nomor", checkPermission(MENU_ID, "view"), ctrl.getDetail);
 router.post(
   "/:nomor/realisasi",

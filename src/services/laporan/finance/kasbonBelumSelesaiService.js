@@ -1,4 +1,5 @@
 const db = require("../../../config/database");
+const { kodeDenganAnak } = require("../../postingGuardService");
 
 // ── Default account per cabang ────────────────────────────────────────
 // Delphi FormShow: sama dengan Buku Besar
@@ -53,6 +54,7 @@ const getAccountByKode = async (kode) => {
 //   tkasbon WHERE bon_selesai=0 AND bon_rek_kode=rekkode
 //   bon_jenis=0 → "KAS", else → "BANK"
 const getMaster = async (rekkode) => {
+  const kodeList = await kodeDenganAnak(rekkode);
   const [rows] = await db.query(
     `SELECT
        b.bon_nomor                                    AS Nomor,
@@ -88,6 +90,7 @@ const getMaster = async (rekkode) => {
 // ORDER BY Nomor, keterangan DESC, uraian
 // (DESC pada keterangan → "Pengajuan GA" muncul duluan karena P > "")
 const getDetail = async (rekkode) => {
+  const kodeList = await kodeDenganAnak(rekkode);
   const [rows] = await db.query(
     `SELECT x.Nomor, x.Uraian, x.Satuan, x.Qty,
             x.Nominal, x.Total, x.Kegunaan, x.Keterangan
@@ -107,7 +110,7 @@ const getDetail = async (rekkode) => {
        INNER JOIN finance.tkasbon b ON b.bon_nomor = d.pmd_bon
        WHERE b.bon_selesai = 0
          AND b.bon_jenis = 0
-         AND b.bon_rek_kode = ?
+         AND b.bon_rek_kode IN (?)
 
        UNION ALL
 
@@ -126,10 +129,10 @@ const getDetail = async (rekkode) => {
        INNER JOIN finance.tkasbon k ON k.bon_nomor = i.bond_nomor
        WHERE k.bon_selesai = 0
          AND k.bon_jenis = 0
-         AND k.bon_rek_kode = ?
+         AND k.bon_rek_kode IN (?)
      ) x
      ORDER BY x.Nomor, x.Keterangan DESC, x.Uraian`,
-    [rekkode, rekkode],
+    [kodeList, kodeList],
   );
   return rows;
 };

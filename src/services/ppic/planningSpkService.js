@@ -131,6 +131,7 @@ const getDetail = async (nomor) => {
         ActualJam: r.actual_jam,
         WaktuProduksi: r.waktu_produksi,
         Resume: r.resume,
+        ActualHarian: r.actual_harian,
       })),
     ];
   };

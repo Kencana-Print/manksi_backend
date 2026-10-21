@@ -34,6 +34,12 @@ router.get(
   ctrl.searchNota,
 );
 router.get(
+  "/rekap-tersedia",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapTersedia,
+);
+router.get(
   "/:nomor/status-realisasi",
   verifyToken,
   checkPermission(MENU_ID, "view"),

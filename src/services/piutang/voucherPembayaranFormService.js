@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const { getRekap } = require("../laporan/marketing/rekapPenawaranService");
 const tutupBukuService = require("../tutupBukuService");
 
 // ── PO Lain-lain (tipe nota POL) ──────────────────────────────────────
@@ -838,6 +839,49 @@ const cekStatusRealisasi = async (nomor) => {
   return row.vou_status_realisasi !== "0" && row.vou_status_realisasi !== 0;
 };
 
+// ── Rekap Pembayaran yang belum dipakai, untuk satu supplier ──────────
+// Satu unit = satu voucher: baris berfaktur dikelompokkan per faktur,
+// baris tanpa faktur berdiri sendiri (satu nota satu voucher).
+const getRekapTersedia = async (supKode) => {
+  const sup = String(supKode || "").trim();
+  if (!sup) throw new Error("Pilih supplier dahulu.");
+
+  const [rows] = await db.query(
+    `SELECT d.rkbd_nomor AS rekapNomor, d.rkbd_nourut AS noUrut,
+            DATE_FORMAT(h.rkb_tanggal, '%Y-%m-%d') AS tanggalRekap,
+            d.rkbd_bulan_tagihan AS bulanTagihan,
+            d.rkbd_tipe AS tipe, d.rkbd_nota AS nota,
+            ABS(d.rkbd_nominal) AS nominal,
+            DATE_FORMAT(d.rkbd_tgl_rencana, '%Y-%m-%d') AS tglRencana,
+            d.rkbd_faktur_pajak AS fakturPajak, d.rkbd_invoice AS invoice,
+            d.rkbd_keterangan AS keterangan
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr h ON h.rkb_nomor = d.rkbd_nomor
+     WHERE d.rkbd_sup_kode = ? AND d.rkbd_vou_nomor = ''
+       AND h.rkb_status = 'AKTIF'
+     ORDER BY d.rkbd_faktur_pajak = '', d.rkbd_faktur_pajak,
+              h.rkb_tanggal DESC, d.rkbd_nomor, d.rkbd_nourut`,
+    [sup],
+  );
+
+  const unit = new Map();
+  for (const r of rows) {
+    const faktur = String(r.fakturPajak || "").trim();
+    const key = faktur ? `F|${faktur}` : `R|${r.rekapNomor}|${r.noUrut}`;
+    let u = unit.get(key);
+    if (!u) {
+      u = { key, fakturPajak: faktur, invoice: "", total: 0, baris: [] };
+      unit.set(key, u);
+    }
+    const nominal = Number(r.nominal);
+    const tanda = ["RET", "PJG"].includes(r.tipe) ? -1 : 1;
+    u.total = Math.round((u.total + tanda * nominal) * 100) / 100;
+    if (!u.invoice && r.invoice) u.invoice = r.invoice;
+    u.baris.push({ ...r, nominal });
+  }
+  return [...unit.values()];
+};
+
 // ── Save ──────────────────────────────────────────────────────────────
 // Delphi simpandata:
 // - UPDATE/INSERT tvoucher_hdr
@@ -1127,6 +1171,47 @@ const save = async (payload, userKode) => {
       }
     }
 
+    // ── Rujukan Rekap Pembayaran ──
+    // 1. Lepas baris rekap yang notanya sudah tidak ada di voucher ini (edit)
+    const dipakai = new Set(
+      detail
+        .filter((d) => d.tipe && d.nomor)
+        .map((d) => `${d.tipe}|${d.nomor}`),
+    );
+    const [lama] = await conn.query(
+      `SELECT rkbd_nomor, rkbd_nourut, rkbd_tipe, rkbd_nota
+       FROM trekap_bayar_dtl WHERE rkbd_vou_nomor = ?`,
+      [anomor],
+    );
+    for (const r of lama) {
+      if (!dipakai.has(`${r.rkbd_tipe}|${r.rkbd_nota}`)) {
+        await conn.query(
+          `UPDATE trekap_bayar_dtl SET rkbd_vou_nomor = ''
+           WHERE rkbd_nomor = ? AND rkbd_nourut = ? AND rkbd_vou_nomor = ?`,
+          [r.rkbd_nomor, r.rkbd_nourut, anomor],
+        );
+      }
+    }
+    // 2. Pasang baris rekap yang dipanggil (harus masih bebas dan AKTIF)
+    for (const d of detail.filter(
+      (x) => x.tipe && x.nomor && x.rekapNomor && x.rekapNoUrut,
+    )) {
+      const [ok] = await conn.query(
+        `UPDATE trekap_bayar_dtl d
+         INNER JOIN trekap_bayar_hdr h ON h.rkb_nomor = d.rkbd_nomor
+         SET d.rkbd_vou_nomor = ?
+         WHERE d.rkbd_nomor = ? AND d.rkbd_nourut = ?
+           AND d.rkbd_vou_nomor = '' AND h.rkb_status = 'AKTIF'
+           AND d.rkbd_sup_kode = ? AND d.rkbd_tipe = ? AND d.rkbd_nota = ?`,
+        [anomor, d.rekapNomor, d.rekapNoUrut, supKode, d.tipe, d.nomor],
+      );
+      if (ok.affectedRows !== 1) {
+        throw new Error(
+          `Baris rekap ${d.rekapNomor} no. ${d.rekapNoUrut} (${d.nomor}) sudah dipakai voucher lain, dibatalkan, atau berubah. Muat ulang rekap.`,
+        );
+      }
+    }
+
     // Delphi simpandata: jika xminta5='ACC' → UPDATE tspk_pin5 SET pin_dipakai='Y'
     if (pin5Status === "ACC" && pin5Urut > 0) {
       await conn.query(
@@ -1397,6 +1482,7 @@ module.exports = {
   searchNota,
   getDetailForm,
   cekStatusRealisasi,
+  getRekapTersedia,
   save,
   // Realisasi
   getMaxNomorRealisasi,

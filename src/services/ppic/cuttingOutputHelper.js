@@ -19,23 +19,27 @@ const withCuttingOutput = async (
   spkKey = "NomorSPK",
 ) => {
   const spkList = [...new Set(rows.map((r) => r[spkKey]).filter(Boolean))];
-  if (!spkList.length) return rows.map((r) => ({ ...r, Output: 0 }));
+  if (!spkList.length)
+    return rows.map((r) => ({ ...r, Output: 0, OutputHarian: [] }));
 
   const [lhk] = await db.query(
     `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS kelompok,
+            DATE_FORMAT(h.mph_tanggal, '%Y-%m-%d') AS tgl,
             IFNULL(SUM(h.mph_jumlah), 0) AS qty
      FROM tmutasiproduksi_hdr h
      WHERE h.mph_spk_nomor IN (?)
        AND ((h.mph_gdgasal = 'GP001' AND h.mph_gdgtujuan = 'GP012')
          OR (h.mph_gdgasal = 'GP015' AND h.mph_gdgtujuan = 'GP021'))
        AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-     GROUP BY h.mph_spk_nomor, h.mph_kelompok`,
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok, DATE(h.mph_tanggal)`,
     [spkList, tgl1, tgl2],
   );
 
+  // bucket[spk][tgl] = { MANUAL, MESIN, LAIN }
   const bucket = {};
   for (const r of lhk) {
-    const b = (bucket[r.spk] ??= { MANUAL: 0, MESIN: 0, LAIN: 0 });
+    const perTgl = (bucket[r.spk] ??= {});
+    const b = (perTgl[r.tgl] ??= { MANUAL: 0, MESIN: 0, LAIN: 0 });
     b[golongkan(r.kelompok)] += Number(r.qty) || 0;
   }
 
@@ -47,19 +51,23 @@ const withCuttingOutput = async (
 
   return rows.map((r) => {
     const spk = r[spkKey];
-    const b = bucket[spk] || { MANUAL: 0, MESIN: 0, LAIN: 0 };
+    const perTgl = bucket[spk] || {};
     const pertama = !sudah.has(spk);
     sudah.add(spk);
+    const p = r[prosesKey];
 
-    let output;
-    if (jumlahBaris[spk] === 1) {
-      output = b.MANUAL + b.MESIN + b.LAIN;
-    } else {
-      const p = r[prosesKey];
-      output =
-        (p === "MANUAL" || p === "MESIN" ? b[p] : 0) + (pertama ? b.LAIN : 0);
+    const harian = [];
+    for (const tgl of Object.keys(perTgl).sort()) {
+      const b = perTgl[tgl];
+      const qty =
+        jumlahBaris[spk] === 1
+          ? b.MANUAL + b.MESIN + b.LAIN
+          : (p === "MANUAL" || p === "MESIN" ? b[p] : 0) +
+            (pertama ? b.LAIN : 0);
+      if (qty > 0) harian.push({ tgl, qty });
     }
-    return { ...r, Output: output };
+    const output = harian.reduce((s, h) => s + h.qty, 0);
+    return { ...r, Output: output, OutputHarian: harian };
   });
 };
 

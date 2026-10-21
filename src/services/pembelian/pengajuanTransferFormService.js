@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
 
 // ── Account header (rekening bank — rek_rekening<>"" AND rek_jp=0) ────
 const getAccountOptions = async () => {
@@ -42,6 +43,70 @@ const getSupplierDetail = async (kode) => {
     [kode],
   );
   return rows;
+};
+
+// ── Voucher hasil Rekap Pembayaran (F7) ───────────────────────────────
+// Hanya voucher yang tertaut ke baris rekap AKTIF (rkbd_vou_nomor) dan belum
+// dipakai Pengajuan Transfer (belum ada di bayar_debet_detail, sama dengan F2).
+// Dua langkah (bukan JOIN lintas tabel) supaya tidak kena collation mismatch.
+const getRekapVoucherOptions = async (search = "") => {
+  const [rekap] = await db.query(
+    `SELECT d.rkbd_vou_nomor AS vouNomor,
+            GROUP_CONCAT(DISTINCT d.rkbd_nomor ORDER BY d.rkbd_nomor
+                         SEPARATOR ', ') AS rekapNomor,
+            DATE_FORMAT(MIN(d.rkbd_tgl_rencana), '%Y-%m-%d') AS tglRencana
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr rh
+       ON rh.rkb_nomor = d.rkbd_nomor AND rh.rkb_status = 'AKTIF'
+     WHERE d.rkbd_vou_nomor <> ''
+     GROUP BY d.rkbd_vou_nomor`,
+  );
+  if (!rekap.length) return [];
+
+  const [rows] = await db.query(
+    `SELECT h.vou_nomor AS nomor,
+        DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
+        h.vou_sup_kode AS supKode,
+        s.sup_nama AS supplier,
+        h.vou_total - IFNULL((
+          SELECT SUM(voud2_harga * voud2_jumlah)
+          FROM tvoucher_dtl2
+          WHERE voud2_vou_nomor = h.vou_nomor
+        ), 0) AS nominal
+     FROM tvoucher_hdr h
+     INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
+     WHERE h.vou_nomor IN (?)
+       AND NOT EXISTS (
+         SELECT 1 FROM bayar_debet_detail b WHERE b.vou_nomor = h.vou_nomor
+       )`,
+    [rekap.map((r) => r.vouNomor)],
+  );
+
+  const infoRekap = new Map(rekap.map((r) => [r.vouNomor, r]));
+  const kata = String(search || "")
+    .trim()
+    .toLowerCase();
+  return rows
+    .map((r) => ({
+      ...r,
+      nominal: Number(r.nominal),
+      rekapNomor: infoRekap.get(r.nomor)?.rekapNomor || "",
+      tglRencana: infoRekap.get(r.nomor)?.tglRencana || "",
+    }))
+    .filter(
+      (r) =>
+        !kata ||
+        r.nomor.toLowerCase().includes(kata) ||
+        String(r.supplier || "")
+          .toLowerCase()
+          .includes(kata) ||
+        r.rekapNomor.toLowerCase().includes(kata),
+    )
+    .sort(
+      (a, b) =>
+        String(a.tglRencana).localeCompare(String(b.tglRencana)) ||
+        a.nomor.localeCompare(b.nomor),
+    );
 };
 
 // ── Voucher pembayaran (F2) ───────────────────────────────────────────
@@ -317,7 +382,7 @@ const getAccountAll = async (search = "") => {
     `
     SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
     FROM finance.trekening
-    WHERE rek_isaktif = 0
+    WHERE rek_isaktif = 0${sqlTanpaInduk()}
       AND (rek_kode LIKE ? OR rek_nama LIKE ?)
     ORDER BY rek_kode LIMIT 500
   `,
@@ -504,6 +569,9 @@ const saveData = async (payload, user) => {
 
       for (const d of detail) {
         if (!d.nama) continue;
+
+        if (d.tglRealisasi)
+          await assertBolehPosting([d.rekkode], d.tglRealisasi, conn);
 
         if (d.jurnal) {
           // ── Realisasi existing → edit atau hapus ──
@@ -1029,6 +1097,7 @@ module.exports = {
   getDcOptions,
   getSupplierOptions,
   getSupplierDetail,
+  getRekapVoucherOptions,
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,

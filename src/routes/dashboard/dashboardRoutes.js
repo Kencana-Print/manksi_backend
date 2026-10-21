@@ -14,6 +14,7 @@ router.use((req, res, next) => {
 // (tidak perlu checkPermission — dashboard bukan menu ERP)
 router.get("/spk-urgent", verifyToken, controller.getSpkUrgent);
 router.get("/saldo-kas", verifyToken, controller.getSaldoKas);
+router.get("/saldo-laci", verifyToken, controller.getSaldoLaci);
 router.get("/penawaran-summary", verifyToken, controller.getPenawaranSummary);
 router.get(
   "/penawaran-belum-spk",

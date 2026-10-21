@@ -6,6 +6,24 @@ const {
   SQL_NOMINAL_INSENTIF,
 } = require("./pengajuanUangMukaService");
 
+// Qty permintaan yang sudah dipenuhi lewat PO (aturan sama dengan getQtySudah di poNonBahanService):
+// PO belum CLOSE = qty PO, PO CLOSE = qty BPB yang benar-benar datang
+const SQL_QTY_PO_MB = (d) => `
+  (IFNULL((
+    SELECT SUM(po_d.pod_jumlah)
+    FROM tgarmenpo_hdr po_h
+    JOIN tgarmenpo_dtl po_d ON po_d.pod_nomor = po_h.po_nomor
+    WHERE po_h.po_mb_nomor = ${d}.mbd_nomor AND po_d.pod_brg_kode = ${d}.mbd_brg_kode
+      AND po_h.po_status NOT LIKE '%CLOSE%'
+  ), 0) + IFNULL((
+    SELECT SUM(bp_i.bpbd_jumlah)
+    FROM tgarmenpo_hdr po_h
+    JOIN tgarmenbpb_hdr bp_h ON bp_h.bpb_po_nomor = po_h.po_nomor
+    JOIN tgarmenbpb_dtl bp_i ON bp_i.bpbd_nomor = bp_h.bpb_nomor
+    WHERE po_h.po_mb_nomor = ${d}.mbd_nomor AND bp_i.bpbd_brg_kode = ${d}.mbd_brg_kode
+      AND po_h.po_status LIKE '%CLOSE%'
+  ), 0))`;
+
 // PUM masih memegang sumber ini (sedang diajukan, atau direalisasi & di-ACC)
 const sqlPumAktif = (sumber, kolomNomor, kolomItem = null) => `
   SELECT 1 FROM tpengajuan_uang_muka_dtl pd
@@ -122,7 +140,7 @@ const getOutstanding = async ({
               WHERE ki.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN'
                 AND ki.bond_ref_nomor = h.mb_nomor AND ki.bond_ref_nourut = d.mbd_nourut
                 AND ki.bond_verified <> 0
-            ), 0)) * d.mbd_harga
+            ), 0) - ${SQL_QTY_PO_MB("d")}) * d.mbd_harga
           )
           FROM tgarmenmintabeli_dtl d
           WHERE d.mbd_nomor = h.mb_nomor
@@ -138,7 +156,7 @@ const getOutstanding = async ({
               FROM finance.tkasbonitem2 ki2
               WHERE ki2.bond2_link = h.mb_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
                 AND ki2.bond2_verified <> 0
-            ), 0)) > IFNULL((
+            ), 0) - ${SQL_QTY_PO_MB("d")}) > IFNULL((
               SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
               WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
             ), 0)
@@ -165,7 +183,7 @@ const getOutstanding = async ({
             FROM finance.tkasbonitem2 ki2
             WHERE ki2.bond2_link = h.mb_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
               AND ki2.bond2_verified <> 0
-          ), 0)) > IFNULL((
+          ), 0) - ${SQL_QTY_PO_MB("d")}) > IFNULL((
             SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
             WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
           ), 0)
@@ -352,7 +370,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
                 FROM finance.tkasbonitem2 ki2
                 WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
                   AND ki2.bond2_verified <> 0
-              ), 0)) AS QtyRealisasi,
+              ), 0) + ${SQL_QTY_PO_MB("d")}) AS QtyRealisasi,
               (IFNULL((
                 SELECT SUM(ki.bond_qty_realisasi * ki.bond_nominal_realisasi)
                 FROM finance.tkasbonitem ki
@@ -380,7 +398,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            FROM finance.tkasbonitem2 ki2
            WHERE ki2.bond2_link = d.mbd_nomor AND ki2.bond2_brg_kode = d.mbd_brg_kode
              AND ki2.bond2_verified <> 0
-         ), 0)) > IFNULL((
+         ), 0) - ${SQL_QTY_PO_MB("d")}) > IFNULL((
            SELECT SUM(d2.mbd2_jumlah) FROM tgarmenmintabeli_dtl2 d2
            WHERE d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
          ), 0)
@@ -502,12 +520,17 @@ const getHistory = async ({ startDate, endDate, cabang }) => {
 // ── HISTORY DELETE ──
 const deleteHistory = async (nomor) => {
   const [[bon]] = await db.query(
-    `SELECT bon_selesai, bon_pjh_nomor FROM finance.tkasbon WHERE bon_nomor = ?`,
+    `SELECT bon_selesai, bon_pjh_nomor, bon_transfer_jur_no, bon_konfirmasi_tgl
+     FROM finance.tkasbon WHERE bon_nomor = ?`,
     [nomor],
   );
   if (!bon) throw new Error("Data tidak ditemukan.");
   if (Number(bon.bon_selesai) !== 0)
     throw new Error("Sudah ada penyelesaian. Tidak bisa dihapus.");
+  if (bon.bon_transfer_jur_no && bon.bon_konfirmasi_tgl)
+    throw new Error(
+      "Kasbon ini sudah dikonfirmasi diterima. Tidak bisa dihapus; koreksi lewat transfer balik oleh Finance.",
+    );
 
   const conn = await db.getConnection();
   await conn.beginTransaction();
@@ -547,6 +570,21 @@ const deleteHistory = async (nomor) => {
         `UPDATE tpengajuan_uang_muka_hdr SET pum_status = 'BATAL'
          WHERE pum_nomor = ?`,
         [p.pum_nomor],
+      );
+    }
+    // Hapus jurnal transfer laci (BKK + BKM otomatisnya) bila ada.
+    if (bon.bon_transfer_jur_no) {
+      const t = bon.bon_transfer_jur_no;
+      await conn.query(
+        `DELETE FROM finance.tjurnalitem WHERE jurd_jur_no IN (
+           SELECT jur_no FROM finance.tjurnal
+           WHERE jur_no = ? OR (jur_otomatis = 1 AND MID(jur_no,3,18) = ?))`,
+        [t, t],
+      );
+      await conn.query(
+        `DELETE FROM finance.tjurnal
+         WHERE jur_no = ? OR (jur_otomatis = 1 AND MID(jur_no,3,18) = ?)`,
+        [t, t],
       );
     }
     await conn.query(`DELETE FROM finance.tkasbonitem WHERE bond_nomor = ?`, [

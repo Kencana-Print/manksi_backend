@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { sqlTanpaInduk } = require("./postingGuardService");
 
 const searchSpk = async (
   keyword,
@@ -2492,12 +2493,11 @@ const searchAccount = async (
   let whereClause = `WHERE 1=1`;
 
   if (jenis === "KAS") {
-    whereClause += ` AND LEFT(rek_kode,5) = 'A-111'`;
+    whereClause += ` AND LEFT(rek_kode,5) = 'A-111'${sqlTanpaInduk()}`;
   } else if (jenis === "BANK") {
     whereClause += ` AND (LEFT(rek_kode,5) = 'A-112' OR LEFT(rek_kode,5) = 'B-211')`;
   } else if (jenis === "ALL") {
-    // Tanpa filter prefix — dipakai untuk pilih akun biaya/GL di
-    // baris detail Penyelesaian Uang Muka, bukan akun kas/bank header.
+    whereClause += sqlTanpaInduk();
   } else {
     whereClause += ` AND rek_rekening <> ""`;
   }

@@ -1,4 +1,11 @@
 const db = require("../../config/database");
+const {
+  assertBolehPosting,
+  isSetelahCutoff,
+  sqlTanpaInduk,
+  hitungSaldoAkun,
+  TANGGAL_MULAI_BLOKIR_INDUK,
+} = require("../postingGuardService");
 
 // ── Lookup account (KAS/BANK) — ported, prefix finance. ──
 const getAccountOptions = async (jenis, cabang) => {
@@ -6,7 +13,7 @@ const getAccountOptions = async (jenis, cabang) => {
   const params = [];
   let whereClause;
   if (jenis === "KAS") {
-    whereClause = `LEFT(rek_kode,5)='A-111' AND rek_cabang = ?`;
+    whereClause = `LEFT(rek_kode,5)='A-111' AND rek_cabang = ?${sqlTanpaInduk()}`;
     params.push(effectiveCabang || "P01");
   } else {
     whereClause = `(LEFT(rek_kode,5)='A-112' OR LEFT(rek_kode,5)='B-211')`;
@@ -130,11 +137,140 @@ const getDetailForRealisasi = async (pumNomor) => {
 
   const detail = [kasbonRow, ...itemRows];
 
-  return { ...hdr, detail };
+  const [laciRows] = await db.query(
+    `SELECT rek_kode, rek_nama FROM finance.trekening
+     WHERE rek_parent = ? AND rek_pemilik = ? AND rek_isaktif = 0`,
+    [KODE_INDUK_KAS, hdr.pum_user_create],
+  );
+  const laci = laciRows.length === 1 ? laciRows[0] : null;
+
+  return {
+    ...hdr,
+    detail,
+    laci_kode: laci?.rek_kode || "",
+    laci_nama: laci?.rek_nama || "",
+    laci_asal: KODE_LACI_FINANCE,
+    cutoff: TANGGAL_MULAI_BLOKIR_INDUK,
+  };
 };
 
 // Konvensi lama: cabang HO- memakai P01 untuk nomor bon/BKK/BBM
 const cabangDokumen = (cabang) => (cabang === "HO-" ? "P01" : cabang);
+
+// ── Transfer kas Finance -> laci penerima (sub-account A-111101) ──
+const KODE_INDUK_KAS = "A-111101";
+const KODE_LACI_FINANCE = "A-111118";
+// Tolak realisasi bila saldo laci Finance kurang. Matikan (false) bila saldo
+// awal cut-off bermasalah dan memblokir operasional.
+const CEK_SALDO_LACI_SUMBER = true;
+
+const fmtRupiah = (n) =>
+  new Intl.NumberFormat("id-ID").format(Math.round(Number(n) || 0));
+
+const getMaxNomorBkk = async (cabang, nomerator, conn) => {
+  const prefix = `${cabang}-${nomerator}.${new Date().getFullYear()}.`;
+  const [[row]] = await conn.query(
+    `SELECT IFNULL(MAX(CAST(RIGHT(jur_no,5) AS UNSIGNED)),0) AS max_val
+     FROM finance.tjurnal WHERE jur_no LIKE ?`,
+    [`${prefix}%`],
+  );
+  return `${prefix}${String(Number(row.max_val) + 1).padStart(5, "0")}`;
+};
+
+// Laci milik user (anak A-111101). Lebih dari satu = data salah, hentikan.
+const cariLaciPemilik = async (conn, userKode) => {
+  if (!userKode) return "";
+  const [rows] = await conn.query(
+    `SELECT rek_kode FROM finance.trekening
+     WHERE rek_parent = ? AND rek_pemilik = ? AND rek_isaktif = 0`,
+    [KODE_INDUK_KAS, userKode],
+  );
+  if (rows.length > 1)
+    throw new Error(
+      `User ${userKode} memiliki lebih dari satu laci kas. Rapikan data account.`,
+    );
+  return rows[0]?.rek_kode || "";
+};
+
+const getParentAccount = async (conn, kode) => {
+  const [[r]] = await conn.query(
+    `SELECT rek_parent FROM finance.trekening WHERE rek_kode = ?`,
+    [kode],
+  );
+  return r?.rek_parent || "";
+};
+
+// BKK: kredit laci asal (nourut 0), debet laci tujuan (nourut 1)
+// + BKM otomatis (debet tujuan nourut 0, kredit asal nourut 1).
+// Nomor BKM dibangun dari nomor BKK ini, BUKAN nomor BON, supaya tidak ikut
+// terhapus oleh pembersihan jurnal otomatis di Penyelesaian.
+const buatTransferLaci = async (
+  conn,
+  { tanggal, bonNomor, pumNomor, asal, tujuan, total, penerima, userKode },
+) => {
+  if (CEK_SALDO_LACI_SUMBER) {
+    const saldo = await hitungSaldoAkun(asal, conn);
+    if (saldo + 0.005 < total)
+      throw new Error(
+        `Saldo laci Finance (${asal}) tidak cukup: tersedia ${fmtRupiah(saldo)}, dibutuhkan ${fmtRupiah(total)}.`,
+      );
+  }
+
+  const noBkk = await getMaxNomorBkk("P01", "BKK", conn);
+  const uraian = `TRANSFER KAS UANG MUKA ${pumNomor} (${bonNomor})`;
+
+  await conn.query(
+    `INSERT INTO finance.tjurnal
+       (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_nota,
+        jur_penerima, jur_keterangan, jur_rek_kode, jur_otomatis,
+        date_create, user_create)
+     VALUES (?, ?, 'BKK', 'P01', ?, ?, ?, ?, 0, NOW(), ?)`,
+    [noBkk, tanggal, bonNomor, penerima || "", uraian, asal, userKode],
+  );
+  await conn.query(
+    `INSERT INTO finance.tjurnalitem
+       (jurd_jur_no, jurd_rek_kode, jurd_kredit, jurd_uraian)
+     VALUES (?, ?, ?, ?)`,
+    [noBkk, asal, total, uraian],
+  );
+  await conn.query(
+    `INSERT INTO finance.tjurnalitem
+       (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_debet,
+        jurd_rek_kode, jurd_cc_kode, jurd_dcnama)
+     VALUES (?, 'BKK', 1, ?, ?, ?, 0, '')`,
+    [noBkk, uraian, total, tujuan],
+  );
+
+  const noBkm = `01${noBkk}`;
+  await conn.query(
+    `INSERT INTO finance.tjurnal
+       (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_penerima,
+        jur_keterangan, jur_rek_kode, jur_otomatis, date_create, user_create)
+     VALUES (?, ?, 'BKM', 'P01', ?, ?, ?, 1, NOW(), ?)`,
+    [
+      noBkm,
+      tanggal,
+      penerima || "",
+      `BKM OTOMATIS: ${uraian}`,
+      tujuan,
+      userKode,
+    ],
+  );
+  await conn.query(
+    `INSERT INTO finance.tjurnalitem
+       (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
+     VALUES (?, ?, ?, ?)`,
+    [noBkm, tujuan, total, uraian],
+  );
+  await conn.query(
+    `INSERT INTO finance.tjurnalitem
+       (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit,
+        jurd_rek_kode)
+     VALUES (?, 'BKM', 1, ?, ?, ?)`,
+    [noBkm, uraian, total, asal],
+  );
+  return noBkk;
+};
 
 // ── Generate nomor bon — ported, prefix finance. ──
 const getMaxNomor = async (cabang, conn) => {
@@ -159,7 +295,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
     await conn.beginTransaction();
 
     const [[hdr]] = await conn.query(
-      `SELECT pum_status, pum_cabang FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
+      `SELECT pum_status, pum_cabang, pum_user_create FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
       [pumNomor],
     );
     if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
@@ -186,6 +322,8 @@ const saveRealisasi = async (pumNomor, payload, user) => {
 
     let bonNomor = null;
     let totalNominal = 0;
+    let rekFinal = rek_kode;
+    let transferJurNo = "";
 
     if (!isFullTolak) {
       if (!rek_kode)
@@ -196,6 +334,17 @@ const saveRealisasi = async (pumNomor, payload, user) => {
         0,
       );
       const jenisInt = jenis === "KAS" ? 0 : 1;
+      const cabangDok = cabangDokumen(hdr.pum_cabang);
+
+      // Setelah cut-off: kas otomatis ke laci milik pembuat PUM (jika punya).
+      const modeLaci =
+        jenis === "KAS" && cabangDok === "P01" && isSetelahCutoff(tanggal);
+      if (modeLaci) {
+        const laci = await cariLaciPemilik(conn, hdr.pum_user_create);
+        if (laci) rekFinal = laci;
+      }
+      await assertBolehPosting([rekFinal], tanggal, conn);
+
       bonNomor = await getMaxNomor(hdr.pum_cabang, conn);
 
       await conn.query(
@@ -210,12 +359,38 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           nota || "",
           totalNominal,
           penerima || "",
-          cabangDokumen(hdr.pum_cabang),
-          rek_kode,
+          cabangDok,
+          rekFinal,
           keterangan || "",
           user.kode,
         ],
       );
+
+      // Transfer hanya bila kas tujuan adalah laci (anak A-111101) dan bukan
+      // laci Finance sendiri, serta ada nominal yang direalisasi.
+      if (
+        modeLaci &&
+        totalNominal > 0 &&
+        rekFinal !== KODE_LACI_FINANCE &&
+        (await getParentAccount(conn, rekFinal)) === KODE_INDUK_KAS
+      ) {
+        transferJurNo = await buatTransferLaci(conn, {
+          tanggal,
+          bonNomor,
+          pumNomor,
+          asal: KODE_LACI_FINANCE,
+          tujuan: rekFinal,
+          total: totalNominal,
+          penerima,
+          userKode: user.kode,
+        });
+        await conn.query(
+          `UPDATE finance.tkasbon
+           SET bon_transfer_jur_no = ?, bon_transfer_asal = ?
+           WHERE bon_nomor = ?`,
+          [transferJurNo, KODE_LACI_FINANCE, bonNomor],
+        );
+      }
     }
 
     let nourut = 1;
@@ -406,6 +581,8 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       bonNomor,
       totalNominal,
       status: isFullTolak ? "DITOLAK" : "REALISASI",
+      rekKode: isFullTolak ? "" : rekFinal,
+      transferJurNo,
     };
   } catch (e) {
     await conn.rollback();
@@ -492,6 +669,38 @@ const getPrintData = async (pumNomor) => {
   };
 };
 
+// Pemilik laci penerima mengonfirmasi uang kasbon sudah diterima.
+// Tidak ada pengecualian untuk ADMIN/Finance: hanya pemilik laci.
+const konfirmasiTerima = async (bonNomor, user) => {
+  const [[bon]] = await db.query(
+    `SELECT k.bon_transfer_jur_no, k.bon_konfirmasi_tgl, r.rek_pemilik
+     FROM finance.tkasbon k
+     LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
+     WHERE k.bon_nomor = ?`,
+    [bonNomor],
+  );
+  if (!bon) throw new Error("Kasbon tidak ditemukan.");
+  if (!bon.bon_transfer_jur_no)
+    throw new Error(
+      "Kasbon ini tidak memakai transfer kas, tidak perlu konfirmasi.",
+    );
+  if (bon.bon_konfirmasi_tgl) throw new Error("Kasbon ini sudah dikonfirmasi.");
+  if (
+    String(bon.rek_pemilik || "").toUpperCase() !==
+    String(user.kode || "").toUpperCase()
+  )
+    throw new Error("Hanya pemilik laci penerima yang dapat mengonfirmasi.");
+
+  const [res] = await db.query(
+    `UPDATE finance.tkasbon
+     SET bon_konfirmasi_tgl = NOW(), bon_konfirmasi_user = ?
+     WHERE bon_nomor = ? AND bon_konfirmasi_tgl IS NULL`,
+    [user.kode, bonNomor],
+  );
+  if (res.affectedRows === 0) throw new Error("Kasbon ini sudah dikonfirmasi.");
+  return { bonNomor };
+};
+
 module.exports = {
   getAccountOptions,
   getSupplierOptions,
@@ -499,4 +708,5 @@ module.exports = {
   getDetailForRealisasi,
   saveRealisasi,
   getPrintData,
+  konfirmasiTerima,
 };

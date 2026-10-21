@@ -51,6 +51,12 @@ router.get(
   ctrl.getVoucherOptions,
 );
 router.get(
+  "/rekap-voucher-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapVoucherOptions,
+);
+router.get(
   "/poexternal-options",
   verifyToken,
   checkPermission(MENU_ID, "view"),

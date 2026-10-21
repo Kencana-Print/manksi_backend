@@ -5,6 +5,16 @@
 // ═══════════════════════════════════════════════════════════
 const changelog = [
   {
+    version: "1.0.14",
+    date: "2026-10-21",
+    changes: [
+      {
+        type: "added",
+        text: "Pembaruan sistem untuk Finance Pusat (HO), sesuai dengan hasil meeting.",
+      },
+    ],
+  },
+  {
     version: "1.0.13",
     date: "2026-10-12",
     changes: [

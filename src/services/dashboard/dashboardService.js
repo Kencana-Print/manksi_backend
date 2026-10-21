@@ -10,6 +10,7 @@ const rekapPenawaranService = require("../laporan/marketing/rekapPenawaranServic
 const rekapMapService = require("../laporan/marketing/rekapMapService");
 const proyeksiVsRealisasiService = require("../laporan/marketing/proyeksiVsRealisasiService");
 const proyeksiBulananService = require("../laporan/marketing/proyeksiBulananService");
+const { isSetelahCutoff } = require("../postingGuardService");
 
 // ══════════════════════════════════════════════
 // CACHE: stale-while-revalidate + pembaruan diam-diam
@@ -254,46 +255,210 @@ const getSpkUrgent = async (user) => {
   return rows;
 };
 
+const KODE_INDUK_KAS = "A-111101";
+const KODE_LACI_FINANCE = "A-111118";
+
+// EDP boleh melihat semua untuk kartu ini (isSuperViewer global tidak diubah).
+const isKasSuper = (user) =>
+  isSuperViewer(user) || (user.bagian || "").toUpperCase() === "EDP";
+
+const bulat2 = (n) => Math.round(n * 100) / 100;
+
+// Saldo induk + semua laci. Tidak bergantung user → aman di-cache bersama.
+const getSaldoLaciPusat = () =>
+  memo(
+    "saldo-laci-pusat",
+    CACHE_TTL,
+    async () => {
+      const [akun] = await db.query(
+        `SELECT r.rek_kode AS Kode, r.rek_nama AS Nama, r.rek_pemilik AS Pemilik,
+                u.user_nama AS PemilikNama
+         FROM finance.trekening r
+         LEFT JOIN tuser u ON u.user_kode = r.rek_pemilik
+         WHERE r.rek_kode = ? OR r.rek_parent = ?
+         ORDER BY r.rek_kode`,
+        [KODE_INDUK_KAS, KODE_INDUK_KAS],
+      );
+      if (!akun.length) return [];
+      const [saldoRows] = await db.query(
+        `SELECT b.jurd_rek_kode AS Kode,
+                IFNULL(SUM(b.jurd_debet - b.jurd_kredit), 0) AS Saldo
+         FROM finance.tjurnalitem b
+         JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
+         WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
+           AND b.jurd_rek_kode IN (?)
+           AND a.jur_tanggal <= CURDATE()
+         GROUP BY b.jurd_rek_kode`,
+        [akun.map((a) => a.Kode)],
+      );
+      const saldoMap = new Map(
+        saldoRows.map((r) => [r.Kode, Number(r.Saldo) || 0]),
+      );
+      return akun.map((a) => ({ ...a, Saldo: saldoMap.get(a.Kode) || 0 }));
+    },
+    "saldoLaciPusat",
+  );
+
+// Cabang selain pusat: perilaku lama (semua rekening bernama KAS), di-cache per cabang.
+const getSaldoKasCabang = (cabang) =>
+  memo(
+    `saldo-kas-cabang|${cabang}`,
+    CACHE_TTL,
+    async () => {
+      const [rekRows] = await db.query(
+        `SELECT rek_kode, rek_nama
+         FROM finance.trekening
+         WHERE rek_isaktif = 0
+           AND rek_cabang = ?
+           AND rek_nama LIKE '%KAS%'
+         ORDER BY rek_kode`,
+        [cabang],
+      );
+      if (!rekRows.length) {
+        return { Cabang: cabang, Saldo: 0, JumlahRekening: 0, Rekening: [] };
+      }
+      const rekKodes = rekRows.map((r) => r.rek_kode);
+      const [[row]] = await db.query(
+        `SELECT IFNULL(SUM(b.jurd_debet - b.jurd_kredit), 0) AS Saldo
+         FROM finance.tjurnalitem b
+         LEFT JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
+         WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
+           AND b.jurd_rek_kode IN (?)
+           AND a.jur_tanggal <= CURDATE()`,
+        [rekKodes],
+      );
+      return {
+        Cabang: cabang,
+        Saldo: Number(row.Saldo) || 0,
+        JumlahRekening: rekKodes.length,
+        Rekening: rekRows,
+      };
+    },
+    "saldoKasCabang",
+  );
+
 const getSaldoKas = async (user) => {
-  const bagian = user?.bagian;
+  const bagian = (user?.bagian || "").toUpperCase();
   const allowed = ["FINANCE", "PEMBELIAN"];
-  if (!allowed.includes(bagian) && !isSuperViewer(user)) return null;
+  if (!allowed.includes(bagian) && !isKasSuper(user)) return null;
 
   let cabang = user?.cabang;
   if (!cabang || cabang === "HO-") cabang = "P01";
+  if (cabang !== "P01") return getSaldoKasCabang(cabang);
 
-  const [rekRows] = await db.query(
-    `SELECT rek_kode, rek_nama
-     FROM finance.trekening
-     WHERE rek_isaktif = 0
-       AND rek_cabang = ?
-       AND rek_nama LIKE '%KAS%'
-     ORDER BY rek_kode`,
-    [cabang],
-  );
+  const semua = await getSaldoLaciPusat();
+  const induk = semua.find((r) => r.Kode === KODE_INDUK_KAS);
+  const anak = semua.filter((r) => r.Kode !== KODE_INDUK_KAS);
 
-  if (!rekRows.length) {
-    return { Cabang: cabang, Saldo: 0, JumlahRekening: 0, Rekening: [] };
+  // Opsi A: Finance dan super user (ADMIN/DIR/AUDIT/EDP) melihat semua.
+  // Pembelian hanya lacinya sendiri, mulai tanggal cut-off. Sebelum cut-off
+  // belum ada pemisahan, jadi mereka melihat total seperti sebelumnya.
+  const lihatSemua =
+    isKasSuper(user) || bagian === "FINANCE" || !isSetelahCutoff(new Date());
+
+  if (!lihatSemua) {
+    const kodeUser = (user.kode || "").toUpperCase();
+    const milik = anak.filter(
+      (r) => (r.Pemilik || "").toUpperCase() === kodeUser,
+    );
+    if (!milik.length) {
+      return {
+        Cabang: "P01",
+        Mode: "LACI_SENDIRI",
+        Tampil: false,
+        Saldo: 0,
+        JumlahRekening: 0,
+      };
+    }
+    return {
+      Cabang: "P01",
+      Mode: "LACI_SENDIRI",
+      Tampil: true,
+      Label: "Kas Operasional Pusat · laci saya",
+      Saldo: bulat2(milik.reduce((s, r) => s + r.Saldo, 0)),
+      JumlahRekening: milik.length,
+    };
   }
 
-  const rekKodes = rekRows.map((r) => r.rek_kode);
-  const placeholders = rekKodes.map(() => "?").join(",");
-
-  const [[row]] = await db.query(
-    `SELECT IFNULL(SUM(b.jurd_debet - b.jurd_kredit), 0) AS Saldo
-     FROM finance.tjurnalitem b
-     LEFT JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
-     WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
-       AND b.jurd_rek_kode IN (${placeholders})
-       AND a.jur_tanggal <= CURDATE()`,
-    rekKodes,
-  );
+  const finance = anak
+    .filter((r) => r.Kode === KODE_LACI_FINANCE)
+    .reduce((s, r) => s + r.Saldo, 0);
+  const purchasing = anak
+    .filter((r) => r.Kode !== KODE_LACI_FINANCE)
+    .reduce((s, r) => s + r.Saldo, 0);
+  const belumDialokasi = induk ? induk.Saldo : 0;
 
   return {
-    Cabang: cabang,
-    Saldo: Number(row.Saldo) || 0,
-    JumlahRekening: rekKodes.length,
-    Rekening: rekRows,
+    Cabang: "P01",
+    Mode: "PUSAT",
+    Tampil: true,
+    Label: "Kas Operasional Pusat",
+    Saldo: bulat2(finance + purchasing + belumDialokasi),
+    JumlahRekening: semua.length,
+    Finance: bulat2(finance),
+    Purchasing: bulat2(purchasing),
+    BelumDialokasi: bulat2(belumDialokasi),
+  };
+};
+
+// Kasbon per laci: belum selesai, dan transfer yang belum dikonfirmasi penerima.
+// "Belum dikonfirmasi" dihitung tanpa melihat bon_selesai (kasbon yang diselesaikan
+// Finance atas nama orang lain tetap belum dikonfirmasi), sama dengan kolom Terima
+// di tab riwayat Uang Muka.
+const getKasbonLaciPusat = (kodes) =>
+  memo(
+    "kasbon-laci-pusat",
+    CACHE_TTL,
+    async () => {
+      if (!kodes.length) return [];
+      const [rows] = await db.query(
+        `SELECT bon_rek_kode AS Kode,
+                SUM(bon_selesai = 0) AS JmlBelumSelesai,
+                IFNULL(SUM(IF(bon_selesai = 0, bon_nominal, 0)), 0) AS NominalBelumSelesai,
+                SUM(IFNULL(bon_transfer_jur_no, '') <> '' AND bon_konfirmasi_tgl IS NULL) AS JmlBelumKonfirmasi,
+                IFNULL(SUM(IF(IFNULL(bon_transfer_jur_no, '') <> '' AND bon_konfirmasi_tgl IS NULL, bon_nominal, 0)), 0) AS NominalBelumKonfirmasi
+         FROM finance.tkasbon
+         WHERE bon_rek_kode IN (?)
+         GROUP BY bon_rek_kode`,
+        [kodes],
+      );
+      return rows;
+    },
+    "kasbonLaciPusat",
+  );
+
+// Rincian per laci untuk tab Finance. Hanya FINANCE dan super user.
+const getSaldoLaci = async (user) => {
+  const bagian = (user?.bagian || "").toUpperCase();
+  if (bagian !== "FINANCE" && !isKasSuper(user)) return null;
+
+  const semua = await getSaldoLaciPusat();
+  const induk = semua.find((r) => r.Kode === KODE_INDUK_KAS);
+  const anak = semua.filter((r) => r.Kode !== KODE_INDUK_KAS);
+  const kasbon = await getKasbonLaciPusat(anak.map((r) => r.Kode));
+  const kasbonMap = new Map(kasbon.map((k) => [k.Kode, k]));
+
+  const Laci = anak.map((r) => {
+    const k = kasbonMap.get(r.Kode) || {};
+    return {
+      Kode: r.Kode,
+      Nama: r.Nama,
+      Pemilik: r.Pemilik || "",
+      PemilikNama: r.PemilikNama || null,
+      Kelompok: r.Kode === KODE_LACI_FINANCE ? "FINANCE" : "PURCHASING",
+      Saldo: r.Saldo,
+      JmlBelumSelesai: Number(k.JmlBelumSelesai) || 0,
+      NominalBelumSelesai: Number(k.NominalBelumSelesai) || 0,
+      JmlBelumKonfirmasi: Number(k.JmlBelumKonfirmasi) || 0,
+      NominalBelumKonfirmasi: Number(k.NominalBelumKonfirmasi) || 0,
+    };
+  });
+  const belumDialokasi = induk ? induk.Saldo : 0;
+
+  return {
+    Laci,
+    BelumDialokasi: bulat2(belumDialokasi),
+    TotalSaldo: bulat2(Laci.reduce((s, l) => s + l.Saldo, 0) + belumDialokasi),
   };
 };
 
@@ -6167,7 +6332,8 @@ const buildOutstandingPP = (cabang) => {
         b.brg_satuan AS Satuan,
         UPPER(b.brg_jenis) AS Jenis,
         d.mbd_jumlah AS QtyMinta,
-        IFNULL(k1.Qty, 0) + IFNULL(k2.Qty, 0) AS QtyBeli,
+        IFNULL(k1.Qty, 0) + IFNULL(k2.Qty, 0)
+          + IFNULL(k3.Qty, 0) + IFNULL(k4.Qty, 0) AS QtyBeli,
         IFNULL(d2.Qty, 0) AS QtyDtl2
       FROM tgarmenmintabeli_hdr h
       JOIN tgarmenmintabeli_dtl d ON d.mbd_nomor = h.mb_nomor
@@ -6189,6 +6355,23 @@ const buildOutstandingPP = (cabang) => {
         FROM tgarmenmintabeli_dtl2
         GROUP BY mbd2_nomor, mbd2_brg_kode
       ) d2 ON d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
+      LEFT JOIN (
+        SELECT h.po_mb_nomor AS mb_nomor, d.pod_brg_kode AS brg_kode,
+               SUM(d.pod_jumlah) AS Qty
+        FROM tgarmenpo_hdr h
+        JOIN tgarmenpo_dtl d ON d.pod_nomor = h.po_nomor
+        WHERE h.po_status NOT LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
+        GROUP BY h.po_mb_nomor, d.pod_brg_kode
+      ) k3 ON k3.mb_nomor = d.mbd_nomor AND k3.brg_kode = d.mbd_brg_kode
+      LEFT JOIN (
+        SELECT h.po_mb_nomor AS mb_nomor, i.bpbd_brg_kode AS brg_kode,
+               SUM(i.bpbd_jumlah) AS Qty
+        FROM tgarmenpo_hdr h
+        JOIN tgarmenbpb_hdr j ON j.bpb_po_nomor = h.po_nomor
+        JOIN tgarmenbpb_dtl i ON i.bpbd_nomor = j.bpb_nomor
+        WHERE h.po_status LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
+        GROUP BY h.po_mb_nomor, i.bpbd_brg_kode
+      ) k4 ON k4.mb_nomor = d.mbd_nomor AND k4.brg_kode = d.mbd_brg_kode
       WHERE d.mbd_closed_manual = 0 AND h.mb_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > x.QtyDtl2
@@ -6362,6 +6545,7 @@ const getOutstandingBeliList = async (
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
+  getSaldoLaci,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,
@@ -6498,7 +6682,6 @@ const CACHED = {
   getSoAktifTrend: CACHE_TTL,
   getTrendSpk7Hari: CACHE_TTL,
   getApprovalPendingCount: CACHE_TTL,
-  getSaldoKas: CACHE_TTL,
   getCompanyPulseSummary: CACHE_TTL,
 
   // ── Marketing ──

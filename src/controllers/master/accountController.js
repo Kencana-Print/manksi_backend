@@ -36,6 +36,24 @@ const getCabang = async (req, res) => {
   }
 };
 
+const getPemilikOptions = async (req, res) => {
+  try {
+    const data = await service.getPemilikOptions(req.query.search || "");
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getIndukOptions = async (req, res) => {
+  try {
+    const data = await service.getIndukOptions();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const saveData = async (req, res) => {
   try {
     const data = await service.saveData(req.body);
@@ -59,6 +77,8 @@ module.exports = {
   getById,
   getKelompok,
   getCabang,
+  getPemilikOptions,
+  getIndukOptions,
   saveData,
   deleteData,
 };

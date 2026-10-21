@@ -405,6 +405,9 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
         ) AS Terpakai,
         DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
         k.user_create AS DibuatOleh,
+        k.bon_transfer_jur_no AS TransferJurNo,
+        k.bon_konfirmasi_tgl AS KonfirmasiTgl,
+        r.rek_pemilik AS LaciPemilik,
         (SELECT v.val_aksi FROM tpengajuan_uang_muka_validasi v
           WHERE v.val_pum_nomor = h.pum_nomor AND v.val_jenis = 'PENGAJUAN'
           ORDER BY v.val_id DESC LIMIT 1) AS ValAksi,
@@ -448,6 +451,9 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
         ) AS Terpakai,
         DATE_FORMAT(k.date_create, '%Y-%m-%d %H:%i') AS TglDibuat,
         k.user_create AS DibuatOleh,
+        k.bon_transfer_jur_no AS TransferJurNo,
+        k.bon_konfirmasi_tgl AS KonfirmasiTgl,
+        r.rek_pemilik AS LaciPemilik,
         NULL AS ValAksi,
         NULL AS ValAksiSelesai
       FROM finance.tkasbon k
@@ -482,6 +488,12 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
   const tutupCache = new Map();
   for (const row of rows) {
     row.Sisa = Number(row.TotalNominal) - Number(row.Terpakai || 0);
+    // "" = tidak pakai transfer kas (tidak perlu konfirmasi)
+    row.KonfirmasiStatus = !row.TransferJurNo
+      ? ""
+      : row.KonfirmasiTgl
+        ? "SUDAH"
+        : "BELUM";
     if (row.BonTanggal) {
       const key = new Date(row.BonTanggal).toISOString().slice(0, 10);
       if (!tutupCache.has(key)) {

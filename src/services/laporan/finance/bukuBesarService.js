@@ -100,10 +100,20 @@ const getBukuBesar = async (rekkode, startDate, endDate) => {
       AND b.jurd_rek_kode IN (?)
       AND a.jur_tanggal < ?
       AND NOT (
-        a.jur_otomatis = 1
+        IFNULL(a.jur_otomatis, 0) = 1
         AND EXISTS (
-          SELECT 1 FROM finance.tkasbon k
+          SELECT 1
+          FROM finance.tkasbon k
+          INNER JOIN finance.tjurnal t2
+            ON t2.jur_otomatis = 1
+           AND MID(t2.jur_no, 3, 18) = k.bon_nomor
+          INNER JOIN finance.tjurnalitem i2
+            ON i2.jurd_jur_no = t2.jur_no
+           AND i2.jurd_nourut = 0
           WHERE k.bon_jur_no = MID(a.jur_no, 3, 18)
+            AND i2.jurd_rek_kode = b.jurd_rek_kode
+            AND i2.jurd_debet = b.jurd_debet
+            AND i2.jurd_kredit = b.jurd_kredit
         )
       )`,
     [kodeList, startDate],
@@ -181,10 +191,20 @@ const getBukuBesar = async (rekkode, startDate, endDate) => {
       AND b.jurd_rek_kode IN (?)
       AND a.jur_tanggal BETWEEN ? AND ?
       AND NOT (
-        a.jur_otomatis = 1
+        IFNULL(a.jur_otomatis, 0) = 1
         AND EXISTS (
-          SELECT 1 FROM finance.tkasbon k
+          SELECT 1
+          FROM finance.tkasbon k
+          INNER JOIN finance.tjurnal t2
+            ON t2.jur_otomatis = 1
+           AND MID(t2.jur_no, 3, 18) = k.bon_nomor
+          INNER JOIN finance.tjurnalitem i2
+            ON i2.jurd_jur_no = t2.jur_no
+           AND i2.jurd_nourut = 0
           WHERE k.bon_jur_no = MID(a.jur_no, 3, 18)
+            AND i2.jurd_rek_kode = b.jurd_rek_kode
+            AND i2.jurd_debet = b.jurd_debet
+            AND i2.jurd_kredit = b.jurd_kredit
         )
       )
     ORDER BY a.jur_tanggal, v.nourut, a.jur_no`,

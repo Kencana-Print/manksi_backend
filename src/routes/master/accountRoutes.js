@@ -5,6 +5,8 @@ const { verifyToken } = require("../../middleware/authMiddleware");
 
 router.get("/kelompok", verifyToken, controller.getKelompok);
 router.get("/cabang", verifyToken, controller.getCabang);
+router.get("/pemilik", verifyToken, controller.getPemilikOptions);
+router.get("/induk", verifyToken, controller.getIndukOptions);
 router.get("/", verifyToken, controller.getAll);
 router.get("/:kode", verifyToken, controller.getById);
 router.post("/", verifyToken, controller.saveData);

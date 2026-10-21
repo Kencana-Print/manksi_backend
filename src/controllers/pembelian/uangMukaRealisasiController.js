@@ -56,6 +56,14 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const konfirmasiTerima = async (req, res) => {
+  try {
+    res.json(await svc.konfirmasiTerima(req.params.bonNomor, req.user));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getSupplierOptions,
@@ -63,4 +71,5 @@ module.exports = {
   getDetail,
   saveRealisasi,
   getPrintData,
+  konfirmasiTerima,
 };

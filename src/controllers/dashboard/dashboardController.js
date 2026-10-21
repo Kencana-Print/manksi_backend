@@ -21,6 +21,18 @@ const getSaldoKas = async (req, res) => {
   }
 };
 
+const getSaldoLaci = async (req, res) => {
+  try {
+    const data = await service.getSaldoLaci(req.user);
+    res.status(200).json({
+      success: true,
+      data: data ?? { Laci: [], BelumDialokasi: 0, TotalSaldo: 0 },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const getPenawaranSummary = async (req, res) => {
   try {
     const data = await service.getPenawaranSummary(req.user);
@@ -1264,6 +1276,7 @@ const setCatatanOutstandingBeli = async (req, res) => {
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
+  getSaldoLaci,
   getPenawaranSummary,
   getPenawaranBelumSpk,
   getSpkSummary,

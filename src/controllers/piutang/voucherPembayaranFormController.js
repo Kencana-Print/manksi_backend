@@ -28,7 +28,6 @@ const getNotaDetail = async (req, res) => {
       supKode || "",
     );
     res.json({ success: true, data });
-    res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -38,6 +37,15 @@ const searchNota = async (req, res) => {
   try {
     const { type, supKode, search } = req.query;
     const data = await svc.searchNota(type, supKode, search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const getRekapTersedia = async (req, res) => {
+  try {
+    const data = await svc.getRekapTersedia(req.query.supKode);
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -179,6 +187,7 @@ module.exports = {
   searchSupplier,
   getNotaDetail,
   searchNota,
+  getRekapTersedia,
   getDetailForm,
   cekStatusRealisasi,
   save,

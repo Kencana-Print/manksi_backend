@@ -142,6 +142,10 @@ const deleteData = async (nomor) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
   try {
+    await conn.query(
+      `UPDATE trekap_bayar_dtl SET rkbd_vou_nomor = '' WHERE rkbd_vou_nomor = ?`,
+      [nomor],
+    );
     // Hapus detail dulu (jika tidak ada CASCADE FK)
     await conn.query(
       `DELETE FROM tvoucher_dtl

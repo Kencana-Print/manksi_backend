@@ -1,11 +1,12 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
 
 // ── Account detail (semua aktif) ──────────────────────────────────────
 const getAccountAll = async () => {
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM finance.trekening WHERE rek_isaktif = 0 ORDER BY rek_kode`,
+     FROM finance.trekening WHERE rek_isaktif = 0${sqlTanpaInduk()} ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -125,6 +126,15 @@ const saveData = async (payload, user) => {
   await conn.beginTransaction();
 
   try {
+    // Pagar induk kas: tolak posting ke akun induk mulai tanggal cut-off.
+    await assertBolehPosting(
+      detail
+        .filter((d) => d.rekkode && (d.uraian || d.debet || d.kredit))
+        .map((d) => d.rekkode),
+      tanggal,
+      conn,
+    );
+
     let actualNomor = nomor;
 
     if (isEdit) {

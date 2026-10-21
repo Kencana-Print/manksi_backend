@@ -271,6 +271,8 @@ const jurnalUmumFormRoutes = require("./routes/piutang/jurnalUmumFormRoutes");
 const rekonsiliasiBankRoutes = require("./routes/piutang/rekonsiliasiBankRoutes");
 const terimaSetoranRoutes = require("./routes/piutang/terimaSetoranRoutes");
 const terimaSetoranFormRoutes = require("./routes/piutang/terimaSetoranFormRoutes");
+const rekapPembayaranRoutes = require("./routes/piutang/rekapPembayaranRoutes");
+const rekapPembayaranFormRoutes = require("./routes/piutang/rekapPembayaranFormRoutes");
 const voucherPembayaranRoutes = require("./routes/piutang/voucherPembayaranRoutes");
 const voucherPembayaranFormRoutes = require("./routes/piutang/voucherPembayaranFormRoutes");
 
@@ -765,6 +767,8 @@ app.use("/api/piutang/jurnal-umum-form", jurnalUmumFormRoutes);
 app.use("/api/piutang/rekonsiliasi-bank", rekonsiliasiBankRoutes);
 app.use("/api/piutang/terima-setoran", terimaSetoranRoutes);
 app.use("/api/piutang/terima-setoran-form", terimaSetoranFormRoutes);
+app.use("/api/piutang/rekap-pembayaran", rekapPembayaranRoutes);
+app.use("/api/piutang/rekap-pembayaran-form", rekapPembayaranFormRoutes);
 app.use("/api/piutang/voucher-pembayaran", voucherPembayaranRoutes);
 app.use("/api/piutang/voucher-pembayaran-form", voucherPembayaranFormRoutes);
 

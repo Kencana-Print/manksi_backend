@@ -99,23 +99,32 @@ const getSmvBySpk = async (spkList) => {
 };
 
 // Actual output = LHK Sewing: mutasi produksi GP003 -> GP004 (Jahit ke Lipat).
-// Line = mph_kelompok, sama seperti yang dipakai getPlanningPpic.
-const getActualOutputBySpkLine = async (spkList, tgl1, tgl2) => {
-  if (!spkList.length) return {};
+// Line = mph_kelompok. Dikelompokkan per TANGGAL supaya bisa dibreakdown;
+// total per SPK|line diturunkan dari hasil ini (satu query, selalu konsisten).
+const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
+  if (!spkList.length) return { total: {}, harian: {} };
   const [rows] = await db.query(
     `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS line,
+            DATE_FORMAT(h.mph_tanggal, '%Y-%m-%d') AS tgl,
             IFNULL(SUM(h.mph_jumlah), 0) AS qty
      FROM tmutasiproduksi_hdr h
      WHERE h.mph_spk_nomor IN (?)
        AND h.mph_gdgasal = 'GP003'
        AND h.mph_gdgtujuan = 'GP004'
        AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-     GROUP BY h.mph_spk_nomor, h.mph_kelompok`,
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok, DATE(h.mph_tanggal)
+     ORDER BY DATE(h.mph_tanggal)`,
     [spkList, tgl1, tgl2],
   );
-  const map = {};
-  for (const r of rows) map[`${r.spk}|${r.line}`] = Number(r.qty) || 0;
-  return map;
+  const total = {};
+  const harian = {};
+  for (const r of rows) {
+    const key = `${r.spk}|${r.line}`;
+    const qty = Number(r.qty) || 0;
+    total[key] = (total[key] || 0) + qty;
+    (harian[key] ||= []).push({ tgl: r.tgl, qty });
+  }
+  return { total, harian };
 };
 
 // Actual jam kerja per bagian: per hari = scan2 (pulang) TERAKHIR di antara
@@ -167,10 +176,12 @@ const getSewingReferensi = async ({
   const bagianList = [...new Set(Object.values(bagianByLine))];
   const spk = [...new Set(spkList.filter(Boolean))];
 
-  const [mpMap, smvMap, outMap, jamMap] = await Promise.all([
+  const [mpMap, smvMap, outRes, jamMap] = await Promise.all([
     getMpByBagian(bagianList),
     getSmvBySpk(spk),
-    withActual ? getActualOutputBySpkLine(spk, tgl1, tgl2) : {},
+    withActual
+      ? getActualOutputHarianBySpkLine(spk, tgl1, tgl2)
+      : { total: {}, harian: {} },
     withActual ? getActualJamByBagian(bagianList, tgl1, tgl2) : {},
   ]);
 
@@ -184,7 +195,8 @@ const getSewingReferensi = async ({
     mpByLine,
     actualJamByLine,
     smvBySpk: smvMap,
-    actualOutputBySpkLine: outMap,
+    actualOutputBySpkLine: outRes.total,
+    actualHarianBySpkLine: outRes.harian,
   };
 };
 
@@ -253,6 +265,9 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       resume,
       actual_output:
         ref.actualOutputBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] || 0,
+      actual_harian:
+        ref.actualHarianBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] ||
+        [],
       actual_jam: ref.actualJamByLine[r.plan_line_kelompok] ?? null,
     };
   });

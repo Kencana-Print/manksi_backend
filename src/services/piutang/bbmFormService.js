@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
 
 // ── Bypass tutup buku SEMENTARA (sampai 2026-10-20, termasuk hari itu).
 // Hapus helper ini dan blok pemakainya di saveData setelah tanggal tsb.
@@ -30,7 +31,7 @@ const getAccountOptions = async (cabang) => {
 const getAccountAll = async () => {
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM finance.trekening WHERE rek_isaktif = 0 ORDER BY rek_kode`,
+     FROM finance.trekening WHERE rek_isaktif = 0${sqlTanpaInduk()} ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -182,6 +183,16 @@ const saveData = async (payload, user) => {
   let localNn = 0;
 
   try {
+    // Pagar induk kas: tolak posting ke akun induk mulai tanggal cut-off.
+    await assertBolehPosting(
+      [
+        rek_kode,
+        ...detail.filter((d) => d.uraian).map((d) => d.rekkode),
+      ].filter(Boolean),
+      tanggal,
+      conn,
+    );
+
     let actualNomor = nomor;
     let flagEdit = isEdit;
 

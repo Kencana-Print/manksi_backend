@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const { ensurePermintaanDana } = require("./pengajuanUangMukaService");
+const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
 
 const TANGGAL_MULAI_SISA = "2026-10-22";
 const AMBANG_SISA = 100;
@@ -64,6 +65,7 @@ const getFormData = async (nomor) => {
         k.bon_keterangan,
         k.bon_cabang, k.bon_byrvoucher,
         k.bon_sisa_rek_kode, k.bon_sisa_nominal, k.bon_sisa_jur_no,
+        k.bon_transfer_jur_no, k.bon_transfer_asal,
         DATE_FORMAT(k.date_create,'%Y-%m-%d') AS tgl_buat,
         r.rek_nama,
         DATE_FORMAT(k.bon_tanggal,'%Y-%m-%d') AS bon_tanggal_fmt,
@@ -362,10 +364,14 @@ const getFormData = async (nomor) => {
     detail,
     pum_user_create: bon.pum_user_create || "",
     pum_user_realisasi: bon.pum_user_realisasi || "",
+    mode_laci: !!bon.bon_transfer_jur_no,
+    laci_asal: bon.bon_transfer_asal || "",
     sisa: {
       wajib: !!bon.tgl_buat && bon.tgl_buat >= TANGGAL_MULAI_SISA,
       ambang: AMBANG_SISA,
-      rek_kode: bon.bon_sisa_rek_kode || "",
+      rek_kode: bon.bon_transfer_jur_no
+        ? bon.bon_transfer_asal || ""
+        : bon.bon_sisa_rek_kode || "",
       nominal: Number(bon.bon_sisa_nominal) || 0,
       jur_no: bon.bon_sisa_jur_no || "",
     },
@@ -376,7 +382,7 @@ const getAccountOptions = async (jenis, cabang) => {
   const params = [];
   let where =
     jenis === "KAS"
-      ? `LEFT(rek_kode,5)='A-111'`
+      ? `LEFT(rek_kode,5)='A-111'${sqlTanpaInduk()}`
       : `(LEFT(rek_kode,5)='A-112' OR LEFT(rek_kode,5)='B-211')`;
   if (cabang && cabang !== "P01") {
     where += ` AND rek_cabang = ?`;
@@ -395,7 +401,7 @@ const getAccountOptions = async (jenis, cabang) => {
 const getAllAccounts = async () => {
   const [rows] = await db.query(
     `SELECT rek_kode AS kode, rek_nama AS nama, rek_cabang AS cabang
-     FROM finance.trekening ORDER BY rek_kode`,
+     FROM finance.trekening WHERE 1=1${sqlTanpaInduk()} ORDER BY rek_kode`,
   );
   return rows;
 };
@@ -476,6 +482,7 @@ const saveData = async (payload, user) => {
   // Nilai krusial dibaca dari DB, bukan dari payload klien.
   const [[bonDb]] = await db.query(
     `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang, bon_nominal,
+            bon_rek_kode, bon_transfer_jur_no, bon_transfer_asal, bon_sisa_jur_no,
             DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_buat
      FROM finance.tkasbon WHERE bon_nomor = ?`,
     [nomor],
@@ -508,6 +515,20 @@ const saveData = async (payload, user) => {
         throw new Error(`Account ${d.rekkode} pada "${d.uraian}" tidak aktif.`);
     }
   }
+  // Kasbon yang uangnya sudah ditransfer ke laci saat realisasi: kas
+  // penyelesaian wajib laci itu, dan sisa kembali ke laci asal (Finance).
+  const modeLaci = !!bonDb.bon_transfer_jur_no;
+  if (modeLaci && rek_kode !== bonDb.bon_rek_kode)
+    throw badRequest(
+      `Kas penyelesaian harus laci penerima kasbon (${bonDb.bon_rek_kode}).`,
+    );
+  await assertBolehPosting(
+    [
+      rek_kode,
+      ...detail.filter((d) => d.verified && d.rekkode).map((d) => d.rekkode),
+    ],
+    tgl_bkk,
+  );
   const totalTerpakai = detail.reduce(
     (s, d) => s + (d.verified && d.total > 0 ? d.total : 0),
     0,
@@ -518,16 +539,18 @@ const saveData = async (payload, user) => {
     !!bonDb.tgl_buat &&
     bonDb.tgl_buat >= TANGGAL_MULAI_SISA &&
     sisa >= AMBANG_SISA;
+  const sisaRekKode = modeLaci ? bonDb.bon_transfer_asal : sisa_rek_kode;
   if (perluBukuSisa) {
-    if (!sisa_rek_kode)
+    if (!sisaRekKode)
       throw badRequest(
         "Sisa kasbon harus dimasukkan ke Kas atau Bank. Pilih rekening tujuan sisa.",
       );
-    const rekSisa = await getAccountByKode(sisa_rek_kode);
+    const rekSisa = await getAccountByKode(sisaRekKode);
     if (!rekSisa)
       throw badRequest("Account tujuan sisa tidak ditemukan atau tidak aktif.");
-    if (!["A-111", "A-112", "B-211"].some((p) => sisa_rek_kode.startsWith(p)))
+    if (!["A-111", "A-112", "B-211"].some((p) => sisaRekKode.startsWith(p)))
       throw badRequest("Account tujuan sisa harus akun Kas atau Bank.");
+    await assertBolehPosting([sisaRekKode], tgl_bkk);
   }
   const conn = await db.getConnection();
   try {
@@ -600,10 +623,32 @@ const saveData = async (payload, user) => {
       `DELETE FROM finance.tjurnal WHERE jur_otomatis=1 AND MID(jur_no,3,18)=?`,
       [nomor],
     );
+    // Mode laci: sisa lama berupa BKK transfer balik + BKM otomatisnya.
+    if (modeLaci && bonDb.bon_sisa_jur_no) {
+      const lama = bonDb.bon_sisa_jur_no;
+      await conn.query(
+        `DELETE FROM finance.tjurnalitem WHERE jurd_jur_no IN (
+           SELECT jur_no FROM finance.tjurnal
+           WHERE jur_no = ? OR (jur_otomatis = 1 AND MID(jur_no,3,18) = ?))`,
+        [lama, lama],
+      );
+      await conn.query(
+        `DELETE FROM finance.tjurnal
+         WHERE jur_no = ? OR (jur_otomatis = 1 AND MID(jur_no,3,18) = ?)`,
+        [lama, lama],
+      );
+    }
     if (noBkk) {
-      await conn.query(`DELETE FROM finance.tjurnalitem WHERE jurd_jur_no=?`, [
-        noBkk,
-      ]);
+      await conn.query(
+        `DELETE FROM finance.tjurnalitem WHERE jurd_jur_no IN (
+       SELECT jur_no FROM finance.tjurnal
+       WHERE jur_otomatis = 1 AND MID(jur_no,3,18) = ?)`,
+        [noBkk],
+      );
+      await conn.query(
+        `DELETE FROM finance.tjurnal WHERE jur_otomatis = 1 AND MID(jur_no,3,18) = ?`,
+        [noBkk],
+      );
     }
     await conn.query(`DELETE FROM finance.tkasbonitem2 WHERE bond2_nomor=?`, [
       nomor,
@@ -990,10 +1035,73 @@ const saveData = async (payload, user) => {
       }
     }
 
-    // ── Sisa kasbon → BKM/BBM otomatis ──
+    // ── Sisa kasbon ──
     let sisaJurNo = "";
-    if (perluBukuSisa) {
-      const tipeSisa = sisa_rek_kode.startsWith("A-111") ? "BKM" : "BBM";
+    if (perluBukuSisa && modeLaci) {
+      // Transfer balik: laci penerima -> laci Finance (BKK + BKM otomatis).
+      sisaJurNo = await getMaxNomorBkk(cabang, "BKK", conn);
+      const uraianSisa = `KEMBALI SISA KASBON ${nomor}`;
+      await conn.query(
+        `INSERT INTO finance.tjurnal
+           (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_nota,
+            jur_penerima, jur_keterangan, jur_rek_kode, jur_otomatis,
+            date_create, user_create)
+         VALUES (?, ?, 'BKK', ?, ?, ?, ?, ?, 0, NOW(), ?)`,
+        [
+          sisaJurNo,
+          tgl_bkk,
+          cabang,
+          nomor,
+          penerima,
+          uraianSisa,
+          rek_kode,
+          user.kode,
+        ],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem
+           (jurd_jur_no, jurd_rek_kode, jurd_kredit, jurd_uraian)
+         VALUES (?, ?, ?, ?)`,
+        [sisaJurNo, rek_kode, sisa, uraianSisa],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem
+           (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_debet,
+            jurd_rek_kode, jurd_cc_kode, jurd_dcnama)
+         VALUES (?, 'BKK', 1, ?, ?, ?, 0, '')`,
+        [sisaJurNo, uraianSisa, sisa, sisaRekKode],
+      );
+      const noBkmSisa = `01${sisaJurNo}`;
+      await conn.query(
+        `INSERT INTO finance.tjurnal
+           (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_penerima,
+            jur_keterangan, jur_rek_kode, jur_otomatis, date_create, user_create)
+         VALUES (?, ?, 'BKM', ?, ?, ?, ?, 1, NOW(), ?)`,
+        [
+          noBkmSisa,
+          tgl_bkk,
+          cabang,
+          penerima,
+          `BKM OTOMATIS: ${uraianSisa}`,
+          sisaRekKode,
+          user.kode,
+        ],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem
+           (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
+         VALUES (?, ?, ?, ?)`,
+        [noBkmSisa, sisaRekKode, sisa, uraianSisa],
+      );
+      await conn.query(
+        `INSERT INTO finance.tjurnalitem
+           (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit,
+            jurd_rek_kode)
+         VALUES (?, 'BKM', 1, ?, ?, ?)`,
+        [noBkmSisa, uraianSisa, sisa, rek_kode],
+      );
+    } else if (perluBukuSisa) {
+      const tipeSisa = sisaRekKode.startsWith("A-111") ? "BKM" : "BBM";
       autoCounter++;
       sisaJurNo = `${String(autoCounter).padStart(2, "0")}${nomor}`;
       const uraianSisa = `SISA KASBON ${nomor}`;
@@ -1010,14 +1118,14 @@ const saveData = async (payload, user) => {
           cabang,
           penerima,
           `${tipeSisa} OTOMATIS: SISA KASBON`,
-          sisa_rek_kode,
+          sisaRekKode,
           user.kode,
         ],
       );
       await conn.query(
         `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
          VALUES (?, ?, ?, ?)`,
-        [sisaJurNo, sisa_rek_kode, sisa, uraianSisa],
+        [sisaJurNo, sisaRekKode, sisa, uraianSisa],
       );
       await conn.query(
         `INSERT INTO finance.tjurnalitem
@@ -1031,7 +1139,7 @@ const saveData = async (payload, user) => {
        SET bon_sisa_rek_kode = ?, bon_sisa_nominal = ?, bon_sisa_jur_no = ?
        WHERE bon_nomor = ?`,
       [
-        perluBukuSisa ? sisa_rek_kode : "",
+        perluBukuSisa ? sisaRekKode : "",
         perluBukuSisa ? sisa : 0,
         sisaJurNo,
         nomor,
@@ -1054,6 +1162,17 @@ const saveData = async (payload, user) => {
         );
       }
     }
+
+    // Penerima yang menyimpan Penyelesaian jelas sudah menerima uangnya:
+    // konfirmasi terima otomatis (hanya bila yang menyimpan pemilik laci).
+    await conn.query(
+      `UPDATE finance.tkasbon k
+       JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
+       SET k.bon_konfirmasi_tgl = NOW(), k.bon_konfirmasi_user = ?
+       WHERE k.bon_nomor = ? AND k.bon_transfer_jur_no <> ''
+         AND k.bon_konfirmasi_tgl IS NULL AND r.rek_pemilik = ?`,
+      [user.kode, nomor, user.kode],
+    );
 
     await conn.commit();
     return { nomor, no_bkk: noBkk };
