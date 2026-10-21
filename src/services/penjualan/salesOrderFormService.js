@@ -982,7 +982,7 @@ const saveData = async (payload, user) => {
     if (alokasi && alokasi.length > 0) {
       for (let i = 0; i < alokasi.length; i++) {
         const item = alokasi[i];
-        if (item.alamat || item.kota) {
+        if (item.alamat || item.kota || item.toko) {
           await conn.query(
             `INSERT INTO tsalesorder_alokasi
                (soa_so_nomor, soa_urut, soa_alamat, soa_toko, soa_kota, soa_person, soa_hp, soa_jumlah)

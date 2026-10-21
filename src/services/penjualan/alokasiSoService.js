@@ -107,16 +107,18 @@ const saveAlokasi = async (nomor, rows, userKode) => {
     );
     if (!hdr) throw new Error("Sales Order tidak ditemukan.");
 
-    const validRows = (rows || []).filter((r) => r.alamat || r.kota);
+    const validRows = (rows || []).filter((r) => r.alamat || r.kota || r.toko);
 
     const sumAlokasi = validRows.reduce(
       (acc, r) => acc + (Number(r.jumlah) || 0),
       0,
     );
     const qtyPesan = Number(hdr.so_jumlah) || 0;
+    // Hanya peringatan, tidak memblokir simpan (sama dengan form Sales Order)
+    const peringatan = [];
     if (sumAlokasi > 0 && sumAlokasi !== qtyPesan) {
-      throw new Error(
-        `Total Qty Alokasi (${sumAlokasi}) tidak sama dengan Jumlah SO (${qtyPesan}). Silakan cek dulu.`,
+      peringatan.push(
+        `Total Qty Alokasi (${sumAlokasi}) belum sama dengan Jumlah SO (${qtyPesan}). Silakan cek kembali.`,
       );
     }
 
@@ -176,7 +178,11 @@ const saveAlokasi = async (nomor, rows, userKode) => {
     );
 
     await conn.commit();
-    return { synced: !!turunan, spkNomor: turunan?.spk_nomor || null };
+    return {
+      synced: !!turunan,
+      spkNomor: turunan?.spk_nomor || null,
+      peringatan,
+    };
   } catch (e) {
     await conn.rollback();
     throw e;
