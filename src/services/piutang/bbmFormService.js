@@ -3,7 +3,7 @@ const tutupBukuService = require("../tutupBukuService");
 
 // ── Bypass tutup buku SEMENTARA (sampai 2026-10-20, termasuk hari itu).
 // Hapus helper ini dan blok pemakainya di saveData setelah tanggal tsb.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-22";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-30";
 const bypassTutupBukuAktif = () =>
   new Date() <= new Date(`${BYPASS_TUTUP_BUKU_SAMPAI}T23:59:59`);
 
