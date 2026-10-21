@@ -1,4 +1,5 @@
 const db = require("../../../config/database");
+const { kodeDenganAnak } = require("../../postingGuardService");
 
 // ── Default account per cabang ────────────────────────────────────────
 // Delphi FormShow: P01→A-111101, P02→A-111102, P04→A-111103
@@ -88,15 +89,24 @@ const getAccountByKode = async (kode) => {
 //     sebagai fallback ketika tidak ada baris lawan (c NULL) — Jurnal
 //     Umum memang punya uraian per baris, jadi ini pas.
 const getBukuBesar = async (rekkode, startDate, endDate) => {
+  // Induk → gabungan induk + semua laci; akun biasa → hanya dirinya.
+  const kodeList = await kodeDenganAnak(rekkode);
   // ── Step 1: Saldo Awal ─────────────────────────────────────────────
   const [[saldoRow]] = await db.query(
     `SELECT IFNULL(SUM(b.jurd_debet - b.jurd_kredit), 0) AS Saldo
      FROM finance.tjurnalitem b
      LEFT JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
      WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
-       AND b.jurd_rek_kode = ?
-       AND a.jur_tanggal < ?`,
-    [rekkode, startDate],
+      AND b.jurd_rek_kode IN (?)
+      AND a.jur_tanggal < ?
+      AND NOT (
+        a.jur_otomatis = 1
+        AND EXISTS (
+          SELECT 1 FROM finance.tkasbon k
+          WHERE k.bon_jur_no = MID(a.jur_no, 3, 18)
+        )
+      )`,
+    [kodeList, startDate],
   );
   let xsaldo = Number(saldoRow.Saldo) || 0;
 
@@ -167,11 +177,18 @@ const getBukuBesar = async (rekkode, startDate, endDate) => {
      ) c ON c.jurd_jur_no = b.jurd_jur_no
         AND (a.jur_tipetransaksi IS NULL OR a.jur_tipetransaksi <> 'JUR')
 
-     WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
-       AND b.jurd_rek_kode = ?
-       AND a.jur_tanggal BETWEEN ? AND ?
-     ORDER BY a.jur_tanggal, v.nourut, a.jur_no`,
-    [rekkode, startDate, endDate],
+      WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
+      AND b.jurd_rek_kode IN (?)
+      AND a.jur_tanggal BETWEEN ? AND ?
+      AND NOT (
+        a.jur_otomatis = 1
+        AND EXISTS (
+          SELECT 1 FROM finance.tkasbon k
+          WHERE k.bon_jur_no = MID(a.jur_no, 3, 18)
+        )
+      )
+    ORDER BY a.jur_tanggal, v.nourut, a.jur_no`,
+    [kodeList, startDate, endDate],
   );
 
   // ── Step 3: Hitung running saldo ────────────────────────────────────
