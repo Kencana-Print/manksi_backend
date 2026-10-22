@@ -238,13 +238,14 @@ const getBrowseList = async (filters) => {
       
       -- pin_acc/Ngedit — sebelumnya 2 correlated subquery per baris, sekarang 1 JOIN
       LEFT JOIN (
-        SELECT p1.pin_nomor, p1.pin_acc, p1.pin_dipakai
-        FROM tspk_pin5 p1
-        INNER JOIN (
-          SELECT pin_nomor, MAX(pin_urut) AS max_urut
-          FROM tspk_pin5 WHERE pin_trs = "SO" GROUP BY pin_nomor
-        ) p2 ON p2.pin_nomor = p1.pin_nomor AND p2.max_urut = p1.pin_urut
-        WHERE p1.pin_trs = "SO"
+        SELECT pin_nomor, pin_acc, pin_dipakai FROM (
+          SELECT pin_nomor, pin_acc, pin_dipakai,
+                ROW_NUMBER() OVER (
+                  PARTITION BY pin_nomor
+                  ORDER BY pin_tgl_minta DESC, pin_urut DESC, pin_jenis
+                ) AS rn
+          FROM tspk_pin5 WHERE pin_trs = "SO"
+        ) t WHERE rn = 1
       ) pin5 ON pin5.pin_nomor = CONVERT(y.spk_nomor USING latin1)
 
       -- status approval cetak ulang — dipakai untuk SPK PPIC turunan
@@ -275,10 +276,14 @@ const getBrowseList = async (filters) => {
         WHERE h.stbj_tanggal >= ?
       ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
 
-      LEFT JOIN tpermintaan_desain pdSo
-        ON pdSo.pd_so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
-      LEFT JOIN tpermintaan_desain pdMap
-        ON y.spk_memo IS NOT NULL AND y.spk_memo <> ''
+      LEFT JOIN (
+        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
+      ) pdSo ON pdSo.pd_so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
+      LEFT JOIN (
+        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
+      ) pdMap ON y.spk_memo IS NOT NULL AND y.spk_memo <> ''
         AND pdMap.pd_so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
       ${whereClause}
     ) x
