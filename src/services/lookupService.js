@@ -1157,10 +1157,15 @@ const searchPoInternalSpk = async (keyword, page = 1, limit = 50) => {
 };
 
 // --- GET ACCESORIES (Dari tgarmen_brg) ---
-const searchAccesories = async (keyword = "", limit = 50, size = "") => {
+const searchAccesories = async (
+  keyword = "",
+  limit = 50,
+  size = "",
+  cabang = "",
+) => {
   const like = `%${keyword}%`;
   let whereExtra = "";
-  const params = [like, like, like];
+  const params = [cabang, like, like, like];
 
   if (size) {
     whereExtra = ` AND b.brg_nama LIKE '%LABEL%' AND b.brg_nama LIKE ?`;
@@ -1177,6 +1182,7 @@ const searchAccesories = async (keyword = "", limit = 50, size = "") => {
         SELECT SUM(m.mst_stok_in - m.mst_stok_out)
         FROM tmasterstok_acc m
         WHERE m.mst_aktif = 'Y' AND m.mst_brg_kode = b.brg_kode
+          AND m.mst_cab = ?
       ), 0) AS Ready
     FROM tgarmen_brg b
     WHERE b.brg_jenis = 'ACCESORIES'
