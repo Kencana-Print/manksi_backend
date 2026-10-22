@@ -477,6 +477,7 @@ const saveData = async (payload, user) => {
     detail,
     pjh_nomor,
     byrvoucher,
+    sisa_rek_kode,
   } = payload;
 
   // Nilai krusial dibaca dari DB, bukan dari payload klien.
