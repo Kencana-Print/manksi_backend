@@ -998,12 +998,16 @@ const cekPendingSpk = async (nomorSpk, gdgAsal) => {
 // PREFIX SPK YANG SKIP VALIDASI PLANNING & LHK
 // Sesuai Delphi: pos(MidStr(spk,4,2),'BR-SB-SD-PL-KS-DP-TG-PM-LL') = 0
 // ─────────────────────────────────────────────────────────
-const isSkipPlanningValidation = (nomorSpk) => {
+const JO_TANPA_SIZE = ["BR", "SB", "SD", "PL", "DP", "TG", "PM", "KS", "LL"];
+
+const isSkipPlanningValidation = async (nomorSpk) => {
   if (nomorSpk.startsWith("MAP")) return true;
-  const prefix = nomorSpk.substring(3, 5); // karakter 4-5 (index 3-4)
-  return ["BR", "SB", "SD", "PL", "KS", "DP", "TG", "PM", "LL"].includes(
-    prefix,
+  const [[row]] = await db.query(
+    `SELECT spk_jo_kode FROM tspk WHERE spk_nomor = ?`,
+    [nomorSpk],
   );
+  const jo = String(row?.spk_jo_kode || "").toUpperCase();
+  return JO_TANPA_SIZE.some((sub) => jo.includes(sub));
 };
 
 // ─────────────────────────────────────────────────────────
@@ -1610,6 +1614,8 @@ const cekPlanningKosong = async (
   tglDibuat,
   gdgTujuan = "",
 ) => {
+  if (await isSkipPlanningValidation(nomorSpk)) return false;
+
   if (JENIS_TANPA_VALIDASI_PLANNING.includes(String(jenisMutasi))) {
     return false;
   }

@@ -321,7 +321,7 @@ const cekGudangAsal = async (req, res) => {
     // -----------------------------------------------------
 
     const isSpg = nomorSpk?.startsWith("SPG");
-    const skipValidation = svc.isSkipPlanningValidation(nomorSpk || "");
+    const skipValidation = await svc.isSkipPlanningValidation(nomorSpk || "");
 
     // 1. Cek pending
     const pendingMsg = await svc.cekPendingSpk(nomorSpk, gdgAsal);
