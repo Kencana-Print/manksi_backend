@@ -128,7 +128,6 @@ const getDetail = async (nomor) => {
         Jam: r.plan_jam,
         Target: r.plan_target_output,
         ActualOutput: r.actual_output,
-        ActualJam: r.actual_jam,
         WaktuProduksi: r.waktu_produksi,
         Resume: r.resume,
         ActualHarian: r.actual_harian,

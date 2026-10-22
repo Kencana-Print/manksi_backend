@@ -26,7 +26,6 @@ const generateNomor = async (tahun) => {
 // ═════════════════════════════════════════════
 const SEWING_DEFAULT_HARI = 5;
 const SEWING_DEFAULT_JAM = 6.5;
-const JAM_MULAI_KERJA = "08:00:00";
 
 // 'LINE A' -> 'JAHIT A', 'LINE PREPARATION' -> 'PREPARATION'
 // (cocok dengan hrd2.tkaryawan.kar_bagian).
@@ -105,6 +104,7 @@ const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
   if (!spkList.length) return { total: {}, harian: {} };
   const [rows] = await db.query(
     `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS line,
+            h.mph_nomor AS nomor,
             DATE_FORMAT(h.mph_tanggal, '%Y-%m-%d') AS tgl,
             IFNULL(SUM(h.mph_jumlah), 0) AS qty
      FROM tmutasiproduksi_hdr h
@@ -112,8 +112,8 @@ const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
        AND h.mph_gdgasal = 'GP003'
        AND h.mph_gdgtujuan = 'GP004'
        AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-     GROUP BY h.mph_spk_nomor, h.mph_kelompok, DATE(h.mph_tanggal)
-     ORDER BY DATE(h.mph_tanggal)`,
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok, h.mph_nomor, DATE(h.mph_tanggal)
+     ORDER BY DATE(h.mph_tanggal), h.mph_nomor`,
     [spkList, tgl1, tgl2],
   );
   const total = {};
@@ -122,41 +122,9 @@ const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
     const key = `${r.spk}|${r.line}`;
     const qty = Number(r.qty) || 0;
     total[key] = (total[key] || 0) + qty;
-    (harian[key] ||= []).push({ tgl: r.tgl, qty });
+    (harian[key] ||= []).push({ tgl: r.tgl, nomor: r.nomor, qty });
   }
   return { total, harian };
-};
-
-// Actual jam kerja per bagian: per hari = scan2 (pulang) TERAKHIR di antara
-// operator bagian itu dikurangi jam 08:00, lalu dijumlah sepanjang range.
-// ⚠️ cek nama kolom tanggal di hrd2.tabsensi (diasumsikan `tanggal`)
-const getActualJamByBagian = async (bagianList, tgl1, tgl2) => {
-  if (!bagianList.length) return {};
-  const [rows] = await db.query(
-    `SELECT x.bagian,
-            ROUND(SUM(GREATEST(TIME_TO_SEC(TIMEDIFF(x.pulang_terakhir, ?)), 0)) / 3600, 2) AS jam
-     FROM (
-       SELECT k.kar_bagian AS bagian,
-              DATE(a.tanggal) AS tgl,
-              MAX(TIME(a.scan2)) AS pulang_terakhir
-       FROM hrd2.tabsensi a
-       INNER JOIN hrd2.tkaryawan k ON k.kar_kode_absensi = a.nik
-       WHERE k.kar_status_aktif = 1
-         AND k.kar_pab_kode = 'P04'
-         AND k.kar_dep_kode = 'PRD2'
-         AND k.kar_jab_kode = 'OPR'
-         AND k.kar_bagian IN (?)
-         AND a.tanggal >= ? AND a.tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-         AND a.scan2 IS NOT NULL
-         AND TIME(a.scan2) > ?
-       GROUP BY k.kar_bagian, DATE(a.tanggal)
-     ) x
-     GROUP BY x.bagian`,
-    [JAM_MULAI_KERJA, bagianList, tgl1, tgl2, JAM_MULAI_KERJA],
-  );
-  const map = {};
-  for (const r of rows) map[r.bagian] = Number(r.jam) || 0;
-  return map;
 };
 
 // Satu pintu untuk semua referensi sewing.
@@ -176,38 +144,30 @@ const getSewingReferensi = async ({
   const bagianList = [...new Set(Object.values(bagianByLine))];
   const spk = [...new Set(spkList.filter(Boolean))];
 
-  const [mpMap, smvMap, outRes, jamMap] = await Promise.all([
+  const [mpMap, smvMap, outRes] = await Promise.all([
     getMpByBagian(bagianList),
     getSmvBySpk(spk),
     withActual
       ? getActualOutputHarianBySpkLine(spk, tgl1, tgl2)
       : { total: {}, harian: {} },
-    withActual ? getActualJamByBagian(bagianList, tgl1, tgl2) : {},
   ]);
 
   const mpByLine = {};
-  const actualJamByLine = {};
   for (const [line, bagian] of Object.entries(bagianByLine)) {
     mpByLine[line] = mpMap[bagian] || 0;
-    actualJamByLine[line] = jamMap[bagian] ?? 0;
   }
   return {
     mpByLine,
-    actualJamByLine,
     smvBySpk: smvMap,
     actualOutputBySpkLine: outRes.total,
     actualHarianBySpkLine: outRes.harian,
   };
 };
 
-// waktu produksi per line (menit-orang) = MP x hari x jam x 60 ;
-// resume = target x SMV / MP (menit per operator)
-const hitungSewing = ({ hari, jam, target, smv, mp }) => {
-  const waktuProduksi =
-    (Number(mp) || 0) * (Number(hari) || 0) * (Number(jam) || 0) * 60;
-  const resume = mp > 0 && smv > 0 ? ((Number(target) || 0) * smv) / mp : null;
-  return { waktuProduksi, resume };
-};
+// waktu produksi per line (menit-orang) = MP x hari x jam x 60.
+// Resume dihitung di enrichSewing karena kumulatif antar baris dalam satu line.
+const hitungSewing = ({ hari, jam, mp }) =>
+  (Number(mp) || 0) * (Number(hari) || 0) * (Number(jam) || 0) * 60;
 
 // Tambah kolom turunan (MP, SMV, waktu produksi, resume, actual) ke tiap baris sewing
 // Resume WAJIB dijumlah per line: 1 line bisa pegang beberapa SPK dengan
@@ -221,6 +181,8 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
     lines: rows.map((r) => r.plan_line_kelompok),
     spkList: rows.map((r) => r.NomorSPK),
   });
+
+  const sisaLine = {}; // sisa waktu produksi berjalan per line
 
   return rows.map((r) => {
     const mp =
@@ -246,13 +208,22 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       smvSumber = "MANUAL";
     }
 
-    const { waktuProduksi, resume } = hitungSewing({
+    const waktuProduksi = hitungSewing({
       hari: r.plan_hari,
       jam: r.plan_jam,
-      target: r.plan_target_output,
-      smv,
       mp,
     });
+    const actualOutput =
+      ref.actualOutputBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] || 0;
+    // Resume = sisa waktu produksi line setelah dikurangi Output (mnt),
+    // kumulatif ke bawah per line (urutan = urutan rows). SMV kosong = 0.
+    let resume = null;
+    if (waktuProduksi > 0) {
+      const key = r.plan_line_kelompok;
+      sisaLine[key] =
+        (sisaLine[key] ?? waktuProduksi) - (smv > 0 ? smv * actualOutput : 0);
+      resume = sisaLine[key];
+    }
     return {
       ...r,
       plan_hari: Number(r.plan_hari),
@@ -263,12 +234,10 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       smv_sumber: smvSumber, // 'PROOF' = terkunci, 'MANUAL' = boleh diedit
       waktu_produksi: waktuProduksi,
       resume,
-      actual_output:
-        ref.actualOutputBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] || 0,
+      actual_output: actualOutput,
       actual_harian:
         ref.actualHarianBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] ||
         [],
-      actual_jam: ref.actualJamByLine[r.plan_line_kelompok] ?? null,
     };
   });
 };
@@ -316,7 +285,7 @@ const getFormDetail = async (nomor) => {
       FROM tplan_ppic_dtl2 d
       LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
-      ORDER BY d.plan_tgl_jadwal ASC`,
+      ORDER BY d.plan_tgl_jadwal ASC, d.plan_line_kelompok ASC, d.plan_spk ASC`,
       [nomor, divisi],
     );
     return rows;
