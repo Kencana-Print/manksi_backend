@@ -34,7 +34,7 @@ const getBrowseList = async (query) => {
 
       SELECT
         1 AS SourceOrder, s.date_create AS DateCreate,
-        s.so_nomor AS Nomor,
+        CONVERT(s.so_nomor USING latin1) AS Nomor,
         DATE_FORMAT(s.so_tanggal, '%Y-%m-%d') AS Tanggal,
         DATE_FORMAT(s.so_dateline, '%Y-%m-%d') AS Dateline,
         s.so_divisi AS Divisi, s.so_tipe AS Tipe, s.so_cab AS Cab,
@@ -42,10 +42,12 @@ const getBrowseList = async (query) => {
         s.so_nama AS NamaSPK, s.so_jumlah AS JumlahSPK, s.so_kain AS Kain,
         s.so_finishing AS Finishing, s.so_sablon AS Sablon, s.so_sublim AS Sublim,
         s.so_bordir AS Bordir,
-        NULL AS RefNomor
+        CAST(NULL AS CHAR CHARACTER SET latin1) AS RefNomor
       FROM tsalesorder s
       LEFT JOIN tspk ppic
-        ON ppic.spk_so_ref = s.so_nomor AND ppic.spk_is_so = 0
+        ON ppic.spk_so_ref = CONVERT(s.so_nomor USING latin1)
+        AND ppic.spk_is_so = 0
+        AND ppic.spk_tanggal >= CONCAT(?, ' 00:00:00')
       WHERE s.so_aktif = 'Y' AND s.so_divisi IN (3, 4, 6)
         AND s.so_cmo <> ''
         AND s.so_jo_kode NOT IN ('', 'SD', 'BR', 'PL', 'SB', 'KS', 'DP', 'TG')
@@ -91,6 +93,13 @@ const getBrowseList = async (query) => {
         SUM(plan_finishing) AS plan_finishing,
         SUM(plan_kirim) AS plan_kirim
       FROM tplanningspk
+      WHERE plan_tanggal >= CONCAT(?, ' 00:00:00')
+        AND plan_spk IN (
+          SELECT Nomor FROM base_orders
+          UNION
+          SELECT RefNomor FROM base_orders
+          WHERE RefNomor IS NOT NULL AND RefNomor <> ''
+        )
       GROUP BY plan_spk
     )
 
@@ -99,7 +108,11 @@ const getBrowseList = async (query) => {
       x.KdCus, x.NamaSPK, x.JumlahSPK, x.Kain, x.Finishing, x.Sablon, x.Sublim,
       x.Bordir,
 
-      IF(rpb.promin_spk_nomor IS NULL, 'BELUM', 'SUDAH') AS RPB,
+      IF(EXISTS (
+        SELECT 1 FROM tproduksiminta_hdr r
+        WHERE r.promin_spk_nomor = x.Nomor
+          AND r.promin_tanggal >= CONCAT(?, ' 00:00:00')
+      ), 'SUDAH', 'BELUM') AS RPB,
 
       IF(IFNULL(p1.plan_datang, 0) + IFNULL(p2.plan_datang, 0) = 0, 1,
         IF(IFNULL(p1.plan_cutting, 0) + IFNULL(p2.plan_cutting, 0) = 0, 2,
@@ -119,20 +132,20 @@ const getBrowseList = async (query) => {
     FROM base_orders x
     LEFT JOIN plan_agg p1 ON p1.plan_spk = x.Nomor
     LEFT JOIN plan_agg p2 ON p2.plan_spk = x.RefNomor
-    LEFT JOIN (
-      SELECT DISTINCT promin_spk_nomor FROM tproduksiminta_hdr
-    ) rpb ON rpb.promin_spk_nomor = x.Nomor
 
     ORDER BY x.SourceOrder ASC, x.DateCreate ASC
   `;
 
   const [rows] = await db.query(sql, [
     startDate,
-    endDate,
+    endDate, // base_orders: tspk
+    startDate, // base_orders: join ppic
     startDate,
-    endDate,
+    endDate, // base_orders: tsalesorder
     startDate,
-    endDate,
+    endDate, // base_orders: tmemospk
+    startDate, // plan_agg
+    startDate, // RPB
   ]);
 
   return rows.map((r) => ({
