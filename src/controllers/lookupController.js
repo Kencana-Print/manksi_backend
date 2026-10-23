@@ -343,7 +343,8 @@ const searchPoInternalSpk = async (req, res) => {
 
 const searchAccesories = async (req, res) => {
   try {
-    const { q = "", limit = 50, size = "", cab = "" } = req.query;
+    const { q = "", limit = 50, size = "" } = req.query;
+    const cab = req.query.cab || req.user?.cabang || "";
     if (!cab) {
       return res
         .status(400)
