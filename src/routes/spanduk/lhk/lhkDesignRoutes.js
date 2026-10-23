@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const controller = require("../../../controllers/spanduk/lhk/lhkHapusPlankanController");
+const controller = require("../../../controllers/spanduk/lhk/lhkDesignController");
 const {
   verifyToken,
   checkPermission,
@@ -12,6 +12,12 @@ router.get(
   verifyToken,
   checkPermission(4, "view"),
   controller.getDetail,
+);
+router.get(
+  "/status",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getStatus,
 );
 router.delete(
   "/:nomor",

@@ -5,6 +5,64 @@ const path = require("path");
 const tutupBukuService = require("../tutupBukuService");
 const mintaHargaFormService = require("./mintaHargaFormService");
 
+// Kebutuhan bahan Pra Order Spanduk (Divisi 1)
+const SQL_BAHAN_SPANDUK = `brg_divisi = 1 AND brg_ktg_kode = '1' AND brg_jenis = 'BB' AND brg_isaktif = 1`;
+const SUMBER_BAHAN_VALID = ["STOK", "PENGAJUAN"];
+const isSpanduk = (divisi) => String(divisi) === "1";
+
+// Validasi + normalisasi bahan Spanduk. `lama` = baris header lama (mode ubah).
+// Bahan yang tidak berubah tidak dicek ulang, supaya Pra Order lama tetap
+// bisa disimpan walaupun bahannya sudah nonaktif di master.
+const siapkanBahanSpanduk = async (conn, data, lama) => {
+  if (!isSpanduk(data.divisi)) return { brgKode: null, sumber: "" };
+  const brgKode = Number(data.brgKode) || 0;
+  const sumber = String(data.sumberBahan || "");
+  if (!brgKode) {
+    throw new Error("Kebutuhan bahan wajib dipilih untuk Divisi Spanduk.");
+  }
+  if (!SUMBER_BAHAN_VALID.includes(sumber)) {
+    throw new Error(
+      "Sumber bahan wajib dipilih: Stok Tersedia atau Melalui Pengajuan.",
+    );
+  }
+  const tidakBerubah = lama && Number(lama.pro_brg_kode) === brgKode;
+  if (!tidakBerubah) {
+    const [[ada]] = await conn.query(
+      `SELECT 1 AS ok FROM kencanaprint.tbarang_new
+       WHERE brg_kode = ? AND ${SQL_BAHAN_SPANDUK}`,
+      [brgKode],
+    );
+    if (!ada) throw new Error("Bahan tidak valid untuk Divisi Spanduk.");
+  }
+  return { brgKode, sumber };
+};
+
+// Ukuran Spanduk = Panjang x Lebar (Mtr), seperti Permintaan Harga.
+// Hapus pemeriksaan <= 0 di bawah kalau P x L tidak jadi wajib.
+const siapkanUkuranSpanduk = (data) => {
+  if (!isSpanduk(data.divisi)) return { panjang: 0, lebar: 0 };
+  const panjang = Number(data.panjang) || 0;
+  const lebar = Number(data.lebar) || 0;
+  if (panjang <= 0 || lebar <= 0) {
+    throw new Error(
+      "Ukuran (Panjang x Lebar) wajib diisi untuk Divisi Spanduk.",
+    );
+  }
+  return { panjang, lebar };
+};
+
+// Jumlah Desain: opsional, hanya Spanduk. Kosong = NULL (beda dengan 0).
+const siapkanJmlDesain = (data) => {
+  if (!isSpanduk(data.divisi)) return null;
+  const raw = data.jmlDesain;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error("Jumlah Desain harus bilangan bulat 0 atau lebih.");
+  }
+  return n;
+};
+
 // --- GENERATE NOMOR PRA ORDER (pola identik generateNomor MH) ---
 const generateNomor = async (tanggal) => {
   const d = new Date(tanggal);
@@ -38,16 +96,33 @@ const getInitGrids = async () => {
   );
   const ukuran = sizes.map((s) => ({ kode: s.kode, ukuran: s.ukuran, qty: 0 }));
 
-  return { bahan, ukuran };
+  const [bahanSpanduk] = await db.query(
+    `SELECT brg_kode AS Kode, brg_nama AS Nama, brg_satuan AS Satuan
+     FROM kencanaprint.tbarang_new
+     WHERE ${SQL_BAHAN_SPANDUK}
+     ORDER BY brg_nama ASC, brg_kode ASC`,
+  );
+
+  // Finishing Spanduk = Jenis Order divisi 1 (keputusan meeting)
+  const [finishingSpanduk] = await db.query(
+    `SELECT jo_kode AS Kode, jo_nama AS Nama
+     FROM tjenisorder
+     WHERE jo_divisi = 1
+     ORDER BY jo_nama ASC`,
+  );
+
+  return { bahan, bahanSpanduk, finishingSpanduk, ukuran };
 };
 
 // --- GET BY ID (load data utk edit) ---
 const getById = async (nomor) => {
   const [[hdr]] = await db.query(
-    `SELECT h.*, v.Divisi AS DivisiNama, s.sal_nama AS SalesNama
+    `SELECT h.*, v.Divisi AS DivisiNama, s.sal_nama AS SalesNama,
+            b.brg_nama AS BahanSpandukNama, b.brg_satuan AS BahanSpandukSatuan
      FROM tpraorder_hdr h
      LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
      LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
+     LEFT JOIN kencanaprint.tbarang_new b ON b.brg_kode = h.pro_brg_kode
      WHERE h.pro_nomor = ?`,
     [nomor],
   );
@@ -108,22 +183,28 @@ const save = async (data, userKode, isNewMode) => {
   try {
     await conn.beginTransaction();
 
-    const totalQty = (data.ukuran || []).reduce(
-      (sum, u) => sum + (Number(u.qty) || 0),
-      0,
-    );
+    const qtyRencana = Number(data.qtyRencana) || 0;
+    if (qtyRencana <= 0) throw new Error("Rencana Order wajib diisi.");
+    const { panjang, lebar } = siapkanUkuranSpanduk(data);
+    const jmlDesain = siapkanJmlDesain(data);
 
     let nomor = data.nomor;
+    let brgKode = null;
+    let sumber = "";
+    // status READY/TIDAK READY bahan alternatif (Garmen) milik PPIC, per kode bahan
+    let statusBahanLama = new Map();
 
     if (isNewMode) {
+      ({ brgKode, sumber } = await siapkanBahanSpanduk(conn, data, null));
       nomor = await generateNomor(data.tanggal);
       await conn.query(
         `INSERT INTO tpraorder_hdr (
           pro_nomor, pro_tanggal, pro_cus_kode, pro_cus_nama, pro_sal_kode,
           pro_nama_pekerjaan, pro_divisi, pro_cabang, pro_cabkaos, pro_finishing,
           pro_spesifikasi, pro_sampel, pro_qty_rencana, pro_tgl_kirim,
-          pro_catatan_deadline, pro_keterangan, pro_ukuran_bebas, user_create
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          pro_catatan_deadline, pro_keterangan, pro_ukuran_bebas,
+          pro_brg_kode, pro_sumber_bahan, pro_panjang, pro_lebar, pro_jml_desain, user_create
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           data.tanggal,
@@ -137,11 +218,16 @@ const save = async (data, userKode, isNewMode) => {
           data.finishing || "",
           data.spesifikasi || "",
           data.sampel === "Y" ? "Y" : "N",
-          totalQty,
+          qtyRencana,
           data.tglKirim,
           data.catatanDeadline || "",
           data.keterangan || "",
           data.ukuranBebas || "",
+          brgKode,
+          sumber,
+          panjang,
+          lebar,
+          jmlDesain,
           userKode,
         ],
       );
@@ -149,16 +235,31 @@ const save = async (data, userKode, isNewMode) => {
       // Lock baris header dulu — mencegah dua request save() yang overlap
       // saling menyisipkan sebelum salah satunya sempat DELETE, yang
       // menghasilkan duplikat baris ukuran/bahan.
-      await conn.query(
-        `SELECT pro_nomor FROM tpraorder_hdr WHERE pro_nomor = ? FOR UPDATE`,
+      const [[lama]] = await conn.query(
+        `SELECT pro_brg_kode, pro_sumber_bahan
+         FROM tpraorder_hdr WHERE pro_nomor = ? FOR UPDATE`,
         [nomor],
       );
+      if (!lama) throw new Error("Data Pra Order tidak ditemukan.");
+
+      ({ brgKode, sumber } = await siapkanBahanSpanduk(conn, data, lama));
+
+      // Konfirmasi bahan Spanduk hanya dipertahankan kalau bahan & sumber sama
+      const berubah =
+        (lama.pro_brg_kode ?? null) !== brgKode ||
+        (lama.pro_sumber_bahan || "") !== sumber;
+      const pertahankan = brgKode !== null && !berubah ? 1 : 0;
 
       await conn.query(
         `UPDATE tpraorder_hdr SET
           pro_tanggal=?, pro_cus_kode=?, pro_cus_nama=?, pro_sal_kode=?, pro_nama_pekerjaan=?,
           pro_divisi=?, pro_finishing=?, pro_spesifikasi=?, pro_sampel=?, pro_qty_rencana=?,
-          pro_tgl_kirim=?, pro_catatan_deadline=?, pro_keterangan=?, pro_ukuran_bebas=?, user_modified=?, date_modified=NOW()
+          pro_tgl_kirim=?, pro_catatan_deadline=?, pro_keterangan=?, pro_ukuran_bebas=?,
+          pro_brg_kode=?, pro_sumber_bahan=?, pro_panjang=?, pro_lebar=?, pro_jml_desain=?,
+          pro_bahan_status = IF(?, pro_bahan_status, ''),
+          pro_bahan_user = IF(?, pro_bahan_user, NULL),
+          pro_bahan_tgl = IF(?, pro_bahan_tgl, NULL),
+          user_modified=?, date_modified=NOW()
         WHERE pro_nomor=?`,
         [
           data.tanggal,
@@ -170,11 +271,19 @@ const save = async (data, userKode, isNewMode) => {
           data.finishing || "",
           data.spesifikasi || "",
           data.sampel === "Y" ? "Y" : "N",
-          totalQty,
+          qtyRencana,
           data.tglKirim,
           data.catatanDeadline || "",
           data.keterangan || "",
           data.ukuranBebas || "",
+          brgKode,
+          sumber,
+          panjang,
+          lebar,
+          jmlDesain,
+          pertahankan,
+          pertahankan,
+          pertahankan,
           userKode,
           nomor,
         ],
@@ -187,6 +296,16 @@ const save = async (data, userKode, isNewMode) => {
         );
       }
 
+      // Simpan status READY/TIDAK READY lama sebelum bahan dihapus-isi ulang
+      const [bahanLama] = await conn.query(
+        `SELECT prob_bahan_kode, prob_status_ready
+         FROM tpraorder_bahan WHERE prob_pro_nomor = ?`,
+        [nomor],
+      );
+      statusBahanLama = new Map(
+        bahanLama.map((b) => [String(b.prob_bahan_kode), b.prob_status_ready]),
+      );
+
       await conn.query(`DELETE FROM tpraorder_bahan WHERE prob_pro_nomor = ?`, [
         nomor,
       ]);
@@ -197,13 +316,23 @@ const save = async (data, userKode, isNewMode) => {
     }
 
     for (const [idx, b] of (data.bahan || []).entries()) {
-      await conn.query(
-        `INSERT INTO tpraorder_bahan (prob_pro_nomor, prob_bahan_kode, prob_urut) VALUES (?, ?, ?)`,
-        [nomor, b.kode, idx + 1],
-      );
+      const statusLama = statusBahanLama.get(String(b.kode));
+      if (statusLama) {
+        // bahan yang sama dengan sebelumnya: status PPIC tidak hilang
+        await conn.query(
+          `INSERT INTO tpraorder_bahan (prob_pro_nomor, prob_bahan_kode, prob_urut, prob_status_ready)
+           VALUES (?, ?, ?, ?)`,
+          [nomor, b.kode, idx + 1, statusLama],
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO tpraorder_bahan (prob_pro_nomor, prob_bahan_kode, prob_urut) VALUES (?, ?, ?)`,
+          [nomor, b.kode, idx + 1],
+        );
+      }
     }
     for (const u of data.ukuran || []) {
-      if (Number(u.qty) > 0) {
+      if (Number(u.qty) > 0 && !isSpanduk(data.divisi)) {
         await conn.query(
           `INSERT INTO tpraorder_ukuran (prou_pro_nomor, prou_ukuran, prou_qty)
            VALUES (?, ?, ?)
@@ -429,6 +558,14 @@ const convertToMintaHarga = async (nomor, userKode) => {
     if (!isDivisiTanpaCekPpic && hdr.pro_status_ppic !== "SANGGUP")
       throw new Error("PPIC belum menyatakan sanggup.");
 
+    // Spanduk: kebutuhan bahan harus sudah dikonfirmasi READY
+    const spanduk = isSpanduk(hdr.pro_divisi);
+    if (spanduk && hdr.pro_bahan_status !== "READY") {
+      throw new Error(
+        "Kebutuhan bahan belum dikonfirmasi READY oleh PPIC/Produksi Spanduk.",
+      );
+    }
+
     const [ukuranRows] = await conn.query(
       `SELECT t.ukuran AS nama, pu.prou_qty
        FROM tpraorder_ukuran pu
@@ -446,19 +583,32 @@ const convertToMintaHarga = async (nomor, userKode) => {
        WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
       [nomor],
     );
-    const kainStr = bahanRows
+    let kainStr = bahanRows
       .map((b) => b.bj_nama)
       .filter(Boolean)
       .join(" / ");
+    if (spanduk) {
+      // Spanduk: bahan dari master barang, bukan tbahan_jenis
+      const [[bhn]] = await conn.query(
+        `SELECT brg_nama FROM kencanaprint.tbarang_new WHERE brg_kode = ?`,
+        [hdr.pro_brg_kode],
+      );
+      kainStr = bhn?.brg_nama || "";
+    }
+
+    // mh_ukuran = Ket. Ukuran; kalau kosong, pakai rincian grid (perilaku lama).
+    // Kolom mh_ukuran hanya 100 karakter.
+    const ketUkuran = String(hdr.pro_ukuran_bebas || "").trim();
+    const ukuranMh = (ketUkuran || ukuranStr).slice(0, 100);
 
     const mhNomor = await mintaHargaFormService.generateNomor(hdr.pro_tanggal);
 
     await conn.query(
       `INSERT INTO tmintaharga (
         mh_nomor, mh_tanggal, mh_divisi, mh_cus_kode, mh_cus_nama, mh_sal_kode, mh_nama,
-        mh_jmlorder, mh_kain, mh_ukuran, mh_finishing, mh_cabkaos, mh_ket, mh_status, mh_pro_nomor,
-        date_create, user_create
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "MINTA", ?, NOW(), ?)`,
+        mh_jmlorder, mh_kain, mh_panjang, mh_lebar, mh_ukuran, mh_finishing, mh_cabkaos,
+        mh_ket, mh_status, mh_pro_nomor, date_create, user_create
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "MINTA", ?, NOW(), ?)`,
       [
         mhNomor,
         hdr.pro_tanggal,
@@ -469,7 +619,9 @@ const convertToMintaHarga = async (nomor, userKode) => {
         hdr.pro_nama_pekerjaan,
         hdr.pro_qty_rencana,
         kainStr,
-        ukuranStr,
+        hdr.pro_panjang || 0,
+        hdr.pro_lebar || 0,
+        ukuranMh,
         hdr.pro_finishing,
         hdr.pro_cabkaos,
         hdr.pro_keterangan,
@@ -503,12 +655,14 @@ const convertToMintaHarga = async (nomor, userKode) => {
 const getPrintData = async (nomor) => {
   const [[hdr]] = await db.query(
     `SELECT h.*, v.Divisi AS DivisiNama, s.sal_nama AS SalesNama,
+            bsp.brg_nama AS BahanSpandukNama, bsp.brg_satuan AS BahanSpandukSatuan,
             DATE_FORMAT(h.pro_tanggal, '%Y-%m-%d') AS TanggalFormat,
             DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirimFormat,
             DATE_FORMAT(h.date_create, '%Y-%m-%d %H:%i') AS CreatedFormat
      FROM tpraorder_hdr h
      LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
      LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
+     LEFT JOIN kencanaprint.tbarang_new bsp ON bsp.brg_kode = h.pro_brg_kode
      WHERE h.pro_nomor = ?`,
     [nomor],
   );
@@ -628,6 +782,7 @@ const getLookupData = async (nomor) => {
     `SELECT h.pro_nomor, h.pro_cus_kode, h.pro_cus_nama, h.pro_sal_kode,
             h.pro_nama_pekerjaan, h.pro_divisi, h.pro_finishing,
             h.pro_qty_rencana, h.pro_mh_nomor, h.pro_keterangan,
+            h.pro_brg_kode, h.pro_bahan_status, h.pro_panjang, h.pro_lebar, h.pro_ukuran_bebas,
             s.sal_nama AS SalesNama
      FROM tpraorder_hdr h
      LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
@@ -636,16 +791,37 @@ const getLookupData = async (nomor) => {
   );
   if (!hdr) throw new Error("Nomor Pra Order tidak ditemukan.");
 
+  const spanduk = isSpanduk(hdr.pro_divisi);
+  if (spanduk && hdr.pro_bahan_status !== "READY") {
+    throw new Error("Kebutuhan bahan belum dikonfirmasi READY.");
+  }
+
   const [bahanRows] = await db.query(
     `SELECT m.bj_nama FROM tpraorder_bahan b
      LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
      WHERE b.prob_pro_nomor = ? ORDER BY b.prob_urut`,
     [nomor],
   );
-  const kainStr = bahanRows
+  let kainStr = bahanRows
     .map((b) => b.bj_nama)
     .filter(Boolean)
     .join(" / ");
+  if (spanduk) {
+    // Spanduk: bahan dari master barang, bukan tbahan_jenis
+    const [[bhn]] = await conn.query(
+      `SELECT brg_nama FROM kencanaprint.tbarang_new WHERE brg_kode = ?`,
+      [hdr.pro_brg_kode],
+    );
+    kainStr = bhn?.brg_nama || "";
+  }
+
+  if (spanduk) {
+    const [[bhn]] = await db.query(
+      `SELECT brg_nama FROM kencanaprint.tbarang_new WHERE brg_kode = ?`,
+      [hdr.pro_brg_kode],
+    );
+    kainStr = bhn?.brg_nama || "";
+  }
 
   const [ukuranRows] = await db.query(
     `SELECT t.ukuran AS nama, pu.prou_qty
@@ -680,9 +856,14 @@ const getLookupData = async (nomor) => {
     finishing: hdr.pro_finishing,
     rencanaOrder: Number(hdr.pro_qty_rencana) || 0,
     kain: kainStr,
-    ukuran: ukuranStr,
-    keterangan: hdr.pro_keterangan || "", // ⬅ BARU
-    imageUrl: gambarPertama ? gambarPertama.prog_file_path : null, // ⬅ BARU
+    ukuran: (String(hdr.pro_ukuran_bebas || "").trim() || ukuranStr).slice(
+      0,
+      100,
+    ),
+    panjang: Number(hdr.pro_panjang) || 0,
+    lebar: Number(hdr.pro_lebar) || 0,
+    keterangan: hdr.pro_keterangan || "",
+    imageUrl: gambarPertama ? gambarPertama.prog_file_path : null,
     sudahDipakaiOleh:
       hdr.pro_mh_nomor && hdr.pro_mh_nomor.trim() !== ""
         ? hdr.pro_mh_nomor
@@ -701,7 +882,8 @@ const searchPraOrder = async (keyword = "", page = 1, limit = 20) => {
   let where = `
     WHERE (
       h.pro_status_ppic = "SANGGUP"
-      OR UPPER(IFNULL(v.Divisi, '')) IN ('SPANDUK', 'MMT')
+      OR UPPER(IFNULL(v.Divisi, '')) = 'MMT'
+      OR (UPPER(IFNULL(v.Divisi, '')) = 'SPANDUK' AND h.pro_bahan_status = 'READY')
     )
   `;
   const params = [];

@@ -10,7 +10,7 @@ const {
   periksaSumber,
   pastikanPabrik,
 } = require("./lhkLipatShared");
-const { pastikanMutasiMasuk } = require("./lhkGerbangMutasi");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-L";
 const NOMOR_LOCK = "lhk_lipat_nomor";
@@ -314,9 +314,8 @@ const createLhkLipat = async (body, user) => {
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "LIPAT",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
     });
     await lengkapiKaryawan(conn, data.baris);
@@ -378,12 +377,11 @@ const updateLhkLipat = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "LIPAT",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });

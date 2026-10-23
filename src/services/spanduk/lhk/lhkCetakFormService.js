@@ -17,7 +17,7 @@ const {
   periksaSumber,
   pastikanPabrik,
 } = require("./lhkCetakShared");
-const { pastikanMutasiMasuk } = require("./lhkGerbangMutasi");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-C";
 const NOMOR_LOCK = "lhk_cetak_nomor";
@@ -390,9 +390,8 @@ const createLhkCetak = async (body, user) => {
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "CETAK",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
     });
     await validasiKaryawan(conn, data.karyawan, data.pabrik);
@@ -464,12 +463,11 @@ const updateLhkCetak = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "CETAK",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });

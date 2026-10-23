@@ -17,29 +17,14 @@ const {
   periksaSumber,
   pastikanPabrik,
 } = require("./lhkAfdrukShared");
-const { pastikanMutasiMasuk } = require("./lhkGerbangMutasi");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-A";
 const NOMOR_LOCK = "lhk_afdruk_nomor";
-const MAKS_ANGKA = 99999999.99; // double(10,2)
 const MAKS_INT = 2147483647; // int(11)
+const MAKS_KETERANGAN = 200; // lad_keterangan varchar(200)
 
 // --- util angka ---
-const angka = (v, label) => {
-  if (v === null || v === undefined || teks(v) === "") {
-    return 0;
-  }
-  const s = teks(v);
-  if (!/^\d+(\.\d+)?$/.test(s)) {
-    throw galat(`${label} harus angka tidak negatif (desimal pakai titik)`);
-  }
-  const n = Number(s);
-  if (n > MAKS_ANGKA) {
-    throw galat(`${label} terlalu besar (maksimum 99.999.999,99)`);
-  }
-  return round2(n);
-};
-
 const bilangan = (v, label) => {
   if (v === null || v === undefined || teks(v) === "") {
     return 0;
@@ -70,8 +55,9 @@ const pastikanLokasiUser = (pabrik, user) => {
 };
 
 // --- validasi payload ---
-// Body: { Tanggal, Kode_Pabrik, Detail: [{ Nomor_SPK, Ulano, Screen, Lem,
-//         Katalis, Plangkan: [{ Ukuran, Qty }] }] }
+// Body: { Tanggal, Kode_Pabrik, Bahan: [{ Kode_Bahan, Qty }],
+//         Detail: [{ Nomor_SPK, Keterangan, Plangkan: [{ Ukuran, Qty }] }] }
+// Bahan pemakaian per LHK (bukan per SPK/MAP), boleh kosong.
 // J Plangkan tidak diterima dari client: dihitung = jumlah Qty semua ukuran.
 const siapkanData = (body = {}) => {
   const tanggal = parseTanggal(body.Tanggal);
@@ -83,6 +69,8 @@ const siapkanData = (body = {}) => {
   if (pabrik.length > 10) {
     throw galat("Kode lokasi maksimal 10 karakter");
   }
+
+  const bahan = siapkanBahan(body.Bahan);
 
   const detail = Array.isArray(body.Detail) ? body.Detail : [];
   if (detail.length === 0) {
@@ -129,19 +117,17 @@ const siapkanData = (body = {}) => {
       throw galat(`Baris ${n}: jumlah plangkan terlalu besar`);
     }
 
-    return {
-      spk,
-      plangkan,
-      jPlangkan,
-      ulano: angka(d.Ulano, `Baris ${n}: Ulano`),
-      screen: angka(d.Screen, `Baris ${n}: Screen`),
-      lem: angka(d.Lem, `Baris ${n}: Lem`),
-      // Delphi membulatkan ke integer; web menyimpan apa adanya (2 desimal)
-      katalis: angka(d.Katalis, `Baris ${n}: Katalis`),
-    };
+    const ket = teks(d.Keterangan);
+    if (ket.length > MAKS_KETERANGAN) {
+      throw galat(
+        `Baris ${n}: keterangan maksimal ${MAKS_KETERANGAN} karakter`,
+      );
+    }
+
+    return { spk, plangkan, jPlangkan, ket };
   });
 
-  return { tanggal, pabrik, baris };
+  return { tanggal, pabrik, bahan, baris };
 };
 
 // Ukuran harus ada di master; nilai yang disimpan = nilai master
@@ -168,7 +154,170 @@ const validasiSumberBaris = async (q, baris, user) => {
   for (const b of baris) {
     periksaSumber(peta.get(b.spk), b.spk, user);
   }
+  return peta;
 };
+
+// Bahan pemakaian Afdruk = master bahan kategori 2 divisi Spanduk (konfirmasi
+// user 22 Okt: bebas pilih, tapi satu kategori agar daftar tidak membengkak)
+const KATEGORI_BAHAN = "2";
+const DIVISI_BAHAN = 1;
+const MAKS_QTY_BAHAN = 9999999999.99; // decimal(12,2)
+// Gudang yang stoknya ditampilkan di form (GUDANG PENOLONG P2); hanya info,
+// tidak memblokir dan tidak memotong stok
+const GUDANG_BAHAN = "WH009";
+
+const qtyBahan = (v, label) => {
+  const s = teks(v);
+  if (!/^\d+(\.\d+)?$/.test(s)) {
+    throw galat(`${label} harus angka lebih dari 0 (desimal pakai titik)`);
+  }
+  const n = round2(Number(s));
+  if (n <= 0) {
+    throw galat(`${label} harus lebih dari 0`);
+  }
+  if (n > MAKS_QTY_BAHAN) {
+    throw galat(`${label} terlalu besar`);
+  }
+  return n;
+};
+
+// Body.Bahan: [{ Kode_Bahan, Qty }], boleh kosong
+const siapkanBahan = (daftar) => {
+  const list = Array.isArray(daftar) ? daftar : [];
+  const sudah = new Set();
+  return list.map((t, i) => {
+    const label = `Bahan ${i + 1}`;
+    const s = teks(t?.Kode_Bahan);
+    const kode = Number(s);
+    if (!/^\d+$/.test(s) || kode <= 0 || !Number.isSafeInteger(kode)) {
+      throw galat(`${label}: bahan wajib dipilih`);
+    }
+    if (sudah.has(kode)) {
+      throw galat(`${label}: bahan ${kode} sudah ada di daftar`);
+    }
+    sudah.add(kode);
+    return { kode, qty: qtyBahan(t.Qty, `${label}: Qty`) };
+  });
+};
+
+// Bahan harus ada di master, kategori & divisi yang benar, dan aktif.
+// Bahan yang sudah tercatat di LHK ini (sudahAda) tetap boleh walau
+// belakangan dinonaktifkan. Mengembalikan peta kode -> baris master.
+const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
+  if (bahan.length === 0) {
+    return new Map();
+  }
+  const [master] = await q.query(
+    `SELECT brg_kode, brg_satuan, brg_isaktif
+     FROM ${T.barang}
+     WHERE brg_kode IN (?) AND brg_ktg_kode = ? AND brg_divisi = ?`,
+    [bahan.map((b) => b.kode), KATEGORI_BAHAN, DIVISI_BAHAN],
+  );
+  const peta = new Map(master.map((m) => [Number(m.brg_kode), m]));
+  bahan.forEach((b, i) => {
+    const m = peta.get(b.kode);
+    if (!m) {
+      throw galat(
+        `Bahan ${i + 1}: ${b.kode} bukan bahan pemakaian Afdruk atau tidak ada di master`,
+      );
+    }
+    if (Number(m.brg_isaktif) !== 1 && !sudahAda.has(b.kode)) {
+      throw galat(`Bahan ${i + 1}: ${b.kode} sudah tidak aktif`);
+    }
+  });
+  return peta;
+};
+
+// Hapus lalu isi ulang; satuan disalin dari master saat simpan
+const simpanBahan = async (conn, nomor, bahan, peta) => {
+  await conn.query(`DELETE FROM ${T.bahan} WHERE lab_lah_nomor = ?`, [nomor]);
+  if (bahan.length === 0) {
+    return;
+  }
+  await conn.query(
+    `INSERT INTO ${T.bahan}
+       (lab_lah_nomor, lab_brg_kode, lab_qty, lab_satuan, lab_nourut)
+     VALUES ?`,
+    [
+      bahan.map((b, i) => [
+        nomor,
+        b.kode,
+        b.qty,
+        peta.get(b.kode).brg_satuan,
+        i + 1,
+      ]),
+    ],
+  );
+};
+
+const getBahanLhk = async (q, nomor) => {
+  const [rows] = await q.query(
+    `SELECT a.lab_brg_kode AS Kode_Bahan,
+            b.brg_nama AS Nama_Bahan,
+            IFNULL(a.lab_satuan, b.brg_satuan) AS Satuan,
+            a.lab_qty AS Qty
+     FROM ${T.bahan} a
+     LEFT JOIN ${T.barang} b ON b.brg_kode = a.lab_brg_kode
+     WHERE a.lab_lah_nomor = ?
+     ORDER BY a.lab_nourut`,
+    [nomor],
+  );
+  return rows.map((r) => ({
+    Kode_Bahan: Number(r.Kode_Bahan),
+    Nama_Bahan: r.Nama_Bahan,
+    Satuan: r.Satuan,
+    Qty: Number(r.Qty),
+  }));
+};
+
+const getLookupBahan = async (search) => {
+  const kata = teks(search);
+  const kondisi = ["brg_ktg_kode = ?", "brg_divisi = ?", "brg_isaktif = 1"];
+  // urutan params mengikuti urutan ? di SQL: subquery stok dulu
+  const params = [GUDANG_BAHAN, KATEGORI_BAHAN, DIVISI_BAHAN];
+  if (kata) {
+    kondisi.push("(brg_nama LIKE ? OR brg_kode LIKE ?)");
+    params.push(`%${kata}%`, `%${kata}%`);
+  }
+  const [rows] = await db.query(
+    `SELECT brg_kode AS Kode, brg_nama AS Nama, brg_satuan AS Satuan,
+            s.stok AS Stok
+     FROM ${T.barang}
+     LEFT JOIN (
+       SELECT mst_brg_kode, SUM(mst_stok_in - mst_stok_out) AS stok
+       FROM ${T.stok}
+       WHERE mst_gdg_kode = ?
+       GROUP BY mst_brg_kode
+     ) s ON s.mst_brg_kode = brg_kode
+     WHERE ${kondisi.join(" AND ")}
+     ORDER BY brg_nama
+     LIMIT 500`,
+    params,
+  );
+  return rows.map((r) => ({
+    Kode: Number(r.Kode),
+    Nama: r.Nama,
+    Satuan: r.Satuan,
+    Stok: r.Stok === null ? null : round2(Number(r.Stok)),
+  }));
+};
+
+// J Meter = J Plangkan x panjang SPK/MAP. Baris lama yang J Plangkan-nya tidak
+// berubah mempertahankan nilai tersimpan (seperti Hapus Plankan), supaya simpan
+// ulang tidak mengubah riwayat bila panjang SPK/MAP berubah. NULL = belum pernah
+// dihitung (baris lama) -> dihitung ulang.
+const hitungJumlahMeter = (baris, peta, lamaPeta) =>
+  baris.map((b) => {
+    const lama = lamaPeta ? lamaPeta.get(b.spk) : null;
+    const pakaiLama =
+      lama &&
+      lama.jumlahmeter !== null &&
+      Number(lama.plangkan) === b.jPlangkan;
+    const jumlahMeter = pakaiLama
+      ? Number(lama.jumlahmeter)
+      : round2(b.jPlangkan * Number(peta.get(b.spk)?.panjang ?? 0));
+    return { ...b, jumlahMeter };
+  });
 
 // Hapus semua detail + Detail Plangkan LHK, lalu isi ulang.
 // Menghapus dtl2 per nomor (bukan per SPK) supaya SPK yang dibuang ikut bersih
@@ -181,15 +330,13 @@ const simpanDetail = async (conn, nomor, baris) => {
     nomor,
     b.spk,
     b.jPlangkan,
-    b.ulano,
-    b.screen,
-    b.lem,
-    b.katalis,
+    b.jumlahMeter,
+    b.ket,
   ]);
   await conn.query(
     `INSERT INTO ${T.dtl}
-       (lad_lah_nomor, lad_spk_nomor, lad_j_plangkan, lad_ulano,
-        lad_screen, lad_lem, lad_katalis)
+       (lad_lah_nomor, lad_spk_nomor, lad_j_plangkan, lad_jumlahmeter,
+        lad_keterangan)
      VALUES ?`,
     [valuesDtl],
   );
@@ -259,10 +406,10 @@ const getLhkAfdrukById = async (nomor, user) => {
             x.spk_jumlah AS Jumlah_Order,
             x.spk_panjang AS Panjang,
             x.spk_lebar AS Lebar,
-            d.lad_ulano AS Ulano,
-            d.lad_screen AS Screen,
-            d.lad_lem AS Lem,
-            d.lad_katalis AS Katalis
+            IFNULL(d.lad_jumlahmeter,
+              ROUND(IFNULL(d.lad_j_plangkan, 0) * IFNULL(x.spk_panjang, 0), 2)
+            ) AS J_Meter,
+            d.lad_keterangan AS Keterangan
      FROM ${T.dtl} d
      LEFT JOIN (
        SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -300,11 +447,13 @@ const getLhkAfdrukById = async (nomor, user) => {
     return {
       ...d,
       J_Plangkan: Plangkan.reduce((a, p) => a + p.Qty, 0),
+      Jumlah_Meter: round2(Plangkan.reduce((a, p) => a + p.Ukuran * p.Qty, 0)),
       Plangkan,
     };
   });
 
-  return { ...hdr[0], Detail };
+  const Bahan = await getBahanLhk(db, no);
+  return { ...hdr[0], Bahan, Detail };
 };
 
 // --- Info SPK/MAP untuk mengisi baris ---
@@ -364,13 +513,14 @@ const createLhkAfdruk = async (body, user) => {
 
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
-    await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await pastikanRantaiLhk(conn, {
       kodeLini: "AFDRUK",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
     });
     await validasiUkuran(conn, data.baris);
+    const baris = hitungJumlahMeter(data.baris, peta, null);
+    const petaBahan = await validasiBahan(conn, data.bahan);
 
     const nomor = await buatNomor(conn, data.tanggal);
     try {
@@ -389,7 +539,8 @@ const createLhkAfdruk = async (body, user) => {
       }
       throw e;
     }
-    await simpanDetail(conn, nomor, data.baris);
+    await simpanDetail(conn, nomor, baris);
+    await simpanBahan(conn, nomor, data.bahan, petaBahan);
 
     await conn.commit();
     return nomor;
@@ -430,16 +581,34 @@ const updateLhkAfdruk = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
-    await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await pastikanRantaiLhk(conn, {
       kodeLini: "AFDRUK",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });
     await validasiUkuran(conn, data.baris);
+
+    const [lamaRows] = await conn.query(
+      `SELECT lad_spk_nomor AS spk, lad_j_plangkan AS plangkan,
+              lad_jumlahmeter AS jumlahmeter
+       FROM ${T.dtl} WHERE lad_lah_nomor = ?`,
+      [no],
+    );
+    const lamaPeta = new Map(lamaRows.map((r) => [r.spk, r]));
+    const baris = hitungJumlahMeter(data.baris, peta, lamaPeta);
+
+    const [bahanAda] = await conn.query(
+      `SELECT lab_brg_kode AS kode FROM ${T.bahan} WHERE lab_lah_nomor = ?`,
+      [no],
+    );
+    const petaBahan = await validasiBahan(
+      conn,
+      data.bahan,
+      new Set(bahanAda.map((r) => Number(r.kode))),
+    );
 
     await conn.query(
       `UPDATE ${T.hdr}
@@ -448,7 +617,8 @@ const updateLhkAfdruk = async (nomor, body, user) => {
        WHERE lah_nomor = ?`,
       [data.tanggal, data.pabrik, user?.kode ?? null, no],
     );
-    await simpanDetail(conn, no, data.baris);
+    await simpanDetail(conn, no, baris);
+    await simpanBahan(conn, no, data.bahan, petaBahan);
 
     await conn.commit();
     return no;
@@ -465,6 +635,7 @@ module.exports = {
   getInfoSpk,
   getLookupPabrik,
   getLookupUkuran,
+  getLookupBahan,
   createLhkAfdruk,
   updateLhkAfdruk,
 };

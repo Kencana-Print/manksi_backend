@@ -25,15 +25,28 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       h.pro_cus_nama AS Customer,
       s.sal_nama AS Sales,
       h.pro_nama_pekerjaan AS NamaPekerjaan,
-      (
-        SELECT GROUP_CONCAT(tj.bj_nama SEPARATOR ', ')
-        FROM tpraorder_bahan pb
-        LEFT JOIN tbahan_jenis tj ON tj.bj_kode = pb.prob_bahan_kode
-        WHERE pb.prob_pro_nomor = h.pro_nomor
+      IF(
+        h.pro_divisi = 1,
+        bsp.brg_nama,
+        (
+          SELECT GROUP_CONCAT(tj.bj_nama SEPARATOR ', ')
+          FROM tpraorder_bahan pb
+          LEFT JOIN tbahan_jenis tj ON tj.bj_kode = pb.prob_bahan_kode
+          WHERE pb.prob_pro_nomor = h.pro_nomor
+        )
       ) AS Bahan,
+      h.pro_sumber_bahan AS SumberBahan,
       h.pro_qty_rencana AS QtyRencana,
+      h.pro_jml_desain AS JmlDesain,
+      h.pro_panjang AS Panjang,
+      h.pro_lebar AS Lebar,
+      REPLACE(REPLACE(IFNULL(h.pro_ukuran_bebas, ''), CHAR(13), ' '), CHAR(10), ' ') AS KetUkuran,
+      h.pro_finishing AS Finishing,
+      h.pro_kirim AS Kirim,
+      h.pro_kirim_ket AS KetKirim,
+      h.pro_syarat_ketentuan AS SyaratKetentuan,
       DATE_FORMAT(h.pro_tgl_kirim, '%Y-%m-%d') AS TglKirim,
-      h.pro_status_bahan AS StatusBahan,
+      IF(h.pro_divisi = 1, h.pro_bahan_status, h.pro_status_bahan) AS StatusBahan,
       h.pro_status_ppic AS StatusPpic,
       h.pro_catatan_ppic AS CatatanPpic,
       DATE_FORMAT(h.pro_tgl_so_estimasi, '%Y-%m-%d') AS TglSoEstimasi,
@@ -68,6 +81,7 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     FROM tpraorder_hdr h
     LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
     LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
+    LEFT JOIN tbarang_new bsp ON bsp.brg_kode = h.pro_brg_kode
     WHERE h.pro_tanggal >= ? AND h.pro_tanggal <= ?
   `;
   const params = [startDate, endDate];

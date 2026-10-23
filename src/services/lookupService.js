@@ -130,6 +130,31 @@ const searchSpk = async (
       whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
+  } else if (filterMode === "lhk-design") {
+    // LHK Design (Proof): SPK dan MAP, divisi 1, aktif, sudah ber-CMO.
+    // Jenis dikirim supaya SPK/MAP bisa dibedakan di modal.
+    baseQuery = `
+    FROM (
+      SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_nama2 AS Nama2,
+             DATE_FORMAT(spk_tanggal, '%Y-%m-%d') AS Tanggal,
+             spk_jumlah AS Jumlah, spk_ukuran AS Ukuran,
+             spk_divisi AS Divisi, spk_cmo AS CMO, spk_aktif AS Aktif,
+             'SPK' AS Jenis
+      FROM tspk
+      UNION ALL
+      SELECT mspk_nomor, mspk_nama, mspk_nama2,
+             DATE_FORMAT(mspk_tanggal, '%Y-%m-%d'),
+             mspk_jumlah, mspk_ukuran,
+             mspk_divisi, mspk_cmo, 'Y',
+             'MAP'
+      FROM tmemospk
+    ) a
+    WHERE Aktif = 'Y' AND CMO <> '' AND Divisi = 1
+  `;
+    if (keyword) {
+      whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`);
+    }
   } else if (filterMode === "spk-map") {
     baseQuery = `
     FROM (

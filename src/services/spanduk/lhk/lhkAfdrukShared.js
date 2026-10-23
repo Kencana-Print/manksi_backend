@@ -1,9 +1,4 @@
-const {
-  galat,
-  cekTutupBuku,
-  PEMAKAI_MUTASI_PRODUKSI,
-  buatPembantuLhk,
-} = require("./lhkCommon");
+const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
   hdr: "kencanaprint.tlhk_afdruk_hdr",
@@ -13,10 +8,13 @@ const T = {
   pabrik: "kencanaprint.tpabrik",
   spk: "kencanaprint.tspk",
   memoSpk: "kencanaprint.tmemospk",
+  bahan: "kencanaprint.tlhk_afdruk_bahan",
+  barang: "kencanaprint.tbarang_new",
+  stok: "tmasterstok_penolong",
 };
 
-// MP-6: LHK yang sudah dimutasi tidak boleh diubah/dihapus
-const TABEL_PEMAKAI_LHK = [PEMAKAI_MUTASI_PRODUKSI];
+// Belum ada pemakai LHK (kunci rantai LHK menunggu keputusan)
+const TABEL_PEMAKAI_LHK = [];
 
 const pembantu = buatPembantuLhk({
   T,

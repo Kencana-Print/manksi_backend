@@ -2,7 +2,7 @@ const { getTanggalTutupBuku } = require("../../tutupBukuService");
 
 const BAGIAN_SUPERADMIN = ["EDP", "DIR", "AUDIT"];
 const DIVISI_BOLEH = [1, 5];
-// MP-13: syarat mutasi (MP-10) hanya untuk LHK bertanggal sejak tanggal ini
+// MP-13: batas "SPK/MAP lama" yang dikecualikan dari gate rantai LHK
 const TANGGAL_MULAI_MUTASI = "2026-10-13";
 const REGEX_TANGGAL = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -110,13 +110,6 @@ const cekTutupBuku = async (tanggalStr) => {
   }
 };
 
-// LHK yang sudah dirujuk mutasi produksi spanduk tidak boleh diubah/dihapus (MP-6)
-const PEMAKAI_MUTASI_PRODUKSI = {
-  tabel: "kencanaprint.tmutasi_produksi_spanduk",
-  kolom: "mps_lhk_nomor",
-  label: "Mutasi Produksi Spanduk",
-};
-
 // Helper yang bergantung pada nama tabel/kolom tiap jenis LHK.
 // cfg: { T: {dtl, spk, memoSpk}, kolomNomorHdr, kolomNomorDtl, kolomSpkDtl,
 //        tabelPemakai: [{tabel, kolom}], sqlCabSpk, sqlCabMemo }
@@ -178,8 +171,10 @@ const buatPembantuLhk = ({
     }
   };
 
-  // Guard: LHK sudah dipakai modul lain (mutasi)
-  const pastikanBelumDipakai = async (q, nomor) => {
+  // Guard: LHK sudah dipakai modul lain, dan kunci rantai LHK
+  // (lini berikutnya sudah ada untuk SPK/MAP di LHK ini). Superadmin
+  // dibebaskan dari kunci rantai.
+  const pastikanBelumDipakai = async (q, nomor, user) => {
     for (const { tabel, kolom, label } of tabelPemakai) {
       const [rows] = await q.query(
         `SELECT 1 FROM ${tabel} WHERE ${kolom} = ? LIMIT 1`,
@@ -191,6 +186,15 @@ const buatPembantuLhk = ({
         );
       }
     }
+    // require di sini, bukan di atas file: lhkLini memuat semua Shared LHK
+    // dan Shared memuat lhkCommon (menghindari ketergantungan melingkar)
+    const { pastikanTidakTerkunciRantai } = require("./lhkKunciRantai");
+    await pastikanTidakTerkunciRantai(q, {
+      tabelDtl: T.dtl,
+      kolomNomorDtl,
+      nomor,
+      user,
+    });
   };
 
   // Sumber: SPK + memo/MAP
@@ -273,7 +277,6 @@ module.exports = {
   adalahSuperadmin,
   cabangUser,
   cekTutupBuku,
-  PEMAKAI_MUTASI_PRODUKSI,
   buatPembantuLhk,
   DIVISI_BOLEH,
   TANGGAL_MULAI_MUTASI,

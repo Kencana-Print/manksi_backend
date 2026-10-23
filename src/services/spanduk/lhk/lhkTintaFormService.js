@@ -17,7 +17,7 @@ const {
   periksaSumber,
   pastikanPabrik,
 } = require("./lhkTintaShared");
-const { pastikanMutasiMasuk } = require("./lhkGerbangMutasi");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-T";
 const NOMOR_LOCK = "lhk_tinta_nomor";
@@ -352,9 +352,8 @@ const createLhkTinta = async (body, user) => {
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "TINTA",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
     });
     await validasiBahan(conn, data.baris);
@@ -407,12 +406,11 @@ const updateLhkTinta = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "TINTA",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });

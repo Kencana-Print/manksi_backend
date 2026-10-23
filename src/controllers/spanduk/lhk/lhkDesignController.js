@@ -1,4 +1,4 @@
-const service = require("../../../services/spanduk/lhk/lhkHapusPlankanService");
+const service = require("../../../services/spanduk/lhk/lhkDesignService");
 
 const kirimError = (res, error, statusDefault) => {
   if (error.notFound) {
@@ -15,11 +15,7 @@ const kirimError = (res, error, statusDefault) => {
 const getBrowse = async (req, res) => {
   try {
     const { tglAwal, tglAkhir } = req.query;
-    const data = await service.getBrowseLhkHapusPlankan(
-      tglAwal,
-      tglAkhir,
-      req.user,
-    );
+    const data = await service.getBrowseLhkDesign(tglAwal, tglAkhir, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     kirimError(res, error, 400);
@@ -29,11 +25,17 @@ const getBrowse = async (req, res) => {
 const getDetail = async (req, res) => {
   try {
     const { tglAwal, tglAkhir } = req.query;
-    const data = await service.getDetailLhkHapusPlankan(
-      tglAwal,
-      tglAkhir,
-      req.user,
-    );
+    const data = await service.getDetailLhkDesign(tglAwal, tglAkhir, req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
+const getStatus = async (req, res) => {
+  try {
+    const { tglAwal, tglAkhir } = req.query;
+    const data = await service.getStatusLhkDesign(tglAwal, tglAkhir, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     kirimError(res, error, 400);
@@ -42,11 +44,11 @@ const getDetail = async (req, res) => {
 
 const remove = async (req, res) => {
   try {
-    await service.deleteLhkHapusPlankan(req.params.nomor, req.user);
+    await service.deleteLhkDesign(req.params.nomor, req.user);
     res.status(200).json({ success: true, message: "Berhasil dihapus" });
   } catch (error) {
     kirimError(res, error, 400);
   }
 };
 
-module.exports = { getBrowse, getDetail, remove };
+module.exports = { getBrowse, getDetail, getStatus, remove };

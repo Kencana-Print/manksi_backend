@@ -11,7 +11,7 @@ const {
   pastikanPabrik,
   pastikanSpk,
 } = require("./lhkQuiringShared");
-const { pastikanMutasiMasuk } = require("./lhkGerbangMutasi");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-Q";
 const NOMOR_LOCK = "lhk_quiring_nomor";
@@ -209,9 +209,8 @@ const createLhkQuiring = async (body, user) => {
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "QUIRING",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
     });
 
@@ -272,12 +271,11 @@ const updateLhkQuiring = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
-    await pastikanMutasiMasuk(conn, {
+    await pastikanRantaiLhk(conn, {
       kodeLini: "QUIRING",
-      tanggal: data.tanggal,
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });

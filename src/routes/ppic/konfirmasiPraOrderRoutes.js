@@ -26,7 +26,7 @@ router.patch(
   "/:nomor/konfirmasi",
   verifyToken,
   checkPermission(menuId, "edit"),
-  checkBagian("PPIC"),
+  checkBagian("PPIC", "PRODUKSI"),
   controller.confirmKesanggupan,
 );
 router.patch(
@@ -35,6 +35,13 @@ router.patch(
   checkPermission(menuId, "edit"),
   checkBagian("PPIC"),
   controller.confirmStatusBahan,
+);
+router.patch(
+  "/:nomor/bahan-spanduk",
+  verifyToken,
+  checkPermission(menuId, "edit"),
+  checkBagian("PPIC", "PRODUKSI"), // ganti setelah nama bagian tim Spanduk dikonfirmasi
+  controller.confirmStatusBahanSpanduk,
 );
 
 module.exports = router;

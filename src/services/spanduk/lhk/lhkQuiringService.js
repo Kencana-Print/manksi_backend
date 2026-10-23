@@ -92,7 +92,7 @@ const deleteLhkQuiring = async (nomor, user) => {
       await cekTutupBuku(cek[0].tgl);
     }
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
 
     await conn.query(`DELETE FROM ${T.dtl} WHERE lqd_lqh_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.hdr} WHERE lqh_nomor = ?`, [no]);

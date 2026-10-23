@@ -18,6 +18,7 @@ const {
   periksaSumber,
   pastikanPabrik,
 } = require("./lhkProofShared");
+const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-PR";
 const NOMOR_LOCK = "lhk_proof_nomor";
@@ -341,6 +342,10 @@ const createLhkProof = async (body, user) => {
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
+    await pastikanRantaiLhk(conn, {
+      kodeLini: "PROOF",
+      daftarSpk: data.baris.map((b) => b.spk),
+    });
     await validasiUkuran(conn, data.baris);
 
     const nomor = await buatNomor(conn, data.tanggal);
@@ -401,9 +406,14 @@ const updateLhkProof = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no);
+    await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
+    await pastikanRantaiLhk(conn, {
+      kodeLini: "PROOF",
+      daftarSpk: data.baris.map((b) => b.spk),
+      nomorLhk: no,
+    });
     await validasiUkuran(conn, data.baris);
 
     await conn.query(

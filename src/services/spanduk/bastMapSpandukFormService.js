@@ -6,6 +6,7 @@ const {
   adalahSuperadmin,
   cabangUser,
 } = require("./lhk/lhkCommon");
+const { pastikanMapPunyaLhk } = require("./lhk/lhkGerbangRantai");
 
 const T = {
   memo: "kencanaprint.tmemospk",
@@ -138,6 +139,12 @@ const getFormData = async (nomor, user) => {
     [nomor],
   );
   const sudahAda = Number(ada.n) > 0;
+  if (!sudahAda) {
+    await pastikanMapPunyaLhk(db, {
+      kodeLini: "PROOF",
+      nomor: map.mspk_nomor,
+    });
+  }
 
   const [checklist] = await db.query(
     `SELECT s.kode_sesuai AS no, s.nama_sesuai AS kesesuaian,
@@ -284,6 +291,10 @@ const simpan = async (mode, nomorUrl, payload, user) => {
         throw galat(`MAP ${nomor} sudah memiliki BAST. Gunakan ubah.`);
       const pesan = await cekBatasOnProgress(conn, norm(map.mspk_cab));
       if (pesan) throw galat(pesan);
+      await pastikanMapPunyaLhk(conn, {
+        kodeLini: "PROOF",
+        nomor: map.mspk_nomor,
+      });
     } else if (!sudahAda) {
       throw galat(`BAST untuk MAP ${nomor} tidak ditemukan`, "notFound");
     }

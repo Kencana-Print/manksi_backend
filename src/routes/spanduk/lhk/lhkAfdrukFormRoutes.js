@@ -19,6 +19,12 @@ router.get(
   controller.getLookupUkuran,
 );
 router.get(
+  "/lookups/bahan",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getLookupBahan,
+);
+router.get(
   "/spk/:nomor",
   verifyToken,
   checkPermission(4, "view"),

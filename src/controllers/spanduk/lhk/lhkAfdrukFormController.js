@@ -48,6 +48,15 @@ const getLookupUkuran = async (req, res) => {
   }
 };
 
+const getLookupBahan = async (req, res) => {
+  try {
+    const data = await service.getLookupBahan(req.query.search);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
 const create = async (req, res) => {
   try {
     const nomor = await service.createLhkAfdruk(req.body, req.user);
@@ -83,6 +92,7 @@ module.exports = {
   getInfoSpk,
   getLookupPabrik,
   getLookupUkuran,
+  getLookupBahan,
   create,
   update,
 };

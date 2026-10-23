@@ -26,13 +26,28 @@ const getDetail = async (req, res) => {
 
 const confirmKesanggupan = async (req, res) => {
   try {
-    const { status, catatan, tglSoEstimasi, tglMap } = req.body;
+    const {
+      status,
+      catatan,
+      tglSoEstimasi,
+      tglMap,
+      syaratKetentuan,
+      kirim,
+      kirimKet,
+    } = req.body;
     await konfirmasiPraOrderService.confirmKesanggupan(
       req.params.nomor,
       status,
       catatan,
       req.user.kode,
-      { tglSoEstimasi, tglMap },
+      {
+        tglSoEstimasi,
+        tglMap,
+        syaratKetentuan,
+        kirim,
+        kirimKet,
+        bagian: req.user.bagian,
+      },
     );
     res.json({
       success: true,
@@ -56,6 +71,20 @@ const confirmStatusBahan = async (req, res) => {
   }
 };
 
+const confirmStatusBahanSpanduk = async (req, res) => {
+  try {
+    await konfirmasiPraOrderService.confirmStatusBahanSpanduk(
+      req.params.nomor,
+      req.body.status,
+      req.user.kode,
+      req.user.bagian,
+    );
+    res.json({ success: true, message: "Status bahan berhasil diperbarui." });
+  } catch (e) {
+    res.status(400).json({ success: false, message: e.message });
+  }
+};
+
 const getDivisi = async (req, res) => {
   try {
     const data = await konfirmasiPraOrderService.getDivisi();
@@ -70,5 +99,6 @@ module.exports = {
   getDetail,
   confirmKesanggupan,
   confirmStatusBahan,
+  confirmStatusBahanSpanduk,
   getDivisi,
 };
