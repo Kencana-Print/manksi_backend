@@ -239,6 +239,7 @@ const insentifRoutes = require("./routes/penjualan/insentifRoutes");
 const insentifFormRoutes = require("./routes/penjualan/insentifFormRoutes");
 const jadwalKirimRoutes = require("./routes/penjualan/jadwalKirimRoutes");
 const jadwalKirimFormRoutes = require("./routes/penjualan/jadwalKirimFormRoutes");
+const permintaanDriverRoutes = require("./routes/penjualan/permintaanDriverRoutes");
 
 //Piutang Routes
 const giroRoutes = require("./routes/piutang/penerimaan/giroRoutes");
@@ -729,6 +730,7 @@ app.use("/api/penjualan/insentif", insentifRoutes);
 app.use("/api/penjualan/insentif/form", insentifFormRoutes);
 app.use("/api/penjualan/jadwal-kirim", jadwalKirimRoutes);
 app.use("/api/penjualan/jadwal-kirim-form", jadwalKirimFormRoutes);
+app.use("/api/penjualan/permintaan-driver", permintaanDriverRoutes);
 
 app.use("/api/piutang/penerimaan/giro", giroRoutes);
 app.use("/api/piutang/penerimaan/giro-form", giroFormRoutes);
