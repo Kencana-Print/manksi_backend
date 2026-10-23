@@ -160,6 +160,8 @@ const validasiSumberBaris = async (q, baris, user) => {
 // Bahan pemakaian Afdruk = master bahan kategori 2 divisi Spanduk (konfirmasi
 // user 22 Okt: bebas pilih, tapi satu kategori agar daftar tidak membengkak)
 const KATEGORI_BAHAN = "2";
+// Slot bahan Afdruk yang barangnya ada di luar kategori 2 (M-46 = kategori 3)
+const BAHAN_LUAR_KATEGORI = [10622];
 const DIVISI_BAHAN = 1;
 const MAKS_QTY_BAHAN = 9999999999.99; // decimal(12,2)
 // Gudang yang stoknya ditampilkan di form (GUDANG PENOLONG P2); hanya info,
@@ -210,8 +212,15 @@ const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
   const [master] = await q.query(
     `SELECT brg_kode, brg_satuan, brg_isaktif
      FROM ${T.barang}
-     WHERE brg_kode IN (?) AND brg_ktg_kode = ? AND brg_divisi = ?`,
-    [bahan.map((b) => b.kode), KATEGORI_BAHAN, DIVISI_BAHAN],
+     WHERE brg_kode IN (?)
+       AND (brg_ktg_kode = ? OR brg_kode IN (?))
+       AND brg_divisi = ?`,
+    [
+      bahan.map((b) => b.kode),
+      KATEGORI_BAHAN,
+      BAHAN_LUAR_KATEGORI,
+      DIVISI_BAHAN,
+    ],
   );
   const peta = new Map(master.map((m) => [Number(m.brg_kode), m]));
   bahan.forEach((b, i) => {
@@ -272,9 +281,18 @@ const getBahanLhk = async (q, nomor) => {
 
 const getLookupBahan = async (search) => {
   const kata = teks(search);
-  const kondisi = ["brg_ktg_kode = ?", "brg_divisi = ?", "brg_isaktif = 1"];
+  const kondisi = [
+    "(brg_ktg_kode = ? OR brg_kode IN (?))",
+    "brg_divisi = ?",
+    "brg_isaktif = 1",
+  ];
   // urutan params mengikuti urutan ? di SQL: subquery stok dulu
-  const params = [GUDANG_BAHAN, KATEGORI_BAHAN, DIVISI_BAHAN];
+  const params = [
+    GUDANG_BAHAN,
+    KATEGORI_BAHAN,
+    BAHAN_LUAR_KATEGORI,
+    DIVISI_BAHAN,
+  ];
   if (kata) {
     kondisi.push("(brg_nama LIKE ? OR brg_kode LIKE ?)");
     params.push(`%${kata}%`, `%${kata}%`);

@@ -14,7 +14,7 @@ const {
 const SLOT_BAHAN = [
   { alias: "Rinso", kode: 10401 },
   { alias: "Porstek", kode: 10400 },
-  { alias: "M46", kode: null },
+  { alias: "M46", kode: 10622 },
   { alias: "Kaporit", kode: 10438 },
   { alias: "Caustik", kode: 10439 },
   { alias: "Ulano", kode: 10435 },

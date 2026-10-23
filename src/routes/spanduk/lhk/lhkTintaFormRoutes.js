@@ -19,10 +19,16 @@ router.get(
   controller.getLookupBahan,
 );
 router.get(
-  "/spk/:nomor",
+  "/lookups/cetak",
   verifyToken,
   checkPermission(4, "view"),
-  controller.getInfoSpk,
+  controller.getLookupCetak,
+);
+router.get(
+  "/cetak/:nomor",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getInfoCetak,
 );
 router.get(
   "/:nomor",

@@ -1,7 +1,6 @@
 const { galat } = require("./lhkCommon");
 const design = require("./lhkDesignShared");
 const afdruk = require("./lhkAfdrukShared");
-const tinta = require("./lhkTintaShared");
 const cetak = require("./lhkCetakShared");
 const quiring = require("./lhkQuiringShared");
 const jahit = require("./lhkJahitShared");
@@ -12,7 +11,7 @@ const proof = require("./lhkProofShared");
 // Lini pertama tiap rantai tanpa syarat. Lini baru (mis. Koli) cukup
 // ditambahkan di sini dan di DAFTAR_LINI.
 const RANTAI = {
-  MAP: ["DESIGN", "AFDRUK", "TINTA", "CETAK", "PROOF"],
+  MAP: ["DESIGN", "AFDRUK", "CETAK", "PROOF"],
   SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT"],
 };
 
@@ -74,17 +73,6 @@ const DAFTAR_LINI = [
       spkDtl: "lad_spk_nomor",
     },
     setara: [LINI_HAPUS_PLANKAN_LAMA],
-  },
-  {
-    kode: "TINTA",
-    nama: "Tinta/Cat",
-    S: tinta,
-    kolom: {
-      nomorHdr: "lnt_nomor",
-      tanggalHdr: "lnt_tanggal",
-      nomorDtl: "lnd_lnt_nomor",
-      spkDtl: "lnd_spk_nomor",
-    },
   },
   {
     kode: "CETAK",

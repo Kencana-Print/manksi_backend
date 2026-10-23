@@ -21,9 +21,19 @@ const getById = async (req, res) => {
   }
 };
 
-const getInfoSpk = async (req, res) => {
+const getInfoCetak = async (req, res) => {
   try {
-    const data = await service.getInfoSpk(req.params.nomor, req.user);
+    const data = await service.getInfoCetak(req.params.nomor, req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
+const getLookupCetak = async (req, res) => {
+  try {
+    const { q, page, limit } = req.query;
+    const data = await service.getLookupCetak(q, page, limit, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     kirimError(res, error, 400);
@@ -80,7 +90,8 @@ const update = async (req, res) => {
 
 module.exports = {
   getById,
-  getInfoSpk,
+  getInfoCetak,
+  getLookupCetak,
   getLookupPabrik,
   getLookupBahan,
   create,

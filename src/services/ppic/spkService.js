@@ -32,6 +32,7 @@ const getBrowseList = async (filters) => {
   const EXTRA_WORKSHOP_USERS = {
     MDI: ["P01"],
     HERU: ["P05"],
+    ISNA: ["P04"],
   };
   const extraCabs =
     EXTRA_WORKSHOP_USERS[String(userKode || "").toUpperCase()] || [];

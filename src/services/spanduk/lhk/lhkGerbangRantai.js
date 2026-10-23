@@ -8,8 +8,38 @@ const {
   spkLamaMp13,
   ringkasDaftar,
 } = require("./lhkLini");
+const { T: T_TINTA } = require("./lhkTintaShared");
 
 const TABEL_SPK = "kencanaprint.tspk";
+
+// LHK Proof wajib didahului LHK Tinta/Cat: MAP harus ada di salah satu LHK
+// Cetak yang dirujuk LHK Tinta berisi minimal satu bahan.
+const pastikanMapPunyaTinta = async (q, daftar) => {
+  if (daftar.length === 0) {
+    return;
+  }
+  const [rows] = await q.query(
+    `SELECT DISTINCT TRIM(cd.lcd_spk_nomor) AS nomor
+     FROM ${T_TINTA.cetakDtl} cd
+     JOIN ${T_TINTA.hdr} t ON t.lnt_lch_nomor = cd.lcd_lch_nomor
+     JOIN ${T_TINTA.bahan} b ON b.ltb_lnt_nomor = t.lnt_nomor
+     WHERE cd.lcd_spk_nomor IN (?)`,
+    [daftar],
+  );
+  const ada = new Set(rows.map((r) => String(r.nomor).toUpperCase()));
+  const belum = daftar.filter((n) => !ada.has(n.toUpperCase()));
+  if (belum.length > 0) {
+    const tampil = belum.slice(0, MAKS_DAFTAR_PESAN).join(", ");
+    const lebih =
+      belum.length > MAKS_DAFTAR_PESAN
+        ? ` dan ${belum.length - MAKS_DAFTAR_PESAN} lainnya`
+        : "";
+    throw galat(
+      `MAP ${tampil}${lebih} belum punya LHK Tinta/Cat. ` +
+        `Buat LHK Tinta/Cat terlebih dahulu.`,
+    );
+  }
+};
 
 // SPK/MAP hanya boleh masuk LHK suatu lini bila sudah punya LHK di lini
 // tepat sebelumnya (rantai MAP dan SPK berbeda: lihat RANTAI di lhkLini).
@@ -95,6 +125,13 @@ const pastikanRantaiLhk = async (
           `Selesaikan LHK ${nama} terlebih dahulu.`,
       );
     }
+  }
+
+  if (kodeLini === "PROOF") {
+    await pastikanMapPunyaTinta(
+      q,
+      [...perLini.values()].flat().filter((n) => !lama.has(n.toUpperCase())),
+    );
   }
 };
 

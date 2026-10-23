@@ -10,8 +10,14 @@ const T = {
   karyawan: "hrd2.tkaryawan",
 };
 
-// Belum ada pemakai LHK (kunci rantai LHK menunggu keputusan)
-const TABEL_PEMAKAI_LHK = [];
+// LHK Cetak tidak boleh diubah/dihapus selama masih dirujuk LHK Tinta/Cat
+const TABEL_PEMAKAI_LHK = [
+  {
+    tabel: "kencanaprint.tlhk_tinta_hdr",
+    kolom: "lnt_lch_nomor",
+    label: "LHK Tinta/Cat",
+  },
+];
 
 const pembantu = buatPembantuLhk({
   T,
