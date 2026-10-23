@@ -67,7 +67,7 @@ const getById = async (nomor) => {
        a.inv_cus_alamat,
        DATE_FORMAT(a.inv_tanggal_tempo,'%Y-%m-%d') AS inv_tanggal_tempo,
        a.inv_rekening, pd.perushd_bank, pd.perushd_atasnama,
-       a.inv_sts_ppn, a.inv_ppn, a.inv_disc
+       a.inv_sts_ppn, a.inv_ppn, a.inv_disc, a.inv_pph
      FROM tinv_hdr a
      INNER JOIN tperusahaan p ON p.perush_kode = a.inv_perush_kode
      INNER JOIN tcustomer c ON c.cus_kode = a.inv_cus_kode
@@ -500,6 +500,7 @@ const save = async (data, userKode, isNew) => {
     StsPpn = 0,
     Ppn = 0,
     Disc = 0,
+    Pph = "",
     Detail = [],
     InvoiceNormalList = [],
     NomorInv = "",
@@ -525,6 +526,7 @@ const save = async (data, userKode, isNew) => {
   const divisiStr = String(Divisi).charAt(0);
   const xppn = StsPpn ? Number(Ppn) : 0;
   const xdisc = Number(Disc) || 0;
+  const cpph = Pph === "PPh" ? "PPh" : "";
 
   const conn = await db.getConnection();
   try {
@@ -541,8 +543,8 @@ const save = async (data, userKode, isNew) => {
            (inv_nomor, inv_divisi, inv_tanggal, inv_keterangan,
             inv_perush_kode, inv_cus_kode, inv_cus_alamat,
             inv_tanggal_tempo, inv_sts_pro, inv_rekening,
-            date_create, user_create, inv_sts_ppn, inv_ppn, inv_disc)
-         VALUES (?,?,?,?,?,?,?,?,2,?,NOW(),?,?,?,?)`,
+            date_create, user_create, inv_sts_ppn, inv_ppn, inv_disc, inv_pph)
+         VALUES (?,?,?,?,?,?,?,?,2,?,NOW(),?,?,?,?,?)`,
         [
           nomor,
           divisiStr,
@@ -557,6 +559,7 @@ const save = async (data, userKode, isNew) => {
           StsPpn,
           xppn,
           xdisc,
+          cpph,
         ],
       );
     } else {
@@ -565,7 +568,7 @@ const save = async (data, userKode, isNew) => {
            inv_tanggal = ?, inv_keterangan = ?,
            inv_perush_kode = ?, inv_cus_kode = ?, inv_cus_alamat = ?,
            inv_tanggal_tempo = ?, inv_rekening = ?,
-           inv_sts_ppn = ?, inv_ppn = ?, inv_disc = ?,
+           inv_sts_ppn = ?, inv_ppn = ?, inv_disc = ?, inv_pph = ?,
            date_modified = NOW(), user_modified = ?
          WHERE inv_nomor = ?`,
         [
@@ -579,6 +582,7 @@ const save = async (data, userKode, isNew) => {
           StsPpn,
           xppn,
           xdisc,
+          cpph,
           userKode,
           nomor,
         ],
@@ -673,7 +677,7 @@ const getDataCetak = async (nomor) => {
     `SELECT
         a.inv_nomor, DATE_FORMAT(a.inv_tanggal,'%d-%m-%Y') AS inv_tanggal_fmt,
         a.inv_keterangan, a.inv_cus_alamat,
-        a.inv_sts_ppn, a.inv_ppn, a.inv_disc,
+        a.inv_sts_ppn, a.inv_ppn, a.inv_disc, a.inv_pph,
         a.inv_rekening, a.inv_perush_kode,
         a.user_create,
         p.perush_nama, p.perush_alamat, p.perush_kota, p.perush_telp,
@@ -716,7 +720,10 @@ const getDataCetak = async (nomor) => {
   const totalBarang = round(totalBarangRaw); // dibulatkan HANYA untuk tampilan
 
   const disc = round(hdr.inv_disc);
-  const dasarPpnRaw = totalBarangRaw - disc;
+  // Mode Disc: PPN dari (total - disc). Mode PPh: PPN dari total penuh,
+  // sama seperti Invoice Normal.
+  const dasarPpnRaw =
+    hdr.inv_pph === "PPh" ? totalBarangRaw : totalBarangRaw - disc;
 
   let totalPpn = 0;
   let grandTotal = totalBarang - disc;
