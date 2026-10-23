@@ -142,9 +142,6 @@ const saveData = async (payload, user, files = [], pendingKeys = []) => {
   if (!header.mkl_cab_asal || !header.mkl_cab_tujuan) {
     throw new Error("Cabang Asal dan Cabang Tujuan wajib diisi.");
   }
-  if (header.mkl_cab_asal === header.mkl_cab_tujuan) {
-    throw new Error("Cabang Asal dan Cabang Tujuan tidak boleh sama.");
-  }
   if (!header.mkl_deadline) {
     throw new Error("Deadline wajib diisi.");
   }
