@@ -35,6 +35,7 @@ const getBrowseLhkCetak = async (tglAwal, tglAkhir, user) => {
            p.pab_nama AS Nama_Pabrik,
            h.lch_jkar_borongan AS Kar_Borongan,
            h.lch_jkar_harian AS Kar_Harian,
+           h.lch_sesi AS Sesi,
            IFNULL(xx.jmeter, 0) AS Jml_Meter
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.lch_pab_kode

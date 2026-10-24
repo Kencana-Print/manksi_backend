@@ -30,119 +30,85 @@ const getBrowse = async (startDate, endDate, cabang = "") => {
 
 // ── Detail (dipakai expand di Browse — read only, gabung data live SO) ──
 const getDetail = async (nomor) => {
+  const [[hdr]] = await db.query(
+    `SELECT DATE_FORMAT(pjw_tgl1,'%Y-%m-%d') AS t1,
+            DATE_FORMAT(pjw_tgl2,'%Y-%m-%d') AS t2, pjw_cab
+     FROM tpenjadwalan_ppic_hdr WHERE pjw_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) return [];
+
   const [rows] = await db.query(
     `SELECT
        d.pjwd_id AS PjwdId,
        d.pjwd_tipe AS PjwdTipe,
-       COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) AS Nomor,
+       COALESCE(d.pjwd_so_nomor, sm.so_nomor) AS Nomor,
+       COALESCE(so.so_spk_ref, d.pjwd_so_nomor, sm.so_nomor) AS EffRef,
        d.pjwd_pro_nomor AS NomorPraOrder,
-       IF(so_from_map.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
+       IF(sm.so_nomor IS NOT NULL, NULL, d.pjwd_map_nomor) AS NomorMap,
        IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_mh_nomor) AS NomorMh,
        IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_nomor) AS NomorPen,
        IF(d.pjwd_so_nomor IS NOT NULL, NULL, d.pjwd_pen_id) AS PenId,
        CASE
-          WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
-          WHEN so_from_map.so_nomor IS NOT NULL THEN 'SO'
-          WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
-          WHEN d.pjwd_mh_nomor IS NOT NULL THEN 'PERMINTAAN HARGA'
-          WHEN d.pjwd_pen_nomor IS NOT NULL THEN 'PENAWARAN'
-          WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
-          ELSE 'MANUAL'
-        END AS Sumber,
-       COALESCE(src.Nama, mp.mspk_nama, mh.mh_nama, pend.pend_nama_barang, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
-       COALESCE(src.Tanggal, DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'), DATE_FORMAT(pro.pro_tanggal, '%Y-%m-%d'), NULL) AS Tanggal,
-       -- ⬅ BARU: Panjang & Lebar, ambil dari sumber yang sesuai; Pra Order belum punya kolomnya jadi tidak diikutkan
-       COALESCE(src.Panjang, mp.mspk_panjang, mh.mh_panjang, pend.pend_panjang, d.pjwd_panjang_manual, 0) AS Panjang,
-       COALESCE(src.Lebar, mp.mspk_lebar, mh.mh_lebar, pend.pend_lebar, d.pjwd_lebar_manual, 0) AS Lebar,
+         WHEN d.pjwd_so_nomor IS NOT NULL THEN 'SO'
+         WHEN sm.so_nomor IS NOT NULL THEN 'SO'
+         WHEN d.pjwd_map_nomor IS NOT NULL THEN 'MAP'
+         WHEN d.pjwd_mh_nomor IS NOT NULL THEN 'PERMINTAAN HARGA'
+         WHEN d.pjwd_pen_nomor IS NOT NULL THEN 'PENAWARAN'
+         WHEN d.pjwd_pro_nomor IS NOT NULL THEN 'PRA ORDER'
+         ELSE 'MANUAL'
+       END AS Sumber,
+       COALESCE(so.so_nama, sp.spk_nama, mp.mspk_nama, mh.mh_nama,
+                pend.pend_nama_barang, pro.pro_nama_pekerjaan, d.pjwd_nama_manual) AS Nama,
+       COALESCE(DATE_FORMAT(COALESCE(so.so_tanggal, sp.spk_tanggal),'%Y-%m-%d'),
+                DATE_FORMAT(mp.mspk_tanggal,'%Y-%m-%d'),
+                DATE_FORMAT(pro.pro_tanggal,'%Y-%m-%d')) AS Tanggal,
+       COALESCE(so.so_panjang, sp.spk_panjang, mp.mspk_panjang, mh.mh_panjang,
+                pend.pend_panjang, d.pjwd_panjang_manual, 0) AS Panjang,
+       COALESCE(so.so_lebar, sp.spk_lebar, mp.mspk_lebar, mh.mh_lebar,
+                pend.pend_lebar, d.pjwd_lebar_manual, 0) AS Lebar,
        CASE
          WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_pesan_manual, 0)
-         ELSE COALESCE(src.Pesan, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0)
+         ELSE COALESCE(so.so_jumlah, sp.spk_jumlah, pro.pro_qty_rencana, d.pjwd_pesan_manual, 0)
        END AS Pesan,
        CASE
-           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
-           SELECT SUM(sm.sjd_jumlah) FROM tsj_dtl_memo sm
-           WHERE sm.sjd_mspk_nomor = d.pjwd_map_nomor
+         WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
+           SELECT SUM(sm1.sjd_jumlah) FROM tsj_dtl_memo sm1
+           WHERE sm1.sjd_mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
          ), 0)
          WHEN d.pjwd_tipe = 'MAP' THEN IFNULL(d.pjwd_kirim_manual, 0)
-         ELSE COALESCE(src.Kirim, 0, d.pjwd_kirim_manual, 0)
+         ELSE IFNULL(COALESCE(so.so_jumlah_kirim, sp.spk_jumlah_kirim), 0)
        END AS Kirim,
        CASE
-           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN GREATEST(
+         WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN GREATEST(
            IFNULL(d.pjwd_pesan_manual, 0) - IFNULL((
              SELECT SUM(sm2.sjd_jumlah) FROM tsj_dtl_memo sm2
-             WHERE sm2.sjd_mspk_nomor = d.pjwd_map_nomor
+             WHERE sm2.sjd_mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
            ), 0), 0)
          WHEN d.pjwd_tipe = 'MAP' THEN GREATEST(IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0), 0)
-         ELSE COALESCE(src.Kurang, pro.pro_qty_rencana,
+         ELSE COALESCE(
+           COALESCE(so.so_jumlah, sp.spk_jumlah)
+             - IFNULL(COALESCE(so.so_jumlah_kirim, sp.spk_jumlah_kirim), 0),
+           pro.pro_qty_rencana,
            (IFNULL(d.pjwd_pesan_manual,0) - IFNULL(d.pjwd_kirim_manual,0)))
        END AS Kurang,
        d.pjwd_rencana AS Rencana,
        d.pjwd_ket_rencana AS KetRencana,
+       -- Realisasi: cabang MAP & manual tetap di SQL; sisanya NULL, diisi dari agregat di JS
        CASE
-           WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
+         WHEN d.pjwd_tipe = 'MAP' AND d.pjwd_map_nomor IS NOT NULL THEN IFNULL((
            SELECT mb.mspk_jumlah_jadi FROM tmemospk mb
-           WHERE mb.mspk_nomor = d.pjwd_map_nomor
+           WHERE mb.mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
              AND EXISTS (
                SELECT 1 FROM tkesesuaianmap kb
                WHERE kb.mspk_nomor = mb.mspk_nomor
                  AND (kb.date_create IS NULL
-                      OR kb.date_create < DATE_ADD(h.pjw_tgl2, INTERVAL 1 DAY))
-             )
+                      OR kb.date_create < DATE_ADD(h.pjw_tgl2, INTERVAL 1 DAY)))
          ), 0)
-         WHEN COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor) IS NULL
+         WHEN COALESCE(d.pjwd_so_nomor, sm.so_nomor) IS NULL
            AND d.pjwd_map_nomor IS NULL AND d.pjwd_pro_nomor IS NULL
          THEN IFNULL(d.pjwd_realisasi_manual, 0)
-         WHEN h.pjw_cab = 'P02' THEN IFNULL((
-           SELECT SUM(sd.sjd_jumlah)
-           FROM tsj_dtl sd
-           INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
-           WHERE sd.sjd_spk_nomor = COALESCE(
-             (SELECT so.so_spk_ref FROM tsalesorder so
-             WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-             COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-           )
-             AND sh.sj_approve <> 2
-             AND sh.sj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-         ), 0)
-         ELSE (
-           IFNULL((
-             SELECT SUM(td.stbjd_jumlah)
-             FROM tstbj_dtl td
-             INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
-             WHERE td.stbjd_spk_nomor = COALESCE(
-               (SELECT so.so_spk_ref FROM tsalesorder so
-               WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-               COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-             )
-             AND th.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2
-           ), 0)
-           +
-           GREATEST(
-             IFNULL((
-               SELECT SUM(td2.stbjd_jumlah)
-               FROM tstbj_dtl td2
-               INNER JOIN tstbj_hdr th2 ON th2.stbj_nomor = td2.stbjd_stbj_nomor
-               WHERE td2.stbjd_spk_nomor = COALESCE(
-                 (SELECT so.so_spk_ref FROM tsalesorder so
-                 WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-                 COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-               )
-               AND NOT (th2.stbj_tanggal BETWEEN h.pjw_tgl1 AND h.pjw_tgl2)
-             ), 0)
-             -
-             IFNULL((
-               SELECT SUM(sd2.sjd_jumlah)
-               FROM tsj_dtl sd2
-               INNER JOIN tsj_hdr sh2 ON sh2.sj_nomor = sd2.sjd_sj_nomor
-               WHERE sd2.sjd_spk_nomor = COALESCE(
-                 (SELECT so.so_spk_ref FROM tsalesorder so
-                 WHERE so.so_nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)),
-                 COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
-               )
-               AND sh2.sj_approve <> 2
-             ), 0)
-           , 0)
-         )
+         ELSE NULL
        END AS Realisasi,
        DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS PermintaanKirim,
        d.pjwd_status_permintaan AS StatusPermintaan,
@@ -152,37 +118,79 @@ const getDetail = async (nomor) => {
        pro.pro_status_ppic AS StatusPpicPraOrder
      FROM tpenjadwalan_ppic_dtl d
      INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
-     LEFT JOIN tsalesorder so_from_map
-       ON so_from_map.so_memo = d.pjwd_map_nomor
-       AND so_from_map.so_aktif = 'Y'
+     LEFT JOIN tsalesorder sm
+       ON sm.so_memo = d.pjwd_map_nomor
+       AND sm.so_aktif = 'Y'
        AND d.pjwd_so_nomor IS NULL
-       AND so_from_map.so_nomor = (
+       AND sm.so_nomor = (
          SELECT MIN(x.so_nomor) FROM tsalesorder x
-         WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y'
-       )
-     LEFT JOIN (
-       SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
-              so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
-              (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang,
-              so_panjang AS Panjang, so_lebar AS Lebar
-       FROM tsalesorder
-       UNION ALL
-       SELECT spk_nomor, spk_nama, DATE_FORMAT(spk_tanggal,'%Y-%m-%d'),
-              spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0)),
-              spk_panjang, spk_lebar
-       FROM tspk WHERE spk_is_so = 0
-     ) src ON src.Nomor = COALESCE(d.pjwd_so_nomor, so_from_map.so_nomor)
+         WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y')
+     LEFT JOIN tsalesorder so
+       ON so.so_nomor = COALESCE(d.pjwd_so_nomor, sm.so_nomor)
+     LEFT JOIN tspk sp
+       ON sp.spk_nomor = CONVERT(COALESCE(d.pjwd_so_nomor, sm.so_nomor) USING latin1)
+       AND sp.spk_is_so = 0
+       AND so.so_nomor IS NULL
      LEFT JOIN tmemospk mp
-       ON mp.mspk_nomor = d.pjwd_map_nomor
-       AND so_from_map.so_nomor IS NULL
+       ON mp.mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
+       AND sm.so_nomor IS NULL
      LEFT JOIN tpraorder_hdr pro ON pro.pro_nomor = d.pjwd_pro_nomor
-     LEFT JOIN tmintaharga mh ON mh.mh_nomor = d.pjwd_mh_nomor
+     LEFT JOIN tmintaharga mh
+       ON mh.mh_nomor = CONVERT(d.pjwd_mh_nomor USING latin1)
      LEFT JOIN tpenawaran_dtl pend
-      ON pend.pend_pen_nomor = d.pjwd_pen_nomor AND pend.pend_id = d.pjwd_pen_id
+       ON pend.pend_pen_nomor = CONVERT(d.pjwd_pen_nomor USING latin1)
+       AND pend.pend_id = d.pjwd_pen_id
      WHERE d.pjwd_pjw_nomor = ?
      ORDER BY Tanggal ASC`,
     [nomor],
   );
+
+  // ── Realisasi SO/SPK: 2 query agregat, terbatas pada nomor yang tampil ──
+  const refs = [
+    ...new Set(
+      rows.filter((r) => r.Realisasi === null && r.EffRef).map((r) => r.EffRef),
+    ),
+  ];
+  const stbj = {};
+  const sj = {};
+  if (refs.length) {
+    const [stbjRows] = await db.query(
+      `SELECT td.stbjd_spk_nomor AS ref,
+              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, td.stbjd_jumlah, 0)) AS inRange,
+              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, 0, td.stbjd_jumlah)) AS outRange
+       FROM tstbj_dtl td
+       INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
+       WHERE td.stbjd_spk_nomor IN (?)
+       GROUP BY td.stbjd_spk_nomor`,
+      [hdr.t1, hdr.t2, hdr.t1, hdr.t2, refs],
+    );
+    stbjRows.forEach((r) => (stbj[r.ref] = r));
+
+    const [sjRows] = await db.query(
+      `SELECT sd.sjd_spk_nomor AS ref,
+              SUM(IF(sh.sj_tanggal BETWEEN ? AND ?, sd.sjd_jumlah, 0)) AS inRange,
+              SUM(sd.sjd_jumlah) AS allQty
+       FROM tsj_dtl sd
+       INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
+       WHERE sd.sjd_spk_nomor IN (?) AND sh.sj_approve <> 2
+       GROUP BY sd.sjd_spk_nomor`,
+      [hdr.t1, hdr.t2, refs],
+    );
+    sjRows.forEach((r) => (sj[r.ref] = r));
+  }
+
+  const isP02 = hdr.pjw_cab === "P02";
+  for (const r of rows) {
+    if (r.Realisasi === null) {
+      const s = stbj[r.EffRef];
+      const j = sj[r.EffRef];
+      r.Realisasi = isP02
+        ? Number(j?.inRange) || 0
+        : (Number(s?.inRange) || 0) +
+          Math.max((Number(s?.outRange) || 0) - (Number(j?.allQty) || 0), 0);
+    }
+    delete r.EffRef;
+  }
   return rows;
 };
 

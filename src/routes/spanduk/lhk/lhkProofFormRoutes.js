@@ -28,6 +28,12 @@ router.get(
   controller.getInfoSpk,
 );
 router.get(
+  "/lookups/resep",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getLookupResep,
+);
+router.get(
   "/:nomor",
   verifyToken,
   checkPermission(menuId, "view"),

@@ -5,7 +5,7 @@ const {
   galat,
   filterCabang,
   pastikanLhkDiCabang,
-  pastikanBelumDipakai,
+  pastikanTintaBelumDikunciProof,
   cekTutupBuku,
 } = require("./lhkTintaShared");
 
@@ -91,7 +91,6 @@ const deleteLhkTinta = async (nomor, user) => {
       await cekTutupBuku(cek[0].tgl);
     }
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no, user);
     await pastikanTintaBelumDikunciProof(conn, {
       nomorCetak: cek[0].cetak,
       nomor: no,

@@ -7,6 +7,7 @@ const {
   cabangUser,
   cekTutupBuku,
 } = require("./lhk/lhkCommon");
+const { KESESUAIAN_SPANDUK } = require("./bastMapSpandukFormService");
 
 const DIVISI_SPANDUK = 1;
 
@@ -55,7 +56,15 @@ const getBrowseList = async (filters, user) => {
       m.mspk_kendala AS kendalaProduksi,
       m.mspk_jumlah_jadi AS Jumlah,
       (SELECT IFNULL(l.apv, "") FROM kencanaprint.tkesesuaianmap_lock l
-        WHERE l.map = m.mspk_nomor LIMIT 1) AS OnProgres
+        WHERE l.map = m.mspk_nomor LIMIT 1) AS OnProgres,
+      (SELECT IF(COUNT(*) > 0 AND SUM(s.status <> 'N') = 0, 1, 0)
+         FROM kencanaprint.tkesesuaianmap s
+        WHERE s.mspk_nomor = m.mspk_nomor
+          AND s.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")})) AS SemuaN,
+      (SELECT p.keputusan FROM kencanaprint.tkesesuaianmap_keputusan p
+        WHERE p.map = m.mspk_nomor) AS Keputusan,
+      (SELECT p.alasan FROM kencanaprint.tkesesuaianmap_keputusan p
+        WHERE p.map = m.mspk_nomor) AS AlasanKeputusan
     FROM kencanaprint.tmemospk m
     ${where}
     ORDER BY m.mspk_tanggal DESC, m.mspk_nomor DESC
@@ -125,6 +134,10 @@ const deleteBast = async (nomor, user) => {
     );
     await conn.query(
       `DELETE FROM kencanaprint.tkesesuaianmap_lock WHERE map = ?`,
+      [nomor],
+    );
+    await conn.query(
+      `DELETE FROM kencanaprint.tkesesuaianmap_keputusan WHERE map = ?`,
       [nomor],
     );
 

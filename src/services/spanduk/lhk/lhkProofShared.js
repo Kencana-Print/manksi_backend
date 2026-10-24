@@ -8,6 +8,9 @@ const T = {
   pabrik: "kencanaprint.tpabrik",
   spk: "kencanaprint.tspk",
   memoSpk: "kencanaprint.tmemospk",
+  afdrukDtl2: "kencanaprint.tlhk_afdruk_dtl_2",
+  barang: "kencanaprint.tbarang_new",
+  resep: "kencanaprint.tlhk_proof_resep",
 };
 
 // Proof tidak masuk rantai mutasi produksi (keputusan 16 Okt 2026)

@@ -27,6 +27,12 @@ router.get(
 );
 
 router.post("/", verifyToken, checkPermission(4, "insert"), controller.create);
+router.put(
+  "/:nomor/keputusan",
+  verifyToken,
+  checkPermission(4, "edit"),
+  controller.setKeputusan,
+);
 router.get(
   "/:nomor",
   verifyToken,

@@ -19,11 +19,12 @@ const {
   pastikanPabrik,
 } = require("./lhkProofShared");
 const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
+const { KODE_RESEP } = require("./lhkProofResep");
 
 const PREFIX_NOMOR = "LHK-PR";
 const NOMOR_LOCK = "lhk_proof_nomor";
 const LOKASI_J_PLANGKAN_MANUAL = "MT1"; // hanya MT1 boleh isi J Plangkan manual
-const JUMLAH_U = 7;
+const JUMLAH_U = 10;
 const MAKS_U = 40; // varchar(40)
 
 // Kunci pembanding ukuran (double 2 desimal) tanpa risiko selisih float
@@ -124,7 +125,7 @@ const siapkanData = (body = {}) => {
     };
   });
 
-  return { tanggal, pabrik, baris };
+  return { tanggal, pabrik, baris, resep: siapkanResep(body) };
 };
 
 // Ukuran harus ada di master; nilai yang disimpan = nilai master
@@ -141,6 +142,146 @@ const validasiUkuran = async (q, baris) => {
       p.nilai = peta.get(p.key);
     }
   });
+};
+
+// Bahan resep dari master (nama + satuan diambil dari master, urutan sesuai konfigurasi)
+const getLookupResep = async (q = db) => {
+  const [rows] = await q.query(
+    `SELECT brg_kode AS kode, brg_nama AS nama, brg_satuan AS satuan
+     FROM ${T.barang} WHERE brg_kode IN (?)`,
+    [KODE_RESEP],
+  );
+  const peta = new Map(rows.map((r) => [Number(r.kode), r]));
+  return KODE_RESEP.filter((k) => peta.has(k)).map((k) => ({
+    Kode: k,
+    Nama: String(peta.get(k).nama ?? "").trim(),
+    Satuan: String(peta.get(k).satuan ?? "").trim(),
+  }));
+};
+
+const angkaResep = (v, label) => {
+  const s = teks(v);
+  if (s === "") {
+    return 0;
+  }
+  if (!/^\d+(\.\d{1,4})?$/.test(s)) {
+    throw galat(
+      `${label} harus angka tidak negatif (maks 4 desimal, pakai titik)`,
+    );
+  }
+  const n = Number(s);
+  if (n > 999999999) {
+    throw galat(`${label} terlalu besar`);
+  }
+  return n;
+};
+
+// Body.Resep: [{ Brg_Kode, Qty_Resep, Qty_Actual }] -> Map kode -> {resep, actual}
+const siapkanResep = (body) => {
+  const daftar = Array.isArray(body.Resep) ? body.Resep : [];
+  const hasil = new Map();
+  for (const r of daftar) {
+    const kode = Number(r?.Brg_Kode);
+    if (!KODE_RESEP.includes(kode)) {
+      throw galat(`Bahan ${r?.Brg_Kode} tidak ada dalam daftar resep`);
+    }
+    if (hasil.has(kode)) {
+      throw galat(`Bahan ${kode} muncul lebih dari sekali`);
+    }
+    hasil.set(kode, {
+      resep: angkaResep(r.Qty_Resep, `Resep bahan ${kode}`),
+      actual: angkaResep(r.Qty_Actual, `Actual bahan ${kode}`),
+    });
+  }
+  return hasil;
+};
+
+const ambilResepLama = async (q, nomor) => {
+  const [rows] = await q.query(
+    `SELECT lpv_brg_kode AS kode, lpv_qty_resep AS resep
+     FROM ${T.resep} WHERE lpv_lpr_nomor = ?`,
+    [nomor],
+  );
+  return new Map(rows.map((r) => [Number(r.kode), Number(r.resep)]));
+};
+
+// Resep terkunci bila dokumen sudah punya resep > 0; Actual selalu dari payload.
+const simpanResep = async (conn, nomor, resep, lama = null) => {
+  const terkunci = !!lama && [...lama.values()].some((v) => v > 0);
+  const master = await getLookupResep(conn);
+  await conn.query(`DELETE FROM ${T.resep} WHERE lpv_lpr_nomor = ?`, [nomor]);
+  const values = [];
+  let urut = 0;
+  for (const m of master) {
+    const p = resep.get(m.Kode);
+    const qResep = terkunci ? (lama.get(m.Kode) ?? 0) : (p?.resep ?? 0);
+    const qActual = p?.actual ?? 0;
+    if (qResep <= 0 && qActual <= 0) {
+      continue;
+    }
+    urut += 1;
+    values.push([nomor, m.Kode, qResep, qActual, m.Satuan.slice(0, 10), urut]);
+  }
+  if (values.length > 0) {
+    await conn.query(
+      `INSERT INTO ${T.resep}
+         (lpv_lpr_nomor, lpv_brg_kode, lpv_qty_resep, lpv_qty_actual,
+          lpv_satuan, lpv_nourut)
+       VALUES ?`,
+      [values],
+    );
+  }
+};
+
+// Qty plangkan per ukuran dari semua LHK Afdruk yang memuat SPK/MAP tsb (dijumlahkan).
+// Mengembalikan Map spk -> Map kunciUkuran -> qty
+const ambilPlangkanAfdruk = async (q, daftarSpk) => {
+  const hasil = new Map();
+  if (daftarSpk.length === 0) {
+    return hasil;
+  }
+  const [rows] = await q.query(
+    `SELECT lad2_spk_nomor AS spk, lad2_up_kode AS ukuran,
+            SUM(lad2_qty) AS qty
+     FROM ${T.afdrukDtl2}
+     WHERE lad2_spk_nomor IN (?)
+     GROUP BY lad2_spk_nomor, lad2_up_kode`,
+    [daftarSpk],
+  );
+  for (const r of rows) {
+    const qty = Number(r.qty) || 0;
+    if (qty <= 0) {
+      continue;
+    }
+    const spk = String(r.spk);
+    if (!hasil.has(spk)) {
+      hasil.set(spk, new Map());
+    }
+    hasil.get(spk).set(kunciUkuran(r.ukuran), qty);
+  }
+  return hasil;
+};
+
+// Baris yang Afdruk-nya punya data: qty ditimpa dari Afdruk (terkunci).
+// daftarKecuali: SPK yang dibiarkan apa adanya (mode ubah, baris lama).
+const terapkanKunciAfdruk = async (q, baris, daftarKecuali = new Set()) => {
+  const target = baris.filter((b) => !daftarKecuali.has(b.spk));
+  const peta = await ambilPlangkanAfdruk(
+    q,
+    target.map((b) => b.spk),
+  );
+  for (const b of target) {
+    const dariAfdruk = peta.get(b.spk);
+    if (!dariAfdruk) {
+      continue;
+    }
+    b.plangkan = [...dariAfdruk.entries()].map(([key, qty]) => ({
+      key,
+      ukuran: String(key / 100),
+      qty,
+    }));
+    b.jPlangkan = [...dariAfdruk.values()].reduce((a, v) => a + v, 0);
+  }
 };
 
 const validasiSumberBaris = async (q, baris, user) => {
@@ -169,7 +310,8 @@ const simpanDetail = async (conn, nomor, baris) => {
   await conn.query(
     `INSERT INTO ${T.dtl}
        (lprd_lpr_nomor, lprd_spk_nomor, lprd_j_plangkan, lprd_j_proof,
-        lprd_u1, lprd_u2, lprd_u3, lprd_u4, lprd_u5, lprd_u6, lprd_u7)
+        lprd_u1, lprd_u2, lprd_u3, lprd_u4, lprd_u5, lprd_u6, lprd_u7,
+        lprd_u8, lprd_u9, lprd_u10)
      VALUES ?`,
     [valuesDtl],
   );
@@ -243,7 +385,8 @@ const getLhkProofById = async (nomor, user) => {
             d.lprd_j_proof AS J_Proof,
             d.lprd_u1 AS U1, d.lprd_u2 AS U2, d.lprd_u3 AS U3,
             d.lprd_u4 AS U4, d.lprd_u5 AS U5, d.lprd_u6 AS U6,
-            d.lprd_u7 AS U7
+            d.lprd_u7 AS U7, d.lprd_u8 AS U8, d.lprd_u9 AS U9,
+            d.lprd_u10 AS U10
      FROM ${T.dtl} d
      LEFT JOIN (
        SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -281,7 +424,25 @@ const getLhkProofById = async (nomor, user) => {
     })),
   }));
 
-  return { ...hdr[0], Detail };
+  const opsi = await getLookupResep(db);
+  const [resepRows] = await db.query(
+    `SELECT lpv_brg_kode AS kode, lpv_qty_resep AS resep, lpv_qty_actual AS actual
+     FROM ${T.resep} WHERE lpv_lpr_nomor = ?`,
+    [no],
+  );
+  const petaResep = new Map(resepRows.map((r) => [Number(r.kode), r]));
+  const Resep = opsi.map((o) => ({
+    ...o,
+    Qty_Resep: Number(petaResep.get(o.Kode)?.resep) || 0,
+    Qty_Actual: Number(petaResep.get(o.Kode)?.actual) || 0,
+  }));
+
+  return {
+    ...hdr[0],
+    Detail,
+    Resep,
+    Resep_Terkunci: Resep.some((r) => r.Qty_Resep > 0),
+  };
 };
 
 // --- Info SPK/MAP untuk mengisi baris ---
@@ -290,12 +451,23 @@ const getInfoSpk = async (nomor, user) => {
   const peta = await ambilInfoSpk(db, [no]);
   const info = peta.get(no);
   periksaSumber(info, no, user);
+  await pastikanRantaiLhk(db, {
+    kodeLini: "PROOF",
+    daftarSpk: [no],
+  });
+  const afdruk = (await ambilPlangkanAfdruk(db, [info.nomor])).get(info.nomor);
+  const ukuran = await getLookupUkuran();
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,
     Jumlah_Order: info.jumlah,
     Panjang: info.panjang,
     Lebar: info.lebar,
+    Terkunci: !!afdruk,
+    Plangkan: ukuran.map((u) => ({
+      Ukuran: u.Ukuran,
+      Qty: afdruk?.get(kunciUkuran(u.Ukuran)) ?? 0,
+    })),
   };
 };
 
@@ -346,6 +518,7 @@ const createLhkProof = async (body, user) => {
       kodeLini: "PROOF",
       daftarSpk: data.baris.map((b) => b.spk),
     });
+    await terapkanKunciAfdruk(conn, data.baris);
     await validasiUkuran(conn, data.baris);
 
     const nomor = await buatNomor(conn, data.tanggal);
@@ -366,6 +539,7 @@ const createLhkProof = async (body, user) => {
       throw e;
     }
     await simpanDetail(conn, nomor, data.baris);
+    await simpanResep(conn, nomor, data.resep);
 
     await conn.commit();
     return nomor;
@@ -414,6 +588,15 @@ const updateLhkProof = async (nomor, body, user) => {
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });
+    const [spkLama] = await conn.query(
+      `SELECT lprd_spk_nomor AS spk FROM ${T.dtl} WHERE lprd_lpr_nomor = ?`,
+      [no],
+    );
+    await terapkanKunciAfdruk(
+      conn,
+      data.baris,
+      new Set(spkLama.map((r) => String(r.spk))),
+    );
     await validasiUkuran(conn, data.baris);
 
     await conn.query(
@@ -423,7 +606,9 @@ const updateLhkProof = async (nomor, body, user) => {
        WHERE lpr_nomor = ?`,
       [data.tanggal, data.pabrik, user?.kode ?? null, no],
     );
+    const resepLama = await ambilResepLama(conn, no);
     await simpanDetail(conn, no, data.baris);
+    await simpanResep(conn, no, data.resep, resepLama);
 
     await conn.commit();
     return no;
@@ -440,6 +625,7 @@ module.exports = {
   getInfoSpk,
   getLookupPabrik,
   getLookupUkuran,
+  getLookupResep,
   createLhkProof,
   updateLhkProof,
 };

@@ -15,6 +15,7 @@ const T = {
   bahan: "kencanaprint.tkesesuaianmap_komponen",
   lock: "kencanaprint.tkesesuaianmap_lock",
   barang: "kencanaprint.tbarang_new",
+  putus: "kencanaprint.tkesesuaianmap_keputusan",
 };
 
 const DIVISI_SPANDUK = 1;
@@ -22,11 +23,16 @@ const KTG_BAHAN_UTAMA = "1";
 // Kode tjenisbarang untuk "jenis bahan baku". Diisi setelah dikonfirmasi;
 // selama kosong, filter jenis tidak dipakai.
 const JENIS_BAHAN_BAKU = [];
-// Jenis dan Warna Bahan, Model, Gambar, Font/Tulisan, Finishing, Ukuran
-const KESESUAIAN_SPANDUK = [1, 3, 5, 6, 7, 10];
+// Urutan tampil: Bahan, Warna, Gambar, Desain Font, Desain Gambar, Finishing, Ukuran
+const KESESUAIAN_SPANDUK = [11, 12, 5, 13, 14, 7, 10];
+const KODE_SESUAI_BAHAN = 11; // keterangannya = daftar bahan terpilih
 const HARI_BATAS_ON_PROGRESS = 6;
 const MAKS_KETERANGAN = 200;
 const MAKS_JUMLAH = 99999999.99;
+const KEPUTUSAN_VALID = ["LANJUT", "ULANG"];
+// BAST "N" = semua baris kesesuaian berstatus N
+const SQL_SEMUA_N = `(SELECT COUNT(*) FROM ${T.bast} a WHERE a.mspk_nomor = ? AND a.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")})) > 0
+  AND (SELECT COUNT(*) FROM ${T.bast} a WHERE a.mspk_nomor = ? AND a.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")}) AND a.status <> 'N') = 0`;
 
 // ── util ──
 const angkaTidakNegatif = (v, label) => {
@@ -47,11 +53,18 @@ const paramJenis = () => (JENIS_BAHAN_BAKU.length ? [JENIS_BAHAN_BAKU] : []);
 // Ambil MAP + semua guard: ada, divisi 1, sudah CMO, cabang sama (non-superadmin)
 const ambilMap = async (conn, nomor, user, kunci = false) => {
   const [[m]] = await conn.query(
-    `SELECT mspk_nomor, mspk_divisi, mspk_cab, mspk_cmo, mspk_nama, mspk_nama2,
-            mspk_ukuran, mspk_kain, mspk_finishing, mspk_keterangan,
-            mspk_kendala, mspk_jumlah_jadi, mspk_tipe,
-            DATE_FORMAT(mspk_tanggal, '%Y-%m-%d') AS mspk_tanggal
-       FROM ${T.memo} WHERE mspk_nomor = ? ${kunci ? "FOR UPDATE" : ""}`,
+    `SELECT m.mspk_nomor, m.mspk_divisi, m.mspk_cab, m.mspk_cmo, m.mspk_nama,
+            m.mspk_nama2, m.mspk_ukuran, m.mspk_kain, m.mspk_finishing,
+            m.mspk_keterangan, m.mspk_kendala, m.mspk_jumlah_jadi, m.mspk_tipe,
+            DATE_FORMAT(m.mspk_tanggal, '%Y-%m-%d') AS mspk_tanggal,
+            (SELECT j.jo_nama FROM kencanaprint.tjenisorder j
+              WHERE j.jo_kode = m.MSpk_jo_kode AND j.jo_divisi = m.mspk_divisi
+              LIMIT 1) AS jenis_order,
+            (SELECT GROUP_CONCAT(DISTINCT d.lprd_lpr_nomor
+                      ORDER BY d.lprd_lpr_nomor SEPARATOR ', ')
+               FROM kencanaprint.tlhk_proof_dtl d
+              WHERE d.lprd_spk_nomor = m.mspk_nomor) AS nomor_lhk_proof
+       FROM ${T.memo} m WHERE m.mspk_nomor = ? ${kunci ? "FOR UPDATE" : ""}`,
     [nomor],
   );
   if (!m) throw galat(`MAP ${nomor} tidak ditemukan`, "notFound");
@@ -153,7 +166,7 @@ const getFormData = async (nomor, user) => {
        FROM ${T.master} s
        LEFT JOIN ${T.bast} a ON a.kode_sesuai = s.kode_sesuai AND a.mspk_nomor = ?
       WHERE s.kode_sesuai IN (?)
-      ORDER BY s.kode_sesuai`,
+      ORDER BY FIELD(s.kode_sesuai, ${KESESUAIAN_SPANDUK.join(",")})`,
     [nomor, KESESUAIAN_SPANDUK],
   );
   if (checklist.length !== KESESUAIAN_SPANDUK.length) {
@@ -301,6 +314,26 @@ const simpan = async (mode, nomorUrl, payload, user) => {
 
     await periksaBahan(conn, d.kodeBahan);
 
+    // Keterangan baris Bahan = nama bahan terpilih (dibuat server)
+    const baris = d.checklist.find((c) => c.no === KODE_SESUAI_BAHAN);
+    if (baris) {
+      if (d.kodeBahan.length > 0) {
+        const [nm] = await conn.query(
+          `SELECT brg_kode, brg_nama FROM ${T.barang} WHERE brg_kode IN (?)`,
+          [d.kodeBahan],
+        );
+        const peta = new Map(
+          nm.map((r) => [String(r.brg_kode), String(r.brg_nama ?? "").trim()]),
+        );
+        baris.keterangan = d.kodeBahan
+          .map((k) => peta.get(k) ?? k)
+          .join(", ")
+          .slice(0, MAKS_KETERANGAN);
+      } else {
+        baris.keterangan = "-";
+      }
+    }
+
     // 1. Header MAP
     await conn.query(
       `UPDATE ${T.memo}
@@ -320,6 +353,11 @@ const simpan = async (mode, nomorUrl, payload, user) => {
            user_modify = ?, date_modify = NOW()`,
         [nomor, c.no, c.status, c.keterangan, user.kode, user.kode],
       );
+    }
+
+    // Status bisa berubah, jadi keputusan lama tidak berlaku lagi
+    if (mode === "update") {
+      await conn.query(`DELETE FROM ${T.putus} WHERE map = ?`, [nomor]);
     }
 
     // 3. Bahan (hapus lalu isi ulang; komponen/warna/babaran tidak dipakai Spanduk)
@@ -381,7 +419,7 @@ const getPrintData = async (nomor, user) => {
        FROM ${T.bast} a
        INNER JOIN ${T.master} s ON s.kode_sesuai = a.kode_sesuai
       WHERE a.mspk_nomor = ? AND a.kode_sesuai IN (?)
-      ORDER BY a.kode_sesuai`,
+      ORDER BY FIELD(a.kode_sesuai, ${KESESUAIAN_SPANDUK.join(",")})`,
     [nomor, KESESUAIAN_SPANDUK],
   );
   if (details.length === 0) {
@@ -390,6 +428,57 @@ const getPrintData = async (nomor, user) => {
 
   return { header: map, details };
 };
+
+// ── KEPUTUSAN BAST N (lanjut / produksi ulang) ──
+const setKeputusan = async (nomorUrl, payload, user) => {
+  const nomor = teks(nomorUrl);
+  const keputusan = norm(payload?.keputusan);
+  const alasan = teks(payload?.alasan);
+  if (!KEPUTUSAN_VALID.includes(keputusan)) {
+    throw galat("Keputusan harus LANJUT atau ULANG");
+  }
+  if (!alasan) throw galat("Alasan wajib diisi");
+  if (alasan.length > 200) throw galat("Alasan maksimal 200 karakter");
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await ambilMap(conn, nomor, user, true);
+
+    const [[sn]] = await conn.query(`SELECT ${SQL_SEMUA_N} AS ok`, [
+      nomor,
+      nomor,
+    ]);
+    if (!Number(sn.ok)) {
+      throw galat("Keputusan hanya untuk BAST yang seluruh kesesuaiannya N");
+    }
+    const [serah] = await conn.query(
+      `SELECT mmkd_nomor FROM kencanaprint.tmutasi_marketing_spanduk_dtl
+       WHERE mmkd_mspk_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+    if (serah.length > 0) {
+      throw galat(`MAP sudah diserahkan ke marketing (${serah[0].mmkd_nomor})`);
+    }
+
+    await conn.query(
+      `INSERT INTO ${T.putus} (map, keputusan, alasan, user_putus, tgl_putus)
+       VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE keputusan = VALUES(keputusan),
+         alasan = VALUES(alasan), user_putus = VALUES(user_putus),
+         tgl_putus = VALUES(tgl_putus)`,
+      [nomor, keputusan, alasan, user.kode],
+    );
+    await conn.commit();
+    return nomor;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getLookupMap,
   getLookupBahan,
@@ -397,4 +486,6 @@ module.exports = {
   getPrintData,
   create,
   update,
+  setKeputusan,
+  KESESUAIAN_SPANDUK,
 };

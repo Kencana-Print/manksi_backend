@@ -34,39 +34,36 @@ const getDivisiOptions = async () => {
 };
 
 // ── Tarik SO — sekarang dengan filter divisi opsional ──
-const searchSoKandidat = async (
-  startDate,
-  endDate,
-  divisi = "",
-  excludeNomor = "",
-) => {
-  let query = `
-    SELECT src.Nomor, src.Nama, src.Tanggal, src.Pesan, src.Kirim, src.Kurang, src.DatelineAsli
-    FROM (
-      SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
-             so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
-             (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang,
-             so_dateline AS DatelineAsli, so_divisi AS Divisi
-      FROM tsalesorder
-      WHERE so_aktif = 'Y' AND so_close = 0
-      UNION ALL
-      SELECT spk_nomor, spk_nama, DATE_FORMAT(spk_tanggal,'%Y-%m-%d'),
-             spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0)),
-             spk_dateline, spk_divisi
-      FROM tspk
-      WHERE spk_aktif = 'Y' AND spk_close = 0 AND spk_is_so = 0
-    ) src
-    WHERE src.DatelineAsli BETWEEN ? AND ?
-  `;
-  const params = [startDate, endDate];
-
-  if (divisi && divisi !== "0") {
-    query += ` AND src.Divisi = ?`;
-    params.push(divisi);
-  }
-  query += ` ORDER BY src.DatelineAsli ASC`;
-
-  const [rows] = await db.query(query, params);
+const searchSoKandidat = async (startDate, endDate, divisi = "") => {
+  const pakaiDivisi = divisi && divisi !== "0";
+  const params = [
+    startDate,
+    endDate,
+    ...(pakaiDivisi ? [divisi] : []),
+    startDate,
+    endDate,
+    ...(pakaiDivisi ? [divisi] : []),
+  ];
+  const [rows] = await db.query(
+    `SELECT so_nomor AS Nomor, so_nama AS Nama, DATE_FORMAT(so_tanggal,'%Y-%m-%d') AS Tanggal,
+            so_jumlah AS Pesan, IFNULL(so_jumlah_kirim,0) AS Kirim,
+            (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang,
+            so_dateline AS DatelineAsli
+     FROM tsalesorder
+     WHERE so_aktif = 'Y' AND so_close = 0
+       AND so_dateline BETWEEN ? AND ?
+       ${pakaiDivisi ? "AND so_divisi = ?" : ""}
+     UNION ALL
+     SELECT spk_nomor, spk_nama, DATE_FORMAT(spk_tanggal,'%Y-%m-%d'),
+            spk_jumlah, IFNULL(spk_jumlah_kirim,0), (spk_jumlah - IFNULL(spk_jumlah_kirim,0)),
+            spk_dateline
+     FROM tspk
+     WHERE spk_aktif = 'Y' AND spk_close = 0 AND spk_is_so = 0
+       AND spk_dateline BETWEEN ? AND ?
+       ${pakaiDivisi ? "AND spk_divisi = ?" : ""}
+     ORDER BY DatelineAsli ASC`,
+    params,
+  );
   return rows;
 };
 
@@ -216,8 +213,8 @@ const getMapInfo = async (
       `SELECT COUNT(*) AS cnt FROM tkesesuaianmap
        WHERE mspk_nomor = ?
          AND (
-           DATE(date_create) BETWEEN ? AND ?
-           OR DATE(date_modify) BETWEEN ? AND ?
+           (date_create >= ? AND date_create < DATE_ADD(?, INTERVAL 1 DAY))
+           OR (date_modify >= ? AND date_modify < DATE_ADD(?, INTERVAL 1 DAY))
          )`,
       [mapNomor, periodeTgl1, periodeTgl2, periodeTgl1, periodeTgl2],
     );
@@ -406,25 +403,27 @@ const resolveSourceForPeriod = async (pjwNomor) => {
 
     if (row.pjwd_mh_nomor) {
       const [found] = await db.query(
-        `SELECT DISTINCT resolved.so_nomor AS SoNomor
-     FROM (
-       SELECT so.so_nomor, so.so_pen_nomor, so.so_pen_id
-       FROM tsalesorder so WHERE so.so_aktif = 'Y'
-       UNION ALL
-       SELECT s.spk_nomor, s.spk_pen_nomor, s.spk_pen_id
-       FROM tspk s WHERE s.spk_is_so = 1 AND s.spk_aktif = 'Y'
-     ) resolved
-     INNER JOIN tpenawaran_dtl pd
-       ON pd.pend_pen_nomor = resolved.so_pen_nomor
-       AND pd.pend_id = resolved.so_pen_id
-     WHERE pd.pend_minta = ?
-     UNION
-     SELECT DISTINCT so2.so_nomor AS SoNomor
-     FROM tpenawaran_dtl pd2
-     INNER JOIN tmemospk mp2 ON mp2.mspk_pen_nomor = pd2.pend_pen_nomor AND mp2.mspk_pen_id = pd2.pend_id
-     INNER JOIN tsalesorder so2 ON so2.so_memo = mp2.mspk_nomor AND so2.so_aktif = 'Y'
-     WHERE pd2.pend_minta = ?`,
-        [row.pjwd_mh_nomor, row.pjwd_mh_nomor],
+        `SELECT so.so_nomor AS SoNomor
+         FROM tpenawaran_dtl pd
+         INNER JOIN tsalesorder so
+           ON so.so_pen_nomor = pd.pend_pen_nomor AND so.so_pen_id = pd.pend_id
+           AND so.so_aktif = 'Y'
+         WHERE pd.pend_minta = ?
+         UNION
+         SELECT s.spk_nomor
+         FROM tpenawaran_dtl pd
+         INNER JOIN tspk s
+           ON s.spk_pen_nomor = pd.pend_pen_nomor AND s.spk_pen_id = pd.pend_id
+           AND s.spk_is_so = 1 AND s.spk_aktif = 'Y'
+         WHERE pd.pend_minta = ?
+         UNION
+         SELECT so2.so_nomor
+         FROM tpenawaran_dtl pd2
+         INNER JOIN tmemospk mp2
+           ON mp2.mspk_pen_nomor = pd2.pend_pen_nomor AND mp2.mspk_pen_id = pd2.pend_id
+         INNER JOIN tsalesorder so2 ON so2.so_memo = mp2.mspk_nomor AND so2.so_aktif = 'Y'
+         WHERE pd2.pend_minta = ?`,
+        [row.pjwd_mh_nomor, row.pjwd_mh_nomor, row.pjwd_mh_nomor],
       );
       soList = found.map((r) => r.SoNomor);
     } else if (row.pjwd_pen_nomor && row.pjwd_pen_id) {

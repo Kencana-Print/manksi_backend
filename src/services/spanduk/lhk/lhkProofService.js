@@ -55,7 +55,11 @@ const getDetailLhkProof = async (tglAwal, tglAkhir, user) => {
            x.spk_lebar AS Lebar,
            d.lprd_j_plangkan AS J_Plangkan,
            d.lprd_j_proof AS J_Proof,
-           d.lprd_j_meter AS J_Meter
+           d.lprd_j_meter AS J_Meter,
+           d.lprd_u1 AS U1, d.lprd_u2 AS U2, d.lprd_u3 AS U3,
+           d.lprd_u4 AS U4, d.lprd_u5 AS U5, d.lprd_u6 AS U6,
+           d.lprd_u7 AS U7, d.lprd_u8 AS U8, d.lprd_u9 AS U9,
+           d.lprd_u10 AS U10
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.lpr_nomor = d.lprd_lpr_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.lprd_spk_nomor
@@ -65,6 +69,34 @@ const getDetailLhkProof = async (tglAwal, tglAkhir, user) => {
   `;
   const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
   return rows;
+};
+
+// Resep & Actual pemakaian obat seluruh LHK pada periode (per dokumen)
+const getResepLhkProof = async (tglAwal, tglAkhir, user) => {
+  validasiPeriode(tglAwal, tglAkhir);
+  const cab = filterCabang(user, "h");
+
+  const query = `
+    SELECT v.lpv_lpr_nomor AS Nomor,
+           v.lpv_brg_kode AS Kode,
+           b.brg_nama AS Nama,
+           v.lpv_satuan AS Satuan,
+           v.lpv_qty_resep AS Qty_Resep,
+           v.lpv_qty_actual AS Qty_Actual
+    FROM ${T.resep} v
+    JOIN ${T.hdr} h ON h.lpr_nomor = v.lpv_lpr_nomor
+    LEFT JOIN ${T.barang} b ON b.brg_kode = v.lpv_brg_kode
+    WHERE h.lpr_tanggal BETWEEN ? AND ?
+    ${cab.sql}
+    ORDER BY v.lpv_lpr_nomor, v.lpv_nourut
+  `;
+  const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
+  return rows.map((r) => ({
+    ...r,
+    Nama: String(r.Nama ?? "").trim(),
+    Qty_Resep: Number(r.Qty_Resep) || 0,
+    Qty_Actual: Number(r.Qty_Actual) || 0,
+  }));
 };
 
 // Hapus LHK: dtl_2, dtl, lalu header dalam satu transaksi (Delphi: tanpa transaksi)
@@ -110,5 +142,6 @@ const deleteLhkProof = async (nomor, user) => {
 module.exports = {
   getBrowseLhkProof,
   getDetailLhkProof,
+  getResepLhkProof,
   deleteLhkProof,
 };

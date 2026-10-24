@@ -20,6 +20,12 @@ router.get(
   checkPermission(MENU_ID_PROOF, "view"),
   controller.getDetail,
 );
+router.get(
+  "/resep",
+  verifyToken,
+  checkPermission(MENU_ID_PROOF, "view"),
+  controller.getResep,
+);
 router.delete(
   "/:nomor",
   verifyToken,

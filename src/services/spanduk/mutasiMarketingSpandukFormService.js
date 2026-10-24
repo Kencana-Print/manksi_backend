@@ -5,6 +5,7 @@ const {
   cabangUser,
   cekTutupBuku,
 } = require("./lhk/lhkCommon");
+const { KESESUAIAN_SPANDUK } = require("./bastMapSpandukFormService");
 
 const T = {
   hdr: "kencanaprint.tmutasi_marketing_spanduk",
@@ -13,6 +14,7 @@ const T = {
   user: "kencanaprint.tuser",
   bast: "kencanaprint.tkesesuaianmap",
   lock: "kencanaprint.tkesesuaianmap_lock",
+  putus: "kencanaprint.tkesesuaianmap_keputusan",
 };
 
 const DIVISI_SPANDUK = 1;
@@ -21,6 +23,15 @@ const PREFIX_NOMOR = "MTM";
 
 const str = (v) => String(v ?? "").trim();
 const MO_SQL = `IFNULL(NULLIF(u.user_nama, ''), IFNULL(m.user_create, ''))`;
+// BAST "semua N" hanya boleh diserahkan bila keputusannya LANJUT.
+const KODE_SPANDUK = KESESUAIAN_SPANDUK.join(",");
+const SQL_BOLEH_SERAH = `(
+  EXISTS (SELECT 1 FROM ${T.putus} p WHERE p.map = m.mspk_nomor AND p.keputusan = 'LANJUT')
+  OR NOT (
+    EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}))
+    AND NOT EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}) AND k.status <> 'N')
+  )
+)`;
 
 // --- Validasi payload ---
 const periksaTanggal = (v) => {
@@ -82,6 +93,7 @@ const siapkanMap = async (conn, daftar, user, nomorDok) => {
             (SELECT COUNT(*) FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor) AS jml_bast,
             (SELECT COUNT(*) FROM ${T.lock} l
               WHERE l.map = m.mspk_nomor AND l.apv = 'N') AS jml_lock,
+            (SELECT IF(${SQL_BOLEH_SERAH}, 1, 0)) AS boleh_serah,
             (SELECT d.mmkd_nomor FROM ${T.dtl} d
               WHERE d.mmkd_mspk_nomor = m.mspk_nomor LIMIT 1) AS doc_lain
      FROM ${T.memo} m
@@ -111,6 +123,11 @@ const siapkanMap = async (conn, daftar, user, nomorDok) => {
     }
     if (!Number(r.jml_bast)) throw galat(`MAP ${no} belum dibuatkan BAST MAP`);
     if (Number(r.jml_lock)) throw galat(`BAST MAP ${no} masih On Progress`);
+    if (!Number(r.boleh_serah)) {
+      throw galat(
+        `BAST MAP ${no} berstatus N dan belum diputuskan LANJUT (lihat Cetak BAST MAP)`,
+      );
+    }
     if (r.doc_lain && r.doc_lain !== nomorDok) {
       throw galat(`MAP ${no} sudah diserahkan pada ${r.doc_lain}`);
     }
@@ -166,6 +183,7 @@ const getLookupMap = async (user) => {
        AND EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor)
        AND NOT EXISTS (SELECT 1 FROM ${T.lock} l WHERE l.map = m.mspk_nomor AND l.apv = 'N')
        AND NOT EXISTS (SELECT 1 FROM ${T.dtl} d WHERE d.mmkd_mspk_nomor = m.mspk_nomor)
+       AND ${SQL_BOLEH_SERAH}
        ${sqlCab}
      ORDER BY m.mspk_tanggal DESC, m.mspk_nomor DESC`,
     params,

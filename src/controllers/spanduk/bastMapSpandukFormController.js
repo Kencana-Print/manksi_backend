@@ -60,4 +60,27 @@ const getPrint = async (req, res) => {
   }
 };
 
-module.exports = { lookupMap, lookupBahan, getById, getPrint, create, update };
+const setKeputusan = async (req, res) => {
+  try {
+    const nomor = await service.setKeputusan(
+      req.params.nomor,
+      req.body,
+      req.user,
+    );
+    res
+      .status(200)
+      .json({ success: true, message: "Keputusan disimpan", data: { nomor } });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
+module.exports = {
+  lookupMap,
+  lookupBahan,
+  getById,
+  getPrint,
+  create,
+  update,
+  setKeputusan,
+};

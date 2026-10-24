@@ -1,5 +1,8 @@
 const db = require("../../config/database");
 
+// Kesesuaian milik Garmen (kode 11 ke atas khusus Spanduk)
+const KESESUAIAN_GARMEN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
 /**
  * Mengambil data lengkap untuk Form BAST berdasarkan Nomor MAP
  */
@@ -31,7 +34,10 @@ const getBastFormData = async (nomorMap, userCabang) => {
     [checklist] = await db.query(
       `SELECT kode_sesuai AS no, nama_sesuai AS kesesuaian, "N" AS status, "-" AS keterangan,
             "" AS user_create, NULL AS date_create, "" AS user_modify, NULL AS date_modify
-     FROM tkesesuaian ORDER BY kode_sesuai`,
+     FROM tkesesuaian
+     WHERE kode_sesuai IN (?)
+     ORDER BY kode_sesuai`,
+      [KESESUAIAN_GARMEN],
     );
   }
 
@@ -240,6 +246,13 @@ const saveBastData = async (payload, userKode, userCabang) => {
       payloadLock,
     } = payload;
     const nomorMap = header.mspk_nomor || header.MSPK_Nomor;
+
+    const asing = (checklist || []).filter(
+      (c) => !KESESUAIAN_GARMEN.includes(Number(c.no)),
+    );
+    if (asing.length > 0) {
+      throw new Error("Kesesuaian di luar daftar Garmen tidak boleh disimpan.");
+    }
 
     // Rencana Size = BRAKEDOWN SIZE → Babaran per Size wajib diisi.
     // Dibaca dari DB (bukan dari payload) supaya tidak bisa dilewati lewat request manual.

@@ -11,10 +11,10 @@ const {
   T,
   cekTutupBuku,
   pastikanLhkDiCabang,
-  pastikanBelumDipakai,
   pastikanPabrik,
   pastikanTintaBelumDikunciProof,
 } = require("./lhkTintaShared");
+const { KODE_RESEP } = require("./lhkProofResep");
 
 const PREFIX_NOMOR = "LHK-T";
 const NOMOR_LOCK = "lhk_tinta_nomor";
@@ -201,6 +201,11 @@ const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
 
   return bahan.map((b, i) => {
     const label = `Bahan ${i + 1}`;
+    if (!KODE_RESEP.includes(b.kode) && !sudahAda.has(b.kode)) {
+      throw galat(
+        `${label}: bahan ${b.kode} tidak ada dalam daftar pemakaian obat`,
+      );
+    }
     const m = peta.get(b.kode);
     if (!m) {
       throw galat(
@@ -433,12 +438,17 @@ const getLookupPabrik = async (search, user) => {
   return rows;
 };
 
-// --- Daftar bahan tinta/cat = baris default form (aktif, kategori Obat & Tinta,
-// divisi Spanduk). Pilihan_Satuan kosong = bahan diinput dalam satuan master.
+// --- Daftar bahan = baris default form: hanya bahan dalam daftar KODE_RESEP
+// (sama dengan Resep LHK Proof), urutan mengikuti konfigurasi.
 const getLookupBahan = async (search) => {
   const kata = teks(search);
-  const kondisi = ["brg_ktg_kode = ?", "brg_divisi = ?", "brg_isaktif = 1"];
-  const params = [KATEGORI_TINTA, DIVISI_TINTA];
+  const kondisi = [
+    "brg_ktg_kode = ?",
+    "brg_divisi = ?",
+    "brg_isaktif = 1",
+    "brg_kode IN (?)",
+  ];
+  const params = [KATEGORI_TINTA, DIVISI_TINTA, KODE_RESEP];
   if (kata) {
     kondisi.push("(brg_nama LIKE ? OR brg_kode LIKE ?)");
     params.push(`%${kata}%`, `%${kata}%`);
@@ -447,13 +457,12 @@ const getLookupBahan = async (search) => {
     `SELECT brg_kode AS Kode, brg_nama AS Nama, brg_satuan AS Satuan
      FROM ${T.barang}
      WHERE ${kondisi.join(" AND ")}
-     ORDER BY brg_nama
-     LIMIT 500`,
+     ORDER BY FIELD(brg_kode, ${KODE_RESEP.join(",")})`,
     params,
   );
   return rows.map((r) => ({
     Kode: Number(r.Kode),
-    Nama: r.Nama,
+    Nama: String(r.Nama ?? "").trim(),
     Satuan: r.Satuan,
     Pilihan_Satuan: pilihanSatuan(r.Satuan),
   }));
@@ -536,7 +545,6 @@ const updateLhkTinta = async (nomor, body, user) => {
     await cekTutupBuku(data.tanggal);
 
     await pastikanLhkDiCabang(conn, no, user);
-    await pastikanBelumDipakai(conn, no, user);
     await pastikanTintaBelumDikunciProof(conn, {
       nomorCetak: lama[0].cetak,
       nomor: no,

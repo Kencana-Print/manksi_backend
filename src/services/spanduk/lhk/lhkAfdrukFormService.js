@@ -480,6 +480,9 @@ const getInfoSpk = async (nomor, user) => {
   const peta = await ambilInfoSpk(db, [no]);
   const info = peta.get(no);
   periksaSumber(info, no, user);
+  // Cek rantai saat nomor di-Enter / dipilih, supaya penolakan muncul sebelum
+  // Simpan. Cek di createLhkAfdruk / updateLhkAfdruk tetap berjalan.
+  await pastikanRantaiLhk(db, { kodeLini: "AFDRUK", daftarSpk: [no] });
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,

@@ -32,6 +32,19 @@ const getDetail = async (req, res) => {
   }
 };
 
+const getResep = async (req, res) => {
+  try {
+    const data = await service.getResepLhkProof(
+      req.query.tglAwal,
+      req.query.tglAkhir,
+      req.user,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
 const remove = async (req, res) => {
   try {
     await service.deleteLhkProof(req.params.nomor, req.user);
@@ -41,4 +54,4 @@ const remove = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, getDetail, remove };
+module.exports = { getBrowse, getDetail, getResep, remove };
