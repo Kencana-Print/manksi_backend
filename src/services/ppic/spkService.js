@@ -15,7 +15,7 @@ const getBrowseList = async (filters) => {
   } = filters;
 
   let params = [startDate, endDate];
-  let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ? AND x.IsSO = 0`;
+  let whereClause = `WHERE DATE(x.Tanggal) >= ? AND DATE(x.Tanggal) <= ?`;
 
   if (workshop && workshop !== "ALL" && workshop !== "") {
     whereClause += ` AND x.Cab = ?`;
