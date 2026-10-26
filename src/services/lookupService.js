@@ -231,6 +231,40 @@ const searchSpk = async (
       whereSearch = ` AND (spk_nomor LIKE ? OR spk_nama LIKE ? OR spk_nama2 LIKE ?)`;
       params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
     }
+  } else if (filterMode === "permintaan-driver") {
+    baseQuery = `
+      FROM (
+        SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_nama2 AS Nama2,
+               DATE_FORMAT(spk_tanggal, '%Y-%m-%d') AS Tanggal,
+               spk_jumlah AS Jumlah, spk_ukuran AS Ukuran,
+               spk_divisi AS Divisi, 'SPK' AS Tipe
+        FROM tspk
+        WHERE spk_aktif = 'Y' AND spk_close = 0
+        UNION ALL
+        SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_nama2 AS Nama2,
+               DATE_FORMAT(mspk_tanggal, '%Y-%m-%d') AS Tanggal,
+               mspk_jumlah AS Jumlah, mspk_ukuran AS Ukuran,
+               mspk_divisi AS Divisi, 'MEMO' AS Tipe
+        FROM tmemospk
+        WHERE mspk_aktif = 'Y' AND mspk_close = 'N'
+        UNION ALL
+        SELECT so_nomor AS Nomor, so_nama AS Nama, so_nama2 AS Nama2,
+               DATE_FORMAT(so_tanggal, '%Y-%m-%d') AS Tanggal,
+               so_jumlah AS Jumlah, so_ukuran AS Ukuran,
+               so_divisi AS Divisi, 'SO' AS Tipe
+        FROM tsalesorder
+        WHERE so_aktif = 'Y' AND so_close = 0
+      ) a
+      WHERE 1=1
+    `;
+    if (divisi) {
+      baseQuery += ` AND FIND_IN_SET(Divisi, ?)`;
+      params.push(String(divisi));
+    }
+    if (keyword) {
+      whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ? OR Nama2 LIKE ?)`;
+      params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+    }
   } else {
     baseQuery = `
       FROM (
