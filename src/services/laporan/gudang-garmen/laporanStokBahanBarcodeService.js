@@ -118,11 +118,14 @@ const getBrowse = async (query) => {
 };
 
 // --- 2. GET BROWSE DETAIL (Rincian Barcode per Bahan) ---
-const getBrowseDetail = async (kode, query) => {
+const ambilBarcodeDetail = async (kodeList, query) => {
   const { endDate, janganTampilkanKosongDetail } = query;
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
-  const isJanganTampilkanKosong = janganTampilkanKosongDetail === "true";
+  // Query string mengirim "true" (string), body JSON mengirim true (boolean)
+  const isJanganTampilkanKosong =
+    janganTampilkanKosongDetail === true ||
+    janganTampilkanKosongDetail === "true";
 
   let sql = `
     SELECT 
@@ -177,7 +180,7 @@ const getBrowseDetail = async (kode, query) => {
       FROM tmasterstok_barcode c
       WHERE c.mst_aktif = 'Y' 
         AND c.mst_tanggal <= ?
-        AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) = ?
+        AND LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7) IN (?)
       GROUP BY c.mst_brg_kode
     ) x
   `;
@@ -188,9 +191,11 @@ const getBrowseDetail = async (kode, query) => {
 
   sql += ` ORDER BY x.Kode, x.Barcode ASC `;
 
-  const [rows] = await db.query(sql, [dEnd, kode]);
+  const [rows] = await db.query(sql, [dEnd, kodeList]);
   return rows;
 };
+
+const getBrowseDetail = (kode, query) => ambilBarcodeDetail([kode], query);
 
 // --- 3. GET LIST BARCODE UNTUK UPDATE KETERANGAN (Stok <> 0) ---
 const getKeteranganList = async (kode) => {
@@ -234,16 +239,18 @@ const updateKeteranganList = async (items) => {
 };
 
 // --- 5. DETAIL MKB BELUM REALISASI PER BAHAN ---
-const getMkbBelumRealisasiDetail = async (kode) => {
+const ambilMkbDetail = async (kodeList) => {
   const sql = `
-    SELECT
+     SELECT
+      x.Kode,
       x.Nomor AS NomorMkb,
       DATE_FORMAT(x.Tanggal, '%d-%m-%Y') AS TglMkb,
       x.Spk,
       IFNULL(s.spk_nama, m.mspk_nama) AS NamaSpk,
       x.Butuh, x.Ready, x.Terima, x.Kurang
-    FROM (
+     FROM (
       SELECT
+        d.mkbd_bhn_kode AS Kode,
         d.mkbd_mkb_nomor AS Nomor,
         h.mkb_tanggal AS Tanggal,
         h.mkb_spk_nomor AS Spk,
@@ -295,16 +302,39 @@ const getMkbBelumRealisasiDetail = async (kode) => {
         )) AS Kurang
        FROM tmkb_dtl d
       LEFT JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
-      WHERE d.mkbd_bhn_kode = ?
+      WHERE d.mkbd_bhn_kode IN (?)
         AND h.mkb_tanggal >= ?
     ) x
     LEFT JOIN tspk s ON s.spk_nomor = x.Spk
     LEFT JOIN tmemospk m ON m.mspk_nomor = x.Spk
     WHERE x.Kurang > 0
-    ORDER BY x.Tanggal
+    ORDER BY x.Kode, x.Tanggal
   `;
-  const [rows] = await db.query(sql, [kode, MKB_CUTOFF_DATE]);
+  const [rows] = await db.query(sql, [kodeList, MKB_CUTOFF_DATE]);
   return rows;
+};
+
+const getMkbBelumRealisasiDetail = (kode) => ambilMkbDetail([kode]);
+
+// --- 6. EXPORT DETAIL: rincian barcode + MKB untuk banyak bahan sekaligus ---
+const CHUNK_KODE = 200;
+
+const getExportDetail = async (kodeList, query) => {
+  const kodes = [
+    ...new Set(
+      (Array.isArray(kodeList) ? kodeList : [])
+        .map((k) => String(k ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  let barcode = [];
+  let mkb = [];
+  for (let i = 0; i < kodes.length; i += CHUNK_KODE) {
+    const bagian = kodes.slice(i, i + CHUNK_KODE);
+    barcode = barcode.concat(await ambilBarcodeDetail(bagian, query));
+    mkb = mkb.concat(await ambilMkbDetail(bagian));
+  }
+  return { barcode, mkb };
 };
 
 module.exports = {
@@ -313,4 +343,5 @@ module.exports = {
   getKeteranganList,
   updateKeteranganList,
   getMkbBelumRealisasiDetail,
+  getExportDetail,
 };

@@ -23,6 +23,14 @@ router.get(
   controller.getMkbBelumRealisasiDetail,
 );
 
+// Export detail: banyak bahan sekaligus (POST karena daftar kode bisa panjang)
+router.post(
+  "/export-detail",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getExportDetail,
+);
+
 // Detail Grid (Saat di-expand / diexport)
 router.get(
   "/detail/:kode",

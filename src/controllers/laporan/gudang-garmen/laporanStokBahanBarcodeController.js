@@ -50,10 +50,24 @@ const getMkbBelumRealisasiDetail = async (req, res) => {
   }
 };
 
+const getExportDetail = async (req, res) => {
+  try {
+    const { kodeList, endDate, janganTampilkanKosongDetail } = req.body;
+    const data = await service.getExportDetail(kodeList, {
+      endDate,
+      janganTampilkanKosongDetail,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getBrowseDetail,
   getKeteranganList,
   updateKeteranganList,
   getMkbBelumRealisasiDetail,
+  getExportDetail,
 };

@@ -1,5 +1,6 @@
 const pengajuanUangMukaService = require("../../services/pembelian/pengajuanUangMukaService");
 const validasiService = require("../../services/pembelian/pengajuanUangMukaValidasiService");
+const { adalahAksesPenuh } = require("../../config/aksesPenuh");
 
 const create = async (req, res) => {
   try {
@@ -19,7 +20,7 @@ const BAGIAN_SEMUA_CABANG = ["FINANCE", "AUDIT", "EDP"];
 
 const bolehSemuaCabang = (u) =>
   u?.cabang === "HO-" ||
-  String(u?.kode || "").toUpperCase() === "ADMIN" ||
+  adalahAksesPenuh(u) ||
   BAGIAN_SEMUA_CABANG.includes(String(u?.bagian || "").toUpperCase());
 
 const getBrowse = async (req, res) => {
