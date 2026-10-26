@@ -5,6 +5,7 @@ const cetak = require("./lhkCetakShared");
 const quiring = require("./lhkQuiringShared");
 const jahit = require("./lhkJahitShared");
 const lipat = require("./lhkLipatShared");
+const koli = require("./lhkKoliShared");
 const proof = require("./lhkProofShared");
 
 // Rantai LHK per jenis sumber. Syarat LHK = ada LHK di lini TEPAT sebelumnya.
@@ -12,7 +13,7 @@ const proof = require("./lhkProofShared");
 // ditambahkan di sini dan di DAFTAR_LINI.
 const RANTAI = {
   MAP: ["DESIGN", "AFDRUK", "CETAK", "PROOF"],
-  SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT"],
+  SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT", "KOLI"],
 };
 
 // Modul LHK Hapus Plankan sudah dicabut (digabung ke Afdruk). Tabelnya tetap
@@ -116,6 +117,17 @@ const DAFTAR_LINI = [
       tanggalHdr: "llh_tanggal",
       nomorDtl: "lld_llh_nomor",
       spkDtl: "lld_spk_nomor",
+    },
+  },
+  {
+    kode: "KOLI",
+    nama: "Koli",
+    S: koli,
+    kolom: {
+      nomorHdr: "lkh_nomor",
+      tanggalHdr: "lkh_tanggal",
+      nomorDtl: "lkd_lkh_nomor",
+      spkDtl: "lkd_spk_nomor",
     },
   },
   {
