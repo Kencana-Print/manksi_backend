@@ -921,6 +921,18 @@ const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
   return Number(row2.jml) > 0;
 };
 
+// Masa toleransi: validasi planning tidak memblokir sampai tanggal ini (inklusif).
+// Hapus konstanta + pemakaiannya setelah masa toleransi selesai.
+const PLANNING_GRACE_UNTIL = "2026-11-01";
+
+const isPlanningGracePeriod = () => {
+  // en-CA menghasilkan format YYYY-MM-DD, dihitung di zona waktu WIB
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "Asia/Jakarta",
+  });
+  return today <= PLANNING_GRACE_UNTIL;
+};
+
 // ─────────────────────────────────────────────────────────
 // CEK LHK SUDAH ADA (islhk_*)
 // Sesuai Delphi — cek dari tmutasiproduksi_hdr per gdgasal
@@ -1411,14 +1423,18 @@ const save = async (data, userKode, isNewMode) => {
       );
     }
 
-    // ── TAMBAHAN: Sinkronisasi Approval "Mutasi Produksi tanpa Planning" ──
-    const planningKosong = await cekPlanningKosong(
-      NomorSpk,
-      data.JenisMutasi,
-      Kelompok,
-      data.TglSpk || Tanggal,
-      GdgTujuan,
-    );
+    // ── Sinkronisasi Approval "Mutasi Produksi tanpa Planning" ──
+    // Masa toleransi (s.d. PLANNING_GRACE_UNTIL): tanpa planning tetap
+    // boleh disimpan dan tidak perlu approval. Setelah itu, wajib approval.
+    const planningKosong = isPlanningGracePeriod()
+      ? false
+      : await cekPlanningKosong(
+          NomorSpk,
+          data.JenisMutasi,
+          Kelompok,
+          data.TglSpk || Tanggal,
+          GdgTujuan,
+        );
     await syncApprovalNoPlan(
       conn,
       nomor,
@@ -1757,6 +1773,7 @@ module.exports = {
   searchBahanBySuffix,
   getDataCetak,
   cekPlanningKosong,
+  isPlanningGracePeriod,
   syncApprovalNoPlan,
   getApprovalNoPlanStatus,
   getPlanningPerSpk,

@@ -3,7 +3,6 @@ const {
   galat,
   teks,
   norm,
-  round2,
   parseTanggal,
   adalahSuperadmin,
   cabangUser,

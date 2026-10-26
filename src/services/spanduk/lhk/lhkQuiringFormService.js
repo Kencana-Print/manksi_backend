@@ -55,13 +55,12 @@ const siapkanData = (body = {}) => {
     }
     sudah.add(spk.toUpperCase());
 
-    const koli = bilangan(d.J_Koli, `Baris ${n}: Jumlah koli`);
     const oven = bilangan(d.J_Oven, `Baris ${n}: Jumlah oven`);
     const jemuran = bilangan(d.J_Jemuran, `Baris ${n}: Jumlah jemuran`);
     const potong = bilangan(d.J_Potong, `Baris ${n}: Jumlah potong`);
-    if (koli + oven + jemuran + potong <= 0) {
+    if (oven + jemuran + potong <= 0) {
       throw galat(
-        `Baris ${n}: minimal satu dari Koli, Oven, Jemuran, atau Potong harus lebih dari 0`,
+        `Baris ${n}: minimal satu dari Oven, Jemuran, atau Potong harus lebih dari 0`,
       );
     }
 
@@ -69,7 +68,7 @@ const siapkanData = (body = {}) => {
     const bsCetak = bsWajib(d.BS_Cetak, `Baris ${n}: BS Cetak`);
     const bsBahan = bsWajib(d.BS_Bahan, `Baris ${n}: BS Bahan`);
 
-    return { spk, koli, oven, jemuran, potong, bsQuiring, bsCetak, bsBahan };
+    return { spk, oven, jemuran, potong, bsQuiring, bsCetak, bsBahan };
   });
 
   return { tanggal, pabrik, baris };
@@ -90,7 +89,6 @@ const simpanDetail = async (conn, nomor, baris) => {
   const values = baris.map((b) => [
     nomor,
     b.spk,
-    b.koli,
     b.oven,
     b.jemuran,
     b.potong,
@@ -100,7 +98,7 @@ const simpanDetail = async (conn, nomor, baris) => {
   ]);
   await conn.query(
     `INSERT INTO ${T.dtl}
-       (lqd_lqh_nomor, lqd_spk_nomor, lqd_j_koli, lqd_j_oven,
+       (lqd_lqh_nomor, lqd_spk_nomor, lqd_j_oven,
         lqd_j_jemuran, lqd_j_potong,
         lqd_bs_quiring, lqd_bs_cetak, lqd_bs_bahan)
      VALUES ?`,
@@ -148,7 +146,6 @@ const getLhkQuiringById = async (nomor, user) => {
             x.spk_jumlah AS Jumlah_Order,
             x.spk_panjang AS Panjang,
             x.spk_lebar AS Lebar,
-            d.lqd_j_koli AS J_Koli,
             d.lqd_j_oven AS J_Oven,
             d.lqd_j_jemuran AS J_Jemuran,
             d.lqd_j_potong AS J_Potong,

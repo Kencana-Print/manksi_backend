@@ -330,6 +330,9 @@ const laporanPemakaianObatRoutes = require("./routes/laporan/produksi-garmen/lap
 // Laporan PPIC Garmen
 const keberhasilanKomitmenKirimRoutes = require("./routes/laporan/ppic/keberhasilanKomitmenKirimRoutes");
 
+// Laporan Produksi Spanduk
+const laporanSpandukOutputBySpkRoutes = require("./routes/laporan/spanduk/outputBySpkRoutes");
+
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
 const realisasiPenawaranRoutes = require("./routes/laporan/penjualan/realisasiPenawaranRoutes");
@@ -892,6 +895,8 @@ app.use(
   "/api/laporan/ppic/keberhasilan-komitmen-kirim",
   keberhasilanKomitmenKirimRoutes,
 );
+
+app.use("/api/laporan/spanduk/output-by-spk", laporanSpandukOutputBySpkRoutes);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);

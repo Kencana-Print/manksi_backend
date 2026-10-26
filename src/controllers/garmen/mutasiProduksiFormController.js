@@ -354,7 +354,7 @@ const cekGudangAsal = async (req, res) => {
         GP018: "JAHIT",
       };
       const planningDivisi = planningMap[gdgAsal];
-      if (planningDivisi) {
+      if (planningDivisi && !svc.isPlanningGracePeriod()) {
         const hasPlan = await svc.cekPlanning(
           nomorSpk,
           planningDivisi,

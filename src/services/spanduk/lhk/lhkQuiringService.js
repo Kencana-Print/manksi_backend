@@ -53,7 +53,6 @@ const getDetailLhkQuiring = async (tglAwal, tglAkhir, user) => {
            x.spk_jumlah AS Jumlah_Order,
            x.spk_panjang AS Panjang,
            x.spk_lebar AS Lebar,
-           d.lqd_j_koli AS J_Koli,
            d.lqd_j_oven AS J_Oven,
            d.lqd_j_jemuran AS J_Jemuran,
            d.lqd_j_potong AS J_Potong,
