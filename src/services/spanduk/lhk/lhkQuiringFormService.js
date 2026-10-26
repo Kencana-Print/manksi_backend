@@ -15,6 +15,13 @@ const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-Q";
 const NOMOR_LOCK = "lhk_quiring_nomor";
+// BS wajib diisi (0 bila tidak ada); kosong/tidak dikirim = ditolak
+const bsWajib = (v, label) => {
+  if (v === undefined || v === null || teks(v) === "") {
+    throw galat(`${label} wajib diisi (isi 0 bila tidak ada BS)`);
+  }
+  return bilangan(v, label);
+};
 
 // --- validasi payload ---
 const siapkanData = (body = {}) => {
@@ -58,7 +65,11 @@ const siapkanData = (body = {}) => {
       );
     }
 
-    return { spk, koli, oven, jemuran, potong };
+    const bsQuiring = bsWajib(d.BS_Quiring, `Baris ${n}: BS Quiring`);
+    const bsCetak = bsWajib(d.BS_Cetak, `Baris ${n}: BS Cetak`);
+    const bsBahan = bsWajib(d.BS_Bahan, `Baris ${n}: BS Bahan`);
+
+    return { spk, koli, oven, jemuran, potong, bsQuiring, bsCetak, bsBahan };
   });
 
   return { tanggal, pabrik, baris };
@@ -83,11 +94,15 @@ const simpanDetail = async (conn, nomor, baris) => {
     b.oven,
     b.jemuran,
     b.potong,
+    b.bsQuiring,
+    b.bsCetak,
+    b.bsBahan,
   ]);
   await conn.query(
     `INSERT INTO ${T.dtl}
        (lqd_lqh_nomor, lqd_spk_nomor, lqd_j_koli, lqd_j_oven,
-        lqd_j_jemuran, lqd_j_potong)
+        lqd_j_jemuran, lqd_j_potong,
+        lqd_bs_quiring, lqd_bs_cetak, lqd_bs_bahan)
      VALUES ?`,
     [values],
   );
@@ -136,7 +151,10 @@ const getLhkQuiringById = async (nomor, user) => {
             d.lqd_j_koli AS J_Koli,
             d.lqd_j_oven AS J_Oven,
             d.lqd_j_jemuran AS J_Jemuran,
-            d.lqd_j_potong AS J_Potong
+            d.lqd_j_potong AS J_Potong,
+            d.lqd_bs_quiring AS BS_Quiring,
+            d.lqd_bs_cetak AS BS_Cetak,
+            d.lqd_bs_bahan AS BS_Bahan
      FROM ${T.dtl} d
      LEFT JOIN (
        SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -163,6 +181,12 @@ const getInfoSpk = async (nomor, user) => {
   const info = peta.get(no);
   periksaSumber(info, no, user);
   await pastikanSpk(db, [no]);
+  // Cek rantai dini (Enter / pilih modal): SPK wajib sudah punya LHK Cetak.
+  // Cek saat simpan tetap jadi pengaman utama.
+  await pastikanRantaiLhk(db, {
+    kodeLini: "QUIRING",
+    daftarSpk: [no],
+  });
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,

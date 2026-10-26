@@ -32,14 +32,16 @@ const getBrowse = async (tglAwal, tglAkhir, user) => {
            h.mmk_cab AS Lokasi,
            IFNULL(h.mmk_keterangan, '') AS Keterangan,
            IFNULL(x.jml_map, 0) AS Jumlah_MAP,
-           IFNULL(x.total_qty, 0) AS Total_Qty,
+           IFNULL(x.total_jadi, 0) AS Total_Jadi,
+           IFNULL(x.total_kirim, 0) AS Total_Kirim,
            IFNULL(x.mo, '') AS MO,
            IFNULL(x.jml_diterima, 0) AS Jumlah_Diterima
     FROM ${T.hdr} h
     LEFT JOIN (
       SELECT d.mmkd_nomor AS xnomor,
              COUNT(*) AS jml_map,
-             SUM(d.mmkd_qty) AS total_qty,
+             SUM(d.mmkd_qty) AS total_jadi,
+             SUM(d.mmkd_qty_kirim) AS total_kirim,
              GROUP_CONCAT(DISTINCT IFNULL(NULLIF(u.user_nama, ''), m.user_create)
                           SEPARATOR ', ') AS mo,
              SUM(d.mmkd_diterima_tgl IS NOT NULL) AS jml_diterima
@@ -73,7 +75,8 @@ const getDetail = async (tglAwal, tglAkhir, user) => {
     SELECT d.mmkd_nomor AS Nomor,
            d.mmkd_mspk_nomor AS Nomor_MAP,
            IFNULL(m.mspk_nama, '') AS Nama_MAP,
-           d.mmkd_qty AS Qty,
+           d.mmkd_qty AS Qty_Jadi,
+           d.mmkd_qty_kirim AS Qty_Kirim,
            IFNULL(NULLIF(u.user_nama, ''), IFNULL(m.user_create, '')) AS MO,
            DATE_FORMAT(d.mmkd_diterima_tgl, '%Y-%m-%d') AS Tgl_Diterima
     FROM ${T.dtl} d

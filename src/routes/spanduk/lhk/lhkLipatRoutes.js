@@ -19,6 +19,12 @@ router.get(
   checkPermission(1223, "view"),
   controller.getDetail,
 );
+router.get(
+  "/karyawan",
+  verifyToken,
+  checkPermission(1223, "view"),
+  controller.getKaryawan,
+);
 router.delete(
   "/:nomor",
   verifyToken,

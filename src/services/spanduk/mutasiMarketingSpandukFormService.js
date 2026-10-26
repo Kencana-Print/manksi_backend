@@ -20,6 +20,9 @@ const T = {
 const DIVISI_SPANDUK = 1;
 const MAKS_KETERANGAN = 200;
 const PREFIX_NOMOR = "MTM";
+const MAKS_JUMLAH = 99999999.99;
+// false = jumlah kirim boleh melebihi jumlah jadi (belum diputuskan)
+const BATASI_KIRIM_MAKS_JADI = false;
 
 const str = (v) => String(v ?? "").trim();
 const MO_SQL = `IFNULL(NULLIF(u.user_nama, ''), IFNULL(m.user_create, ''))`;
@@ -44,15 +47,35 @@ const periksaTanggal = (v) => {
   return s;
 };
 
+const parseKirim = (v, nomor) => {
+  const s = str(v);
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) {
+    throw galat(
+      `Jumlah kirim MAP ${nomor} harus angka (maks 2 desimal, desimal pakai titik)`,
+    );
+  }
+  const n = Number(s);
+  if (n <= 0) throw galat(`Jumlah kirim MAP ${nomor} harus lebih dari 0`);
+  if (n > MAKS_JUMLAH) throw galat(`Jumlah kirim MAP ${nomor} terlalu besar`);
+  return n;
+};
+
 const siapkanPayload = (p) => {
   const tanggal = periksaTanggal(p?.tanggal);
   const keterangan = str(p?.keterangan);
   if (keterangan.length > MAKS_KETERANGAN) {
     throw galat(`Keterangan maksimal ${MAKS_KETERANGAN} karakter`);
   }
-  const maps = Array.isArray(p?.maps) ? p.maps.map(str).filter(Boolean) : [];
+  const daftar = Array.isArray(p?.maps) ? p.maps : [];
+  const maps = daftar
+    .map((m) => ({ nomor: str(m?.nomor), qtyKirim: m?.qtyKirim }))
+    .filter((m) => m.nomor !== "")
+    .map((m) => ({
+      nomor: m.nomor,
+      qtyKirim: parseKirim(m.qtyKirim, m.nomor),
+    }));
   if (maps.length === 0) throw galat("Pilih minimal satu MAP");
-  if (new Set(maps.map((n) => n.toUpperCase())).size !== maps.length) {
+  if (new Set(maps.map((m) => m.nomor.toUpperCase())).size !== maps.length) {
     throw galat("Ada MAP yang terpilih ganda");
   }
   return { tanggal, keterangan, maps };
@@ -141,18 +164,28 @@ const siapkanMap = async (conn, daftar, user, nomorDok) => {
   return hasil;
 };
 
-const sisipDetail = async (conn, nomor, maps, qtyLama) => {
+// qtyLama: snapshot jumlah jadi dokumen lama. kirim: Map nomor(UPPER) -> jumlah kirim.
+const sisipDetail = async (conn, nomor, maps, qtyLama, kirim) => {
   let urut = 1;
   for (const r of maps) {
-    const qty =
-      qtyLama?.get(String(r.mspk_nomor).toUpperCase()) ??
-      Number(r.mspk_jumlah_jadi);
-    if (!(qty > 0)) throw galat(`Jumlah jadi BAST MAP ${r.mspk_nomor} masih 0`);
+    const kunci = String(r.mspk_nomor).toUpperCase();
+    const jadi = qtyLama?.get(kunci) ?? Number(r.mspk_jumlah_jadi);
+    if (!(jadi > 0))
+      throw galat(`Jumlah jadi BAST MAP ${r.mspk_nomor} masih 0`);
+    const qtyKirim = kirim.get(kunci);
+    if (!(qtyKirim > 0)) {
+      throw galat(`Jumlah kirim MAP ${r.mspk_nomor} harus lebih dari 0`);
+    }
+    if (BATASI_KIRIM_MAKS_JADI && qtyKirim > jadi) {
+      throw galat(
+        `Jumlah kirim MAP ${r.mspk_nomor} (${qtyKirim}) melebihi jumlah jadi (${jadi})`,
+      );
+    }
     await conn.query(
       `INSERT INTO ${T.dtl}
-         (mmkd_nomor, mmkd_mspk_nomor, mmkd_qty, mmkd_no_urut, date_create)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [nomor, r.mspk_nomor, qty, urut++],
+         (mmkd_nomor, mmkd_mspk_nomor, mmkd_qty, mmkd_qty_kirim, mmkd_no_urut, date_create)
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [nomor, r.mspk_nomor, jadi, qtyKirim, urut++],
     );
   }
 };
@@ -212,7 +245,8 @@ const getFormData = async (nomor, user) => {
     `SELECT d.mmkd_mspk_nomor AS nomor,
             IFNULL(m.mspk_nama, '') AS nama,
             IFNULL(m.mspk_ukuran, '') AS ukuran,
-            d.mmkd_qty AS qty,
+            d.mmkd_qty AS qtyJadi,
+            d.mmkd_qty_kirim AS qtyKirim,
             ${MO_SQL} AS mo,
             DATE_FORMAT(d.mmkd_diterima_tgl, '%Y-%m-%d') AS tglDiterima
      FROM ${T.dtl} d
@@ -244,7 +278,12 @@ const create = async (payload, user) => {
     dapatKunci = true;
 
     await conn.beginTransaction();
-    const maps = await siapkanMap(conn, d.maps, user, "");
+    const maps = await siapkanMap(
+      conn,
+      d.maps.map((m) => m.nomor),
+      user,
+      "",
+    );
     const nomor = await buatNomor(conn, d.tanggal);
 
     await conn.query(
@@ -253,7 +292,10 @@ const create = async (payload, user) => {
        VALUES (?, ?, ?, ?, NOW(), ?)`,
       [nomor, d.tanggal, str(maps[0].mspk_cab), d.keterangan, user.kode],
     );
-    await sisipDetail(conn, nomor, maps, null);
+    const kirim = new Map(
+      d.maps.map((m) => [m.nomor.toUpperCase(), m.qtyKirim]),
+    );
+    await sisipDetail(conn, nomor, maps, null, kirim);
 
     await conn.commit();
     return { nomor };
@@ -300,7 +342,12 @@ const update = async (nomorUrl, payload, user) => {
     await cekTutupBuku(lama[0].tgl);
     await cekTutupBuku(d.tanggal);
 
-    const maps = await siapkanMap(conn, d.maps, user, nomor);
+    const maps = await siapkanMap(
+      conn,
+      d.maps.map((m) => m.nomor),
+      user,
+      nomor,
+    );
     // Qty MAP yang sudah ada di dokumen dipertahankan (snapshot saat diserahkan)
     const qtyLama = new Map(
       dtlLama.map((r) => [
@@ -317,7 +364,10 @@ const update = async (nomorUrl, payload, user) => {
        WHERE mmk_nomor = ?`,
       [d.tanggal, str(maps[0].mspk_cab), d.keterangan, user.kode, nomor],
     );
-    await sisipDetail(conn, nomor, maps, qtyLama);
+    const kirim = new Map(
+      d.maps.map((m) => [m.nomor.toUpperCase(), m.qtyKirim]),
+    );
+    await sisipDetail(conn, nomor, maps, qtyLama, kirim);
 
     await conn.commit();
     return { nomor };
@@ -359,7 +409,8 @@ const getPrintData = async (nomor, user) => {
       nama: m.nama,
       ukuran: m.ukuran,
       tipe: tipe.get(String(m.nomor).toUpperCase()) ?? "",
-      qty: Number(m.qty) || 0,
+      qty: Number(m.qtyKirim) || 0,
+      qtyJadi: Number(m.qtyJadi) || 0,
       mo: str(m.mo) || "-",
     })),
   };

@@ -37,6 +37,19 @@ const getDetail = async (req, res) => {
   }
 };
 
+const getKaryawan = async (req, res) => {
+  try {
+    const data = await service.getKaryawanLhkLipat(
+      req.query.tglAwal,
+      req.query.tglAkhir,
+      req.user,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
 const hapus = async (req, res) => {
   try {
     await service.deleteLhkLipat(req.params.nomor, req.user);
@@ -46,4 +59,4 @@ const hapus = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, getDetail, hapus };
+module.exports = { getBrowse, getDetail, getKaryawan, hapus };

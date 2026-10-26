@@ -125,7 +125,7 @@ const getDetail = async (nomor) => {
      LEFT JOIN tsales a ON s.spk_sal_kode = a.sal_kode
      LEFT JOIN tperusahaan p ON s.spk_perush_kode = p.perush_kode
      LEFT JOIN tcustomer c ON s.spk_cus_kode = c.cus_kode
-     WHERE s.spk_nomor = ? AND s.spk_is_so = 0`,
+     WHERE s.spk_nomor = ?`,
     [nomor],
   );
   if (header.length === 0) throw new Error("Data SPK PPIC tidak ditemukan.");

@@ -56,7 +56,10 @@ const getDetailLhkQuiring = async (tglAwal, tglAkhir, user) => {
            d.lqd_j_koli AS J_Koli,
            d.lqd_j_oven AS J_Oven,
            d.lqd_j_jemuran AS J_Jemuran,
-           d.lqd_j_potong AS J_Potong
+           d.lqd_j_potong AS J_Potong,
+           d.lqd_bs_quiring AS BS_Quiring,
+           d.lqd_bs_cetak AS BS_Cetak,
+           d.lqd_bs_bahan AS BS_Bahan
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.lqh_nomor = d.lqd_lqh_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.lqd_spk_nomor

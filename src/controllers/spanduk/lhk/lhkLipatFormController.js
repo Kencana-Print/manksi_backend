@@ -28,7 +28,11 @@ const lookupPabrik = async (req, res) => {
 
 const lookupKaryawan = async (req, res) => {
   try {
-    const data = await service.getLookupKaryawan(req.query.pabrik);
+    const data = await service.getLookupKaryawan(
+      req.query.pabrik,
+      req.query.sesi,
+      req.query.tanggal,
+    );
     res.json({ success: true, data });
   } catch (e) {
     kirimError(res, e);

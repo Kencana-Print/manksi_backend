@@ -30,7 +30,8 @@ const getBrowseLhkLipat = async (tglAwal, tglAkhir, user) => {
     SELECT h.llh_nomor AS Nomor,
            DATE_FORMAT(h.llh_tanggal, '%Y-%m-%d') AS Tanggal,
            h.llh_pab_kode AS Kode_Pabrik,
-           p.pab_nama AS Nama_Pabrik
+           p.pab_nama AS Nama_Pabrik,
+           h.llh_sesi AS Sesi
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.llh_pab_kode
     WHERE h.llh_tanggal BETWEEN ? AND ?
@@ -55,7 +56,8 @@ const getDetailLhkLipat = async (tglAwal, tglAkhir, user) => {
            x.spk_lebar AS Lebar,
            d.lld_qty_lipat AS Qty_Lipat,
            d.lld_tambah_lipat AS Tambah_Lipat,
-           d.lld_mata_ayam AS Mata_Ayam
+           d.lld_mata_ayam AS Mata_Ayam,
+           d.lld_bs_lipat AS BS_Lipat
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.llh_nomor = d.lld_llh_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.lld_spk_nomor
@@ -65,6 +67,32 @@ const getDetailLhkLipat = async (tglAwal, tglAkhir, user) => {
   `;
   const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
   return rows;
+};
+
+// Karyawan + jam kerja seluruh LHK pada periode (satu baris per NIK per SPK)
+const getKaryawanLhkLipat = async (tglAwal, tglAkhir, user) => {
+  validasiPeriode(tglAwal, tglAkhir);
+  const cab = filterCabang(user, "h");
+
+  const query = `
+    SELECT k.lld2_llh_nomor AS Nomor,
+           k.lld2_spk_nomor AS Nomor_SPK,
+           k.lld2_kar_nik AS NIK,
+           k.lld2_kar_nama AS Nama,
+           k.lld2_absensi AS Absensi,
+           k.lld2_qty_lipat AS Qty,
+           IFNULL(k.lld2_menit_kerja, 0) AS Menit_Kerja
+    FROM ${T.dtl2} k
+    JOIN ${T.hdr} h ON h.llh_nomor = k.lld2_llh_nomor
+    WHERE h.llh_tanggal BETWEEN ? AND ?
+    ${cab.sql}
+    ORDER BY k.lld2_llh_nomor, k.lld2_spk_nomor, k.lld2_kar_nama
+  `;
+  const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
+  return rows.map((r) => ({
+    ...r,
+    Menit_Kerja: Number(r.Menit_Kerja) || 0,
+  }));
 };
 
 // Hapus LHK: dtl_2, dtl, lalu header, satu transaksi (Delphi: tanpa transaksi)
@@ -110,5 +138,6 @@ const deleteLhkLipat = async (nomor, user) => {
 module.exports = {
   getBrowseLhkLipat,
   getDetailLhkLipat,
+  getKaryawanLhkLipat,
   deleteLhkLipat,
 };

@@ -7,7 +7,10 @@ const {
   cabangUser,
   cekTutupBuku,
 } = require("./lhk/lhkCommon");
-const { KESESUAIAN_SPANDUK } = require("./bastMapSpandukFormService");
+const {
+  KESESUAIAN_SPANDUK,
+  hariKerjaSql,
+} = require("./bastMapSpandukFormService");
 
 const DIVISI_SPANDUK = 1;
 
@@ -64,7 +67,16 @@ const getBrowseList = async (filters, user) => {
       (SELECT p.keputusan FROM kencanaprint.tkesesuaianmap_keputusan p
         WHERE p.map = m.mspk_nomor) AS Keputusan,
       (SELECT p.alasan FROM kencanaprint.tkesesuaianmap_keputusan p
-        WHERE p.map = m.mspk_nomor) AS AlasanKeputusan
+        WHERE p.map = m.mspk_nomor) AS AlasanKeputusan,
+      (SELECT GROUP_CONCAT(DISTINCT d.lprd_lpr_nomor
+              ORDER BY d.lprd_lpr_nomor SEPARATOR ', ')
+        FROM kencanaprint.tlhk_proof_dtl d
+      WHERE d.lprd_spk_nomor = m.mspk_nomor) AS NomorProof
+      ,
+      ${hariKerjaSql(
+        "DATE(m.date_create)",
+        `IFNULL((SELECT DATE(MIN(s.date_create)) FROM kencanaprint.tkesesuaianmap s WHERE s.mspk_nomor = m.mspk_nomor), CURDATE())`,
+      )} AS HariBAST
     FROM kencanaprint.tmemospk m
     ${where}
     ORDER BY m.mspk_tanggal DESC, m.mspk_nomor DESC

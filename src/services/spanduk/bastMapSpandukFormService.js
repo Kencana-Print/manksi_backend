@@ -27,6 +27,10 @@ const JENIS_BAHAN_BAKU = [];
 const KESESUAIAN_SPANDUK = [11, 12, 5, 13, 14, 7, 10];
 const KODE_SESUAI_BAHAN = 11; // keterangannya = daftar bahan terpilih
 const HARI_BATAS_ON_PROGRESS = 6;
+const BATAS_HARI_BAST = 3; // hanya warning, tidak memblokir
+// Hari kerja = selisih hari kalender dikurangi jumlah hari Minggu di (a, b]
+const hariKerjaSql = (a, b) =>
+  `(DATEDIFF(${b}, ${a}) - (FLOOR((DATEDIFF(${b}, ${a}) + WEEKDAY(${a}) + 1) / 7) - FLOOR((WEEKDAY(${a}) + 1) / 7)))`;
 const MAKS_KETERANGAN = 200;
 const MAKS_JUMLAH = 99999999.99;
 const KEPUTUSAN_VALID = ["LANJUT", "ULANG"];
@@ -57,6 +61,11 @@ const ambilMap = async (conn, nomor, user, kunci = false) => {
             m.mspk_nama2, m.mspk_ukuran, m.mspk_kain, m.mspk_finishing,
             m.mspk_keterangan, m.mspk_kendala, m.mspk_jumlah_jadi, m.mspk_tipe,
             DATE_FORMAT(m.mspk_tanggal, '%Y-%m-%d') AS mspk_tanggal,
+            DATE_FORMAT(m.date_create, '%Y-%m-%d') AS tgl_buat_map,
+            ${hariKerjaSql(
+              "DATE(m.date_create)",
+              `IFNULL((SELECT DATE(MIN(s.date_create)) FROM ${T.bast} s WHERE s.mspk_nomor = m.mspk_nomor), CURDATE())`,
+            )} AS hari_pembuatan,
             (SELECT j.jo_nama FROM kencanaprint.tjenisorder j
               WHERE j.jo_kode = m.MSpk_jo_kode AND j.jo_divisi = m.mspk_divisi
               LIMIT 1) AS jenis_order,
@@ -77,6 +86,8 @@ const ambilMap = async (conn, nomor, user, kunci = false) => {
   if (!adalahSuperadmin(user) && norm(m.mspk_cab) !== cabangUser(user)) {
     throw galat(`MAP ${nomor} milik cabang lain`, "forbidden");
   }
+  m.batas_hari = BATAS_HARI_BAST;
+  m.terlambat = Number(m.hari_pembuatan) > BATAS_HARI_BAST ? 1 : 0;
   return m;
 };
 
@@ -204,6 +215,7 @@ const getFormData = async (nomor, user) => {
 // ── VALIDASI PAYLOAD ──
 const siapkanData = (p) => {
   const jumlah = angkaTidakNegatif(p?.jumlahJadi, "Jumlah");
+  if (!(jumlah > 0)) throw galat("Jumlah harus lebih dari 0");
   const kendala = teks(p?.kendala);
   const tipe = teks(p?.tipe);
 
@@ -488,4 +500,6 @@ module.exports = {
   update,
   setKeputusan,
   KESESUAIAN_SPANDUK,
+  BATAS_HARI_BAST,
+  hariKerjaSql,
 };
