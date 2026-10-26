@@ -1,9 +1,15 @@
 const uangMukaService = require("../../services/pembelian/uangMukaService");
 
+// Akses penuh: lihat semua cabang dan semua sumber
+const USER_AKSES_PENUH = ["ADMIN", "NANDA"];
+
 const getOutstanding = async (req, res) => {
   try {
     const { search = "", startDate, endDate, page = 1, limit = 25 } = req.query;
     const cabang = req.user?.cabang || "";
+    const semuaCabang = USER_AKSES_PENUH.includes(
+      String(req.user?.kode || "").toUpperCase(),
+    );
     const result = await uangMukaService.getOutstanding({
       search,
       startDate,
@@ -11,6 +17,7 @@ const getOutstanding = async (req, res) => {
       page: Number(page),
       limit: Number(limit),
       cabang,
+      semuaCabang,
     });
     res.json(result);
   } catch (err) {

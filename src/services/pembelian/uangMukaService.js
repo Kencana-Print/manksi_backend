@@ -41,14 +41,16 @@ const getOutstanding = async ({
   page = 1,
   limit = 25,
   cabang,
+  semuaCabang = false,
 }) => {
   const searchParam = `%${search}%`;
 
   // P01 dan HO- setara Head Office: lihat yang ditujukan ke HO- maupun P01,
   // plus sumber khusus HO (insentif, PO Lain-lain, BKK kas kecil P04).
-  const isHO = cabang === "HO-" || cabang === "P01";
+  // semuaCabang: lihat seluruh cabang + semua sumber (termasuk sumber khusus HO)
+  const isHO = semuaCabang || cabang === "HO-" || cabang === "P01";
   const buildCabangClause = (kolom) => {
-    if (!cabang) return "";
+    if (semuaCabang || !cabang) return "";
     if (isHO) return ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`;
     return ` AND ${kolom} = ?`;
   };
