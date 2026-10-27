@@ -2,6 +2,9 @@
 const SESI_VALID = ["PAGI", "SIANG"];
 const BATAS_SIANG = 13 * 3600; // 13:00
 
+// Sementara sebelum rilis: Jahit/Lipat boleh input mundur. Set false saat rilis.
+const BOLEH_MUNDUR = true;
+
 // TIME dari fingerprint: NULL atau 00:00:00 = belum scan
 const detik = (t) => {
   const m = /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(t ?? ""));
@@ -52,14 +55,17 @@ const potongIstirahat = (dari, sampai) => {
   return total - irisan;
 };
 
-// Satu hari penuh. Belum scan pulang: batas akhir = detikAkhir (jam input).
-// null = belum scan masuk
+// Satu hari penuh. Belum scan pulang: batas akhir = detikAkhir (jam input, hanya hari ini).
+// null = belum scan masuk, atau belum scan pulang dan tidak ada batas akhir
 const hitungJamHarian = (row, detikAkhir) => {
   const s1 = detik(row.scan1);
   if (s1 === null) {
     return null;
   }
   const akhir = detik(row.scan2) ?? detikAkhir;
+  if (akhir === null) {
+    return null;
+  }
   return { kerja: Math.floor(potongIstirahat(s1, akhir) / 60) };
 };
 
@@ -100,6 +106,7 @@ const ambilAbsensi = async (
 module.exports = {
   SESI_VALID,
   BATAS_SIANG,
+  BOLEH_MUNDUR,
   detik,
   fmtJam,
   hitungJam,

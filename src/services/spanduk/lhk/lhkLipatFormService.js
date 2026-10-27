@@ -12,6 +12,7 @@ const {
 } = require("./lhkLipatShared");
 const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 const {
+  BOLEH_MUNDUR,
   detik,
   fmtJam,
   hitungJamHarian,
@@ -22,6 +23,16 @@ const {
 const PREFIX_NOMOR = "LHK-L";
 const NOMOR_LOCK = "lhk_lipat_nomor";
 const LOKASI_QTY_MANUAL = "MT1"; // mitra luar: tanpa fingerprint, Qty Lipat manual
+
+// Masa depan ditolak; tanggal lampau hanya selama saklar BOLEH_MUNDUR true
+const cekTanggalInput = (tgl, hariIni) => {
+  if (tgl > hariIni) {
+    throw galat("Tanggal tidak boleh lebih dari hari ini");
+  }
+  if (tgl < hariIni && !BOLEH_MUNDUR) {
+    throw galat("LHK Lipat hanya boleh diinput pada tanggal hari ini");
+  }
+};
 
 // BS wajib diisi (0 bila tidak ada)
 const bsWajib = (v, label) => {
@@ -144,12 +155,8 @@ const lengkapiKaryawan = async (q, baris) => {
 };
 
 // Isi nama + menit kerja. nikLama: Map nik -> {nama, kerja} (snapshot, tidak dihitung ulang).
-// Belum scan pulang: batas akhir = jamAkhir (jam input/jam saat dihitung).
-const hitungKaryawan = async (
-  q,
-  data,
-  { hariIni, jamAkhir, nikLama = new Map() },
-) => {
+// jamAkhir: batas bila belum scan pulang (hari ini); null = tanggal lampau, scan pulang wajib.
+const hitungKaryawan = async (q, data, { jamAkhir, nikLama = new Map() }) => {
   if (data.pabrik === LOKASI_QTY_MANUAL) {
     await lengkapiKaryawan(q, data.baris);
     return;
@@ -158,11 +165,6 @@ const hitungKaryawan = async (
     ...new Set(data.baris.flatMap((b) => b.karyawan.map((k) => k.nik))),
   ];
   const baru = semua.filter((n) => !nikLama.has(n));
-  if (baru.length > 0 && data.tanggal !== hariIni) {
-    throw galat(
-      "Karyawan hanya bisa ditambahkan pada tanggal hari ini (absensi diambil dari hari yang sama)",
-    );
-  }
   const peta = new Map();
   if (baru.length > 0) {
     const rows = await ambilAbsensi(q, {
@@ -186,12 +188,16 @@ const hitungKaryawan = async (
     const r = peta.get(nik);
     if (!r) {
       throw galat(
-        `Karyawan ${nik} tidak memenuhi syarat: bukan karyawan lipat aktif lokasi ${data.pabrik}, tidak punya kode absensi, atau tidak ada absensi hari ini`,
+        `Karyawan ${nik} tidak memenuhi syarat: bukan karyawan lipat aktif lokasi ${data.pabrik}, tidak punya kode absensi, atau tidak ada absensi pada tanggal ${data.tanggal}`,
       );
     }
     const jam = hitungJamHarian(r, jamAkhir);
     if (!jam) {
-      throw galat(`Karyawan ${nik} (${r.nama}) belum scan masuk`);
+      throw galat(
+        jamAkhir === null
+          ? `Karyawan ${nik} (${r.nama}) belum scan masuk atau belum scan pulang pada tanggal ${data.tanggal}`
+          : `Karyawan ${nik} (${r.nama}) belum scan masuk`,
+      );
     }
     hasil.set(nik, { nama: String(r.nama ?? "").trim(), kerja: jam.kerja });
   }
@@ -393,8 +399,8 @@ const getLookupPabrik = async (search) => {
   return rows;
 };
 
-// MT1: dari master (tanpa absensi). Selain MT1: yang sudah scan masuk hari ini
-// (belum pulang boleh; jam kerja dihitung sampai sekarang).
+// MT1: dari master (tanpa absensi). Selain MT1: yang sudah scan masuk pada tanggal LHK.
+// Hari ini: belum pulang boleh. Tanggal lampau: wajib sudah scan pulang.
 const getLookupKaryawan = async (pabrik, tanggalParam) => {
   const kode = teks(pabrik);
   if (!kode) {
@@ -414,10 +420,8 @@ const getLookupKaryawan = async (pabrik, tanggalParam) => {
 
   const tanggal = parseTanggal(tanggalParam);
   const sekarang = await sekarangServer(db);
-  if (tanggal !== sekarang.tgl) {
-    throw galat("Daftar karyawan hanya tersedia untuk tanggal hari ini");
-  }
-  const jamAkhir = detik(sekarang.jam) ?? 0;
+  cekTanggalInput(tanggal, sekarang.tgl);
+  const jamAkhir = tanggal < sekarang.tgl ? null : (detik(sekarang.jam) ?? 0);
   const rows = await ambilAbsensi(db, {
     tabelKaryawan: T.karyawan,
     bagian: "LIPAT",
@@ -463,14 +467,10 @@ const createLhkLipat = async (body, user) => {
       daftarSpk: data.baris.map((b) => b.spk),
     });
     const sekarang = await sekarangServer(conn);
-    if (data.tanggal !== sekarang.tgl) {
-      throw galat("LHK Lipat hanya boleh diinput pada tanggal hari ini");
-    }
+    cekTanggalInput(data.tanggal, sekarang.tgl);
+    const mundur = data.tanggal < sekarang.tgl;
     const jamSkrg = detik(sekarang.jam) ?? 0;
-    await hitungKaryawan(conn, data, {
-      hariIni: sekarang.tgl,
-      jamAkhir: jamSkrg,
-    });
+    await hitungKaryawan(conn, data, { jamAkhir: mundur ? null : jamSkrg });
     finalisasiBaris(data);
 
     const nomor = await buatNomor(conn, data.tanggal);
@@ -544,18 +544,22 @@ const updateLhkLipat = async (nomor, body, user) => {
     });
     const legacy = lama[0].sesi === "";
     if (!legacy) {
-      if (data.sesi !== lama[0].sesi) {
-        throw galat("Sesi LHK tidak bisa diubah");
-      }
-      if (data.tanggal !== lama[0].tgl) {
-        throw galat(
-          "Tanggal LHK tidak bisa diubah (jam kerja terikat absensi hari itu)",
-        );
-      }
       const sekarang = await sekarangServer(conn);
       const jamSkrg = detik(sekarang.jam) ?? 0;
+      const tglBerubah = data.tanggal !== lama[0].tgl;
+      if (tglBerubah) {
+        cekTanggalInput(data.tanggal, sekarang.tgl);
+        if (!BOLEH_MUNDUR) {
+          throw galat(
+            "Tanggal LHK tidak bisa diubah (jam kerja terikat absensi hari itu)",
+          );
+        }
+      }
+      const mundur = data.tanggal < sekarang.tgl;
+
+      // Snapshot karyawan dipertahankan hanya bila lokasi dan tanggal tidak berubah
       let nikLama = new Map();
-      if (data.pabrik === String(lama[0].pabrik).trim()) {
+      if (!tglBerubah && data.pabrik === String(lama[0].pabrik).trim()) {
         const [ada] = await conn.query(
           `SELECT lld2_kar_nik AS nik, MAX(lld2_kar_nama) AS nama,
                   MAX(IFNULL(lld2_menit_kerja, 0)) AS kerja
@@ -569,33 +573,11 @@ const updateLhkLipat = async (nomor, body, user) => {
           ]),
         );
       }
-      const adaBaru = data.baris.some((b) =>
-        b.karyawan.some((k) => !nikLama.has(k.nik)),
-      );
-      if (
-        data.sesi === "PAGI" &&
-        adaBaru &&
-        data.pabrik !== LOKASI_QTY_MANUAL &&
-        jamSkrg >= BATAS_SIANG
-      ) {
-        throw galat(
-          "Karyawan baru tidak bisa ditambahkan ke LHK pagi setelah jam 13.00.",
-        );
-      }
       await hitungKaryawan(conn, data, {
-        hariIni: sekarang.tgl,
-        // pagi: jam akhir tetap jam input LHK saat pertama disimpan
-        jamAkhir: detik(lama[0].jam) ?? jamSkrg,
+        jamAkhir: mundur ? null : jamSkrg,
         nikLama,
       });
       finalisasiBaris(data);
-      await cekDobelSesi(
-        conn,
-        data.tanggal,
-        data.sesi,
-        data.baris.flatMap((b) => b.karyawan.map((k) => k.nik)),
-        no,
-      );
     } else {
       // LHK lama: SPK dan karyawan tidak berubah, hanya Tambah Lipat, Mata Ayam, BS
       const [dtlLama] = await conn.query(
