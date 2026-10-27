@@ -1,7 +1,7 @@
 const uangMukaService = require("../../services/pembelian/uangMukaService");
 
 // Akses penuh: lihat semua cabang dan semua sumber
-const USER_AKSES_PENUH = ["ADMIN", "NANDA"];
+const USER_AKSES_PENUH = ["ADMIN", "NANDA", "LIA"];
 
 const getOutstanding = async (req, res) => {
   try {

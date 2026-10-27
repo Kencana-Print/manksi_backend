@@ -332,6 +332,19 @@ const keberhasilanKomitmenKirimRoutes = require("./routes/laporan/ppic/keberhasi
 
 // Laporan Produksi Spanduk
 const laporanSpandukOutputBySpkRoutes = require("./routes/laporan/spanduk/outputBySpkRoutes");
+const laporanSpandukKekuranganProduksiRoutes = require("./routes/laporan/spanduk/kekuranganProduksiRoutes");
+const laporanSpandukMonitoringProofRoutes = require("./routes/laporan/spanduk/monitoringProofRoutes");
+const laporanSpandukMonitoringProofFormRoutes = require("./routes/laporan/spanduk/monitoringProofFormRoutes");
+const laporanSpandukResumeProofRoutes = require("./routes/laporan/spanduk/resumeProofRoutes");
+const laporanSpandukMonitoringCetakRoutes = require("./routes/laporan/spanduk/monitoringCetakRoutes");
+const laporanSpandukMonitoringJahitRoutes = require("./routes/laporan/spanduk/monitoringJahitRoutes");
+const laporanSpandukMonitoringLipatRoutes = require("./routes/laporan/spanduk/monitoringLipatRoutes");
+const laporanSpandukMonitoringCuiringRoutes = require("./routes/laporan/spanduk/monitoringCuiringRoutes");
+const laporanSpandukMonitoringAfdrukRoutes = require("./routes/laporan/spanduk/monitoringAfdrukRoutes");
+const laporanSpandukMonitoringKoliRoutes = require("./routes/laporan/spanduk/monitoringKoliRoutes");
+const laporanSpandukMonitoringHasilProofRoutes = require("./routes/laporan/spanduk/monitoringHasilProofRoutes");
+const laporanSpandukRekapMonitoringBySpkRoutes = require("./routes/laporan/spanduk/rekapMonitoringBySpkRoutes");
+const laporanSpandukPemakaianBahanRoutes = require("./routes/laporan/spanduk/pemakaianBahanRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -897,6 +910,55 @@ app.use(
 );
 
 app.use("/api/laporan/spanduk/output-by-spk", laporanSpandukOutputBySpkRoutes);
+app.use(
+  "/api/laporan/spanduk/kekurangan-produksi",
+  laporanSpandukKekuranganProduksiRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-proof",
+  laporanSpandukMonitoringProofRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-proof-form",
+  laporanSpandukMonitoringProofFormRoutes,
+);
+app.use("/api/laporan/spanduk/resume-proof", laporanSpandukResumeProofRoutes);
+app.use(
+  "/api/laporan/spanduk/monitoring-cetak",
+  laporanSpandukMonitoringCetakRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-jahit",
+  laporanSpandukMonitoringJahitRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-lipat",
+  laporanSpandukMonitoringLipatRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-cuiring",
+  laporanSpandukMonitoringCuiringRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-afdruk",
+  laporanSpandukMonitoringAfdrukRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-koli",
+  laporanSpandukMonitoringKoliRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/monitoring-hasil-proof",
+  laporanSpandukMonitoringHasilProofRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/rekap-monitoring-by-spk",
+  laporanSpandukRekapMonitoringBySpkRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/pemakaian-bahan",
+  laporanSpandukPemakaianBahanRoutes,
+);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);

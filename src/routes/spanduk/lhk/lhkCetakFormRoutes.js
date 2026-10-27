@@ -25,6 +25,12 @@ router.get(
   controller.getInfoSpk,
 );
 router.get(
+  "/lookups/kain",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getLookupKain,
+);
+router.get(
   "/:nomor",
   verifyToken,
   checkPermission(4, "view"),

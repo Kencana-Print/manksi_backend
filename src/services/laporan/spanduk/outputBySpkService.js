@@ -1,9 +1,5 @@
 const db = require("../../../config/database");
-const {
-  validasiPeriode,
-  adalahSuperadmin,
-  cabangUser,
-} = require("../../spanduk/lhk/lhkCommon");
+const { validasiPeriode } = require("../../spanduk/lhk/lhkCommon");
 
 const DIVISI_SPANDUK = 1;
 
@@ -15,16 +11,11 @@ const dua = (v) => Math.round(angka(v) * 100) / 100;
 const petakan = (rows, kolomSpk, kolomNilai) =>
   new Map(rows.map((r) => [String(r[kolomSpk]).toUpperCase(), r[kolomNilai]]));
 
-const getOutputBySpk = async (tglAwal, tglAkhir, user) => {
+const getOutputBySpk = async (tglAwal, tglAkhir) => {
   validasiPeriode(tglAwal, tglAkhir);
 
   // 1) Daftar SPK: yang punya LHK Cetak pada periode (divisi Spanduk, aktif)
   const params = [tglAwal, tglAkhir, DIVISI_SPANDUK];
-  let sqlCab = "";
-  if (!adalahSuperadmin(user)) {
-    sqlCab = "AND s.spk_cab = ?";
-    params.push(cabangUser(user));
-  }
   const [master] = await db.query(
     `SELECT s.spk_nomor AS Nomor,
             s.spk_memo AS Memo,
@@ -55,8 +46,6 @@ const getOutputBySpk = async (tglAwal, tglAkhir, user) => {
      LEFT JOIN kencanaprint.tjenisorder jo
        ON jo.jo_kode = s.spk_jo_kode AND jo.jo_divisi = s.spk_divisi
      LEFT JOIN kencanaprint.tdivisi dv ON dv.kode = s.spk_divisi
-     WHERE 1 = 1
-     ${sqlCab}
      ORDER BY s.spk_nomor`,
     params,
   );

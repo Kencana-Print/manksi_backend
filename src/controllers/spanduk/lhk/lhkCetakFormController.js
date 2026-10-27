@@ -39,6 +39,15 @@ const getLookupPabrik = async (req, res) => {
   }
 };
 
+const getLookupKain = async (req, res) => {
+  try {
+    const data = await service.getLookupKain(req.query.search);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
 const getLookupKaryawan = async (req, res) => {
   try {
     const data = await service.getLookupKaryawan(
@@ -87,6 +96,7 @@ module.exports = {
   getById,
   getInfoSpk,
   getLookupPabrik,
+  getLookupKain,
   getLookupKaryawan,
   create,
   update,

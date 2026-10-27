@@ -13,6 +13,12 @@ router.get(
   checkPermission(4, "view"),
   controller.getDetail,
 );
+router.get(
+  "/kain",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.getKain,
+);
 router.delete(
   "/:nomor",
   verifyToken,
