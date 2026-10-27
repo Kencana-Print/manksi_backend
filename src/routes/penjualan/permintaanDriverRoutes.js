@@ -6,7 +6,7 @@ const {
 } = require("../../middleware/authMiddleware");
 const ctrl = require("../../controllers/penjualan/permintaanDriverController");
 
-const MENU_ID = 189;
+const MENU_ID = 612;
 
 // ── STATIC GET (semua sebelum /:nomor) ──────────────────────────────────
 router.get("/generate-nomor", verifyToken, ctrl.generateNomor);
