@@ -30,8 +30,7 @@ const getBrowseLhkLipat = async (tglAwal, tglAkhir, user) => {
     SELECT h.llh_nomor AS Nomor,
            DATE_FORMAT(h.llh_tanggal, '%Y-%m-%d') AS Tanggal,
            h.llh_pab_kode AS Kode_Pabrik,
-           p.pab_nama AS Nama_Pabrik,
-           h.llh_sesi AS Sesi
+           p.pab_nama AS Nama_Pabrik
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.llh_pab_kode
     WHERE h.llh_tanggal BETWEEN ? AND ?
@@ -81,7 +80,8 @@ const getKaryawanLhkLipat = async (tglAwal, tglAkhir, user) => {
            k.lld2_kar_nama AS Nama,
            k.lld2_absensi AS Absensi,
            k.lld2_qty_lipat AS Qty,
-           IFNULL(k.lld2_menit_kerja, 0) AS Menit_Kerja
+           IFNULL(k.lld2_menit_kerja, 0) AS Menit_Kerja,
+           (h.llh_jam_input IS NULL) AS Legacy
     FROM ${T.dtl2} k
     JOIN ${T.hdr} h ON h.llh_nomor = k.lld2_llh_nomor
     WHERE h.llh_tanggal BETWEEN ? AND ?
@@ -92,6 +92,7 @@ const getKaryawanLhkLipat = async (tglAwal, tglAkhir, user) => {
   return rows.map((r) => ({
     ...r,
     Menit_Kerja: Number(r.Menit_Kerja) || 0,
+    Legacy: Number(r.Legacy) === 1,
   }));
 };
 

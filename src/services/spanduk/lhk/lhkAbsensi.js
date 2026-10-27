@@ -39,6 +39,30 @@ const hitungJam = (sesi, row, detikAkhirPagi) => {
   return { kerja: selisihMenit(Math.max(BATAS_SIANG, s1), s2) };
 };
 
+const ISTIRAHAT_MULAI = 12 * 3600; // 12:00
+const ISTIRAHAT_SELESAI = 13 * 3600; // 13:00
+
+// Detik kerja dari dari..sampai, dikurangi irisan dengan jam istirahat
+const potongIstirahat = (dari, sampai) => {
+  const total = Math.max(0, sampai - dari);
+  const irisan = Math.max(
+    0,
+    Math.min(sampai, ISTIRAHAT_SELESAI) - Math.max(dari, ISTIRAHAT_MULAI),
+  );
+  return total - irisan;
+};
+
+// Satu hari penuh. Belum scan pulang: batas akhir = detikAkhir (jam input).
+// null = belum scan masuk
+const hitungJamHarian = (row, detikAkhir) => {
+  const s1 = detik(row.scan1);
+  if (s1 === null) {
+    return null;
+  }
+  const akhir = detik(row.scan2) ?? detikAkhir;
+  return { kerja: Math.floor(potongIstirahat(s1, akhir) / 60) };
+};
+
 const sekarangServer = async (q) => {
   const [r] = await q.query(
     `SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS tgl,
@@ -79,6 +103,7 @@ module.exports = {
   detik,
   fmtJam,
   hitungJam,
+  hitungJamHarian,
   sekarangServer,
   ambilAbsensi,
 };

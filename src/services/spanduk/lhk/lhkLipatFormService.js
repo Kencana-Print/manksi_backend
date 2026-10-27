@@ -12,11 +12,9 @@ const {
 } = require("./lhkLipatShared");
 const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 const {
-  SESI_VALID,
-  BATAS_SIANG,
   detik,
   fmtJam,
-  hitungJam,
+  hitungJamHarian,
   sekarangServer,
   ambilAbsensi,
 } = require("./lhkAbsensi");
@@ -45,11 +43,6 @@ const siapkanData = (body = {}) => {
   }
   if (pabrik.length > 10) {
     throw galat("Kode lokasi maksimal 10 karakter");
-  }
-
-  const sesi = teks(body.Sesi).toUpperCase();
-  if (sesi !== "" && !SESI_VALID.includes(sesi)) {
-    throw galat("Sesi harus PAGI atau SIANG");
   }
 
   const detail = Array.isArray(body.Detail) ? body.Detail : [];
@@ -109,7 +102,7 @@ const siapkanData = (body = {}) => {
     };
   });
 
-  return { tanggal, pabrik, sesi, baris };
+  return { tanggal, pabrik, baris };
 };
 
 // Sumber harus ada, divisi 1/5, dan cabang user (SPK atau MAP)
@@ -151,6 +144,7 @@ const lengkapiKaryawan = async (q, baris) => {
 };
 
 // Isi nama + menit kerja. nikLama: Map nik -> {nama, kerja} (snapshot, tidak dihitung ulang).
+// Belum scan pulang: batas akhir = jamAkhir (jam input/jam saat dihitung).
 const hitungKaryawan = async (
   q,
   data,
@@ -195,13 +189,9 @@ const hitungKaryawan = async (
         `Karyawan ${nik} tidak memenuhi syarat: bukan karyawan lipat aktif lokasi ${data.pabrik}, tidak punya kode absensi, atau tidak ada absensi hari ini`,
       );
     }
-    const jam = hitungJam(data.sesi, r, jamAkhir);
+    const jam = hitungJamHarian(r, jamAkhir);
     if (!jam) {
-      throw galat(
-        data.sesi === "PAGI"
-          ? `Karyawan ${nik} (${r.nama}) belum scan masuk atau sudah scan pulang`
-          : `Karyawan ${nik} (${r.nama}) belum scan masuk atau belum scan pulang`,
-      );
+      throw galat(`Karyawan ${nik} (${r.nama}) belum scan masuk`);
     }
     hasil.set(nik, { nama: String(r.nama ?? "").trim(), kerja: jam.kerja });
   }
@@ -231,28 +221,7 @@ const finalisasiBaris = (data) => {
   });
 };
 
-// NIK yang sama tidak boleh ada di dua LHK Lipat pada tanggal + sesi yang sama
-const cekDobelSesi = async (q, tanggal, sesi, niks, nomorSendiri) => {
-  if (niks.length === 0) {
-    return;
-  }
-  const [rows] = await q.query(
-    `SELECT d.lld2_kar_nik AS nik, h.llh_nomor AS nomor
-     FROM ${T.dtl2} d
-     JOIN ${T.hdr} h ON h.llh_nomor = d.lld2_llh_nomor
-     WHERE h.llh_tanggal = ? AND h.llh_sesi = ?
-       AND d.lld2_kar_nik IN (?) AND h.llh_nomor <> ?
-     LIMIT 1`,
-    [tanggal, sesi, niks, nomorSendiri],
-  );
-  if (rows.length > 0) {
-    throw galat(
-      `Karyawan ${rows[0].nik} sudah tercatat di LHK ${rows[0].nomor} (sesi ${sesi.toLowerCase()} tanggal yang sama)`,
-    );
-  }
-};
-
-// tulisKaryawan=false: LHK lama (tanpa sesi), dtl_2 tidak disentuh
+// tulisKaryawan=false: LHK lama (tanpa jam input), dtl_2 tidak disentuh
 const simpanDetail = async (conn, nomor, baris, tulisKaryawan = true) => {
   if (tulisKaryawan) {
     await conn.query(`DELETE FROM ${T.dtl2} WHERE lld2_llh_nomor = ?`, [nomor]);
@@ -317,8 +286,8 @@ const getLhkLipatById = async (nomor, user) => {
             DATE_FORMAT(h.llh_tanggal, '%Y-%m-%d') AS Tanggal,
             h.llh_pab_kode AS Kode_Pabrik,
             p.pab_nama AS Nama_Pabrik,
-            h.llh_sesi AS Sesi,
-            TIME_FORMAT(h.llh_jam_input, '%H:%i') AS Jam_Input
+            TIME_FORMAT(h.llh_jam_input, '%H:%i') AS Jam_Input,
+            (h.llh_jam_input IS NULL) AS Legacy
      FROM ${T.hdr} h
      LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.llh_pab_kode
      WHERE h.llh_nomor = ?`,
@@ -381,6 +350,7 @@ const getLhkLipatById = async (nomor, user) => {
 
   return {
     ...hdr[0],
+    Legacy: Number(hdr[0].Legacy) === 1,
     Detail: detail.map((d) => ({
       ...d,
       Karyawan: perSpk.get(d.Nomor_SPK) ?? [],
@@ -423,8 +393,9 @@ const getLookupPabrik = async (search) => {
   return rows;
 };
 
-// MT1: dari master (tanpa absensi). Selain MT1: hanya yang hadir hari ini sesuai sesi.
-const getLookupKaryawan = async (pabrik, sesiParam, tanggalParam) => {
+// MT1: dari master (tanpa absensi). Selain MT1: yang sudah scan masuk hari ini
+// (belum pulang boleh; jam kerja dihitung sampai sekarang).
+const getLookupKaryawan = async (pabrik, tanggalParam) => {
   const kode = teks(pabrik);
   if (!kode) {
     throw galat("Lokasi wajib diisi");
@@ -441,21 +412,12 @@ const getLookupKaryawan = async (pabrik, sesiParam, tanggalParam) => {
     return rows.map((r) => ({ ...r, Jam_Kerja: "00:00" }));
   }
 
-  const sesi = teks(sesiParam).toUpperCase();
-  if (!SESI_VALID.includes(sesi)) {
-    throw galat("Sesi wajib dipilih (PAGI atau SIANG)");
-  }
   const tanggal = parseTanggal(tanggalParam);
   const sekarang = await sekarangServer(db);
   if (tanggal !== sekarang.tgl) {
     throw galat("Daftar karyawan hanya tersedia untuk tanggal hari ini");
   }
   const jamAkhir = detik(sekarang.jam) ?? 0;
-  if (sesi === "PAGI" && jamAkhir >= BATAS_SIANG) {
-    throw galat(
-      "Sesi pagi sudah berakhir (setelah jam 13.00). Pilih sesi Siang.",
-    );
-  }
   const rows = await ambilAbsensi(db, {
     tabelKaryawan: T.karyawan,
     bagian: "LIPAT",
@@ -464,7 +426,7 @@ const getLookupKaryawan = async (pabrik, sesiParam, tanggalParam) => {
   });
   const hasil = [];
   for (const r of rows) {
-    const jam = hitungJam(sesi, r, jamAkhir);
+    const jam = hitungJamHarian(r, jamAkhir);
     if (!jam) {
       continue;
     }
@@ -480,9 +442,6 @@ const getLookupKaryawan = async (pabrik, sesiParam, tanggalParam) => {
 // --- CREATE ---
 const createLhkLipat = async (body, user) => {
   const data = siapkanData(body);
-  if (!SESI_VALID.includes(data.sesi)) {
-    throw galat("Sesi wajib dipilih (PAGI atau SIANG)");
-  }
   await cekTutupBuku(data.tanggal);
 
   const conn = await db.getConnection();
@@ -508,39 +467,20 @@ const createLhkLipat = async (body, user) => {
       throw galat("LHK Lipat hanya boleh diinput pada tanggal hari ini");
     }
     const jamSkrg = detik(sekarang.jam) ?? 0;
-    if (data.sesi === "PAGI" && jamSkrg >= BATAS_SIANG) {
-      throw galat(
-        "LHK sesi pagi tidak bisa diinput setelah jam 13.00. Gunakan sesi Siang.",
-      );
-    }
     await hitungKaryawan(conn, data, {
       hariIni: sekarang.tgl,
       jamAkhir: jamSkrg,
     });
     finalisasiBaris(data);
-    await cekDobelSesi(
-      conn,
-      data.tanggal,
-      data.sesi,
-      data.baris.flatMap((b) => b.karyawan.map((k) => k.nik)),
-      "",
-    );
 
     const nomor = await buatNomor(conn, data.tanggal);
     try {
       await conn.query(
         `INSERT INTO ${T.hdr}
-           (llh_nomor, llh_tanggal, llh_pab_kode, llh_sesi, llh_jam_input,
+           (llh_nomor, llh_tanggal, llh_pab_kode, llh_jam_input,
             llh_date_create, llh_user_create)
-         VALUES (?, ?, ?, ?, ?, CURDATE(), ?)`,
-        [
-          nomor,
-          data.tanggal,
-          data.pabrik,
-          data.sesi,
-          sekarang.jam,
-          user?.kode ?? null,
-        ],
+         VALUES (?, ?, ?, ?, CURDATE(), ?)`,
+        [nomor, data.tanggal, data.pabrik, sekarang.jam, user?.kode ?? null],
       );
     } catch (e) {
       // Aplikasi desktop tidak memakai lock penomoran ini
