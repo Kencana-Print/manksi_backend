@@ -51,7 +51,14 @@ const getBrowse = async (startDate, endDate, userKode) => {
       a.pjh_user_kode AS UserKode
     FROM ga2.tpengajuan2_hdr a
     LEFT JOIN ga2.peminta b ON a.pjh_nik = b.nik
-    LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = a.pjh_nomor
+    LEFT JOIN ga2.tpermintaan_hdr h
+      ON h.pmt_nomor = (
+        SELECT h2.pmt_nomor
+        FROM ga2.tpermintaan_hdr h2
+        WHERE h2.pmt_pjh_nomor = a.pjh_nomor
+        ORDER BY h2.pmt_approval DESC, h2.pmt_close DESC, h2.pmt_nomor
+        LIMIT 1
+      )
     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
     WHERE a.pjh_nonga = 0
       AND a.pjh_tanggal BETWEEN ? AND ?
