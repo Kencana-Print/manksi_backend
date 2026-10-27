@@ -27,6 +27,12 @@ router.get(
   ctrl.getDetail,
 );
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.create);
+router.get(
+  "/:nomor/cetak",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPrint,
+);
 router.put(
   "/:nomor",
   verifyToken,

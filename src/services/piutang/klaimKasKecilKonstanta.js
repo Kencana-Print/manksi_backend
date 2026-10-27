@@ -8,6 +8,11 @@ const TANGGAL_MULAI_KLAIM = "2026-10-27";
 // Bank asal tidak ada di sini: dipilih Finance pusat di Pengajuan Transfer.
 const REK_TUJUAN_PER_CABANG = { P04: "A-111103" };
 
+// Supplier (master) yang mewakili rekening ATM kas kecil tiap cabang di
+// Pengajuan Transfer. Dipakai supaya baris klaim konsisten dengan baris
+// manual ke supplier yang sama.
+const SUP_KLAIM_PER_CABANG = { P04: "S0000145" };
+
 // Bagian (token `bagian`) dengan akses penuh: lihat semua cabang,
 // buat, ubah, dan batalkan klaim cabang terdaftar mana pun.
 const BAGIAN_AKSES_PENUH = ["EDP", "AUDIT", "DIR"];
@@ -22,6 +27,7 @@ const aksesPenuh = (user) =>
 module.exports = {
   TANGGAL_MULAI_KLAIM,
   REK_TUJUAN_PER_CABANG,
+  SUP_KLAIM_PER_CABANG,
   BAGIAN_AKSES_PENUH,
   aksesPenuh,
 };

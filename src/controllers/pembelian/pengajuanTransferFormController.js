@@ -119,6 +119,16 @@ const getPoLainOptions = async (req, res) => {
   }
 };
 
+const getKlaimKasKecilOptions = async (req, res) => {
+  try {
+    const { search, nomor } = req.query;
+    const data = await svc.getKlaimKasKecilOptions(search, nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getDetailForm = async (req, res) => {
   try {
     const data = await svc.getDetailForm(req.query.nomor);
@@ -193,6 +203,7 @@ module.exports = {
   getPettyCashOptions,
   getBkkOptions,
   getPoLainOptions,
+  getKlaimKasKecilOptions,
   getDetailForm,
   save,
   update,

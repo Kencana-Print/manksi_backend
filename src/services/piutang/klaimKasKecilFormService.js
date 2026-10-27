@@ -349,11 +349,62 @@ const saveData = async (payload, user) => {
   }
 };
 
+// ── Data cetak (ringkas per BKK) ──────────────────────────────────────
+// cabangScope: cabang user bila bukan pusat/akses penuh; null = semua cabang
+const getPrintData = async (nomor, cabangScope) => {
+  const [[h]] = await db.query(
+    `SELECT h.kkh_nomor AS nomor,
+            DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS tanggal,
+            h.kkh_cabang AS cabang,
+            h.kkh_rek_tujuan AS rekTujuan,
+            h.kkh_total AS total,
+            h.kkh_keterangan AS keterangan,
+            h.kkh_status AS status,
+            u.user_nama AS kasir
+     FROM tklaim_kaskecil_hdr h
+     LEFT JOIN tuser u ON u.user_kode = h.user_create
+     WHERE h.kkh_nomor = ?`,
+    [nomor],
+  );
+  if (!h) throw httpError("Klaim tidak ditemukan.", 404);
+  if (cabangScope && h.cabang !== cabangScope)
+    throw httpError("Klaim ini bukan milik cabang Anda.", 403);
+  if (h.status !== "AKTIF")
+    throw httpError("Klaim sudah dibatalkan. Tidak bisa dicetak.");
+
+  const [dtl] = await db.query(
+    `SELECT kkd_jur_no AS bkk,
+            DATE_FORMAT(kkd_tanggal,'%Y-%m-%d') AS tanggal,
+            kkd_uraian AS uraian, kkd_nominal AS nominal
+     FROM tklaim_kaskecil_dtl WHERE kkd_kkh_nomor = ?
+     ORDER BY kkd_tanggal, kkd_jur_no`,
+    [nomor],
+  );
+
+  return {
+    nomor: h.nomor,
+    tanggal: h.tanggal,
+    cabang: h.cabang,
+    rekTujuan: await infoRekening(h.rekTujuan),
+    keterangan: h.keterangan || "",
+    kasir: h.kasir || "",
+    total: Number(h.total),
+    detail: dtl.map((d, i) => ({
+      no: i + 1,
+      bkk: d.bkk,
+      tanggal: d.tanggal,
+      uraian: d.uraian,
+      nominal: Number(d.nominal),
+    })),
+  };
+};
+
 module.exports = {
   cabangKerja,
   getDefaults,
   getBkkOptions,
   getDetailForm,
+  getPrintData,
   saveData,
   cariBkkEligible,
 };

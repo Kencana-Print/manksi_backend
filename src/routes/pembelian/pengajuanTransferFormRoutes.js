@@ -81,6 +81,12 @@ router.get(
   ctrl.getPoLainOptions,
 );
 router.get(
+  "/klaim-kas-kecil-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getKlaimKasKecilOptions,
+);
+router.get(
   "/detail",
   verifyToken,
   checkPermission(MENU_ID, "view"),

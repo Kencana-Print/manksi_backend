@@ -1,6 +1,7 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
+const { SUP_KLAIM_PER_CABANG } = require("../piutang/klaimKasKecilKonstanta");
 
 // ── Account header (rekening bank — rek_rekening<>"" AND rek_jp=0) ────
 const getAccountOptions = async () => {
@@ -215,7 +216,16 @@ const getBkkOptions = async (search = "") => {
   `,
     [`%${search}%`, `%${search}%`, `%${search}%`],
   );
-  return rows.map((r) => ({ ...r, nominal: Number(r.nominal) }));
+
+  // BKK yang terkunci di Klaim Kas Kecil aktif diajukan lewat F8, bukan F1
+  const [kunci] = await db.query(
+    `SELECT kkd_kunci FROM tklaim_kaskecil_dtl WHERE kkd_kunci IS NOT NULL`,
+  );
+  const dikunci = new Set(kunci.map((r) => r.kkd_kunci));
+
+  return rows
+    .filter((r) => !dikunci.has(r.nomor))
+    .map((r) => ({ ...r, nominal: Number(r.nominal) }));
 };
 
 // ── PO Lain-lain (F6) ─────────────────────────────────────────────────
@@ -377,6 +387,224 @@ const validasiPoLain = async (conn, detail) => {
   }
 };
 
+// Supplier tujuan klaim per cabang (master tsupplier + rekening pertama).
+// Bila supplier punya lebih dari satu rekening, dipakai yang pertama
+// berdasarkan nama bank.
+const ambilSupplierKlaim = async (conn, cabang) => {
+  const kode = SUP_KLAIM_PER_CABANG[cabang];
+  if (!kode)
+    throw new Error(
+      `Supplier tujuan untuk kas kecil cabang ${cabang} belum diatur.`,
+    );
+  const [rows] = await conn.query(
+    `SELECT a.sup_kode AS kode, a.sup_nama AS nama,
+            b.supd_bank AS bank, b.supd_rekening AS rekening,
+            b.supd_atasnama AS atasnama
+     FROM tsupplier a
+     LEFT JOIN tsupplieritem b ON b.supd_kode = a.sup_kode
+     WHERE a.sup_aktif = 'Y' AND a.sup_kode = ?
+     ORDER BY b.supd_bank
+     LIMIT 1`,
+    [kode],
+  );
+  if (!rows.length)
+    throw new Error(`Supplier ${kode} tidak ditemukan atau tidak aktif.`);
+  const r = rows[0];
+  return {
+    kode: r.kode,
+    nama: r.nama || "",
+    bank: r.bank || "",
+    rekening: r.rekening || "",
+    atasnama: r.atasnama || "",
+  };
+};
+
+// ── Klaim Kas Kecil (F8) ──────────────────────────────────────────────
+// Klaim AKTIF yang belum dipanggil baris PJT aktif lain. Dua langkah
+// (bukan JOIN lintas schema). excludeNomor = pengajuan yang sedang diedit.
+const getKlaimKasKecilOptions = async (search = "", excludeNomor = "") => {
+  const [rows] = await db.query(
+    `SELECT h.kkh_nomor AS nomor,
+        DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS tanggal,
+        h.kkh_cabang AS cabang,
+        h.kkh_rek_tujuan AS rekKode,
+        h.kkh_total AS nominal,
+        h.kkh_keterangan AS keterangan,
+        (SELECT COUNT(*) FROM tklaim_kaskecil_dtl d
+          WHERE d.kkd_kkh_nomor = h.kkh_nomor) AS jumlahBkk
+     FROM tklaim_kaskecil_hdr h
+     WHERE h.kkh_status = 'AKTIF'
+       AND (h.kkh_nomor LIKE ? OR h.kkh_cabang LIKE ?)
+     ORDER BY h.kkh_nomor DESC
+     LIMIT 200`,
+    [`%${search}%`, `%${search}%`],
+  );
+  if (!rows.length) return [];
+
+  const [dipakai] = await db.query(
+    `SELECT DISTINCT ptd_trs FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_trs IN (?) AND ptd_batal = '' AND ptd_nomor <> ?`,
+    [rows.map((r) => r.nomor), excludeNomor || ""],
+  );
+  const terpakai = new Set(dipakai.map((r) => r.ptd_trs));
+
+  const kodeRek = [...new Set(rows.map((r) => r.rekKode))];
+  const [rek] = await db.query(
+    `SELECT rek_kode, rek_nama, rek_rekening
+     FROM finance.trekening WHERE rek_kode IN (?)`,
+    [kodeRek],
+  );
+  const infoRek = new Map(rek.map((r) => [r.rek_kode, r]));
+
+  const supPerCabang = new Map();
+  const hasil = [];
+  for (const r of rows.filter((x) => !terpakai.has(x.nomor))) {
+    if (!supPerCabang.has(r.cabang))
+      supPerCabang.set(r.cabang, await ambilSupplierKlaim(db, r.cabang));
+    hasil.push({
+      ...r,
+      nominal: Number(r.nominal),
+      jumlahBkk: Number(r.jumlahBkk),
+      rekNama: infoRek.get(r.rekKode)?.rek_nama || "",
+      rekRekening: infoRek.get(r.rekKode)?.rek_rekening || "",
+      sup: supPerCabang.get(r.cabang),
+    });
+  }
+  return hasil;
+};
+
+// Nominal tiap BKK di jurnal harus sama dengan snapshot klaim. Menutup
+// jendela waktu antara klaim dibuat dan diajukan/direalisasi (tabel
+// Finance MyISAM, tidak bisa satu transaksi dengan klaim).
+const pastikanNominalBkk = async (conn, klaim) => {
+  const [dtl] = await conn.query(
+    `SELECT kkd_jur_no, kkd_nominal FROM tklaim_kaskecil_dtl
+     WHERE kkd_kkh_nomor = ?`,
+    [klaim.kkh_nomor],
+  );
+  if (!dtl.length)
+    throw new Error(`Klaim ${klaim.kkh_nomor} tidak memiliki BKK.`);
+
+  const [jur] = await conn.query(
+    `SELECT jurd_jur_no AS bkk, SUM(jurd_kredit) AS nominal
+     FROM finance.tjurnalitem
+     WHERE jurd_nourut = 0 AND jurd_rek_kode = ? AND jurd_jur_no IN (?)
+     GROUP BY jurd_jur_no`,
+    [klaim.kkh_rek_tujuan, dtl.map((d) => d.kkd_jur_no)],
+  );
+  const peta = new Map(jur.map((r) => [r.bkk, Number(r.nominal)]));
+  const beda = dtl
+    .filter(
+      (d) =>
+        Math.abs((peta.get(d.kkd_jur_no) ?? -1) - Number(d.kkd_nominal)) >
+        0.005,
+    )
+    .map((d) => d.kkd_jur_no);
+  if (beda.length)
+    throw new Error(
+      `Nominal atau akun BKK berikut berubah sejak klaim ${klaim.kkh_nomor} dibuat: ${beda.join(", ")}. Batalkan klaim lalu buat ulang.`,
+    );
+};
+
+// Validasi server saat simpan (mode baru/edit). Dipanggil SETELAH baris
+// yang belum direalisasi dihapus, jadi baris pengajuan ini sendiri tidak
+// terhitung sebagai "sudah dipakai". Sekaligus mengisi ulang kolom baris
+// klaim dari data server (nomor, nominal, nama, rekening, atas nama).
+const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
+  const baris = detail.filter((d) => d.nama && d.trs && !d.jurnal && !d.batal);
+  if (!baris.length) return;
+
+  const daftarTrs = [...new Set(baris.map((d) => String(d.trs).trim()))];
+
+  // BKK yang terkunci klaim aktif tidak boleh diajukan langsung (F1/ketik manual)
+  const [kunci] = await conn.query(
+    `SELECT kkd_kunci, kkd_kkh_nomor FROM tklaim_kaskecil_dtl
+     WHERE kkd_kunci IN (?) LIMIT 1`,
+    [daftarTrs],
+  );
+  if (kunci.length)
+    throw new Error(
+      `BKK ${kunci[0].kkd_kunci} sudah diklaim di Klaim Kas Kecil ${kunci[0].kkd_kkh_nomor}. Ajukan lewat F8 Klaim Kas Kecil.`,
+    );
+
+  const [klaim] = await conn.query(
+    `SELECT kkh_nomor, kkh_cabang, kkh_status, kkh_total, kkh_rek_tujuan
+     FROM tklaim_kaskecil_hdr WHERE kkh_nomor IN (?)`,
+    [daftarTrs],
+  );
+  if (!klaim.length) return;
+  const peta = new Map(klaim.map((k) => [k.kkh_nomor.toUpperCase(), k]));
+
+  const dipakaiDiForm = new Set();
+  for (const d of baris) {
+    const k = peta.get(String(d.trs).trim().toUpperCase());
+    if (!k) continue;
+
+    if (k.kkh_status !== "AKTIF")
+      throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
+    if (dipakaiDiForm.has(k.kkh_nomor))
+      throw new Error(`Klaim ${k.kkh_nomor} diinput lebih dari satu kali.`);
+    dipakaiDiForm.add(k.kkh_nomor);
+    if (rekKode === k.kkh_rek_tujuan)
+      throw new Error(
+        `Rekening asal tidak boleh sama dengan kas kecil tujuan (${k.kkh_rek_tujuan}).`,
+      );
+
+    const [[lain]] = await conn.query(
+      `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_trs = ? AND ptd_batal = '' AND ptd_nomor <> ? LIMIT 1`,
+      [k.kkh_nomor, nomorPjt],
+    );
+    if (lain)
+      throw new Error(
+        `Klaim ${k.kkh_nomor} sudah dipanggil di Pengajuan Transfer ${lain.ptd_nomor}.`,
+      );
+
+    await pastikanNominalBkk(conn, k);
+
+    const sup = await ambilSupplierKlaim(conn, k.kkh_cabang);
+    d.trs = k.kkh_nomor;
+    d.nominal = Number(k.kkh_total);
+    d.kode = sup.kode;
+    d.nama = sup.nama;
+    d.bank = sup.bank;
+    d.rekening = sup.rekening;
+    d.atasnama = sup.atasnama;
+  }
+};
+
+// Mode realisasi: baris klaim dipaksa ke akun kas kecil dan nominal tersimpan.
+// Data dibaca dari baris PJT di database, bukan dari payload klien.
+const terapkanKlaimRealisasi = async (conn, nomorPjt, d, rekKode) => {
+  const [[row]] = await conn.query(
+    `SELECT ptd_trs, ptd_nominal FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+    [nomorPjt, d.nourut],
+  );
+  if (!row || !row.ptd_trs) return;
+  const [[k]] = await conn.query(
+    `SELECT kkh_nomor, kkh_status, kkh_total, kkh_rek_tujuan
+     FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
+    [row.ptd_trs],
+  );
+  if (!k) return;
+
+  if (k.kkh_status !== "AKTIF")
+    throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
+  if (rekKode === k.kkh_rek_tujuan)
+    throw new Error(
+      `Rekening asal tidak boleh sama dengan kas kecil tujuan (${k.kkh_rek_tujuan}).`,
+    );
+
+  d.rekkode = k.kkh_rek_tujuan;
+  d.nominal = Number(row.ptd_nominal);
+  d.cckode = 0;
+  d.dcnama = "";
+  d.dckode = 0;
+
+  if (!d.jurnal && d.tglRealisasi) await pastikanNominalBkk(conn, k);
+};
+
 const getAccountAll = async (search = "") => {
   const [rows] = await db.query(
     `
@@ -453,7 +681,7 @@ const getDetailForm = async (nomor) => {
     .map((r) => ({
       nourut: r.ptd_nourut,
       kode: r.ptd_sup_kode || "",
-      nama: r.sup_nama || "",
+      nama: r.sup_nama || r.ptd_atasnama || "",
       bank: r.ptd_bank || "",
       rekening: r.ptd_rekening || "",
       atasnama: r.ptd_atasnama || "",
@@ -469,7 +697,37 @@ const getDetailForm = async (nomor) => {
       dckode: r.ptd_cc_kode || 0,
       jurnal: r.ptd_jur_no || "",
       batal: r.ptd_batal || "",
+      klaim: false,
     }));
+
+  // Tandai baris Klaim Kas Kecil dan isi akun tujuan untuk realisasi
+  const daftarTrs = [...new Set(detail.map((d) => d.trs).filter(Boolean))];
+  if (daftarTrs.length) {
+    const [klaim] = await db.query(
+      `SELECT kkh_nomor, kkh_rek_tujuan FROM tklaim_kaskecil_hdr
+       WHERE kkh_nomor IN (?)`,
+      [daftarTrs],
+    );
+    if (klaim.length) {
+      const petaRek = new Map(
+        klaim.map((k) => [k.kkh_nomor.toUpperCase(), k.kkh_rek_tujuan]),
+      );
+      const [rek] = await db.query(
+        `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
+        [[...new Set(petaRek.values())]],
+      );
+      const namaRek = new Map(rek.map((r) => [r.rek_kode, r.rek_nama]));
+      for (const d of detail) {
+        const rk = petaRek.get(String(d.trs).toUpperCase());
+        if (!rk) continue;
+        d.klaim = true;
+        if (!d.rekkode) {
+          d.rekkode = rk;
+          d.reknama = namaRek.get(rk) || "";
+        }
+      }
+    }
+  }
 
   return {
     nomor: h.pth_nomor,
@@ -569,6 +827,9 @@ const saveData = async (payload, user) => {
 
       for (const d of detail) {
         if (!d.nama) continue;
+
+        // Baris Klaim Kas Kecil: akun dan nominal dipaksa dari data server
+        if (!d.batal) await terapkanKlaimRealisasi(conn, nomor, d, rek_kode);
 
         if (d.tglRealisasi)
           await assertBolehPosting([d.rekkode], d.tglRealisasi, conn);
@@ -937,6 +1198,7 @@ const saveData = async (payload, user) => {
     );
 
     await validasiPoLain(conn, detail);
+    await validasiKlaimKasKecil(conn, detail, rek_kode, actualNomor);
 
     // Delphi: delete link voucher & po external lama
     await conn.query(`DELETE FROM tpoexternal_dtl2 WHERE poed2_link = ?`, [
@@ -1071,7 +1333,7 @@ const getPrintData = async (nomor) => {
 
   const [detail] = await db.query(
     `
-    SELECT s.sup_nama AS namaSupplier,
+    SELECT COALESCE(NULLIF(s.sup_nama, ''), d.ptd_atasnama) AS namaSupplier,
       d.ptd_bank AS bank,
       d.ptd_atasnama AS atasNama,
       d.ptd_rekening AS rekening,
@@ -1103,6 +1365,7 @@ module.exports = {
   getPettyCashOptions,
   getBkkOptions,
   getPoLainOptions,
+  getKlaimKasKecilOptions,
   getDetailForm,
   saveData,
   getPrintData,

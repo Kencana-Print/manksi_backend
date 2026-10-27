@@ -78,4 +78,20 @@ const update = async (req, res) => {
   }
 };
 
-module.exports = { getDefaults, getBkkOptions, getDetail, create, update };
+const getPrint = async (req, res) => {
+  try {
+    const data = await svc.getPrintData(req.params.nomor, scopeBaca(req));
+    res.json({ success: true, data });
+  } catch (err) {
+    kirimError(res, err);
+  }
+};
+
+module.exports = {
+  getDefaults,
+  getBkkOptions,
+  getDetail,
+  getPrint,
+  create,
+  update,
+};
