@@ -14,7 +14,6 @@ const getBrowse = async (startDate, endDate, cabang) => {
     SELECT h.kkh_nomor AS Nomor,
       DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS Tanggal,
       h.kkh_cabang AS Cabang,
-      h.kkh_rek_asal AS RekAsal,
       h.kkh_rek_tujuan AS RekTujuan,
       h.kkh_total AS Total,
       h.kkh_status AS Status,
@@ -35,7 +34,7 @@ const getBrowse = async (startDate, endDate, cabang) => {
   if (rows.length === 0) return [];
 
   // Nama rekening (finance.trekening) — query terpisah, bukan JOIN lintas DB
-  const kodeRek = [...new Set(rows.flatMap((r) => [r.RekAsal, r.RekTujuan]))];
+  const kodeRek = [...new Set(rows.map((r) => r.RekTujuan))];
   const [rek] = await db.query(
     `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
     [kodeRek],
@@ -66,7 +65,6 @@ const getBrowse = async (startDate, endDate, cabang) => {
       ...r,
       Total: Number(r.Total),
       JumlahBkk: Number(r.JumlahBkk),
-      NamaRekAsal: namaRek.get(r.RekAsal) || "",
       NamaRekTujuan: namaRek.get(r.RekTujuan) || "",
       NomorPjt: p ? p.pjt : "",
       TglRealisasi: p ? p.tglRealisasi || "" : "",

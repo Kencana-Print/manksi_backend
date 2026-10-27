@@ -1,6 +1,10 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
+const {
+  assertBkkBelumDiklaim,
+  assertTidakKeKasKlaim,
+} = require("./klaimKasKecilGuardService");
 
 // ── Lookup account header (KAS sesuai cabang) ─────────────────────────
 const getAccountOptions = async (cabang) => {
@@ -234,6 +238,14 @@ const saveData = async (payload, user) => {
     cabang_old,
     detail,
   } = payload;
+
+  // Klaim Kas Kecil: BKK yang sudah diklaim tidak boleh diubah, dan detail
+  // ke kas kecil yang diisi ulang lewat klaim ditolak.
+  if (isEdit) await assertBkkBelumDiklaim(nomor);
+  assertTidakKeKasKlaim(
+    detail.filter((d) => d.uraian && d.rekkode).map((d) => d.rekkode),
+    tanggal,
+  );
 
   // Cek tutup buku — pola sama dengan bkkService.js (browse/delete):
   // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override

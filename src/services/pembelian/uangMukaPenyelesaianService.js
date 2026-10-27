@@ -1,6 +1,10 @@
 const db = require("../../config/database");
 const { ensurePermintaanDana } = require("./pengajuanUangMukaService");
 const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
+const {
+  assertBkkBelumDiklaim,
+  assertTidakKeKasKlaim,
+} = require("../piutang/klaimKasKecilGuardService");
 
 const TANGGAL_MULAI_SISA = "2026-10-22";
 const AMBANG_SISA = 100;
@@ -492,6 +496,9 @@ const saveData = async (payload, user) => {
 
   await cekBatasPenyelesaian(nomor);
 
+  // Klaim Kas Kecil: BKK penyelesaian yang sudah diklaim tidak boleh diubah
+  await assertBkkBelumDiklaim(bonDb.bon_jur_no);
+
   const is_edit = Number(bonDb.bon_selesai) !== 0;
   const no_bkk_lama = bonDb.bon_jur_no || "";
   const cabang = bonDb.bon_cabang;
@@ -516,6 +523,11 @@ const saveData = async (payload, user) => {
         throw new Error(`Account ${d.rekkode} pada "${d.uraian}" tidak aktif.`);
     }
   }
+  // Detail ke kas kecil yang diisi ulang lewat klaim ditolak
+  assertTidakKeKasKlaim(
+    detail.filter((d) => d.verified && d.rekkode).map((d) => d.rekkode),
+    tgl_bkk,
+  );
   // Kasbon yang uangnya sudah ditransfer ke laci saat realisasi: kas
   // penyelesaian wajib laci itu, dan sisa kembali ke laci asal (Finance).
   const modeLaci = !!bonDb.bon_transfer_jur_no;

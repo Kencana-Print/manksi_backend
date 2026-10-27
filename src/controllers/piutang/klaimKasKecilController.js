@@ -1,18 +1,37 @@
 const svc = require("../../services/piutang/klaimKasKecilService");
+const {
+  REK_TUJUAN_PER_CABANG,
+  aksesPenuh,
+} = require("../../services/piutang/klaimKasKecilKonstanta");
 
 const CABANG_PUSAT = ["P01", "HO-"];
 
-// Cabang user dibaca dari token (bukan dari query string).
-// Pusat -> null (boleh lihat semua); cabang lain -> dipaksa ke cabangnya.
-// Gagal tertutup: kalau cabang user tidak terbaca, tolak, jangan anggap pusat.
+// Scope baca. Akses penuh dan pusat -> null (semua cabang);
+// cabang lain -> dipaksa ke cabangnya. Gagal tertutup bila cabang kosong.
 const resolveCabang = (req) => {
-  const c = String(req.user?.cabang || "").trim(); // <-- satu-satunya asumsi, lihat catatan
+  if (aksesPenuh(req.user)) return null;
+  const c = String(req.user?.cabang || "").trim();
   if (!c) {
     const e = new Error("Cabang user tidak diketahui.");
     e.status = 403;
     throw e;
   }
   return CABANG_PUSAT.includes(c) ? null : c;
+};
+
+// Scope batal. Akses penuh -> null (boleh semua); selain itu hanya pemilik
+// cabang terdaftar. Pusat tanpa akses penuh ditolak.
+const scopeBatal = (req) => {
+  if (aksesPenuh(req.user)) return null;
+  const c = String(req.user?.cabang || "").trim();
+  if (!REK_TUJUAN_PER_CABANG[c]) {
+    const e = new Error(
+      "Klaim Kas Kecil hanya dapat dibatalkan oleh user cabang yang terdaftar.",
+    );
+    e.status = 403;
+    throw e;
+  }
+  return c;
 };
 
 const kirimError = (res, err, statusDefault = 500) =>
@@ -45,7 +64,7 @@ const getBrowseDetail = async (req, res) => {
 const batalKlaim = async (req, res) => {
   try {
     const { nomor } = req.params;
-    await svc.batalKlaim(nomor, req.user, resolveCabang(req));
+    await svc.batalKlaim(nomor, req.user, scopeBatal(req));
     res.json({ success: true, message: "Klaim berhasil dibatalkan." });
   } catch (err) {
     kirimError(res, err, 400);
