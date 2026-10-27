@@ -242,6 +242,11 @@ const insentifFormRoutes = require("./routes/penjualan/insentifFormRoutes");
 const jadwalKirimRoutes = require("./routes/penjualan/jadwalKirimRoutes");
 const jadwalKirimFormRoutes = require("./routes/penjualan/jadwalKirimFormRoutes");
 const permintaanDriverRoutes = require("./routes/penjualan/permintaanDriverRoutes");
+const gaPermintaanDriverRoutes = require("./routes/ga/permintaanDriverRoutes");
+const gaKendaraanRoutes = require("./routes/ga/kendaraanRoutes");
+const gaPenggunaRoutes = require("./routes/ga/penggunaRoutes");
+const gaPerawatanRoutes = require("./routes/ga/perawatanRoutes");
+const gaLaporanPengajuanPerbaikanRoutes = require("./routes/ga/laporanPengajuanPerbaikanRoutes");
 
 //Piutang Routes
 const giroRoutes = require("./routes/piutang/penerimaan/giroRoutes");
@@ -753,6 +758,14 @@ app.use("/api/penjualan/insentif/form", insentifFormRoutes);
 app.use("/api/penjualan/jadwal-kirim", jadwalKirimRoutes);
 app.use("/api/penjualan/jadwal-kirim-form", jadwalKirimFormRoutes);
 app.use("/api/penjualan/permintaan-driver", permintaanDriverRoutes);
+app.use("/api/ga/permintaan-driver", gaPermintaanDriverRoutes);
+app.use("/api/ga/master-kendaraan", gaKendaraanRoutes);
+app.use("/api/ga/master-pengguna", gaPenggunaRoutes);
+app.use("/api/ga/perawatan", gaPerawatanRoutes);
+app.use(
+  "/api/ga/laporan-pengajuan-perbaikan",
+  gaLaporanPengajuanPerbaikanRoutes,
+);
 
 app.use("/api/piutang/penerimaan/giro", giroRoutes);
 app.use("/api/piutang/penerimaan/giro-form", giroFormRoutes);
