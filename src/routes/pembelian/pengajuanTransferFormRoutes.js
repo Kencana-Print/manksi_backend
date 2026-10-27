@@ -21,18 +21,6 @@ router.get(
   ctrl.getAccountAll,
 );
 router.get(
-  "/cost-center",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  ctrl.getCostCenterOptions,
-);
-router.get(
-  "/dc-options",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  ctrl.getDcOptions,
-);
-router.get(
   "/supplier-options",
   verifyToken,
   checkPermission(MENU_ID, "view"),

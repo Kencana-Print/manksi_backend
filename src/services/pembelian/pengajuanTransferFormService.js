@@ -619,33 +619,6 @@ const getAccountAll = async (search = "") => {
   return rows;
 };
 
-const getCostCenterOptions = async (search = "") => {
-  const [rows] = await db.query(
-    `
-    SELECT cc_kode AS kode, cc_nama AS nama
-    FROM finance.tcostcenter
-    WHERE cc_nama LIKE ? OR cc_kode LIKE ?
-    ORDER BY cc_nama LIMIT 200
-  `,
-    [`%${search}%`, `%${search}%`],
-  );
-  return rows;
-};
-
-const getDcOptions = async (cckode, search = "") => {
-  const [rows] = await db.query(
-    `
-    SELECT dc_kode AS kode, dc_nama AS nama
-    FROM finance.tcostcenteritem
-    WHERE dc_kode = ?
-      AND (dc_nama LIKE ? OR dc_kode LIKE ?)
-    ORDER BY dc_nama
-  `,
-    [cckode, `%${search}%`, `%${search}%`],
-  );
-  return rows;
-};
-
 // ── Load form edit ────────────────────────────────────────────────────
 const getDetailForm = async (nomor) => {
   const [rows] = await db.query(
@@ -1355,8 +1328,6 @@ const getPrintData = async (nomor) => {
 module.exports = {
   getAccountOptions,
   getAccountAll,
-  getCostCenterOptions,
-  getDcOptions,
   getSupplierOptions,
   getSupplierDetail,
   getRekapVoucherOptions,

@@ -19,26 +19,6 @@ const getAccountAll = async (req, res) => {
   }
 };
 
-const getCostCenterOptions = async (req, res) => {
-  try {
-    const { search } = req.query;
-    const data = await svc.getCostCenterOptions(search);
-    res.json({ success: true, data });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
-const getDcOptions = async (req, res) => {
-  try {
-    const { cckode, search } = req.query;
-    const data = await svc.getDcOptions(cckode, search);
-    res.json({ success: true, data });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
-
 const getSupplierOptions = async (req, res) => {
   try {
     const { search } = req.query;
@@ -193,8 +173,6 @@ const getPrintData = async (req, res) => {
 module.exports = {
   getAccountOptions,
   getAccountAll,
-  getCostCenterOptions,
-  getDcOptions,
   getSupplierOptions,
   getSupplierDetail,
   getRekapVoucherOptions,
