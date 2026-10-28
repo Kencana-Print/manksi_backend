@@ -14,7 +14,7 @@ const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
 
 const PREFIX_NOMOR = "LHK-K";
 const NOMOR_LOCK = "lhk_koli_nomor";
-const MAKS_KOLI = 999;
+const MAKS_KOLI = 9999;
 
 const SUMBER_SPK = `
   SELECT spk_nomor, spk_nama, spk_jumlah,
