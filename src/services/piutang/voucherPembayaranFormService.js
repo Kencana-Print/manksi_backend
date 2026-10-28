@@ -1,6 +1,7 @@
 const db = require("../../config/database");
 const { getRekap } = require("../laporan/marketing/rekapPenawaranService");
 const tutupBukuService = require("../tutupBukuService");
+const { assertVoucherTidakDiRekap } = require("./rekapVoucherGuardService");
 const {
   JENIS_PO_BAHAN,
   LABEL_JENIS_PO,
@@ -905,6 +906,7 @@ const getRekapTersedia = async (supKode) => {
      FROM trekap_bayar_dtl d
      INNER JOIN trekap_bayar_hdr h ON h.rkb_nomor = d.rkbd_nomor
      WHERE d.rkbd_sup_kode = ? AND d.rkbd_vou_nomor = ''
+       AND d.rkbd_tipe <> 'VOU'
        AND h.rkb_status = 'AKTIF'
      ORDER BY d.rkbd_faktur_pajak = '', d.rkbd_faktur_pajak,
               h.rkb_tanggal DESC, d.rkbd_nomor, d.rkbd_nourut`,
@@ -979,6 +981,7 @@ const save = async (payload, userKode) => {
     const sudahRealisasi = await cekStatusRealisasi(nomor);
     if (sudahRealisasi)
       throw new Error("Voucher ini sudah di realisasi, tidak bisa di edit.");
+    await assertVoucherTidakDiRekap(nomor);
   }
 
   if (!supKode) throw new Error("Supplier belum diisi.");
@@ -1229,7 +1232,7 @@ const save = async (payload, userKode) => {
     );
     const [lama] = await conn.query(
       `SELECT rkbd_nomor, rkbd_nourut, rkbd_tipe, rkbd_nota
-       FROM trekap_bayar_dtl WHERE rkbd_vou_nomor = ?`,
+       FROM trekap_bayar_dtl WHERE rkbd_vou_nomor = ? AND rkbd_tipe <> 'VOU'`,
       [anomor],
     );
     for (const r of lama) {
@@ -1460,6 +1463,16 @@ const saveRealisasi = async (payload, userKode) => {
         ],
       );
     } else {
+      const [dariPjt] = await conn.query(
+        `SELECT vou_link FROM bayar_debet_detail
+         WHERE nomor = ? AND IFNULL(vou_link, '') <> '' LIMIT 1`,
+        [nomor],
+      );
+      if (dariPjt.length) {
+        throw new Error(
+          `Pembayaran ini dibuat dari Pengajuan Transfer ${dariPjt[0].vou_link}. Ubah lewat Pengajuan Transfer.`,
+        );
+      }
       await conn.query(
         `UPDATE bayar_debet
          SET tanggal=?, tanggal_tempo=?, account=?, total=?
@@ -1478,6 +1491,16 @@ const saveRealisasi = async (payload, userKode) => {
     await conn.query(`DELETE FROM bayar_debet_detail WHERE nomor = ?`, [
       finalNomor,
     ]);
+    const [dipakaiLain] = await conn.query(
+      `SELECT vou_nomor, nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor IN (?) AND nomor <> ? LIMIT 1`,
+      [detail.map((d) => d.vouNomor).concat(["-"]), finalNomor],
+    );
+    if (dipakaiLain.length) {
+      throw new Error(
+        `Voucher ${dipakaiLain[0].vou_nomor} sudah ada di pembayaran ${dipakaiLain[0].vou_link || dipakaiLain[0].nomor}.`,
+      );
+    }
     for (const d of detail) {
       await conn.query(
         `INSERT INTO bayar_debet_detail (nomor, vou_nomor, nilai)
@@ -1506,6 +1529,16 @@ const hapusRealisasi = async (nomor) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    const [dariPjt] = await conn.query(
+      `SELECT vou_link FROM bayar_debet_detail
+       WHERE nomor = ? AND IFNULL(vou_link, '') <> '' LIMIT 1`,
+      [nomor],
+    );
+    if (dariPjt.length) {
+      throw new Error(
+        `Pembayaran ini dibuat dari Pengajuan Transfer ${dariPjt[0].vou_link}. Batalkan lewat Pengajuan Transfer.`,
+      );
+    }
     await conn.query(
       `UPDATE tvoucher_hdr h
        INNER JOIN bayar_debet_detail d ON d.vou_nomor = h.vou_nomor

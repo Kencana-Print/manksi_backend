@@ -391,6 +391,298 @@ const validasiPoLain = async (conn, detail) => {
   }
 };
 
+// ── Validasi voucher di server ────────────────────────────────────────
+// Baris VOU bisa diketik manual dan lookup F2/F7 hanya saran, jadi server
+// harus memastikan: voucher ada, supplier cocok, nominal tidak melebihi sisa
+// voucher, dan voucher belum dipakai Pengajuan Transfer lain. Dipanggil di
+// dalam transaksi (mode baru/edit); link milik pengajuan ini sendiri tidak
+// dihitung. `<=>` karena vou_link data lama bisa NULL.
+const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
+  SELECT SUM(voud2_harga * voud2_jumlah)
+  FROM tvoucher_dtl2
+  WHERE voud2_vou_nomor = h.vou_nomor
+), 0)`;
+
+const validasiVoucher = async (conn, detail, nomorPjt) => {
+  const baris = detail.filter(
+    (d) =>
+      d.nama &&
+      !d.jurnal &&
+      !d.batal &&
+      String(d.trs || "")
+        .trim()
+        .startsWith("VOU"),
+  );
+  if (!baris.length) return;
+
+  const daftar = [...new Set(baris.map((d) => String(d.trs).trim()))];
+  const [vou] = await conn.query(
+    `SELECT h.vou_nomor AS nomor, h.vou_sup_kode AS sup,
+            ${SQL_NOMINAL_VOUCHER} AS nominal
+     FROM tvoucher_hdr h
+     WHERE h.vou_nomor IN (?)`,
+    [daftar],
+  );
+  const peta = new Map(vou.map((v) => [v.nomor.toUpperCase(), v]));
+
+  const [lain] = await conn.query(
+    `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+     WHERE vou_nomor IN (?) AND NOT (vou_link <=> ?)`,
+    [vou.map((v) => v.nomor).concat(["-"]), nomorPjt],
+  );
+  const dipakai = new Map(lain.map((r) => [r.vou_nomor, r.vou_link]));
+
+  const diForm = new Set();
+  for (const d of baris) {
+    const v = peta.get(String(d.trs).trim().toUpperCase());
+    if (!v) throw new Error(`Voucher ${d.trs} tidak ditemukan.`);
+    if (diForm.has(v.nomor))
+      throw new Error(`Voucher ${v.nomor} diinput lebih dari satu kali.`);
+    diForm.add(v.nomor);
+
+    if (dipakai.has(v.nomor)) {
+      const link = dipakai.get(v.nomor);
+      throw new Error(
+        `Voucher ${v.nomor} sudah dibayar/diajukan${link ? ` di ${link}` : ""}.`,
+      );
+    }
+    if (String(d.kode || "").trim() !== String(v.sup || "").trim())
+      throw new Error(
+        `Supplier baris ${v.nomor} tidak sama dengan supplier voucher (${v.sup}).`,
+      );
+    const nominal = Number(d.nominal) || 0;
+    if (!(nominal > 0))
+      throw new Error(`Nominal baris ${v.nomor} harus lebih dari 0.`);
+    if (nominal > Number(v.nominal) + 0.005)
+      throw new Error(
+        `Nominal ${v.nomor} melebihi sisa voucher (${Number(v.nominal).toLocaleString("id-ID")}).`,
+      );
+    d.trs = v.nomor;
+  }
+};
+
+// Baris PJT dibatalkan: voucher dilepas supaya bisa diajukan lagi, dan total
+// bayar_debet disesuaikan.
+const lepasVoucherBaris = async (conn, nomorPjt, nourut) => {
+  const [[row]] = await conn.query(
+    `SELECT d.ptd_trs AS trs, h.pth_byrvoucher AS byr
+     FROM finance.tpengajuan_transfer_dtl d
+     INNER JOIN finance.tpengajuan_transfer_hdr h ON h.pth_nomor = d.ptd_nomor
+     WHERE d.ptd_nomor = ? AND d.ptd_nourut = ?`,
+    [nomorPjt, nourut],
+  );
+  const vou = String(row?.trs || "");
+  if (!vou.startsWith("VOU")) return;
+  await conn.query(
+    `DELETE FROM bayar_debet_detail WHERE vou_link = ? AND vou_nomor = ?`,
+    [nomorPjt, vou],
+  );
+  if (row.byr) {
+    await conn.query(
+      `UPDATE bayar_debet
+       SET total = (SELECT IFNULL(SUM(nilai), 0) FROM bayar_debet_detail
+                    WHERE nomor = ?)
+       WHERE nomor = ?`,
+      [row.byr, row.byr],
+    );
+  }
+};
+
+// Kebalikan lepasVoucherBaris: baris yang batalnya dibatalkan ("Gak Jadi")
+// menautkan voucher lagi. Ditolak bila voucher sudah dipakai pengajuan lain.
+const pasangVoucherBaris = async (conn, nomorPjt, nourut, userKode) => {
+  const [[row]] = await conn.query(
+    `SELECT d.ptd_trs AS trs, d.ptd_nominal AS nominal,
+            h.pth_byrvoucher AS byr, h.pth_rek_kode AS rek,
+            DATE_FORMAT(h.pth_tanggal, '%Y-%m-%d') AS tanggal
+     FROM finance.tpengajuan_transfer_dtl d
+     INNER JOIN finance.tpengajuan_transfer_hdr h ON h.pth_nomor = d.ptd_nomor
+     WHERE d.ptd_nomor = ? AND d.ptd_nourut = ?`,
+    [nomorPjt, nourut],
+  );
+  const vou = String(row?.trs || "");
+  if (!vou.startsWith("VOU")) return;
+
+  const [ada] = await conn.query(
+    `SELECT vou_link FROM bayar_debet_detail WHERE vou_nomor = ? LIMIT 1`,
+    [vou],
+  );
+  if (ada.length)
+    throw new Error(
+      `Voucher ${vou} sudah dipakai${ada[0].vou_link ? ` di ${ada[0].vou_link}` : ""}, pembatalan baris ini tidak bisa dibatalkan.`,
+    );
+
+  let byr = row.byr || "";
+  if (!byr) {
+    byr = await getVoucherNomor(row.tanggal, conn);
+    await conn.query(
+      `INSERT INTO bayar_debet
+         (nomor, kode, account, tanggal, tanggal_tempo, total, kodeuser)
+       VALUES (?, 'BT', ?, ?, ?, 0, ?)
+       ON DUPLICATE KEY UPDATE total = total`,
+      [byr, row.rek, row.tanggal, row.tanggal, userKode],
+    );
+    await conn.query(
+      `UPDATE finance.tpengajuan_transfer_hdr SET pth_byrvoucher = ?
+       WHERE pth_nomor = ?`,
+      [byr, nomorPjt],
+    );
+  }
+  await conn.query(
+    `INSERT INTO bayar_debet_detail (nomor, vou_nomor, vou_link, nilai)
+     VALUES (?, ?, ?, ?)`,
+    [byr, vou, nomorPjt, Number(row.nominal) || 0],
+  );
+  await conn.query(
+    `UPDATE bayar_debet
+     SET total = (SELECT IFNULL(SUM(nilai), 0) FROM bayar_debet_detail
+                  WHERE nomor = ?)
+     WHERE nomor = ?`,
+    [byr, byr],
+  );
+};
+
+// Samakan ptd_batal baris belum-realisasi dengan form (termasuk "Gak Jadi",
+// yang sebelumnya tidak pernah tersimpan) dan atur link voucher mengikutinya.
+const selaraskanBatal = async (conn, nomorPjt, d, userKode) => {
+  const [[cur]] = await conn.query(
+    `SELECT ptd_batal AS batal FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+    [nomorPjt, d.nourut],
+  );
+  const lama = String(cur?.batal || "");
+  const baru = String(d.batal || "");
+  if (lama === baru) return;
+  await conn.query(
+    `UPDATE finance.tpengajuan_transfer_dtl SET ptd_batal = ?
+     WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+    [baru, nomorPjt, d.nourut],
+  );
+  if (baru && !lama) await lepasVoucherBaris(conn, nomorPjt, d.nourut);
+  else if (!baru && lama)
+    await pasangVoucherBaris(conn, nomorPjt, d.nourut, userKode);
+};
+
+// ── Panggil Rekap Pembayaran ──────────────────────────────────────────
+// Daftar rekap AKTIF yang masih punya voucher belum masuk pengajuan.
+const getRekapPanggilOptions = async (search = "") => {
+  const kata = `%${String(search || "").trim()}%`;
+  const [rows] = await db.query(
+    `SELECT h.rkb_nomor AS nomor,
+            DATE_FORMAT(h.rkb_tanggal,'%Y-%m-%d') AS tanggal,
+            IFNULL(h.rkb_keterangan,'') AS keterangan,
+            d.rkbd_vou_nomor AS vou, d.rkbd_nominal AS nominal
+     FROM trekap_bayar_hdr h
+     INNER JOIN trekap_bayar_dtl d
+       ON d.rkbd_nomor = h.rkb_nomor AND d.rkbd_vou_nomor <> ''
+     WHERE h.rkb_status = 'AKTIF'
+       AND (h.rkb_nomor LIKE ? OR h.rkb_keterangan LIKE ?)
+     ORDER BY h.rkb_nomor DESC`,
+    [kata, kata],
+  );
+  if (!rows.length) return [];
+
+  const [bayar] = await db.query(
+    `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
+    [[...new Set(rows.map((r) => r.vou))]],
+  );
+  const terpakai = new Set(bayar.map((r) => r.vou_nomor));
+
+  const peta = new Map();
+  for (const r of rows) {
+    if (terpakai.has(r.vou)) continue;
+    const g = peta.get(r.nomor) || {
+      nomor: r.nomor,
+      tanggal: r.tanggal,
+      keterangan: r.keterangan,
+      jumlah: 0,
+      total: 0,
+    };
+    g.jumlah += 1;
+    g.total += Number(r.nominal) || 0;
+    peta.set(r.nomor, g);
+  }
+  return [...peta.values()].slice(0, 100);
+};
+
+// Baris siap pakai untuk grid PJT dari satu rekap. Nominal dihitung ulang
+// dari voucher. Rekening = rekening pertama di master supplier; bila
+// supplier punya lebih dari satu rekening atau tidak punya, baris diberi
+// tanda supaya Finance memeriksa (ganti lewat pilihan rekening di grid).
+const getRekapPanggilRows = async (rekapNomor) => {
+  const nomor = String(rekapNomor || "").trim();
+  const [[hdr]] = await db.query(
+    `SELECT rkb_status AS status FROM trekap_bayar_hdr WHERE rkb_nomor = ?`,
+    [nomor],
+  );
+  if (!hdr) throw new Error("Rekap pembayaran tidak ditemukan.");
+  if (hdr.status !== "AKTIF")
+    throw new Error("Rekap pembayaran sudah dibatalkan.");
+
+  const [rekap] = await db.query(
+    `SELECT rkbd_vou_nomor AS vou FROM trekap_bayar_dtl
+     WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> ''
+     ORDER BY rkbd_nourut`,
+    [nomor],
+  );
+  if (!rekap.length) return [];
+  const urutan = rekap.map((r) => r.vou);
+
+  const [bayar] = await db.query(
+    `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
+    [urutan],
+  );
+  const terpakai = new Set(bayar.map((r) => r.vou_nomor));
+  const sisa = urutan.filter((v) => !terpakai.has(v));
+  if (!sisa.length) return [];
+
+  const [vou] = await db.query(
+    `SELECT h.vou_nomor AS nomor, h.vou_sup_kode AS supKode,
+            IFNULL(s.sup_nama, '') AS supNama,
+            ${SQL_NOMINAL_VOUCHER} AS nominal
+     FROM tvoucher_hdr h
+     LEFT JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
+     WHERE h.vou_nomor IN (?)`,
+    [sisa],
+  );
+  const petaVou = new Map(vou.map((v) => [v.nomor, v]));
+
+  const [bank] = await db.query(
+    `SELECT supd_kode AS kode, supd_bank AS bank, supd_rekening AS rekening,
+            supd_atasnama AS atasnama
+     FROM tsupplieritem
+     WHERE supd_kode IN (?)
+     ORDER BY supd_kode, supd_bank`,
+    [[...new Set(vou.map((v) => v.supKode))].concat(["-"])],
+  );
+  const petaBank = new Map();
+  for (const b of bank) {
+    const arr = petaBank.get(b.kode) || [];
+    arr.push(b);
+    petaBank.set(b.kode, arr);
+  }
+
+  return sisa
+    .map((no) => petaVou.get(no))
+    .filter((v) => v && Number(v.nominal) > 0.005)
+    .map((v) => {
+      const daftar = petaBank.get(v.supKode) || [];
+      const b = daftar[0];
+      return {
+        trs: v.nomor,
+        kode: v.supKode,
+        nama: v.supNama,
+        bank: b?.bank || "",
+        rekening: b?.rekening || "",
+        atasnama: b?.atasnama || "",
+        nominal: Number(v.nominal),
+        rekapNomor: nomor,
+        cekRekening:
+          daftar.length === 0 ? "KOSONG" : daftar.length > 1 ? "BANYAK" : "",
+      };
+    });
+};
+
 // Supplier tujuan klaim per kas (master tsupplier + rekening pertama).
 // Bila supplier punya lebih dari satu rekening, dipakai yang pertama
 // berdasarkan nama bank.
@@ -892,6 +1184,7 @@ const saveData = async (payload, user) => {
             await conn.query(`DELETE FROM finance.tjurnal WHERE jur_no = ?`, [
               d.jurnal,
             ]);
+            if (d.batal) await lepasVoucherBaris(conn, nomor, d.nourut);
           } else {
             // Delphi: realisasi diubah → update dtl + update jurnal BBK
             await conn.query(
@@ -1041,6 +1334,7 @@ const saveData = async (payload, user) => {
           }
         } else {
           // ── Realisasi baru ──
+          await selaraskanBatal(conn, nomor, d, user.kode);
           if (d.tglRealisasi) {
             noj++;
             const jurnalNomor = await getJurnalNomor(conn, noj);
@@ -1196,15 +1490,6 @@ const saveData = async (payload, user) => {
                 [noMasuk, d.nominal, rek_kode],
               );
             }
-          } else if (d.batal) {
-            // Delphi: tidak ada tglRealisasi tapi ada batal → update batal saja
-            await conn.query(
-              `
-              UPDATE finance.tpengajuan_transfer_dtl SET ptd_batal = ?
-              WHERE ptd_nomor = ? AND ptd_nourut = ?
-            `,
-              [d.batal, nomor, d.nourut],
-            );
           }
         }
       }
@@ -1254,14 +1539,27 @@ const saveData = async (payload, user) => {
     await validasiPoLain(conn, detail);
     await validasiKlaimKasKecil(conn, detail, rek_kode, actualNomor);
     await assertSupplierKlaimHanyaLewatKlaim(conn, detail, tanggal);
+    await validasiVoucher(conn, detail, actualNomor);
 
     // Delphi: delete link voucher & po external lama
     await conn.query(`DELETE FROM tpoexternal_dtl2 WHERE poed2_link = ?`, [
       actualNomor,
     ]);
-    await conn.query(`DELETE FROM bayar_debet_detail WHERE vou_link = ?`, [
-      actualNomor,
-    ]);
+    // Link voucher baris yang sudah direalisasi (masih ada di dtl setelah
+    // delete di atas) dipertahankan, kalau tidak voucher itu bisa dibayar lagi.
+    const [vouRealisasi] = await conn.query(
+      `SELECT ptd_trs FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_nomor = ? AND ptd_jur_no <> '' AND ptd_batal = ''
+         AND ptd_trs LIKE 'VOU%'`,
+      [actualNomor],
+    );
+    await conn.query(
+      `DELETE FROM bayar_debet_detail
+       WHERE vou_link = ?${vouRealisasi.length ? " AND vou_nomor NOT IN (?)" : ""}`,
+      vouRealisasi.length
+        ? [actualNomor, vouRealisasi.map((r) => r.ptd_trs)]
+        : [actualNomor],
+    );
 
     // Get nourut existing
     const [[maxNourut]] = await conn.query(
@@ -1276,7 +1574,7 @@ const saveData = async (payload, user) => {
     // Delphi: xRpVou — total nominal VOU
     let xRpVou = 0;
     for (const d of detail) {
-      if (d.nama && d.trs && d.trs.startsWith("VOU")) {
+      if (d.nama && d.trs && d.trs.startsWith("VOU") && !d.batal) {
         xRpVou += Number(d.nominal) || 0;
       }
     }
@@ -1312,7 +1610,7 @@ const saveData = async (payload, user) => {
       );
 
       // Delphi: link voucher (trs prefix VOU)
-      if ((d.trs || "").startsWith("VOU")) {
+      if ((d.trs || "").startsWith("VOU") && !d.batal) {
         if (!vouInserted) {
           vouNomor =
             payload.byrvoucher || (await getVoucherNomor(tanggal, conn));
@@ -1413,6 +1711,8 @@ module.exports = {
   getSupplierOptions,
   getSupplierDetail,
   getRekapVoucherOptions,
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,

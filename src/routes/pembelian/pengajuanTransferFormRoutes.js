@@ -45,6 +45,18 @@ router.get(
   ctrl.getRekapVoucherOptions,
 );
 router.get(
+  "/rekap-panggil-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapPanggilOptions,
+);
+router.get(
+  "/rekap-panggil-rows",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapPanggilRows,
+);
+router.get(
   "/poexternal-options",
   verifyToken,
   checkPermission(MENU_ID, "view"),

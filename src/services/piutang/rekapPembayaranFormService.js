@@ -74,6 +74,16 @@ const isTanggal = (t) => {
 
 const isBulan = (b) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b || ""));
 
+// Baris Rekap yang langsung memilih voucher yang sudah ada (bukan nota).
+// rkbd_nota dan rkbd_vou_nomor sama-sama berisi nomor voucher.
+const TIPE_VOUCHER = "VOU";
+// Nominal bersih voucher: sama dengan Pengajuan Transfer (F2)
+const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
+  SELECT SUM(voud2_harga * voud2_jumlah)
+  FROM tvoucher_dtl2
+  WHERE voud2_vou_nomor = h.vou_nomor
+), 0)`;
+
 // ── Lookup ────────────────────────────────────────────────────────────
 const searchSupplier = (search = "") => voucherForm.searchSupplier(search);
 
@@ -267,7 +277,110 @@ const getTagihan = async (supKode, startDate, endDate, excludeNomor = "") => {
   return hasil;
 };
 
-// ── Ambil satu (edit + print) ─────────────────────────────────────────
+// ── Voucher untuk dipilih langsung ke Rekap ───────────────────────────
+// Belum dibayar/diajukan (bayar_debet_detail) dan belum ada di baris Rekap
+// AKTIF mana pun. Baris VOU milik rekap yang sedang diedit tidak dihitung
+// sebagai terpakai (form sendiri yang mencegah duplikat di layar).
+const getVoucherOptions = async (search = "", excludeNomor = "") => {
+  const [terpakai] = await db.query(
+    `SELECT DISTINCT d.rkbd_vou_nomor AS vou
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr h
+       ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+     WHERE d.rkbd_vou_nomor <> ''
+       AND NOT (d.rkbd_nomor = ? AND d.rkbd_tipe = ?)`,
+    [excludeNomor || "", TIPE_VOUCHER],
+  );
+  const dikecualikan = new Set(terpakai.map((r) => r.vou));
+
+  const kata = `%${String(search || "").trim()}%`;
+  const [rows] = await db.query(
+    `SELECT h.vou_nomor AS nomor,
+            DATE_FORMAT(h.vou_tanggal, '%Y-%m-%d') AS tanggal,
+            h.vou_sup_kode AS supKode,
+            s.sup_nama AS supplier,
+            IFNULL(h.vou_keterangan, '') AS keterangan,
+            ${SQL_NOMINAL_VOUCHER} AS nominal
+     FROM tvoucher_hdr h
+     INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
+     WHERE NOT EXISTS (
+         SELECT 1 FROM bayar_debet_detail b WHERE b.vou_nomor = h.vou_nomor
+       )
+       AND (h.vou_nomor LIKE ? OR s.sup_nama LIKE ? OR h.vou_keterangan LIKE ?)
+     ORDER BY h.vou_tanggal DESC, h.vou_nomor DESC
+     LIMIT 500`,
+    [kata, kata, kata],
+  );
+
+  return rows
+    .filter((r) => !dikecualikan.has(r.nomor) && Number(r.nominal) > 0.005)
+    .slice(0, 200)
+    .map((r) => ({
+      ...r,
+      nominal: round2(r.nominal),
+      kategori: kategoriDari(TIPE_VOUCHER),
+      kategoriUrut: urutanKategori(TIPE_VOUCHER),
+    }));
+};
+
+// Data voucher dari server (sumber kebenaran saat simpan): nomor kanonik,
+// tanggal, supplier, nominal bersih. Kunci peta = nomor huruf besar.
+const ambilVoucherBanyak = async (nomors) => {
+  if (!nomors.length) return new Map();
+  const [rows] = await db.query(
+    `SELECT h.vou_nomor AS nomor,
+            DATE_FORMAT(h.vou_tanggal, '%Y-%m-%d') AS tanggal,
+            h.vou_sup_kode AS supKode,
+            ${SQL_NOMINAL_VOUCHER} AS nominal
+     FROM tvoucher_hdr h
+     WHERE h.vou_nomor IN (?)`,
+    [nomors],
+  );
+  return new Map(
+    rows.map((r) => [
+      r.nomor.toUpperCase(),
+      {
+        nomor: r.nomor,
+        tanggal: r.tanggal || "",
+        supKode: String(r.supKode || "").trim(),
+        nominal: round2(r.nominal),
+      },
+    ]),
+  );
+};
+
+// Voucher yang mau dimasukkan belum boleh dibayar/diajukan atau ada di rekap
+// aktif lain (termasuk baris transaksi yang menghasilkan voucher itu).
+const cekVoucherBebas = async (nomors, nomorEdit) => {
+  if (!nomors.length) return;
+  const [bayar] = await db.query(
+    `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+     WHERE vou_nomor IN (?) LIMIT 1`,
+    [nomors],
+  );
+  if (bayar.length) {
+    throw new Error(
+      `Voucher ${bayar[0].vou_nomor} sudah dibayar/diajukan${bayar[0].vou_link ? ` (${bayar[0].vou_link})` : ""}.`,
+    );
+  }
+  const [rekap] = await db.query(
+    `SELECT d.rkbd_vou_nomor AS vou, d.rkbd_nomor AS rekap
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr h
+       ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+     WHERE d.rkbd_vou_nomor IN (?)
+       AND NOT (d.rkbd_nomor = ? AND d.rkbd_tipe = ?)
+     LIMIT 1`,
+    [nomors, nomorEdit || "", TIPE_VOUCHER],
+  );
+  if (rekap.length) {
+    throw new Error(
+      `Voucher ${rekap[0].vou} sudah ada di rekap ${rekap[0].rekap}.`,
+    );
+  }
+};
+
+// ── Ambil satu (edit + print) ─────────────────────────────------
 const getById = async (nomor) => {
   const [[h]] = await db.query(
     `SELECT h.rkb_nomor AS nomor,
@@ -304,12 +417,25 @@ const getById = async (nomor) => {
      ORDER BY d.rkbd_nourut`,
     [nomor],
   );
+  // Voucher yang sudah masuk Pengajuan Transfer: nomor PJT-nya ("-" bila
+  // tercatat tanpa link). Baris VOU dengan pjtNomor tidak bisa diubah/dihapus.
+  const vouRows = [...new Set(rows.map((r) => r.vouNomor).filter(Boolean))];
+  const petaPjt = new Map();
+  if (vouRows.length) {
+    const [pj] = await db.query(
+      `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor IN (?)`,
+      [vouRows],
+    );
+    for (const p of pj) petaPjt.set(p.vou_nomor, p.vou_link || "-");
+  }
   const detail = rows.map((r) => ({
     ...r,
     nilaiNota: Number(r.nilaiNota),
     nominal: Number(r.nominal),
     kategori: kategoriDari(r.tipe),
     kategoriUrut: urutanKategori(r.tipe),
+    pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
   }));
   return {
     ...h,
@@ -333,7 +459,12 @@ const generateNomor = async (conn, tahun) => {
 };
 
 // ── Validasi + normalisasi isi rekap ──────────────────────────────────
-const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
+const siapkanData = async (
+  payload,
+  nomorEdit,
+  bolehKosong = false,
+  kunciVou = new Set(),
+) => {
   const { tanggal, keterangan, detail } = payload;
 
   if (!isTanggal(tanggal)) {
@@ -351,6 +482,17 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
   const infoCache = new Map();
   const baris = [];
 
+  // Voucher yang dipilih langsung (tipe VOU): data diambil dari server
+  const petaVou = await ambilVoucherBanyak([
+    ...new Set(
+      detail
+        .filter((x) => String(x?.tipe || "").toUpperCase() === TIPE_VOUCHER)
+        .map((x) => String(x.nota || "").trim())
+        .filter(Boolean),
+    ),
+  ]);
+  const vouDiForm = new Set();
+
   for (let i = 0; i < detail.length; i++) {
     const d = detail[i] || {};
     const no = i + 1;
@@ -362,10 +504,11 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
     if (!supKode && !tipe && !nota) {
       continue; // baris kosong dilewati
     }
-    if (!supKode || !tipe || !nota) {
+    const adalahVoucher = tipe === TIPE_VOUCHER;
+    if (!tipe || !nota || (!adalahVoucher && !supKode)) {
       throw new Error(`Baris ${no}: supplier, tipe, dan nota harus diisi.`);
     }
-    if (!supValid.has(supKode)) {
+    if (!adalahVoucher && !supValid.has(supKode)) {
       try {
         await voucherForm.getSupplier(supKode);
       } catch (e) {
@@ -373,12 +516,12 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
       }
       supValid.add(supKode);
     }
-    if (!isBulan(d.bulanTagihan)) {
+    if (!adalahVoucher && !isBulan(d.bulanTagihan)) {
       throw new Error(`Baris ${no}: bulan tagihan tidak valid (YYYY-MM).`);
     }
 
     const nominal = round2(Math.abs(Number(d.nominal)));
-    if (!(nominal > 0)) {
+    if (!adalahVoucher && !(nominal > 0)) {
       throw new Error(`Baris ${no}: nominal harus lebih dari 0.`);
     }
     const tglRencana = d.tglRencana ? String(d.tglRencana) : null;
@@ -396,6 +539,39 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
     }
     if (ketBaris.length > 200) {
       throw new Error(`Baris ${no}: keterangan maksimal 200 karakter.`);
+    }
+
+    if (adalahVoucher) {
+      const v = petaVou.get(nota.toUpperCase());
+      if (!v) {
+        throw new Error(`Baris ${no}: voucher ${nota} tidak ditemukan.`);
+      }
+      if (kunciVou.has(v.nomor)) {
+        continue; // sudah masuk Pengajuan Transfer: baris lama dipertahankan
+      }
+      if (vouDiForm.has(v.nomor)) {
+        throw new Error(`Baris ${no}: voucher ${v.nomor} diinput dua kali.`);
+      }
+      vouDiForm.add(v.nomor);
+      if (!(v.nominal > 0.005)) {
+        throw new Error(`Baris ${no}: nominal voucher ${v.nomor} nol.`);
+      }
+      // Supplier dan nominal selalu dari voucher, bukan dari payload
+      baris.push({
+        supKode: v.supKode,
+        bulanTagihan: isBulan(d.bulanTagihan)
+          ? String(d.bulanTagihan)
+          : v.tanggal.slice(0, 7),
+        tipe,
+        voucher: true,
+        info: { nomor: v.nomor, tanggal: v.tanggal, sisaNota: v.nominal },
+        nominal: v.nominal,
+        tglRencana,
+        faktur,
+        invoice,
+        ketBaris,
+      });
+      continue;
     }
 
     const cacheKey = `${tipe}|${nota.toUpperCase()}|${supKode}`;
@@ -429,6 +605,9 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
   // Total per nota (nota yang sama boleh muncul lebih dari sekali, mis. cicilan)
   const totalPerNota = new Map();
   for (const b of baris) {
+    if (b.voucher) {
+      continue;
+    }
     const key = `${b.tipe}|${b.info.nomor}`;
     const cur = totalPerNota.get(key) || { total: 0, info: b.info };
     cur.total += b.nominal;
@@ -448,6 +627,10 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
   }
 
   await cekBentrokPobBpb(baris, nomorEdit);
+  await cekVoucherBebas(
+    baris.filter((b) => b.voucher).map((b) => b.info.nomor),
+    nomorEdit,
+  );
 
   return { ket, baris };
 };
@@ -588,6 +771,7 @@ const save = async (payload, userKode, nomorEdit = "") => {
     lockDiambil = true;
 
     let adaTerkunci = false;
+    let kunciVou = new Set();
 
     if (nomorEdit) {
       const [[cur]] = await conn.query(
@@ -600,15 +784,37 @@ const save = async (payload, userKode, nomorEdit = "") => {
       if (cur.rkb_status !== "AKTIF") {
         throw new Error("Rekap yang sudah dibatalkan tidak dapat diubah.");
       }
-      const [[k]] = await conn.query(
-        `SELECT COUNT(*) AS n FROM trekap_bayar_dtl
+      // Baris transaksi yang sudah divoucher selalu terkunci. Baris VOU hanya
+      // terkunci bila vouchernya sudah masuk Pengajuan Transfer.
+      const [terkait] = await conn.query(
+        `SELECT rkbd_vou_nomor AS vou, rkbd_tipe AS tipe FROM trekap_bayar_dtl
          WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> ''`,
         [nomorEdit],
       );
-      adaTerkunci = Number(k.n) > 0;
+      let terpakaiVou = new Set();
+      if (terkait.length) {
+        const [pj] = await conn.query(
+          `SELECT DISTINCT vou_nomor FROM bayar_debet_detail
+           WHERE vou_nomor IN (?)`,
+          [terkait.map((r) => r.vou)],
+        );
+        terpakaiVou = new Set(pj.map((r) => r.vou_nomor));
+      }
+      kunciVou = new Set(
+        terkait
+          .filter((r) => r.tipe === TIPE_VOUCHER && terpakaiVou.has(r.vou))
+          .map((r) => r.vou),
+      );
+      adaTerkunci =
+        terkait.some((r) => r.tipe !== TIPE_VOUCHER) || kunciVou.size > 0;
     }
 
-    const { ket, baris } = await siapkanData(payload, nomorEdit, adaTerkunci);
+    const { ket, baris } = await siapkanData(
+      payload,
+      nomorEdit,
+      adaTerkunci,
+      kunciVou,
+    );
     const peringatan = await cariPeringatan(baris, nomorEdit);
 
     await conn.beginTransaction();
@@ -626,6 +832,15 @@ const save = async (payload, userKode, nomorEdit = "") => {
       await conn.query(
         `DELETE FROM trekap_bayar_dtl WHERE rkbd_nomor = ? AND rkbd_vou_nomor = ''`,
         [nomorEdit],
+      );
+      // Baris VOU yang belum dipakai ikut diganti isi form; yang sudah dipakai
+      // Pengajuan Transfer tetap.
+      await conn.query(
+        `DELETE FROM trekap_bayar_dtl
+         WHERE rkbd_nomor = ? AND rkbd_tipe = ?${kunciVou.size ? " AND rkbd_vou_nomor NOT IN (?)" : ""}`,
+        kunciVou.size
+          ? [nomorEdit, TIPE_VOUCHER, [...kunciVou]]
+          : [nomorEdit, TIPE_VOUCHER],
       );
     } else {
       nomor = await generateNomor(conn, payload.tanggal.substring(0, 4));
@@ -654,8 +869,8 @@ const save = async (payload, userKode, nomorEdit = "") => {
            (rkbd_nomor, rkbd_nourut, rkbd_sup_kode, rkbd_bulan_tagihan,
             rkbd_tipe, rkbd_nota, rkbd_tgl_nota, rkbd_nilai_nota,
             rkbd_nominal, rkbd_tgl_rencana, rkbd_faktur_pajak,
-            rkbd_invoice, rkbd_keterangan)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            rkbd_invoice, rkbd_keterangan, rkbd_vou_nomor)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           nomor,
           urut,
@@ -670,6 +885,7 @@ const save = async (payload, userKode, nomorEdit = "") => {
           b.faktur,
           b.invoice,
           b.ketBaris,
+          b.voucher ? b.info.nomor : "",
         ],
       );
     }
@@ -699,6 +915,7 @@ module.exports = {
   searchNota,
   getInfoNota,
   getTagihan,
+  getVoucherOptions,
   getById,
   save,
 };

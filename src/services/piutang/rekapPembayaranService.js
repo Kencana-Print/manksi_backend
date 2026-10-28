@@ -73,11 +73,56 @@ const getBrowseDetail = async (startDate, endDate) => {
      ORDER BY h.rkb_tanggal DESC, h.rkb_nomor DESC, d.rkbd_nourut`,
     params,
   );
+  // Status bayar per voucher: nomor PJT, atau "-" bila dibayar lewat realisasi
+  // voucher (bayar_debet_detail tanpa vou_link)
+  const vouRows = [...new Set(rows.map((r) => r.vouNomor).filter(Boolean))];
+  const petaPjt = new Map();
+  if (vouRows.length) {
+    const [pj] = await db.query(
+      `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor IN (?)`,
+      [vouRows],
+    );
+    for (const p of pj) petaPjt.set(p.vou_nomor, p.vou_link || "-");
+  }
   return rows.map((r) => ({
     ...r,
     kategori: kategoriDari(r.tipe),
     kategoriUrut: urutanKategori(r.tipe),
+    pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
   }));
+};
+
+// Rekap tidak boleh dibatalkan/dihapus bila ada baris transaksi yang sudah
+// jadi voucher, atau baris voucher (VOU) yang sudah masuk pembayaran. Baris
+// VOU yang belum dipakai tidak menghalangi.
+const assertRekapBebas = async (conn, nomor) => {
+  const [[pakai]] = await conn.query(
+    `SELECT COUNT(*) AS n FROM trekap_bayar_dtl
+     WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> '' AND rkbd_tipe <> 'VOU'`,
+    [nomor],
+  );
+  if (Number(pakai.n) > 0) {
+    throw new Error(
+      "Rekap ini sudah dipakai di Voucher Pembayaran. Hapus voucher terkait dahulu.",
+    );
+  }
+  const [vou] = await conn.query(
+    `SELECT rkbd_vou_nomor AS vou FROM trekap_bayar_dtl
+     WHERE rkbd_nomor = ? AND rkbd_tipe = 'VOU'`,
+    [nomor],
+  );
+  if (!vou.length) return;
+  const [bayar] = await conn.query(
+    `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+     WHERE vou_nomor IN (?) LIMIT 1`,
+    [vou.map((r) => r.vou)],
+  );
+  if (bayar.length) {
+    throw new Error(
+      `Voucher ${bayar[0].vou_nomor} di rekap ini sudah dibayar/diajukan${bayar[0].vou_link ? ` (${bayar[0].vou_link})` : ""}. Rekap tidak bisa dibatalkan atau dihapus.`,
+    );
+  }
 };
 
 const batalData = async (nomor, alasan, userKode) => {
@@ -95,16 +140,7 @@ const batalData = async (nomor, alasan, userKode) => {
   if (hdr.rkb_status !== "AKTIF") {
     throw new Error("Rekap pembayaran sudah dibatalkan.");
   }
-  const [[pakai]] = await db.query(
-    `SELECT COUNT(*) AS n FROM trekap_bayar_dtl
-     WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> ''`,
-    [nomor],
-  );
-  if (Number(pakai.n) > 0) {
-    throw new Error(
-      "Rekap ini sudah dipakai di Voucher Pembayaran. Hapus voucher terkait dahulu.",
-    );
-  }
+  await assertRekapBebas(db, nomor);
   const [result] = await db.query(
     `UPDATE trekap_bayar_hdr
      SET rkb_status = 'BATAL',
@@ -133,16 +169,7 @@ const deleteData = async (nomor) => {
     if (hdr.rkb_status !== "AKTIF") {
       throw new Error("Rekap yang sudah dibatalkan tidak dapat dihapus.");
     }
-    const [[pakai]] = await conn.query(
-      `SELECT COUNT(*) AS n FROM trekap_bayar_dtl
-       WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> ''`,
-      [nomor],
-    );
-    if (Number(pakai.n) > 0) {
-      throw new Error(
-        "Rekap ini sudah dipakai di Voucher Pembayaran. Hapus voucher terkait dahulu.",
-      );
-    }
+    await assertRekapBebas(conn, nomor);
     await conn.query(`DELETE FROM trekap_bayar_dtl WHERE rkbd_nomor = ?`, [
       nomor,
     ]);

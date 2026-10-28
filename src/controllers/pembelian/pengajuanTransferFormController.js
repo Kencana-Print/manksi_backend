@@ -170,12 +170,34 @@ const getPrintData = async (req, res) => {
   }
 };
 
+const getRekapPanggilOptions = async (req, res) => {
+  try {
+    const { search } = req.query;
+    const data = await svc.getRekapPanggilOptions(search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getRekapPanggilRows = async (req, res) => {
+  try {
+    const { nomor } = req.query;
+    const data = await svc.getRekapPanggilRows(nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getAccountAll,
   getSupplierOptions,
   getSupplierDetail,
   getRekapVoucherOptions,
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,
