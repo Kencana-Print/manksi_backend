@@ -1,6 +1,10 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
+const {
+  assertBkkBelumDiklaim,
+  assertTidakKeKasKlaim,
+} = require("../piutang/klaimKasKecilGuardService");
 
 // ── Account header BBK (A-112 atau rek_kol_id=12) ─────────────────────
 const getAccountOptions = async (cabang) => {
@@ -195,6 +199,11 @@ const saveData = async (payload, user) => {
     detail,
   } = payload;
 
+  // BBK yang sudah diklaim (Klaim Kas Kecil / ATM) tidak boleh diubah
+  if (isEdit) {
+    await assertBkkBelumDiklaim(nomor);
+  }
+
   // Cek tutup buku — pola sama dengan bbkService.js (browse/delete):
   // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
   // (pengaturan.tclose, cid="BBK") menang kalau ada.
@@ -238,6 +247,15 @@ const saveData = async (payload, user) => {
       ].filter(Boolean),
       tanggal,
       conn,
+    );
+
+    // Isi saldo kas klaim hanya lewat Klaim, bukan BBK manual ke akunnya
+    await assertTidakKeKasKlaim(
+      detail
+        .filter((d) => d.uraian)
+        .map((d) => d.rekkode)
+        .filter(Boolean),
+      tanggal,
     );
 
     let actualNomor = nomor;

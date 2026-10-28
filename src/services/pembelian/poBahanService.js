@@ -183,9 +183,11 @@ const deleteData = async (nomor) => {
       throw new Error("PO Sudah di-Close. Tidak bisa dihapus.");
     }
 
+    // PO yang sudah divoucher (POB/POL) tidak boleh diubah: nilai PO jadi tidak
+    // sama dengan voucher. Hapus voucher dahulu bila memang perlu diubah.
     const [cekVoucher] = await conn.query(
       `SELECT voud_vou_nomor FROM tvoucher_dtl
-       WHERE voud_nota = ? AND voud_type = 'PCL' LIMIT 1`,
+       WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
       [nomor],
     );
     if (cekVoucher.length > 0) {
@@ -277,6 +279,19 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
     );
     if (headers.length === 0) throw new Error("Data PO tidak ditemukan.");
     const header = headers[0];
+
+    // PO yang sudah divoucher (POB) tidak boleh diubah: nilai PO jadi tidak
+    // sama dengan voucher. Hapus voucher dahulu bila memang perlu diubah.
+    const [cekVoucher] = await conn.query(
+      `SELECT voud_vou_nomor FROM tvoucher_dtl
+       WHERE voud_nota = ? AND voud_type = 'POB' LIMIT 1`,
+      [nomor],
+    );
+    if (cekVoucher.length > 0) {
+      throw new Error(
+        `PO ini sudah dibayar di Voucher ${cekVoucher[0].voud_vou_nomor}, tidak bisa diubah.`,
+      );
+    }
 
     const [lastPin] = await conn.query(
       `SELECT pin_urut, pin_dipakai FROM tspk_pin5 WHERE pin_trs="PO BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,

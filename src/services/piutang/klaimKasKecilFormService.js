@@ -2,8 +2,11 @@ const db = require("../../config/database");
 const { assertBolehPosting } = require("../postingGuardService");
 const {
   TANGGAL_MULAI_KLAIM,
-  REK_TUJUAN_PER_CABANG,
   aksesPenuh,
+  normCabang,
+  kasByRek,
+  kasPerCabang,
+  cabangTerdaftar,
 } = require("./klaimKasKecilKonstanta");
 
 const httpError = (msg, status = 400) =>
@@ -11,28 +14,37 @@ const httpError = (msg, status = 400) =>
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const TGL_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// Rekening tujuan ditentukan dari cabang; cabang yang tidak terdaftar ditolak.
-const rekTujuanCabang = (cabang) => {
-  const rek = REK_TUJUAN_PER_CABANG[cabang];
-  if (!rek)
+// Kas tujuan: satu cabang bisa punya lebih dari satu kas (pusat = beberapa ATM).
+// Bila cabang hanya punya satu kas, rek boleh kosong; bila lebih, wajib dipilih.
+// Cabang atau kas yang tidak terdaftar ditolak.
+const tentukanKas = (cabang, rek) => {
+  const daftar = kasPerCabang(cabang);
+  if (!daftar.length)
     throw httpError(
-      "Klaim Kas Kecil hanya dapat dibuat atau diubah oleh user cabang yang terdaftar.",
+      "Klaim hanya dapat dibuat atau diubah oleh user cabang yang terdaftar.",
       403,
     );
-  return rek;
+  const kode = String(rek || "").trim();
+  if (!kode) {
+    if (daftar.length === 1) return daftar[0];
+    throw httpError("Pilih kas / ATM yang diklaim.");
+  }
+  const kas = daftar.find((k) => k.rek === kode);
+  if (!kas) throw httpError("Kas tersebut tidak terdaftar untuk cabang ini.");
+  return kas;
 };
 
 // Cabang kerja untuk Tambah / lookup BKK.
-// User biasa: cabang token. Akses penuh: cabang pilihan; bila kosong, cabang
-// token jika terdaftar, kalau tidak cabang terdaftar pertama.
-// Validitasnya tetap dicek rekTujuanCabang (cabang tak terdaftar ditolak).
+// User biasa: cabang token (HO- dipetakan ke P01). Akses penuh: cabang pilihan;
+// bila kosong, cabang token jika terdaftar, kalau tidak cabang terdaftar pertama.
+// Validitasnya tetap dicek tentukanKas (cabang tak terdaftar ditolak).
 const cabangKerja = (user, pilihan = "") => {
-  const cab = String(user?.cabang || "").trim();
+  const cab = normCabang(user?.cabang);
   if (!aksesPenuh(user)) return cab;
   const p = String(pilihan || "").trim();
-  if (p) return p;
-  if (REK_TUJUAN_PER_CABANG[cab]) return cab;
-  return Object.keys(REK_TUJUAN_PER_CABANG)[0];
+  if (p) return normCabang(p);
+  if (kasPerCabang(cab).length) return cab;
+  return cabangTerdaftar()[0];
 };
 
 // Info rekening dari master (finance.trekening), query terpisah
@@ -45,30 +57,72 @@ const infoRekening = async (kode) => {
   return { kode, nama: r?.nama || "", rekening: r?.rekening || "" };
 };
 
-// ── Info default form: rekening tujuan + tanggal mulai ────────────────
+// ── Info default form: kas tujuan + tanggal mulai ─────────────────────
 const getDefaults = async (cabang, penuh = false) => {
-  const rekTujuan = rekTujuanCabang(cabang);
+  const daftar = kasPerCabang(cabang);
+  if (!daftar.length)
+    throw httpError(
+      "Klaim hanya dapat dibuat atau diubah oleh user cabang yang terdaftar.",
+      403,
+    );
   return {
     cabang,
-    rekTujuan: await infoRekening(rekTujuan),
+    jenis: daftar[0].jenis,
+    kasOpsi: await Promise.all(daftar.map((k) => infoRekening(k.rek))),
     tanggalMulai: TANGGAL_MULAI_KLAIM,
     // Daftar pilihan cabang hanya untuk akses penuh; user biasa kosong
-    cabangOpsi: penuh ? Object.keys(REK_TUJUAN_PER_CABANG) : [],
+    cabangOpsi: penuh ? cabangTerdaftar() : [],
   };
 };
 
-// ── BKK yang memenuhi syarat klaim (syarat 11.4) ──────────────────────
+// ── BKK/BBK yang memenuhi syarat klaim (syarat 11.4) ──────────────────
 // Dua langkah (bukan JOIN lintas schema): query Finance dulu, lalu buang
 // yang sudah terkunci di klaim aktif lewat `conn` (kencanaprint).
-// rekKas = rekening kas cabang (kredit BKK kasbon) = rekening tujuan klaim.
+// kas = entri KAS_KLAIM (rek = kredit nourut 0 = rekening tujuan klaim).
+//   KAS_KECIL: BKK dari kasbon yang sudah selesai.
+//   ATM      : BKK/BBK langsung dari jurnal; bila terkait kasbon, kasbon
+//              harus sudah selesai. BBK hasil Pengajuan Transfer dikecualikan.
 // daftarBkk: batasi ke nomor tertentu (dipakai validasi saat simpan).
 // exceptNomor: kunci milik klaim ini dianggap bebas (saat ubah).
 const cariBkkEligible = async (
-  { cabang, rekKas, search = "", daftarBkk = null, exceptNomor = "" },
+  { kas, search = "", daftarBkk = null, exceptNomor = "" },
   conn = db,
 ) => {
-  const params = [rekKas, cabang, rekKas, TANGGAL_MULAI_KLAIM];
-  let sql = `
+  const params = [];
+  let sql;
+
+  if (kas.jenis === "ATM") {
+    sql = `
+    SELECT IFNULL(b.bon_nomor,'') AS bon,
+      j.jur_no AS bkk,
+      DATE_FORMAT(j.jur_tanggal,'%Y-%m-%d') AS tanggal,
+      j.jur_penerima AS penerima,
+      j.jur_keterangan AS keterangan,
+      k.nominal AS nominal
+    FROM finance.tjurnal j
+    INNER JOIN (
+      SELECT jurd_jur_no, SUM(jurd_kredit) AS nominal
+      FROM finance.tjurnalitem
+      WHERE jurd_nourut = 0 AND jurd_rek_kode = ?
+      GROUP BY jurd_jur_no
+    ) k ON k.jurd_jur_no = j.jur_no
+    LEFT JOIN finance.tkasbon b ON b.bon_jur_no = j.jur_no
+    WHERE j.jur_tipetransaksi IN ('BKK','BBK')
+      AND j.jur_otomatis = 0
+      AND j.jur_tanggal >= ?
+      AND k.nominal > 0
+      AND (b.bon_nomor IS NULL OR b.bon_selesai = 1)
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_jur_no = j.jur_no
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
+      )`;
+    params.push(kas.rek, TANGGAL_MULAI_KLAIM);
+  } else {
+    sql = `
     SELECT b.bon_nomor AS bon,
       b.bon_jur_no AS bkk,
       DATE_FORMAT(j.jur_tanggal,'%Y-%m-%d') AS tanggal,
@@ -96,6 +150,8 @@ const cariBkkEligible = async (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = b.bon_jur_no AND d.ptd_batal = ''
       )`;
+    params.push(kas.rek, kas.cabang, kas.rek, TANGGAL_MULAI_KLAIM);
+  }
 
   if (daftarBkk) {
     sql += ` AND j.jur_no IN (?)`;
@@ -125,9 +181,14 @@ const cariBkkEligible = async (
 };
 
 // ── Lookup modal "Pilih BKK" ──────────────────────────────────────────
-const getBkkOptions = async (cabang, search = "", exceptNomor = "") => {
-  const rekKas = rekTujuanCabang(cabang);
-  const rows = await cariBkkEligible({ cabang, rekKas, search, exceptNomor });
+const getBkkOptions = async (
+  cabang,
+  rekTujuan = "",
+  search = "",
+  exceptNomor = "",
+) => {
+  const kas = tentukanKas(cabang, rekTujuan);
+  const rows = await cariBkkEligible({ kas, search, exceptNomor });
   return rows.slice(0, 300);
 };
 
@@ -142,9 +203,15 @@ const cariPjtAktif = async (nomor) => {
 };
 
 // ── Load form (lihat / ubah) ──────────────────────────────────────────
-// cabangScope: cabang user bila bukan pusat/akses penuh; null = baca semua.
+// cabangScope: hak BACA. Cabang user bila bukan pusat/akses penuh; null = baca semua.
 // penuh: user akses penuh (EDP/AUDIT/DIR).
-const getDetailForm = async (nomor, cabangScope, penuh = false) => {
+// cabangTulis: hak TULIS. Cabang klaim milik user ("" bila tidak terdaftar).
+const getDetailForm = async (
+  nomor,
+  cabangScope,
+  penuh = false,
+  cabangTulis = "",
+) => {
   const [[h]] = await db.query(
     `SELECT kkh_nomor, DATE_FORMAT(kkh_tanggal,'%Y-%m-%d') AS tanggal,
             kkh_cabang, kkh_rek_tujuan, kkh_total,
@@ -166,10 +233,12 @@ const getDetailForm = async (nomor, cabangScope, penuh = false) => {
   );
 
   const nomorPjt = await cariPjtAktif(nomor);
+  const bolehTulis = penuh || (!!cabangTulis && cabangTulis === h.kkh_cabang);
   return {
     nomor: h.kkh_nomor,
     tanggal: h.tanggal,
     cabang: h.kkh_cabang,
+    jenis: kasByRek(h.kkh_rek_tujuan)?.jenis || "",
     rekTujuan: await infoRekening(h.kkh_rek_tujuan),
     total: Number(h.kkh_total),
     keterangan: h.kkh_keterangan || "",
@@ -177,8 +246,8 @@ const getDetailForm = async (nomor, cabangScope, penuh = false) => {
     dibuat: h.user_create,
     nomorPjt,
     // Boleh diubah hanya bila AKTIF, belum dipanggil Pengajuan Transfer,
-    // dan user punya hak tulis (cabang terdaftar atau akses penuh)
-    bisaUbah: h.kkh_status === "AKTIF" && !nomorPjt && (penuh || !!cabangScope),
+    // dan user punya hak tulis atas klaim ini (cabang sendiri atau akses penuh)
+    bisaUbah: h.kkh_status === "AKTIF" && !nomorPjt && bolehTulis,
     detail: dtl.map((d) => ({ ...d, nominal: Number(d.nominal) })),
   };
 };
@@ -195,27 +264,37 @@ const getMaxNomor = async (cabang, conn) => {
 };
 
 // ── Simpan (baru / ubah) ──────────────────────────────────────────────
-// payload: { isEdit, nomor, cabang?, tanggal, keterangan, detail: [{ bkk }] }
-// Tambah: cabang = cabangKerja(user, payload.cabang).
-// Ubah: cabang = cabang milik klaim itu sendiri (bukan dari payload).
+// payload: { isEdit, nomor, cabang?, rekTujuan?, tanggal, keterangan, detail: [{ bkk }] }
+// Tambah: cabang = cabangKerja(user, payload.cabang); kas = payload.rekTujuan
+//         (wajib bila cabang punya lebih dari satu kas).
+// Ubah: cabang dan kas = milik klaim itu sendiri (bukan dari payload).
 const saveData = async (payload, user) => {
   const { isEdit, nomor, tanggal, keterangan, detail } = payload;
   const penuh = aksesPenuh(user);
 
   let cabang;
+  let kas;
   if (isEdit) {
     const [[h0]] = await db.query(
-      `SELECT kkh_cabang FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
+      `SELECT kkh_cabang, kkh_rek_tujuan FROM tklaim_kaskecil_hdr
+       WHERE kkh_nomor = ?`,
       [nomor],
     );
     if (!h0) throw httpError("Klaim tidak ditemukan.", 404);
     cabang = h0.kkh_cabang;
-    if (!penuh && cabang !== String(user.cabang || "").trim())
+    kas = kasByRek(h0.kkh_rek_tujuan);
+    if (!kas)
+      throw httpError(
+        `Kas ${h0.kkh_rek_tujuan} tidak lagi terdaftar sebagai kas klaim.`,
+        409,
+      );
+    if (!penuh && cabang !== normCabang(user?.cabang))
       throw httpError("Klaim ini bukan milik cabang Anda.", 403);
   } else {
     cabang = cabangKerja(user, payload.cabang);
+    kas = tentukanKas(cabang, payload.rekTujuan);
   }
-  const rekTujuan = rekTujuanCabang(cabang);
+  const rekTujuan = kas.rek;
 
   if (!TGL_RE.test(String(tanggal || "")))
     throw httpError("Tanggal klaim tidak valid.");
@@ -228,7 +307,7 @@ const saveData = async (payload, user) => {
   if (daftar.length !== dipilih.length)
     throw httpError("Ada BKK yang dipilih lebih dari satu kali.");
 
-  // Pagar posting yang sama dengan modul Finance lain (hanya kas kecil;
+  // Pagar posting yang sama dengan modul Finance lain (hanya kas klaim;
   // bank asal dijaga di Pengajuan Transfer)
   await assertBolehPosting([rekTujuan], tanggal);
 
@@ -270,10 +349,7 @@ const saveData = async (payload, user) => {
     }
 
     // Validasi ulang di server — daftar BKK dari klien tidak dipercaya
-    const eligible = await cariBkkEligible(
-      { cabang, rekKas: rekTujuan, daftarBkk: daftar },
-      conn,
-    );
+    const eligible = await cariBkkEligible({ kas, daftarBkk: daftar }, conn);
     const peta = new Map(eligible.map((e) => [e.bkk, e]));
     const tidakValid = daftar.filter((b) => !peta.has(b));
     if (tidakValid.length > 0)

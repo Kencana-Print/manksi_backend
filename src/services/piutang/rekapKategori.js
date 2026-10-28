@@ -7,7 +7,7 @@ const KATEGORI_TIPE = {
   BPE: "BPB PO Ext MMT",
   BPG: "BPB Non Bahan",
   POL: "PO Lain-lain",
-  PCL: "PO Celup",
+  POB: "PO Bahan/Greige/Celup",
   POE: "PO External",
   RET: "Retur Barang",
   PJG: "Potongan Jasa",

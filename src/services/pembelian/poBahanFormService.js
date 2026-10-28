@@ -417,15 +417,37 @@ const saveData = async (payload, userKode) => {
       if (cekMKB[0].total > 0) {
         throw new Error("PO ini sudah link di MKB, tidak bisa di edit");
       }
-      if (jenisDb === 2) {
-        const [cekVoucher] = await conn.query(
-          `SELECT voud_vou_nomor FROM tvoucher_dtl
-           WHERE voud_nota = ? AND voud_type = 'PCL' LIMIT 1`,
-          [nomorPO],
+      // PO yang sudah divoucher tidak boleh diedit
+      // (POB: Bahan/Greige/Celup, POL: Lain-lain)
+      const [cekVoucher] = await conn.query(
+        `SELECT voud_vou_nomor FROM tvoucher_dtl
+         WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
+        [nomorPO],
+      );
+      if (cekVoucher.length > 0) {
+        throw new Error(
+          `PO ini sudah dibayar di Voucher ${cekVoucher[0].voud_vou_nomor}, tidak bisa di edit.`,
         );
-        if (cekVoucher.length > 0) {
+      }
+
+      // PO Celup: edit menimpa detail BPB-nya. No. BPB dari klien harus milik PO
+      // ini, dan BPB itu tidak boleh sudah divoucher.
+      if (jenisDb === 2 && nomorBPB) {
+        const [bpbSah] = await conn.query(
+          `SELECT bpb_nomor FROM tbpb_hdr
+           WHERE bpb_nomor = ? AND (bpb_keterangan = ? OR bpb_po_nomor = ?)`,
+          [nomorBPB, nomorPO, nomorPO],
+        );
+        if (bpbSah.length === 0) {
+          throw new Error("No. BPB tidak sesuai dengan PO ini.");
+        }
+        const [cekVoucherBpb] = await conn.query(
+          `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`,
+          [nomorBPB],
+        );
+        if (cekVoucherBpb.length > 0) {
           throw new Error(
-            `PO Celup ini sudah dibayar di Voucher ${cekVoucher[0].voud_vou_nomor}, tidak bisa di edit.`,
+            `BPB PO Celup ini sudah dibayar di Voucher ${cekVoucherBpb[0].voud_vou_nomor}, tidak bisa di edit.`,
           );
         }
       }

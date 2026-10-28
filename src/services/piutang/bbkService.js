@@ -1,5 +1,8 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const {
+  assertBkkBelumDiklaim,
+} = require("../piutang/klaimKasKecilGuardService");
 
 // ── Browse ────────────────────────────────────────────────────────────
 const getBrowse = async (startDate, endDate, cabang) => {
@@ -101,6 +104,9 @@ const deleteData = async (nomor) => {
   // Delphi: sudah diclose tidak bisa dihapus
   if (Number(jurnal.jur_close) !== 0)
     throw new Error("Transaksi sudah diclose. Tidak bisa dihapus.");
+
+  // Sudah diklaim (Klaim Kas Kecil / ATM): jangan dihapus, klaim menunjuk nomor ini
+  await assertBkkBelumDiklaim(nomor);
 
   // Cek tutup buku — pakai getTanggalTutupBukuUntukTanggal (boundary
   // closing UNTUK BULAN transaksi ini) dibanding hari ini, sama pola

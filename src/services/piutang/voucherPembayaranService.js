@@ -1,6 +1,16 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// Baris tipe POB (PO Bahan/Greige/Celup dipanggil langsung ke voucher):
+// voud_nota = nomor PO, jenisnya dibaca dari tpo_hdr.po_jenis.
+// Alias yang dipakai: d = tvoucher_dtl.
+const SQL_JOIN_POB = `LEFT JOIN tpo_hdr po
+            ON po.po_nomor = d.voud_nota AND d.voud_type = 'POB'`;
+const SQL_LABEL_POB = `CASE po.po_jenis
+         WHEN 0 THEN 'PO Bahan' WHEN 3 THEN 'PO Bahan'
+         WHEN 1 THEN 'PO Greige' WHEN 2 THEN 'PO Celup'
+         ELSE '' END`;
+
 // ── Browse Master ─────────────────────────────────────────────────────
 // Delphi btnRefreshClick SQLMaster
 // ORDER BY MID(vou_nomor,5,5) → urutan nomor sekuensial
@@ -78,6 +88,7 @@ const getBrowseDetail = async (startDate, endDate) => {
        IFNULL(p.pojh_nomor, '')                          AS NomorPO,
        DATE_FORMAT(d.voud_tgl_nota, '%Y-%m-%d')          AS Tanggal,
        IFNULL(d.voud_type, '')                           AS Type,
+       IFNULL(NULLIF(p.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS Keterangan,
        IFNULL(d.voud_total, 0)                           AS Total,
        IFNULL(s.spk_nomor, '')                           AS SpkNomor,
        IFNULL(s.spk_nama, '')                            AS SpkNama,
@@ -93,6 +104,7 @@ const getBrowseDetail = async (startDate, endDate) => {
             ON p.pojh_nomor = bpj.bpj_po_nomor
      LEFT JOIN tspk s
             ON s.spk_nomor = p.pojh_spk_nomor
+     ${SQL_JOIN_POB}
      WHERE h.vou_tanggal >= ? AND h.vou_tanggal <= ?
      ORDER BY d.voud_vou_nomor`,
     [startDate, endDate],
@@ -113,6 +125,27 @@ const deleteData = async (nomor) => {
     [nomor],
   );
   if (!hdr) throw new Error("Data tidak ditemukan.");
+
+  // Voucher yang sudah masuk Pengajuan Transfer atau sudah direalisasi tidak boleh
+  // dihapus: baris PT-nya jadi yatim dan nota/PO bisa divoucher lagi (dobel bayar).
+  const [[pt]] = await db.query(
+    `SELECT COUNT(*) AS n
+     FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_trs = ? AND ptd_batal = ''`,
+    [nomor],
+  );
+  if (Number(pt.n) > 0) {
+    throw new Error(
+      "Voucher sudah masuk Pengajuan Transfer. Hapus baris pengajuannya dahulu.",
+    );
+  }
+  const [[real]] = await db.query(
+    `SELECT vou_status_realisasi FROM tvoucher_hdr WHERE vou_nomor = ?`,
+    [nomor],
+  );
+  if (real && String(real.vou_status_realisasi) === "1") {
+    throw new Error("Voucher sudah direalisasi. Tidak bisa dihapus.");
+  }
 
   // Cek tutup buku — pola sama dengan modul-modul jurnal sebelumnya:
   // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
@@ -300,7 +333,7 @@ const getPrintData = async (nomor) => {
        IFNULL(s.sup_bank, '')                         AS sup_bank,
        IFNULL(s.sup_cabang, '')                       AS sup_cabang,
        IFNULL(s.sup_atasnama, '')                     AS sup_atasnama,
-       IFNULL(e.pojh_keterangan, '')                  AS pojh_keterangan,
+       IFNULL(NULLIF(e.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS pojh_keterangan,
        IFNULL((
          SELECT bpj_po_nomor FROM tbpj_hdr
          WHERE bpj_nomor = d.voud_nota
@@ -315,6 +348,7 @@ const getPrintData = async (nomor) => {
      LEFT JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
      LEFT JOIN tbpj_hdr bpj ON bpj.bpj_nomor = d.voud_nota
      LEFT JOIN tpojasa_hdr e ON e.pojh_nomor = bpj.bpj_po_nomor
+     ${SQL_JOIN_POB}
      WHERE h.vou_nomor = ?`,
     [nomor],
   );
@@ -352,12 +386,12 @@ const getBrowsePendingAll = async () => {
        IFNULL(a.vou_nomor_pajak, '')                      AS NomorPajak,
        a.vou_total                                        AS Total,
        IFNULL((
-         SELECT SUM(d2.voud2_harga * d2.voud2_jumlah)
+         SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
        ), 0)                                              AS BahanTambahan,
        a.vou_total - IFNULL((
-         SELECT SUM(d2.voud2_harga * d2.voud2_jumlah)
+         SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
        ), 0)                                              AS Net,
@@ -403,6 +437,7 @@ const getBrowseDetailPendingAll = async () => {
        IFNULL(p.pojh_nomor, '')                          AS NomorPO,
        DATE_FORMAT(d.voud_tgl_nota, '%Y-%m-%d')          AS Tanggal,
        IFNULL(d.voud_type, '')                           AS Type,
+       IFNULL(NULLIF(p.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS Keterangan,
        IFNULL(d.voud_total, 0)                           AS Total,
        IFNULL(s.spk_nomor, '')                           AS SpkNomor,
        IFNULL(s.spk_nama, '')                            AS SpkNama,
@@ -418,6 +453,7 @@ const getBrowseDetailPendingAll = async () => {
             ON p.pojh_nomor = bpj.bpj_po_nomor
      LEFT JOIN tspk s
             ON s.spk_nomor = p.pojh_spk_nomor
+     ${SQL_JOIN_POB}           
      WHERE NOT EXISTS (
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = h.vou_nomor

@@ -1,6 +1,12 @@
 const db = require("../../config/database");
 const { getRekap } = require("../laporan/marketing/rekapPenawaranService");
 const tutupBukuService = require("../tutupBukuService");
+const {
+  JENIS_PO_BAHAN,
+  LABEL_JENIS_PO,
+  TANGGAL_MULAI_PO_BAHAN,
+  SQL_BPB_MILIK_PO,
+} = require("./voucherPoBahanKonstanta");
 
 // ── PO Lain-lain (tipe nota POL) ──────────────────────────────────────
 // Rumus total sama persis dengan SQL_TOTAL_PO_LAIN di pengajuanTransferService.js
@@ -70,22 +76,36 @@ const getInfoPoLain = async (po, sup, excludeVou = "", statusPpn = null) => {
   };
 };
 
-// ── PO Celup (tipe nota PCL) — kasus CBD ──────────────────────────────
-// Dasar nilai: tpo_dtl.pod_Jumlah (bukan roll), rumus sama dengan POL.
-// pod_sup_kode di tpo_dtl NULL untuk Celup → supplier dari tpo_hdr.po_sup_kode.
-// BPB Celup terhubung lewat tbpb_hdr.bpb_keterangan = nomor PO Celup.
-const getInfoPoCelup = async (po, sup, excludeVou = "", statusPpn = null) => {
+// ── PO Bahan (tipe nota POB) — jenis 0/3 Bahan, 1 Greige, 2 Celup ─────
+// Dasar nilai: tpo_dtl.pod_Jumlah, rumus sama dengan POL (SQL_TOTAL_PO_LAIN).
+// pod_sup_kode di tpo_dtl kosong untuk jenis 0-3 → supplier dari tpo_hdr.po_sup_kode.
+// Kepemilikan BPB oleh PO: lihat SQL_BPB_MILIK_PO (PO Greige tidak punya BPB sendiri).
+// cekTanggal=false dipakai saat edit voucher yang sudah memuat PO itu.
+const getInfoPoBahan = async (
+  po,
+  sup,
+  { excludeVou = "", statusPpn = null, cekTanggal = true } = {},
+) => {
+  const params = [po, JENIS_PO_BAHAN, sup];
+  let filter = "";
+  if (cekTanggal) {
+    filter += " AND h.po_tanggal >= ?";
+    params.push(TANGGAL_MULAI_PO_BAHAN);
+  }
+  if (statusPpn !== null) {
+    filter += " AND h.po_status_ppn = ?";
+    params.push(statusPpn);
+  }
   const [[tot]] = await db.query(
-    `SELECT h.po_nomor AS nomor,
+    `SELECT h.po_nomor AS nomor, h.po_jenis AS jenis,
             DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS tanggal,
             ${SQL_TOTAL_PO_LAIN} AS total
      FROM tpo_hdr h
      INNER JOIN tpo_dtl d
        ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
-     WHERE h.po_nomor = ? AND h.po_jenis = 2 AND h.po_sup_kode = ?
-       ${statusPpn === null ? "" : "AND h.po_status_ppn = ?"}
-     GROUP BY h.po_nomor, h.po_tanggal, h.po_status_ppn, h.po_ppn`,
-    statusPpn === null ? [po, sup] : [po, sup, statusPpn],
+     WHERE h.po_nomor = ? AND h.po_jenis IN (?) AND h.po_sup_kode = ?${filter}
+     GROUP BY h.po_nomor, h.po_jenis, h.po_tanggal, h.po_status_ppn, h.po_ppn`,
+    params,
   );
   if (!tot) return null;
 
@@ -93,28 +113,54 @@ const getInfoPoCelup = async (po, sup, excludeVou = "", statusPpn = null) => {
     `SELECT IFNULL(SUM(v.voud_total), 0) AS sudah
      FROM tvoucher_dtl v
      INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
-     WHERE v.voud_nota = ? AND v.voud_type = 'PCL'
+     WHERE v.voud_nota = ? AND v.voud_type = 'POB'
        AND vh.vou_sup_kode = ? AND v.voud_vou_nomor <> ?`,
     [tot.nomor, sup, excludeVou],
   );
 
-  // Ada BPB milik PO ini yang sudah divoucher (voucher lain) → PCL dilarang
+  // Ada BPB milik PO ini yang sudah divoucher (voucher lain) → POB dilarang
   const [[bv]] = await db.query(
     `SELECT COUNT(*) AS n
-     FROM tbpb_hdr b
+     FROM tpo_hdr p
+     CROSS JOIN tbpb_hdr b
      INNER JOIN tvoucher_dtl v ON v.voud_nota = b.bpb_nomor
-     WHERE (b.bpb_po_nomor = ? OR b.bpb_keterangan = ?)
-       AND v.voud_vou_nomor <> ?`,
-    [tot.nomor, tot.nomor, excludeVou],
+     WHERE p.po_nomor = ? AND v.voud_vou_nomor <> ?
+       AND ${SQL_BPB_MILIK_PO("b", "p")}`,
+    [tot.nomor, excludeVou],
   );
 
   return {
     nomor: tot.nomor,
+    jenis: Number(tot.jenis),
     tanggal: tot.tanggal,
     total: Number(tot.total),
     sudah: Number(vou.sudah),
     adaVoucherBpb: Number(bv.n) > 0,
   };
+};
+
+// Alasan spesifik saat getInfoPoBahan mengembalikan null (dipakai getNotaDetail dan save)
+const alasanPoBahanTidakValid = async (po, sup, statusPpn) => {
+  const [[p]] = await db.query(
+    `SELECT po_jenis, po_sup_kode, po_status_ppn,
+            DATE_FORMAT(po_tanggal,'%Y-%m-%d') AS tanggal
+     FROM tpo_hdr WHERE po_nomor = ?`,
+    [po],
+  );
+  if (!p) return `PO ${po} tidak ditemukan.`;
+  if (!JENIS_PO_BAHAN.includes(Number(p.po_jenis))) {
+    return `PO ${po} bukan PO Bahan, Greige, atau Celup.`;
+  }
+  if (String(p.po_sup_kode || "").trim() !== String(sup).trim()) {
+    return `PO ${po} milik supplier ${p.po_sup_kode}, bukan ${sup}.`;
+  }
+  if (Number(p.po_status_ppn) !== Number(statusPpn)) {
+    return `Status PPN PO (${Number(p.po_status_ppn) ? "PPN" : "Non PPN"}) tidak sama dengan voucher (${Number(statusPpn) ? "PPN" : "Non PPN"}).`;
+  }
+  if (p.tanggal < TANGGAL_MULAI_PO_BAHAN) {
+    return `PO ${po} bertanggal sebelum ${TANGGAL_MULAI_PO_BAHAN} dan tidak bisa dibayar lewat tipe PO Bahan.`;
+  }
+  return `PO ${po} tidak memiliki baris bahan.`;
 };
 
 // ── Cek tutup buku — sama pola dengan voucherPembayaranService.js ────
@@ -216,19 +262,19 @@ const getNotaDetail = async (
         "BPB dari PO Lain-lain dibayar lewat Pengajuan Transfer atau Uang Muka. Tidak bisa dibuat Voucher.",
       );
     }
-    const [[sudahPcl]] = await db.query(
+    const [[sudahPob]] = await db.query(
       `SELECT 1 AS x
-       FROM tbpb_hdr b
-       INNER JOIN tpo_hdr c
-         ON c.po_jenis = 2 AND c.po_nomor IN (b.bpb_po_nomor, b.bpb_keterangan)
-       INNER JOIN tvoucher_dtl v
-         ON v.voud_nota = c.po_nomor AND v.voud_type = 'PCL'
-       WHERE b.bpb_nomor = ? LIMIT 1`,
+       FROM tvoucher_dtl v
+       INNER JOIN tpo_hdr c ON c.po_nomor = v.voud_nota
+       INNER JOIN tbpb_hdr b ON b.bpb_nomor = ?
+       WHERE v.voud_type = 'POB'
+         AND ${SQL_BPB_MILIK_PO("b", "c")}
+       LIMIT 1`,
       [kode],
     );
-    if (sudahPcl) {
+    if (sudahPob) {
       throw new Error(
-        "BPB ini milik PO Celup yang sudah dibayar lewat tipe PO Celup. Tidak bisa divoucher lagi.",
+        "BPB ini milik PO yang sudah dibayar lewat tipe PO Bahan. Tidak bisa divoucher lagi.",
       );
     }
   }
@@ -265,17 +311,17 @@ const getNotaDetail = async (
     };
   }
 
-  if (type === "PCL") {
+  if (type === "POB") {
     if (!supKode) throw new Error("Pilih supplier dahulu.");
-    const info = await getInfoPoCelup(kode, supKode, "", Number(statusPpn));
+    const info = await getInfoPoBahan(kode, supKode, {
+      statusPpn: Number(statusPpn),
+    });
     if (!info) {
-      throw new Error(
-        "PO Celup tidak ditemukan untuk supplier ini (atau status PPN tidak sama dengan voucher).",
-      );
+      throw new Error(await alasanPoBahanTidakValid(kode, supKode, statusPpn));
     }
     if (info.adaVoucherBpb) {
       throw new Error(
-        `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lagi lewat PO Celup.`,
+        `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lewat PO Bahan.`,
       );
     }
     const nilai = Math.round((info.total - info.sudah) * 100) / 100;
@@ -283,10 +329,10 @@ const getNotaDetail = async (
       throw new Error(`PO ${info.nomor} sudah terbayar seluruhnya.`);
     }
     return {
-      tipe: "PCL",
+      tipe: "POB",
       nomor: info.nomor,
       tanggal: info.tanggal,
-      keterangan: "PO Celup",
+      keterangan: LABEL_JENIS_PO[info.jenis] || "PO Bahan",
       jenis: "",
       nilai,
       nilaiMax: nilai,
@@ -488,11 +534,10 @@ const searchNota = async (type, supKode, search = "") => {
                WHERE px.po_nomor = bpb_po_nomor AND px.po_jenis = 4
              )
              AND NOT EXISTS (
-               SELECT 1 FROM tpo_hdr pc
-               INNER JOIN tvoucher_dtl pv
-                 ON pv.voud_nota = pc.po_nomor AND pv.voud_type = 'PCL'
-               WHERE pc.po_jenis = 2
-                 AND pc.po_nomor IN (bpb_po_nomor, bpb_keterangan)
+               SELECT 1 FROM tvoucher_dtl pv
+               INNER JOIN tpo_hdr pc ON pc.po_nomor = pv.voud_nota
+               WHERE pv.voud_type = 'POB'
+                 AND ${SQL_BPB_MILIK_PO("tbpb_hdr", "pc")}
              )
              ${search ? "AND (bpb_nomor LIKE ? OR sup_nama LIKE ?)" : ""}
            ORDER BY bpb_tanggal DESC LIMIT 100`;
@@ -615,39 +660,41 @@ const searchNota = async (type, supKode, search = "") => {
            ORDER BY x.Nomor DESC LIMIT 100`;
     params.push(supKode);
     if (search) params.push(like);
-  } else if (type === "PCL") {
-    sql = `SELECT x.Nomor, x.Tanggal, x.Supplier,
-                  CONCAT('Sisa: ', FORMAT(x.Total - x.Sudah, 0)) AS Keterangan
+  } else if (type === "POB") {
+    sql = `SELECT x.Nomor, x.Tanggal, x.Supplier, x.JenisPo,
+                  CONCAT(CASE x.JenisPo WHEN 1 THEN 'Greige' WHEN 2 THEN 'Celup' ELSE 'Bahan' END,
+                         ' | Sisa: ', FORMAT(x.Total - x.Sudah, 0)) AS Keterangan
            FROM (
              SELECT h.po_nomor AS Nomor,
                     DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS Tanggal,
                     IFNULL(s.sup_nama,'') AS Supplier,
+                    h.po_jenis AS JenisPo,
                     ${SQL_TOTAL_PO_LAIN} AS Total,
                     IFNULL((
                       SELECT SUM(v.voud_total)
                       FROM tvoucher_dtl v
                       INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
-                      WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'PCL'
+                      WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POB'
                         AND vh.vou_sup_kode = h.po_sup_kode
                     ), 0) AS Sudah
              FROM tpo_hdr h
              INNER JOIN tpo_dtl d
                ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
              LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
-             WHERE h.po_jenis = 2 AND h.po_sup_kode = ?
+             WHERE h.po_jenis IN (?) AND h.po_sup_kode = ?
+               AND h.po_tanggal >= ?
                ${search ? "AND h.po_nomor LIKE ?" : ""}
                AND NOT EXISTS (
                  SELECT 1 FROM tbpb_hdr b
                  INNER JOIN tvoucher_dtl bv ON bv.voud_nota = b.bpb_nomor
-                 WHERE b.bpb_po_nomor = h.po_nomor
-                    OR b.bpb_keterangan = h.po_nomor
+                 WHERE ${SQL_BPB_MILIK_PO("b", "h")}
                )
-             GROUP BY h.po_nomor, h.po_tanggal, h.po_status_ppn, h.po_ppn,
-                      h.po_sup_kode, s.sup_nama
+             GROUP BY h.po_nomor, h.po_tanggal, h.po_jenis, h.po_status_ppn,
+                      h.po_ppn, h.po_sup_kode, s.sup_nama
            ) x
            WHERE (x.Total - x.Sudah) > 0.005
-           ORDER BY x.Nomor DESC LIMIT 100`;
-    params.push(supKode);
+           ORDER BY x.Tanggal DESC, x.Nomor DESC LIMIT 100`;
+    params.push(JENIS_PO_BAHAN, supKode, TANGGAL_MULAI_PO_BAHAN);
     if (search) params.push(like);
   } else if (type === "BPG") {
     const hasSupKode = supKode && supKode.trim() !== "";
@@ -685,17 +732,17 @@ const searchNota = async (type, supKode, search = "") => {
 };
 
 const getNilaiSisa = async (nota, tipe = "") => {
-  if (tipe === "PCL") {
+  if (tipe === "POB") {
     const [[pc]] = await db.query(
       `SELECT ${SQL_TOTAL_PO_LAIN} AS total,
               IFNULL((SELECT SUM(v.voud_total) FROM tvoucher_dtl v
-                      WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'PCL'), 0) AS sudah
+                      WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POB'), 0) AS sudah
        FROM tpo_hdr h
        INNER JOIN tpo_dtl d
          ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
-       WHERE h.po_nomor = ? AND h.po_jenis = 2
+       WHERE h.po_nomor = ? AND h.po_jenis IN (?)
        GROUP BY h.po_nomor, h.po_status_ppn, h.po_ppn`,
-      [nota],
+      [nota, JENIS_PO_BAHAN],
     );
     if (!pc) return 0;
     return Math.max(0, Number(pc.total) - Number(pc.sudah));
@@ -953,20 +1000,19 @@ const save = async (payload, userKode) => {
       );
     }
 
-    // BPB milik PO Celup yang sudah dibayar lewat PCL (voucher lain) tidak boleh divoucher
-    const [sudahPcl] = await db.query(
+    // BPB milik PO yang sudah dibayar lewat tipe POB (voucher lain) tidak boleh divoucher
+    const [sudahPob] = await db.query(
       `SELECT DISTINCT b.bpb_nomor
-       FROM tbpb_hdr b
-       INNER JOIN tpo_hdr c
-         ON c.po_jenis = 2 AND c.po_nomor IN (b.bpb_po_nomor, b.bpb_keterangan)
-       INNER JOIN tvoucher_dtl v
-         ON v.voud_nota = c.po_nomor AND v.voud_type = 'PCL'
-       WHERE b.bpb_nomor IN (?) AND v.voud_vou_nomor <> ?`,
+       FROM tvoucher_dtl v
+       INNER JOIN tpo_hdr c ON c.po_nomor = v.voud_nota
+       INNER JOIN tbpb_hdr b ON b.bpb_nomor IN (?)
+       WHERE v.voud_type = 'POB' AND v.voud_vou_nomor <> ?
+         AND ${SQL_BPB_MILIK_PO("b", "c")}`,
       [daftarBpb, isEdit ? nomor : ""],
     );
-    if (sudahPcl.length) {
+    if (sudahPob.length) {
       throw new Error(
-        `BPB ${sudahPcl.map((r) => r.bpb_nomor).join(", ")} milik PO Celup yang sudah dibayar lewat tipe PO Celup.`,
+        `BPB ${sudahPob.map((r) => r.bpb_nomor).join(", ")} milik PO yang sudah dibayar lewat tipe PO Bahan.`,
       );
     }
   }
@@ -992,54 +1038,57 @@ const save = async (payload, userKode) => {
     d.nomor = info.nomor; // normalkan ke penulisan asli di database
   }
 
-  const daftarPcl = detail
-    .filter((d) => d.tipe === "PCL" && d.nomor)
+  const daftarPob = detail
+    .filter((d) => d.tipe === "POB" && d.nomor)
     .map((d) => d.nomor);
-  if (daftarPcl.length && daftarBpb.length) {
+  const unikPob = new Set(daftarPob.map((n) => String(n).toUpperCase()));
+  if (unikPob.size !== daftarPob.length) {
+    throw new Error(
+      "PO yang sama tidak boleh dipanggil dua kali dalam satu voucher.",
+    );
+  }
+  if (daftarPob.length && daftarBpb.length) {
     const [campur] = await db.query(
-      `SELECT b.bpb_nomor FROM tbpb_hdr b
-       WHERE b.bpb_nomor IN (?)
-         AND (b.bpb_po_nomor IN (?) OR b.bpb_keterangan IN (?))`,
-      [daftarBpb, daftarPcl, daftarPcl],
+      `SELECT DISTINCT b.bpb_nomor
+       FROM tpo_hdr c
+       CROSS JOIN tbpb_hdr b
+       WHERE c.po_nomor IN (?) AND b.bpb_nomor IN (?)
+         AND ${SQL_BPB_MILIK_PO("b", "c")}`,
+      [daftarPob, daftarBpb],
     );
     if (campur.length) {
       throw new Error(
-        `BPB ${campur.map((r) => r.bpb_nomor).join(", ")} milik PO Celup yang juga ada di voucher ini sebagai PO Celup. Pilih salah satu.`,
+        `BPB ${campur.map((r) => r.bpb_nomor).join(", ")} milik PO yang juga ada di voucher ini sebagai PO Bahan. Pilih salah satu.`,
       );
     }
   }
 
-  for (const d of detail.filter((x) => x.tipe === "PCL" && x.nomor)) {
-    const info = await getInfoPoCelup(
-      d.nomor,
-      supKode,
-      isEdit ? nomor : "",
-      Number(statusPpn),
+  // Saat edit, PO yang sudah ada di voucher ini tidak kena batas tanggal mulai
+  const nomorPobLama = new Set();
+  if (isEdit) {
+    const [lamaPob] = await db.query(
+      `SELECT voud_nota FROM tvoucher_dtl
+       WHERE voud_vou_nomor = ? AND voud_type = 'POB'`,
+      [nomor],
     );
+    for (const r of lamaPob)
+      nomorPobLama.add(String(r.voud_nota).toUpperCase());
+  }
+
+  for (const d of detail.filter((x) => x.tipe === "POB" && x.nomor)) {
+    const info = await getInfoPoBahan(d.nomor, supKode, {
+      excludeVou: isEdit ? nomor : "",
+      statusPpn: Number(statusPpn),
+      cekTanggal: !nomorPobLama.has(String(d.nomor).toUpperCase()),
+    });
     if (!info) {
-      const [[po]] = await db.query(
-        `SELECT po_jenis, po_sup_kode, po_status_ppn FROM tpo_hdr WHERE po_nomor = ?`,
-        [kode],
+      throw new Error(
+        await alasanPoBahanTidakValid(d.nomor, supKode, statusPpn),
       );
-      if (!po) throw new Error(`PO ${kode} tidak ditemukan.`);
-      if (Number(po.po_jenis) !== 2) {
-        throw new Error(`PO ${kode} bukan PO Celup.`);
-      }
-      if (String(po.po_sup_kode).trim() !== String(supKode).trim()) {
-        throw new Error(
-          `PO ${kode} milik supplier ${po.po_sup_kode}, bukan ${supKode}.`,
-        );
-      }
-      if (Number(po.po_status_ppn) !== Number(statusPpn)) {
-        throw new Error(
-          `Status PPN PO (${Number(po.po_status_ppn) ? "PPN" : "Non PPN"}) tidak sama dengan voucher (${Number(statusPpn) ? "PPN" : "Non PPN"}).`,
-        );
-      }
-      throw new Error(`PO ${kode} tidak memiliki baris bahan.`);
     }
     if (info.adaVoucherBpb) {
       throw new Error(
-        `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lagi lewat PO Celup.`,
+        `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lewat PO Bahan.`,
       );
     }
     const sisa = info.total - info.sudah;
@@ -1058,7 +1107,7 @@ const save = async (payload, userKode) => {
   for (const d of detail) {
     if (d.tipe && d.nomor) {
       if (
-        ["BPB", "BPJ", "POE", "MMT", "BPE", "BPG", "POL", "PCL"].includes(
+        ["BPB", "BPJ", "POE", "MMT", "BPE", "BPG", "POL", "POB"].includes(
           d.tipe,
         )
       ) {

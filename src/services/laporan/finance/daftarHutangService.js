@@ -1,4 +1,8 @@
 const db = require("../../../config/database");
+const {
+  SQL_BPB_MILIK_PO,
+  TANGGAL_MULAI_PO_BAHAN,
+} = require("../../piutang/voucherPoBahanKonstanta");
 
 // ── PO Lain-lain via Uang Muka. Satu baris PUM = satu baris PO.
 // Aktual = hasil Penyelesaian (tkasbonitem terverifikasi). Selama belum
@@ -117,12 +121,16 @@ const getHutangPoLainLain = async (startDate, endDate) => {
   return hasil;
 };
 
-// ── PO Celup via Voucher Pembayaran (tipe PCL) ──────────────────────────
-// Satu PO Celup bisa punya banyak BPB. Voucher PCL dibagi ke BPB tertua dulu,
-// masing-masing maksimal sebesar total BPB-nya. Semua BPB PO dihitung (termasuk
-// di luar rentang tanggal), hanya yang dalam rentang yang dikembalikan.
-// Relasi BPB ke PO: bpb_po_nomor (Delphi/manual) atau bpb_keterangan (auto-BPB web).
-const getAlokasiPcl = async (startDate, endDate) => {
+// ── PO Bahan / Greige / Celup via Voucher Pembayaran (tipe POB) ─────────
+// Satu PO bisa punya banyak BPB. Voucher POB dibagi ke BPB tertua dulu,
+// masing-masing maksimal sebesar total BPB-nya. Semua BPB milik PO dihitung
+// (termasuk di luar rentang tanggal), hanya yang dalam rentang yang dikembalikan.
+// Kepemilikan BPB oleh PO: SQL_BPB_MILIK_PO (voucherPoBahanKonstanta.js).
+// PO Greige yang BPB-nya milik PO Celup tidak punya BPB sendiri, jadi voucher
+// POB-nya tidak teralokasi dan tidak tampil di Daftar Hutang.
+// terkunci = BPB dalam rentang yang PO-nya sudah punya voucher POB; BPB itu
+// tidak boleh divoucher per BPB lagi (Tarik Tagihan Rekap harus melewatinya).
+const getAlokasiPob = async (startDate, endDate) => {
   const [vou] = await db.query(
     `SELECT v.voud_nota AS Po, vh.vou_nomor AS NomorVoucher,
             DATE_FORMAT(vh.vou_tanggal, '%Y-%m-%d') AS TanggalVoucher,
@@ -134,10 +142,11 @@ const getAlokasiPcl = async (startDate, endDate) => {
             ) AS Bayar
      FROM tvoucher_dtl v
      INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = v.voud_vou_nomor
-     WHERE v.voud_type = 'PCL'
+     WHERE v.voud_type = 'POB'
      ORDER BY v.voud_nota, vh.vou_tanggal, vh.vou_nomor`,
   );
-  if (!vou.length) return { perBpb: new Map(), detail: [] };
+  if (!vou.length)
+    return { perBpb: new Map(), detail: [], terkunci: new Set() };
 
   const poList = [...new Set(vou.map((v) => v.Po))];
   const [bpb] = await db.query(
@@ -145,9 +154,8 @@ const getAlokasiPcl = async (startDate, endDate) => {
             (h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?) AS DalamRentang,
             ROUND(SUM((d.bpbd_harga * (100 - d.bpbd_disc) / 100) * d.bpbd_jumlah
               * IF(p.po_status_ppn = 1, (100 + p.po_ppn) / 100, 1)), 2) AS Total
-     FROM tbpb_hdr h
-     INNER JOIN tpo_hdr c
-       ON c.po_jenis = 2 AND c.po_nomor IN (h.bpb_po_nomor, h.bpb_keterangan)
+     FROM tpo_hdr c
+     INNER JOIN tbpb_hdr h ON ${SQL_BPB_MILIK_PO("h", "c")}
      INNER JOIN tbpb_dtl d ON d.bpbd_bpb_nomor = h.bpb_nomor
      INNER JOIN tpo_hdr p ON p.po_nomor = h.bpb_po_nomor
      WHERE c.po_nomor IN (?)
@@ -164,6 +172,7 @@ const getAlokasiPcl = async (startDate, endDate) => {
 
   const perBpb = new Map();
   const detail = [];
+  const terkunci = new Set();
   for (const b of bpb) {
     let butuh = Number(b.Total) || 0;
     const alok = { v: 0, b: 0 };
@@ -187,9 +196,10 @@ const getAlokasiPcl = async (startDate, endDate) => {
     }
     if (Number(b.DalamRentang)) {
       perBpb.set(b.Bpb, { v: bulat(alok.v), b: bulat(alok.b) });
+      terkunci.add(b.Bpb);
     }
   }
-  return { perBpb, detail };
+  return { perBpb, detail, terkunci };
 };
 
 // ── Master: Daftar Seluruh Jenis BPB / Nota Hutang ─────────────────────
@@ -350,6 +360,31 @@ const getBrowse = async (startDate, endDate) => {
         INNER JOIN .tsupplier s ON s.sup_kode = h.bpb_sup_kode
         WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?
         GROUP BY h.bpb_nomor
+
+        UNION ALL
+
+        -- 9. POB Greige: PO Greige tanpa BPB sendiri dihutang di tingkat PO
+        --    (BPB yang menunjuk PO Greige milik PO Celup). Mulai tanggal
+        --    TANGGAL_MULAI_PO_BAHAN, sama seperti batas pemanggilan POB.
+        SELECT
+          p.po_nomor AS Nomor,
+          'POB' AS Tipe,
+          DATE_FORMAT(p.po_tanggal, '%Y-%m-%d') AS Tanggal,
+          DATE_FORMAT(p.po_tanggal, '%Y-%m-%d') AS JatuhTempo,
+          p.po_sup_kode AS SupKode,
+          s.sup_nama AS Nama,
+          ROUND(SUM(d.pod_jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100) * IF(p.po_status_ppn = 1, (100 + p.po_ppn) / 100, 1), 2) AS Total
+        FROM tpo_hdr p
+        INNER JOIN tpo_dtl d ON d.pod_po_nomor = p.po_nomor
+        INNER JOIN tsupplier s ON s.sup_kode = p.po_sup_kode
+        WHERE p.po_jenis = 1
+          AND p.po_tanggal >= ? AND p.po_tanggal <= ?
+          AND p.po_tanggal >= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM tbpb_hdr b WHERE ${SQL_BPB_MILIK_PO("b", "p")}
+          )
+        GROUP BY p.po_nomor, p.po_tanggal, p.po_sup_kode, s.sup_nama,
+                 p.po_status_ppn, p.po_ppn
      ) x
      ORDER BY x.Tanggal ASC, x.Nomor ASC`,
     [
@@ -369,12 +404,17 @@ const getBrowse = async (startDate, endDate) => {
       endDate, // BPE
       startDate,
       endDate, // BPG
+      startDate,
+      endDate,
+      TANGGAL_MULAI_PO_BAHAN, // POB Greige
     ],
   );
 
-  const { perBpb } = await getAlokasiPcl(startDate, endDate);
+  const { perBpb, terkunci } = await getAlokasiPob(startDate, endDate);
   rowsUtama.forEach((r) => {
-    const a = r.Tipe === "PBG" ? perBpb.get(r.Nomor) : null;
+    if (r.Tipe !== "PBG") return;
+    r.TerkunciPob = terkunci.has(r.Nomor) ? 1 : 0;
+    const a = perBpb.get(r.Nomor);
     if (a) {
       r.Voucher = Number(r.Voucher) + a.v;
       r.Bayar = Number(r.Bayar) + a.b;
@@ -417,6 +457,12 @@ const getDetail = async (startDate, endDate) => {
        SELECT bpe_nomor FROM tbpbpoexternal_hdr WHERE bpe_tanggal >= ? AND bpe_tanggal <= ?
        UNION
        SELECT bpb_nomor FROM tgarmenbpb_hdr WHERE bpb_tanggal >= ? AND bpb_tanggal <= ?
+       UNION
+       SELECT p.po_nomor FROM tpo_hdr p
+       WHERE p.po_jenis = 1 AND p.po_tanggal >= ? AND p.po_tanggal <= ?
+         AND NOT EXISTS (
+           SELECT 1 FROM tbpb_hdr b WHERE ${SQL_BPB_MILIK_PO("b", "p")}
+         )
      ) n
      INNER JOIN tvoucher_dtl vd ON vd.voud_nota = n.Nomor
      INNER JOIN tvoucher_hdr vh ON vh.vou_nomor = vd.voud_vou_nomor
@@ -438,6 +484,8 @@ const getDetail = async (startDate, endDate) => {
       endDate, // tbpbpoexternal_hdr
       startDate,
       endDate, // tgarmenbpb_hdr
+      startDate,
+      endDate, // PO Greige
     ],
   );
   // PO Lain-lain: tampilkan pengajuan transfer sebagai "voucher". Dokumen
@@ -496,8 +544,8 @@ const getDetail = async (startDate, endDate) => {
     [startDate, endDate],
   );
 
-  const { detail: rowsVouPcl } = await getAlokasiPcl(startDate, endDate);
-  return [...rows, ...rowsLain, ...rowsPum, ...rowsVouPol, ...rowsVouPcl].sort(
+  const { detail: rowsVouPob } = await getAlokasiPob(startDate, endDate);
+  return [...rows, ...rowsLain, ...rowsPum, ...rowsVouPol, ...rowsVouPob].sort(
     (a, b) =>
       String(a.Nomor).localeCompare(String(b.Nomor)) ||
       String(a.TanggalVoucher).localeCompare(String(b.TanggalVoucher)),

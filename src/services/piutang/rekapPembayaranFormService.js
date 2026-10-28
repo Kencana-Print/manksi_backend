@@ -2,6 +2,7 @@ const db = require("../../config/database");
 const voucherForm = require("./voucherPembayaranFormService");
 const { kategoriDari, urutanKategori } = require("./rekapKategori");
 const daftarHutang = require("../laporan/finance/daftarHutangService");
+const { SQL_BPB_MILIK_PO } = require("./voucherPoBahanKonstanta");
 
 const PREFIX_CABANG = "P01";
 const NAMA_LOCK = "trekap_bayar_simpan";
@@ -16,13 +17,13 @@ const TIPE_VALID = [
   "BPE",
   "BPG",
   "POL",
-  "PCL",
+  "POB",
 ];
 // RET dan PJG adalah pengurang (sama dengan Voucher)
 const TIPE_MINUS = ["RET", "PJG"];
 // searchNota Voucher memakai kode "RTG" untuk retur
 const TIPE_KE_SEARCH = { RET: "RTG" };
-// Kode tipe di Daftar Hutang → tipe rekap (POL/PCL tidak ada di sana)
+// Kode tipe di Daftar Hutang → tipe rekap (POL/POB tidak ada di sana)
 const TIPE_DARI_HUTANG = {
   PBG: "BPB",
   BJG: "BPJ",
@@ -56,7 +57,7 @@ const SQL_STATUS_PPN = {
         WHERE b.bpj_nomor = ?`,
   RET: "SELECT ret_sts_ppn AS s FROM tret_hdr WHERE ret_nomor = ?",
   POL: "SELECT po_status_ppn AS s FROM tpo_hdr WHERE po_nomor = ?",
-  PCL: "SELECT po_status_ppn AS s FROM tpo_hdr WHERE po_nomor = ?",
+  POB: "SELECT po_status_ppn AS s FROM tpo_hdr WHERE po_nomor = ?",
 };
 
 // ── Helper ────────────────────────────────────────────────────────────
@@ -227,7 +228,13 @@ const getTagihan = async (supKode, startDate, endDate, excludeNomor = "") => {
       continue;
     }
     const tipe = TIPE_DARI_HUTANG[r.Tipe];
-    if (!tipe || (tipe === "BPB" && bpbPoLain.has(r.Nomor))) {
+    // BPB milik PO Lain-lain dibayar per PO (POL); BPB milik PO yang sudah
+    // divoucher POB tidak boleh dibayar per BPB lagi (ditolak saat simpan)
+    if (
+      !tipe ||
+      (tipe === "BPB" &&
+        (bpbPoLain.has(r.Nomor) || Number(r.TerkunciPob) === 1))
+    ) {
       continue;
     }
     const sisa = round2(Number(r.Total) - Number(r.Voucher));
@@ -236,8 +243,8 @@ const getTagihan = async (supKode, startDate, endDate, excludeNomor = "") => {
     }
   }
 
-  // PO Lain-lain dan PO Celup dibayar di tingkat PO
-  for (const tipe of ["POL", "PCL"]) {
+  // PO Lain-lain (POL) dan PO Bahan/Greige/Celup (POB) dibayar di tingkat PO
+  for (const tipe of ["POL", "POB"]) {
     const daftar = await voucherForm.searchNota(tipe, sup, "");
     for (const n of daftar) {
       try {
@@ -440,7 +447,81 @@ const siapkanData = async (payload, nomorEdit, bolehKosong = false) => {
     }
   }
 
+  await cekBentrokPobBpb(baris, nomorEdit);
+
   return { ket, baris };
+};
+
+// BPB dan POB milik PO yang sama tidak boleh sama-sama direncanakan, di rekap
+// ini maupun rekap AKTIF lain: saat divoucher salah satunya pasti ditolak dan
+// total rencana jadi dobel.
+const cekBentrokPobBpb = async (baris, nomorEdit) => {
+  const pob = [
+    ...new Set(baris.filter((b) => b.tipe === "POB").map((b) => b.info.nomor)),
+  ];
+  const bpb = [
+    ...new Set(baris.filter((b) => b.tipe === "BPB").map((b) => b.info.nomor)),
+  ];
+  const pesan = (po, nota) =>
+    `PO ${po} dan BPB ${nota} (milik PO itu) tidak boleh direncanakan bersamaan.`;
+
+  if (pob.length && bpb.length) {
+    const [rows] = await db.query(
+      `SELECT p.po_nomor AS po, b.bpb_nomor AS bpb
+       FROM tpo_hdr p
+       INNER JOIN tbpb_hdr b ON ${SQL_BPB_MILIK_PO("b", "p")}
+       WHERE p.po_nomor IN (?) AND b.bpb_nomor IN (?)
+       LIMIT 1`,
+      [pob, bpb],
+    );
+    if (rows.length) {
+      throw new Error(pesan(rows[0].po, rows[0].bpb));
+    }
+  }
+
+  if (pob.length) {
+    const [rows] = await db.query(
+      `SELECT p.po_nomor AS po, b.bpb_nomor AS bpb, h.rkb_nomor AS rekap
+       FROM tpo_hdr p
+       INNER JOIN tbpb_hdr b ON ${SQL_BPB_MILIK_PO("b", "p")}
+       INNER JOIN trekap_bayar_dtl d
+         ON d.rkbd_tipe = 'BPB' AND d.rkbd_nota = b.bpb_nomor
+        AND d.rkbd_vou_nomor = ''
+       INNER JOIN trekap_bayar_hdr h
+         ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+        AND h.rkb_nomor <> ?
+       WHERE p.po_nomor IN (?)
+       LIMIT 1`,
+      [nomorEdit || "", pob],
+    );
+    if (rows.length) {
+      throw new Error(
+        `${pesan(rows[0].po, rows[0].bpb)} BPB itu sudah direncanakan di ${rows[0].rekap}.`,
+      );
+    }
+  }
+
+  if (bpb.length) {
+    const [rows] = await db.query(
+      `SELECT p.po_nomor AS po, b.bpb_nomor AS bpb, h.rkb_nomor AS rekap
+       FROM tbpb_hdr b
+       INNER JOIN tpo_hdr p ON ${SQL_BPB_MILIK_PO("b", "p")}
+       INNER JOIN trekap_bayar_dtl d
+         ON d.rkbd_tipe = 'POB' AND d.rkbd_nota = p.po_nomor
+        AND d.rkbd_vou_nomor = ''
+       INNER JOIN trekap_bayar_hdr h
+         ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+        AND h.rkb_nomor <> ?
+       WHERE b.bpb_nomor IN (?)
+       LIMIT 1`,
+      [nomorEdit || "", bpb],
+    );
+    if (rows.length) {
+      throw new Error(
+        `${pesan(rows[0].po, rows[0].bpb)} PO itu sudah direncanakan di ${rows[0].rekap}.`,
+      );
+    }
+  }
 };
 
 // Peringatan (tidak menolak simpan): faktur yang sama dipakai supplier berbeda

@@ -1,10 +1,10 @@
 const svc = require("../../services/piutang/klaimKasKecilService");
 const {
-  REK_TUJUAN_PER_CABANG,
   aksesPenuh,
+  normCabang,
+  cabangKlaimUser,
+  CABANG_PUSAT,
 } = require("../../services/piutang/klaimKasKecilKonstanta");
-
-const CABANG_PUSAT = ["P01", "HO-"];
 
 // Scope baca. Akses penuh dan pusat -> null (semua cabang);
 // cabang lain -> dipaksa ke cabangnya. Gagal tertutup bila cabang kosong.
@@ -16,17 +16,17 @@ const resolveCabang = (req) => {
     e.status = 403;
     throw e;
   }
-  return CABANG_PUSAT.includes(c) ? null : c;
+  return CABANG_PUSAT.includes(c) ? null : normCabang(c);
 };
 
-// Scope batal. Akses penuh -> null (boleh semua); selain itu hanya pemilik
-// cabang terdaftar. Pusat tanpa akses penuh ditolak.
+// Scope batal. Akses penuh -> null (boleh semua); selain itu hanya klaim milik
+// cabang terdaftar user (P04 -> klaim P04, P01/HO- -> klaim ATM pusat).
 const scopeBatal = (req) => {
   if (aksesPenuh(req.user)) return null;
-  const c = String(req.user?.cabang || "").trim();
-  if (!REK_TUJUAN_PER_CABANG[c]) {
+  const c = cabangKlaimUser(req.user);
+  if (!c) {
     const e = new Error(
-      "Klaim Kas Kecil hanya dapat dibatalkan oleh user cabang yang terdaftar.",
+      "Klaim hanya dapat dibatalkan oleh user cabang yang terdaftar.",
     );
     e.status = 403;
     throw e;
@@ -41,9 +41,14 @@ const kirimError = (res, err, statusDefault = 500) =>
 
 const getBrowse = async (req, res) => {
   try {
-    const { startDate, endDate, cabang } = req.query;
+    const { startDate, endDate, cabang, jenis } = req.query;
     const scope = resolveCabang(req);
-    const data = await svc.getBrowse(startDate, endDate, scope || cabang);
+    const data = await svc.getBrowse(
+      startDate,
+      endDate,
+      scope || cabang,
+      jenis,
+    );
     res.json({ success: true, data });
   } catch (err) {
     kirimError(res, err);
@@ -52,9 +57,14 @@ const getBrowse = async (req, res) => {
 
 const getBrowseDetail = async (req, res) => {
   try {
-    const { startDate, endDate, cabang } = req.query;
+    const { startDate, endDate, cabang, jenis } = req.query;
     const scope = resolveCabang(req);
-    const data = await svc.getBrowseDetail(startDate, endDate, scope || cabang);
+    const data = await svc.getBrowseDetail(
+      startDate,
+      endDate,
+      scope || cabang,
+      jenis,
+    );
     res.json({ success: true, data });
   } catch (err) {
     kirimError(res, err);

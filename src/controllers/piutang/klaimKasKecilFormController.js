@@ -1,14 +1,17 @@
 const svc = require("../../services/piutang/klaimKasKecilFormService");
-const { aksesPenuh } = require("../../services/piutang/klaimKasKecilKonstanta");
-
-const CABANG_PUSAT = ["P01", "HO-"];
+const {
+  aksesPenuh,
+  normCabang,
+  cabangKlaimUser,
+  CABANG_PUSAT,
+} = require("../../services/piutang/klaimKasKecilKonstanta");
 
 const kirimError = (res, err, statusDefault = 500) =>
   res
     .status(err.status || statusDefault)
     .json({ success: false, message: err.message });
 
-// Akses penuh dan pusat -> null (baca semua); cabang lain -> cabangnya
+// Hak BACA: akses penuh dan pusat -> null (baca semua); cabang lain -> cabangnya
 const scopeBaca = (req) => {
   if (aksesPenuh(req.user)) return null;
   const c = String(req.user?.cabang || "").trim();
@@ -17,7 +20,7 @@ const scopeBaca = (req) => {
     e.status = 403;
     throw e;
   }
-  return CABANG_PUSAT.includes(c) ? null : c;
+  return CABANG_PUSAT.includes(c) ? null : normCabang(c);
 };
 
 const getDefaults = async (req, res) => {
@@ -35,6 +38,7 @@ const getBkkOptions = async (req, res) => {
     const cabang = svc.cabangKerja(req.user, req.query.cabang);
     const data = await svc.getBkkOptions(
       cabang,
+      req.query.rekTujuan || "",
       req.query.search || "",
       req.query.exceptNomor || "",
     );
@@ -50,6 +54,7 @@ const getDetail = async (req, res) => {
       req.params.nomor,
       scopeBaca(req),
       aksesPenuh(req.user),
+      cabangKlaimUser(req.user),
     );
     res.json({ success: true, data });
   } catch (err) {

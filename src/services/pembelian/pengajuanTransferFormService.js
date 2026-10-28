@@ -1,7 +1,11 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
-const { SUP_KLAIM_PER_CABANG } = require("../piutang/klaimKasKecilKonstanta");
+const {
+  TANGGAL_MULAI_KLAIM,
+  kasByRek,
+  semuaSupKlaim,
+} = require("../piutang/klaimKasKecilKonstanta");
 
 // ── Account header (rekening bank — rek_rekening<>"" AND rek_jp=0) ────
 const getAccountOptions = async () => {
@@ -387,15 +391,13 @@ const validasiPoLain = async (conn, detail) => {
   }
 };
 
-// Supplier tujuan klaim per cabang (master tsupplier + rekening pertama).
+// Supplier tujuan klaim per kas (master tsupplier + rekening pertama).
 // Bila supplier punya lebih dari satu rekening, dipakai yang pertama
 // berdasarkan nama bank.
-const ambilSupplierKlaim = async (conn, cabang) => {
-  const kode = SUP_KLAIM_PER_CABANG[cabang];
+const ambilSupplierKlaim = async (conn, rekKode) => {
+  const kode = kasByRek(rekKode)?.sup;
   if (!kode)
-    throw new Error(
-      `Supplier tujuan untuk kas kecil cabang ${cabang} belum diatur.`,
-    );
+    throw new Error(`Supplier tujuan untuk kas ${rekKode} belum diatur.`);
   const [rows] = await conn.query(
     `SELECT a.sup_kode AS kode, a.sup_nama AS nama,
             b.supd_bank AS bank, b.supd_rekening AS rekening,
@@ -456,18 +458,18 @@ const getKlaimKasKecilOptions = async (search = "", excludeNomor = "") => {
   );
   const infoRek = new Map(rek.map((r) => [r.rek_kode, r]));
 
-  const supPerCabang = new Map();
+  const supPerRek = new Map();
   const hasil = [];
   for (const r of rows.filter((x) => !terpakai.has(x.nomor))) {
-    if (!supPerCabang.has(r.cabang))
-      supPerCabang.set(r.cabang, await ambilSupplierKlaim(db, r.cabang));
+    if (!supPerRek.has(r.rekKode))
+      supPerRek.set(r.rekKode, await ambilSupplierKlaim(db, r.rekKode));
     hasil.push({
       ...r,
       nominal: Number(r.nominal),
       jumlahBkk: Number(r.jumlahBkk),
       rekNama: infoRek.get(r.rekKode)?.rek_nama || "",
       rekRekening: infoRek.get(r.rekKode)?.rek_rekening || "",
-      sup: supPerCabang.get(r.cabang),
+      sup: supPerRek.get(r.rekKode),
     });
   }
   return hasil;
@@ -562,7 +564,7 @@ const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
 
     await pastikanNominalBkk(conn, k);
 
-    const sup = await ambilSupplierKlaim(conn, k.kkh_cabang);
+    const sup = await ambilSupplierKlaim(conn, k.kkh_rek_tujuan);
     d.trs = k.kkh_nomor;
     d.nominal = Number(k.kkh_total);
     d.kode = sup.kode;
@@ -571,6 +573,69 @@ const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
     d.rekening = sup.rekening;
     d.atasnama = sup.atasnama;
   }
+};
+
+// Supplier tujuan klaim (kas kecil cabang / ATM) hanya boleh dipakai lewat
+// baris klaim, yaitu No. Transaksi berisi nomor klaim yang ada. Baris manual
+// ke supplier itu ditolak mulai tanggal mulai klaim (sebelumnya alur lama).
+// Dipanggil SETELAH validasiKlaimKasKecil (baris klaim sudah dinormalkan).
+const assertSupplierKlaimHanyaLewatKlaim = async (conn, detail, tanggal) => {
+  if (!tanggal || String(tanggal).slice(0, 10) < TANGGAL_MULAI_KLAIM) return;
+  const supKlaim = new Set(semuaSupKlaim());
+  const baris = detail.filter(
+    (d) =>
+      d.nama &&
+      !d.jurnal &&
+      !d.batal &&
+      supKlaim.has(String(d.kode || "").trim()),
+  );
+  if (!baris.length) return;
+
+  const daftarTrs = [
+    ...new Set(baris.map((d) => String(d.trs || "").trim()).filter(Boolean)),
+  ];
+  let klaimAda = new Set();
+  if (daftarTrs.length) {
+    const [klaim] = await conn.query(
+      `SELECT kkh_nomor FROM tklaim_kaskecil_hdr WHERE kkh_nomor IN (?)`,
+      [daftarTrs],
+    );
+    klaimAda = new Set(klaim.map((k) => k.kkh_nomor.toUpperCase()));
+  }
+  const salah = baris.filter(
+    (d) =>
+      !klaimAda.has(
+        String(d.trs || "")
+          .trim()
+          .toUpperCase(),
+      ),
+  );
+  if (salah.length)
+    throw new Error(
+      `Supplier ${[...new Set(salah.map((d) => d.nama))].join(", ")} khusus pengisian kas lewat Klaim. Ajukan lewat F8 Klaim Kas Kecil.`,
+    );
+};
+
+// Supplier baris PJT dari database (bukan payload klien), dicatat di baris
+// debit BBK hasil realisasi supaya BBK menampilkan supplier/bank/rekening.
+const ambilSupplierBaris = async (conn, nomorPjt, nourut) => {
+  const [[r]] = await conn.query(
+    `SELECT d.ptd_sup_kode AS kode,
+            COALESCE(NULLIF(s.sup_nama, ''), d.ptd_atasnama) AS nama,
+            d.ptd_bank AS bank, d.ptd_rekening AS rekening,
+            d.ptd_atasnama AS atasnama
+     FROM finance.tpengajuan_transfer_dtl d
+     LEFT JOIN tsupplier s ON s.sup_kode = d.ptd_sup_kode
+     WHERE d.ptd_nomor = ? AND d.ptd_nourut = ?`,
+    [nomorPjt, nourut],
+  );
+  return {
+    kode: r?.kode || "",
+    nama: r?.nama || "",
+    bank: r?.bank || "",
+    rekening: r?.rekening || "",
+    atasnama: r?.atasnama || "",
+  };
 };
 
 // Mode realisasi: baris klaim dipaksa ke akun kas kecil dan nominal tersimpan.
@@ -876,13 +941,16 @@ const saveData = async (payload, user) => {
             `,
               [d.jurnal, rek_kode, d.nominal, d.ket || ""],
             );
-            // Detail debet
+            // Detail debet (dengan supplier baris PJT)
+            const sup = await ambilSupplierBaris(conn, nomor, d.nourut);
             await conn.query(
               `
               INSERT INTO finance.tjurnalitem
                 (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
-                 jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama)
-              VALUES (?, 'BBK', 1, ?, ?, ?, ?, ?)
+                 jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
+                 jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening,
+                 jurd_atasnama)
+              VALUES (?, 'BBK', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
               [
                 d.jurnal,
@@ -891,6 +959,11 @@ const saveData = async (payload, user) => {
                 d.rekkode || "",
                 d.cckode || 0,
                 d.dcnama || "",
+                sup.kode,
+                sup.nama,
+                sup.bank,
+                sup.rekening,
+                sup.atasnama,
               ],
             );
 
@@ -1022,13 +1095,16 @@ const saveData = async (payload, user) => {
             `,
               [jurnalNomor, rek_kode, d.nominal, d.ket || ""],
             );
-            // Detail debet
+            // Detail debet (dengan supplier baris PJT)
+            const supBaru = await ambilSupplierBaris(conn, nomor, d.nourut);
             await conn.query(
               `
               INSERT INTO finance.tjurnalitem
                 (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
-                 jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama)
-              VALUES (?, 'BBK', 1, ?, ?, ?, ?, ?)
+                 jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
+                 jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening,
+                 jurd_atasnama)
+              VALUES (?, 'BBK', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `,
               [
                 jurnalNomor,
@@ -1037,6 +1113,11 @@ const saveData = async (payload, user) => {
                 d.rekkode || "",
                 d.cckode || 0,
                 d.dcnama || "",
+                supBaru.kode,
+                supBaru.nama,
+                supBaru.bank,
+                supBaru.rekening,
+                supBaru.atasnama,
               ],
             );
 
@@ -1172,6 +1253,7 @@ const saveData = async (payload, user) => {
 
     await validasiPoLain(conn, detail);
     await validasiKlaimKasKecil(conn, detail, rek_kode, actualNomor);
+    await assertSupplierKlaimHanyaLewatKlaim(conn, detail, tanggal);
 
     // Delphi: delete link voucher & po external lama
     await conn.query(`DELETE FROM tpoexternal_dtl2 WHERE poed2_link = ?`, [

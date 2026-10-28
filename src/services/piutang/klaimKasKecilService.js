@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const { JENIS_KLAIM, rekPerJenis } = require("./klaimKasKecilKonstanta");
 
 const httpError = (msg, status) => Object.assign(new Error(msg), { status });
 
@@ -7,9 +8,14 @@ const httpError = (msg, status) => Object.assign(new Error(msg), { status });
 const filterCabang = (cabang) =>
   cabang && cabang !== "ALL" && cabang !== "HO-" ? cabang : null;
 
+// jenis: "KAS_KECIL" | "ATM" | kosong (semua). Dipakai untuk dua mode halaman.
+const filterRekJenis = (jenis) =>
+  JENIS_KLAIM.includes(jenis) ? rekPerJenis(jenis) : null;
+
 // ── Browse (satu baris per klaim) ─────────────────────────────────────
-const getBrowse = async (startDate, endDate, cabang) => {
+const getBrowse = async (startDate, endDate, cabang, jenis = "") => {
   const cab = filterCabang(cabang);
+  const rekJenis = filterRekJenis(jenis);
   let sql = `
     SELECT h.kkh_nomor AS Nomor,
       DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS Tanggal,
@@ -27,6 +33,10 @@ const getBrowse = async (startDate, endDate, cabang) => {
   if (cab) {
     sql += ` AND h.kkh_cabang = ?`;
     params.push(cab);
+  }
+  if (rekJenis) {
+    sql += ` AND h.kkh_rek_tujuan IN (?)`;
+    params.push(rekJenis);
   }
   sql += ` ORDER BY h.kkh_nomor DESC`;
 
@@ -74,8 +84,9 @@ const getBrowse = async (startDate, endDate, cabang) => {
 };
 
 // ── Browse detail (daftar BKK per klaim, untuk expand) ────────────────
-const getBrowseDetail = async (startDate, endDate, cabang) => {
+const getBrowseDetail = async (startDate, endDate, cabang, jenis = "") => {
   const cab = filterCabang(cabang);
+  const rekJenis = filterRekJenis(jenis);
   let sql = `
     SELECT d.kkd_kkh_nomor AS Nomor,
       d.kkd_jur_no AS Bkk,
@@ -90,6 +101,10 @@ const getBrowseDetail = async (startDate, endDate, cabang) => {
   if (cab) {
     sql += ` AND h.kkh_cabang = ?`;
     params.push(cab);
+  }
+  if (rekJenis) {
+    sql += ` AND h.kkh_rek_tujuan IN (?)`;
+    params.push(rekJenis);
   }
   sql += ` ORDER BY d.kkd_kkh_nomor, d.kkd_jur_no`;
 
