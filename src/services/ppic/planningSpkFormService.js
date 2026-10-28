@@ -1,7 +1,11 @@
 // services/ppic/planningSpkFormService.js
 const db = require("../../config/database");
-const { getWipBahanBySpk, withWipBahan } = require("./wipBahanHelper");
 const { withCuttingOutput } = require("./cuttingOutputHelper");
+const {
+  getStatusBahanBySpk,
+  withStatusBahan,
+} = require("./statusBahanMkbHelper");
+const { getWipBahanBySpk, withWipBahan } = require("./wipBahanHelper");
 
 // ─────────────────────────────────────────────
 // Generate nomor: PL/PPIC/00001/2026
@@ -283,7 +287,7 @@ const getFormDetail = async (nomor) => {
         d.plan_smv             AS plan_smv,
         d.plan_smv_sumber      AS plan_smv_sumber
       FROM tplan_ppic_dtl2 d
-      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      LEFT JOIN tspk s ON s.spk_nomor = CONVERT(d.plan_spk USING latin1)
       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
       ORDER BY d.plan_tgl_jadwal ASC, d.plan_line_kelompok ASC, d.plan_spk ASC`,
       [nomor, divisi],
@@ -296,27 +300,18 @@ const getFormDetail = async (nomor) => {
     loadDivisi("SEWING"),
   ]);
   const cutting = await withCuttingOutput(
-    await withWipBahan(cuttingRaw),
+    await withStatusBahan(await withWipBahan(cuttingRaw)),
     hdr.pl_tgl1,
     hdr.pl_tgl2,
   );
-  // Riwayat: semua planning lain yang punya SPK yang sama
-  // dengan SPK yang ada di salah satu tab
-  const allSpk = [
-    ...cutting.map((r) => r.NomorSPK),
-    ...sewing.map((r) => r.NomorSPK),
-  ].filter(Boolean);
-  const uniqueSpk = [...new Set(allSpk)];
-
-  const [riwayat, sewingItems] = await Promise.all([
-    uniqueSpk.length ? getRiwayatBySpkList(uniqueSpk, nomor) : [],
-    enrichSewing(sewing, hdr.pl_tgl1, hdr.pl_tgl2),
-  ]);
+  // Riwayat TIDAK dimuat di sini: form memuatnya lewat endpoint terpisah
+  // (getRiwayatSpk) supaya tidak menahan tampilnya form.
+  const sewingItems = await enrichSewing(sewing, hdr.pl_tgl1, hdr.pl_tgl2);
 
   return {
     header: hdr,
     detail: { cutting, sewing: sewingItems },
-    riwayat,
+    riwayat: [],
   };
 };
 
@@ -338,8 +333,10 @@ const getRiwayatBySpkList = async (spkList, excludeNomor = "") => {
        d.plan_spk   AS NomorSPK,
        s.spk_nama   AS NamaSPK
      FROM tplan_ppic_hdr h
-     INNER JOIN tplan_ppic_dtl2 d ON d.plan_pl_nomor = h.pl_nomor
-     LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+     INNER JOIN tplan_ppic_dtl2 d
+       ON CONVERT(d.plan_pl_nomor USING latin1) = h.pl_nomor
+     LEFT JOIN tspk s
+       ON s.spk_nomor = CONVERT(d.plan_spk USING latin1)
      WHERE d.plan_spk IN (${placeholders})
        AND d.plan_divisi <> 'KOLI'
        AND h.pl_nomor <> ?
@@ -381,8 +378,12 @@ const getSpkInfo = async (spkNomor) => {
   );
   if (!rows.length) return null;
   const w = (await getWipBahanBySpk([spkNomor]))[spkNomor];
+  const sb = (await getStatusBahanBySpk([spkNomor]))[spkNomor];
   return {
     ...rows[0],
+    StatusBahan: sb ? sb.StatusBahan : "",
+    MkbNomor: sb ? sb.MkbNomor : "",
+    EstimasiKedatangan: sb ? sb.EstimasiKedatangan : "",
     WipBahan: w ? w.wip : 0,
     WipQty: w ? w.qty : 0,
     WipSatuan: w ? w.satuan : "",

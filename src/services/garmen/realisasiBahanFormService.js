@@ -60,11 +60,13 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
       IFNULL(s.spk_nama, m.mspk_nama) AS namaspk,
       IFNULL(s.spk_jumlah, m.mspk_jumlah) AS jumlahspk,
       d.mind_bhn_kode, d.mind_jumlah, b.Bhn_Name, b.Bhn_satuan,
+      IFNULL(st.bs_nama, '') AS setting,
       IFNULL((SELECT SUM(mst_stok_in - mst_stok_out) FROM tmasterstok_bahan WHERE mst_aktif="Y" AND mst_brg_kode=b.Bhn_kode), 0) AS stok
     FROM tmintabahan_hdr h
     INNER JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
     LEFT JOIN tgudangproduksi gp ON gp.gdgp_kode = IF(h.min_cab = 'P01', 'GP015', 'GP001')
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
     LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
     WHERE h.min_nomor = ?
@@ -110,6 +112,7 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
       namam: row.Bhn_Name,
       satuan: row.Bhn_satuan,
       satuanm: row.Bhn_satuan,
+      setting: row.setting,
       stk: parseFloat(row.stok) || 0,
       minta: minta,
       sudah: sudah,
@@ -149,12 +152,14 @@ const getBarcodeInfo = async (barcode) => {
   const query = `
     SELECT 
       a.bard_barcode, a.bard_kode, b.Bhn_Name, b.Bhn_satuan,
+      IFNULL(st.bs_nama, '') AS setting,
       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=a.bard_barcode), 0) AS stok,
       -- LOGIKA GETSUPPLIER: Melacak Supplier dari BPB
       IFNULL(bpb.bpb_sup_kode, "") AS kode_supplier,
       IFNULL(sup.sup_nama, "") AS nama_supplier
     FROM tbahan_barcode_dtl a
     INNER JOIN tbahan b ON b.Bhn_kode = a.bard_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(a.bard_kode, 8, 2)
     LEFT JOIN tbahan_barcode_hdr h ON h.bar_nomor = a.bard_nomor
     LEFT JOIN tbpb_hdr bpb ON bpb.bpb_Nomor = h.bar_bpb
     LEFT JOIN tsupplier sup ON sup.sup_kode = bpb.bpb_sup_kode
@@ -170,6 +175,7 @@ const getBarcodeInfo = async (barcode) => {
     kode: rows[0].bard_kode,
     nama: rows[0].Bhn_Name,
     satuan: rows[0].Bhn_satuan,
+    setting: rows[0].setting,
     stok: parseFloat(rows[0].stok),
     jumlah: parseFloat(rows[0].stok), // Default jumlah = stok full
     // Tambahan dari getsupplier
@@ -198,12 +204,14 @@ const getDetailRealisasi = async (nomor) => {
 
   const qDtl = `
     SELECT d.*, b.Bhn_Name, b.Bhn_satuan, c.Bhn_Name AS namam, c.Bhn_satuan AS satuanm, p.sup_nama,
+      IFNULL(st.bs_nama, '') AS setting,
       -- PERBAIKAN: Ditambah dengan promind_gross sesuai logika Delphi (Sisa stok dikembalikan seperti sebelum transaksi)
       (IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_bahan m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=b.bhn_kode), 0) + d.promind_gross) AS Stk,
       IFNULL((SELECT i.mind_jumlah FROM tmintabahan_hdr j INNER JOIN tmintabahan_dtl i ON i.mind_nomor=j.min_nomor WHERE j.min_nomor=h.promin_minta AND i.mind_bhn_kode=d.promind_kodem LIMIT 1), 0) AS minta
     FROM tproduksiminta_dtl d
     INNER JOIN tproduksiminta_hdr h ON h.promin_nomor = d.promind_promin_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
     LEFT JOIN tbahan c ON c.Bhn_kode = d.promind_kodem
     LEFT JOIN tsupplier p ON p.sup_kode = d.promind_sup_kode
     WHERE d.promind_promin_nomor = ?
@@ -212,9 +220,11 @@ const getDetailRealisasi = async (nomor) => {
 
   const qDtlBarcode = `
     SELECT d.*, b.Bhn_Name, b.Bhn_satuan,
+      IFNULL(st.bs_nama, '') AS setting,
       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=d.promind2_barcode AND m.mst_noreferensi <> d.promind2_promin_nomor), 0) AS stok
     FROM tproduksiminta_dtl2 d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind2_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind2_bhn_kode, 8, 2)
     WHERE d.promind2_promin_nomor = ?
   `;
   const [barcodeRows] = await db.query(qDtlBarcode, [nomor]);

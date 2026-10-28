@@ -2,6 +2,7 @@
 const db = require("../../config/database");
 const { enrichSewing } = require("./planningSpkFormService");
 const { withWipBahan } = require("./wipBahanHelper");
+const { withStatusBahan } = require("./statusBahanMkbHelper");
 const { withCuttingOutput } = require("./cuttingOutputHelper");
 
 // ─────────────────────────────────────────────
@@ -61,7 +62,7 @@ const getDetail = async (nomor) => {
         d.plan_line_kelompok   AS LineKelompok,
         d.plan_keterangan      AS Keterangan
       FROM tplan_ppic_dtl2 d
-      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      LEFT JOIN tspk s ON s.spk_nomor = CONVERT(d.plan_spk USING latin1)
       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = ?
       ORDER BY d.plan_tgl_jadwal ASC`,
       [nomor, divisi],
@@ -92,7 +93,7 @@ const getDetail = async (nomor) => {
         d.plan_line_kelompok, d.plan_hari, d.plan_jam,
         d.plan_target_output, d.plan_mp, d.plan_smv, d.plan_smv_sumber
       FROM tplan_ppic_dtl2 d
-      LEFT JOIN tspk s ON s.spk_nomor = d.plan_spk
+      LEFT JOIN tspk s ON s.spk_nomor = CONVERT(d.plan_spk USING latin1)
       WHERE d.plan_pl_nomor = ? AND d.plan_divisi = 'SEWING'
       ORDER BY d.plan_line_kelompok ASC, d.plan_tgl_jadwal ASC, d.plan_spk ASC`,
       [nomor],
@@ -147,7 +148,7 @@ const getDetail = async (nomor) => {
   );
   const cutting = hdrTgl
     ? await withCuttingOutput(
-        await withWipBahan(cuttingRaw),
+        await withStatusBahan(await withWipBahan(cuttingRaw)),
         hdrTgl.tgl1,
         hdrTgl.tgl2,
         "LineKelompok",
