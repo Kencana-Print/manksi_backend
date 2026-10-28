@@ -119,24 +119,28 @@ const generateNomor = async (tanggal, conn = null) => {
   return `${prefix}${String(nextNum).padStart(4, "0")}`;
 };
 
-// ── SEARCH SPK / MEMO SPK / SO (Bantuan SPK) ──────────────────────────
+// ── SEARCH SPK / MEMO SPK / SO (Direct Input SPK) ─────────────────────
+// Saat input SPK dan enter: tidak mengecek kondisi aktif atau close.
+// Yang penting nomor ada di database bisa lanjut.
+// (Untuk popup bantuan F1 menggunakan lookupService yang tetap memvalidasi aktif dan close)
 const searchSpk = async (keyword = "") => {
-  const term = `%${keyword.trim()}%`;
+  const kw = (keyword || "").trim();
+  const term = `%${kw}%`;
   const query = `
     SELECT * FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, 'SPK' AS Tipe 
       FROM kencanaprint.tspk 
-      WHERE spk_aktif = 'Y' AND spk_close = 0 AND (spk_nomor LIKE ? OR spk_nama LIKE ?)
+      WHERE (spk_nomor LIKE ? OR spk_nama LIKE ?)
       UNION ALL
       SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, 'MEMO' AS Tipe 
       FROM kencanaprint.tmemospk 
-      WHERE mspk_aktif = 'Y' AND mspk_close = 'N' AND (mspk_nomor LIKE ? OR mspk_nama LIKE ?)
+      WHERE (mspk_nomor LIKE ? OR mspk_nama LIKE ?)
       UNION ALL
       SELECT so_nomor AS Nomor, so_nama AS Nama, 'SO' AS Tipe
       FROM kencanaprint.tsalesorder
-      WHERE so_aktif = 'Y' AND so_close = 0 AND (so_nomor LIKE ? OR so_nama LIKE ?)
+      WHERE (so_nomor LIKE ? OR so_nama LIKE ?)
     ) x
-    ORDER BY Nomor DESC
+    ORDER BY (Nomor = ?) DESC, (Nomor LIKE ?) DESC, Nomor DESC
     LIMIT 50
   `;
 
@@ -147,6 +151,8 @@ const searchSpk = async (keyword = "") => {
     term,
     term,
     term,
+    kw,
+    `${kw}%`,
   ]);
   return rows;
 };
