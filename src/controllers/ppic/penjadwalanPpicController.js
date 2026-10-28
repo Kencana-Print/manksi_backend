@@ -86,6 +86,36 @@ const markMapNotified = async (req, res) => {
   }
 };
 
+const getRiwayatKirim = async (req, res) => {
+  try {
+    const data = await penjadwalanPpicService.getRiwayatKirim(
+      req.query.spk || "",
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getUnnotifiedSo = async (req, res) => {
+  try {
+    const data = await penjadwalanPpicService.getUnnotifiedSo(req.user.kode);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const markSoNotified = async (req, res) => {
+  try {
+    const { pjwdIds } = req.body;
+    await penjadwalanPpicService.markSoNotified(pjwdIds, req.user.kode);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -95,4 +125,7 @@ module.exports = {
   savePencapaian,
   getUnnotifiedMap,
   markMapNotified,
+  getRiwayatKirim,
+  getUnnotifiedSo,
+  markSoNotified,
 };

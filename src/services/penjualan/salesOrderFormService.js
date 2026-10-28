@@ -1348,6 +1348,14 @@ const saveData = async (payload, user) => {
     }
 
     await conn.commit();
+
+    // Auto-push ke Komitmen Kirim PPIC berdasarkan dateline (best-effort,
+    // tidak menggagalkan penyimpanan SO).
+    await require("../ppic/penjadwalanPpicFormService").pushSoToKomitmenKirim(
+      nomor,
+      user.kode,
+    );
+
     return { nomor };
   } catch (error) {
     await conn.rollback();
@@ -1357,7 +1365,7 @@ const saveData = async (payload, user) => {
   }
 };
 
-// --- VALIDASI FIELD FORM — UNION tspk + tsalesorder karena data
+// --- VALIDASI FIELD FORM— UNION tspk + tsalesorder karena data
 // historis (Delphi-created) tetap di tspk, data baru di tsalesorder.
 // Duplikasi/keberadaan harus dicek di KEDUANYA. ---
 const validateField = async (type, value, extraParam = "") => {

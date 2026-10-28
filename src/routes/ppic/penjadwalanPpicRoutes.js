@@ -16,10 +16,28 @@ router.get(
   controller.getBrowse,
 );
 router.get(
+  "/riwayat-kirim",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getRiwayatKirim,
+);
+router.get(
   "/notif-map",
   verifyToken,
   checkPermission(menuId, "view"),
   controller.getUnnotifiedMap,
+);
+router.get(
+  "/notif-so",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.getUnnotifiedSo,
+);
+router.post(
+  "/notif-so/mark-read",
+  verifyToken,
+  checkPermission(menuId, "view"),
+  controller.markSoNotified,
 );
 router.post(
   "/notif-map/mark-read",

@@ -510,6 +510,7 @@ const getFormDetail = async (nomor) => {
   if (!hdrRows.length) return null;
 
   await resolveSourceForPeriod(nomor);
+  await sinkronSoKePeriode(nomor);
 
   const penjadwalanPpicService = require("./penjadwalanPpicService");
   const detail = await penjadwalanPpicService.getDetail(nomor);
@@ -751,7 +752,8 @@ const createHeader = async (payload, userKode, userBagian) => {
       userKode,
     ],
   );
-  return { nomor };
+  const jumlahSo = await sinkronSoKePeriode(nomor, userKode);
+  return { nomor, jumlahSo };
 };
 
 // ── Helper: total Rencana SAAT INI untuk satu periode, opsional exclude
@@ -811,6 +813,11 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
   if (isManual && !NamaManual) {
     throw new Error("Baris manual harus punya Nama.");
   }
+  if (tipe === "MAP" && SoNomor) {
+    throw new Error(
+      "Nomor SO tidak bisa ditambahkan ke Komitmen Kirim MAP/Sampel. Tambahkan lewat tab Komitmen Kirim SO.",
+    );
+  }
 
   // Untuk tab MAP: Rencana otomatis = Pesan (qty penuh), bukan diisi
   // manual — beda dari keputusan awal ("qty sampel manual"), diganti
@@ -860,6 +867,17 @@ const addDetailRow = async (pjwNomor, rowData, userKode, userBagian) => {
       isManual ? Number(RealisasiManual) || 0 : realisasiVal,
     ],
   );
+  if (SoNomor) {
+    try {
+      await db.query(
+        `INSERT IGNORE INTO tpenjadwalan_ppic_so_log
+           (pso_so_nomor, pso_pjw_nomor, pso_sumber) VALUES (?, ?, 'MANUAL')`,
+        [SoNomor, pjwNomor],
+      );
+    } catch (e) {
+      console.error("Gagal catat log SO manual:", e.message);
+    }
+  }
   return {
     pjwd_id: result.insertId,
     warning: melebihiBatas ? { totalSetelah, batas: batasKapasitas } : null,
@@ -886,19 +904,23 @@ const updateDetailField = async (
     sanitizedValue = null;
   }
 
+  let breakdownDihapus = false;
+  let rencanaBerubah = false;
   let melebihiBatas = false;
   let totalSetelah = null;
   let batasKapasitas = null;
 
   if (field === "pjwd_rencana") {
     const [[row]] = await db.query(
-      `SELECT d.pjwd_pjw_nomor, d.pjwd_tipe, h.pjw_cab
+      `SELECT d.pjwd_pjw_nomor, d.pjwd_tipe, d.pjwd_rencana, h.pjw_cab
        FROM tpenjadwalan_ppic_dtl d
        INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
        WHERE d.pjwd_id = ?`,
       [pjwdId],
     );
     if (!row) throw new Error("Baris tidak ditemukan.");
+
+    rencanaBerubah = (Number(value) || 0) !== (Number(row.pjwd_rencana) || 0);
 
     if (row.pjwd_tipe === "SO") {
       batasKapasitas = getCapacity(row.pjw_cab);
@@ -909,15 +931,36 @@ const updateDetailField = async (
     }
   }
 
+  if (field === "pjwd_tgl_kesepakatan") {
+    const [[b]] = await db.query(
+      `SELECT COUNT(*) AS n FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+      [pjwdId],
+    );
+    if (Number(b.n) > 0)
+      throw new Error(
+        "Kesepakatan sudah dipecah (breakdown). Ubah lewat dialog breakdown.",
+      );
+  }
+
   await db.query(
     `UPDATE tpenjadwalan_ppic_dtl SET ${field} = ? WHERE pjwd_id = ?`,
     [sanitizedValue, pjwdId],
   );
+
+  if (field === "pjwd_rencana" && rencanaBerubah) {
+    const [del] = await db.query(
+      `DELETE FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+      [pjwdId],
+    );
+    breakdownDihapus = del.affectedRows > 0;
+  }
+
   return {
     pjwd_id: Number(pjwdId),
     field,
     value: sanitizedValue,
     warning: melebihiBatas ? { totalSetelah, batas: batasKapasitas } : null,
+    breakdownDihapus,
   };
 };
 
@@ -930,6 +973,10 @@ const deleteDetailRow = async (pjwdId, userKode, userBagian) => {
       "Menghapus baris hanya bisa dilakukan oleh bagian MARKETING.",
     );
   }
+  await db.query(
+    `DELETE FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+    [pjwdId],
+  );
   await db.query(`DELETE FROM tpenjadwalan_ppic_dtl WHERE pjwd_id = ?`, [
     pjwdId,
   ]);
@@ -1025,6 +1072,15 @@ const moveDetailRowToPeriod = async (
     );
     if (!row) throw new Error("Baris tidak ditemukan.");
 
+    const [[adaBd]] = await conn.query(
+      `SELECT COUNT(*) AS n FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+      [pjwdId],
+    );
+    if (Number(adaBd.n) > 0)
+      throw new Error(
+        "Kesepakatan sudah dipecah (breakdown). Ubah lewat dialog breakdown.",
+      );
+
     if (tanggalBaru >= row.pjw_tgl1 && tanggalBaru <= row.pjw_tgl2) {
       await conn.query(
         `UPDATE tpenjadwalan_ppic_dtl SET pjwd_tgl_kesepakatan = ? WHERE pjwd_id = ?`,
@@ -1068,6 +1124,8 @@ const moveDetailRowToPeriod = async (
     // ada — digabung (merge Rencana), bukan pindah-tabrak (yang akan
     // kena UNIQUE KEY constraint uq_pjwd_so).
     let merged = false;
+    let mergedKe = null;
+    let breakdownTargetDihapus = false;
     if (key && target) {
       const identifierCol = row.pjwd_so_nomor
         ? "pjwd_so_nomor"
@@ -1094,6 +1152,12 @@ const moveDetailRowToPeriod = async (
           `DELETE FROM tpenjadwalan_ppic_dtl WHERE pjwd_id = ?`,
           [pjwdId],
         );
+        const [delBd] = await conn.query(
+          `DELETE FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+          [existingTarget.pjwd_id],
+        );
+        breakdownTargetDihapus = delBd.affectedRows > 0;
+        mergedKe = existingTarget.pjwd_id;
         merged = true;
       }
     }
@@ -1124,11 +1188,164 @@ const moveDetailRowToPeriod = async (
     return {
       moved: true,
       merged,
+      mergedKe,
+      breakdownTargetDihapus,
       arah,
       fromNomor: row.pjwd_pjw_nomor,
       nomor: targetNomor,
       pjwd_id: Number(pjwdId),
     };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
+// ── Revisi MAP: telusuri rantai referensi ─────────────────────────────
+// Leluhur: MAP yang direvisi (referensi), lalu referensinya, dst.
+const cariLeluhur = async (conn, mapNomor) => {
+  const hasil = [];
+  let cur = mapNomor;
+  for (let i = 0; i < 20; i++) {
+    const [[r]] = await conn.query(
+      `SELECT mspk_referensi FROM tmemospk WHERE mspk_nomor = ?`,
+      [cur],
+    );
+    const ref = r && r.mspk_referensi ? String(r.mspk_referensi) : "";
+    if (!ref || ref === mapNomor || hasil.includes(ref)) break;
+    hasil.push(ref);
+    cur = ref;
+  }
+  return hasil;
+};
+
+// Keturunan: MAP revisi aktif terakhir yang sudah di-approve CMO.
+const cariRevisiAkhir = async (conn, mapNomor) => {
+  let frontier = [mapNomor];
+  const sudah = new Set([mapNomor]);
+  let terbaik = null;
+  for (let depth = 0; depth < 20 && frontier.length; depth++) {
+    const [anak] = await conn.query(
+      `SELECT mspk_nomor, mspk_aktif, mspk_jumlah, mspk_cab,
+              DATE_FORMAT(mspk_tgl_cmo, '%Y-%m-%d %H:%i:%s') AS tgl_cmo
+       FROM tmemospk WHERE mspk_referensi IN (?)`,
+      [frontier],
+    );
+    frontier = [];
+    for (const a of anak) {
+      if (sudah.has(a.mspk_nomor)) continue;
+      sudah.add(a.mspk_nomor);
+      if (a.mspk_aktif === "Y" && a.tgl_cmo) {
+        if (!terbaik || a.tgl_cmo > terbaik.tgl_cmo) terbaik = a;
+      }
+      frontier.push(a.mspk_nomor);
+    }
+  }
+  return terbaik;
+};
+
+// Satu garis MAP (MAP asal + semua revisinya) hanya menyisakan SATU baris
+// tab MAP di periode Open: periode terbaru, lalu yang punya Kesepakatan,
+// lalu yang paling baru dibuat. Baris yang menang diarahkan ke MAP revisi
+// akhir; Rencana, Permintaan Kirim & Kesepakatannya tetap.
+const arahkanRevisiMap = async (conn, akhir, { dryRun = false } = {}) => {
+  const hasil = {
+    map: akhir.mspk_nomor,
+    dipertahankan: null,
+    dihapus: [],
+    dilewati: "",
+  };
+  const leluhur = await cariLeluhur(conn, akhir.mspk_nomor);
+  const [rows] = await conn.query(
+    `SELECT d.pjwd_id, d.pjwd_pjw_nomor AS periode, d.pjwd_map_nomor AS map,
+            DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS tgl1, h.pjw_cab,
+            (d.pjwd_tgl_kesepakatan IS NOT NULL) AS ada_sepakat
+     FROM tpenjadwalan_ppic_dtl d
+     INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+     WHERE d.pjwd_tipe = 'MAP' AND h.pjw_close = 'N'
+       AND d.pjwd_map_nomor IN (?)`,
+    [[akhir.mspk_nomor, ...leluhur]],
+  );
+  if (!rows.length) return hasil;
+
+  if (rows.some((r) => String(r.pjw_cab) !== String(akhir.mspk_cab || ""))) {
+    hasil.dilewati = "cabang periode berbeda dengan cabang MAP";
+    return hasil;
+  }
+
+  rows.sort(
+    (a, b) =>
+      b.tgl1.localeCompare(a.tgl1) ||
+      Number(b.ada_sepakat) - Number(a.ada_sepakat) ||
+      b.pjwd_id - a.pjwd_id,
+  );
+  const [menang, ...kalah] = rows;
+  hasil.dipertahankan = `${menang.periode} (#${menang.pjwd_id}, dari ${menang.map})`;
+  hasil.dihapus = kalah.map((k) => `${k.periode} (#${k.pjwd_id}, ${k.map})`);
+
+  if (!dryRun) {
+    if (kalah.length) {
+      await conn.query(
+        `DELETE FROM tpenjadwalan_ppic_dtl WHERE pjwd_id IN (?)`,
+        [kalah.map((k) => k.pjwd_id)],
+      );
+    }
+    await conn.query(
+      `UPDATE tpenjadwalan_ppic_dtl
+       SET pjwd_map_nomor = ?, pjwd_pesan_manual = ?
+       WHERE pjwd_id = ?`,
+      [akhir.mspk_nomor, Number(akhir.mspk_jumlah) || 0, menang.pjwd_id],
+    );
+  }
+  return hasil;
+};
+
+// Pembersihan sekali jalan untuk baris Komitmen MAP (periode Open) yang
+// masih menunjuk MAP nonaktif karena revisi. dryRun=true hanya melapor,
+// tidak menulis apa pun.
+const rapikanRevisiMapKomitmen = async ({ dryRun = true } = {}) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [penunjuk] = await conn.query(
+      `SELECT DISTINCT d.pjwd_map_nomor AS map
+       FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       INNER JOIN tmemospk m
+         ON m.mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
+       WHERE d.pjwd_tipe = 'MAP' AND h.pjw_close = 'N' AND m.mspk_aktif <> 'Y'`,
+    );
+
+    const laporan = [];
+    const sudah = new Set();
+    for (const p of penunjuk) {
+      const akhir = await cariRevisiAkhir(conn, p.map);
+      if (!akhir) {
+        laporan.push({
+          map: p.map,
+          dilewati: "tidak ada revisi aktif yang sudah di-approve CMO",
+        });
+        continue;
+      }
+      if (sudah.has(akhir.mspk_nomor)) continue;
+      sudah.add(akhir.mspk_nomor);
+      laporan.push(await arahkanRevisiMap(conn, akhir, { dryRun }));
+    }
+
+    // Baris yang MAP-nya sudah terhapus fisik dari tmemospk
+    const sqlYatim = `FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       LEFT JOIN tmemospk m
+         ON m.mspk_nomor = CONVERT(d.pjwd_map_nomor USING latin1)
+       WHERE d.pjwd_tipe = 'MAP' AND h.pjw_close = 'N'
+         AND d.pjwd_map_nomor IS NOT NULL AND m.mspk_nomor IS NULL`;
+    const [[yatim]] = await conn.query(`SELECT COUNT(*) AS jumlah ${sqlYatim}`);
+    if (!dryRun) await conn.query(`DELETE d ${sqlYatim}`);
+
+    await conn.commit();
+    return { dryRun, barisMapTerhapusFisik: Number(yatim.jumlah), laporan };
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -1158,30 +1375,39 @@ const pushMapToKomitmenKirim = async (mapNomor, userKode = "SYSTEM") => {
     const cab = map.mspk_cab || "";
     if (!KOMITMEN_KIRIM_CABANG.includes(cab)) return;
 
+    // MAP yang sudah jadi SO tidak masuk Komitmen Kirim MAP/Sampel
+    const [[sudahJadiSo]] = await db.query(
+      `SELECT so_nomor FROM tsalesorder
+       WHERE so_memo = ? AND so_aktif = 'Y' LIMIT 1`,
+      [mapNomor],
+    );
+    if (sudahJadiSo) return;
+
+    // MAP revisi: telusuri rantai revisi ke atas. Baris tab SO yang masih
+    // menunjuk MAP lama diarahkan ke MAP revisi ini; baris tab MAP dari satu
+    // garis MAP disatukan jadi satu baris (periode Open terbaru).
+    if (map.mspk_referensi) {
+      const leluhur = await cariLeluhur(db, mapNomor);
+      if (leluhur.length) {
+        await db.query(
+          `UPDATE tpenjadwalan_ppic_dtl SET pjwd_map_nomor = ?
+           WHERE pjwd_tipe <> 'MAP' AND pjwd_map_nomor IN (?)`,
+          [mapNomor, leluhur],
+        );
+      }
+      const hasil = await arahkanRevisiMap(db, {
+        mspk_nomor: mapNomor,
+        mspk_jumlah: map.mspk_jumlah,
+        mspk_cab: cab,
+      });
+      if (hasil.dipertahankan) return;
+    }
+
     const [[existing]] = await db.query(
       `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl WHERE pjwd_map_nomor = ? AND pjwd_tipe = 'MAP' LIMIT 1`,
       [mapNomor],
     );
     if (existing) return;
-
-    // MAP revisi: arahkan baris MAP asal (tab SO maupun MAP/Sampel) ke MAP
-    // revisi ini. Rencana, Permintaan Kirim & Kesepakatan tetap; pesan_manual
-    // ikut jumlah revisi hanya untuk baris tipe MAP.
-    if (map.mspk_referensi) {
-      await db.query(
-        `UPDATE tpenjadwalan_ppic_dtl
-         SET pjwd_map_nomor = ?,
-             pjwd_pesan_manual = IF(pjwd_tipe = 'MAP', ?, pjwd_pesan_manual)
-         WHERE pjwd_map_nomor = ?`,
-        [mapNomor, Number(map.mspk_jumlah) || 0, map.mspk_referensi],
-      );
-      const [[sudahAda]] = await db.query(
-        `SELECT pjwd_id FROM tpenjadwalan_ppic_dtl
-         WHERE pjwd_map_nomor = ? AND pjwd_tipe = 'MAP' LIMIT 1`,
-        [mapNomor],
-      );
-      if (sudahAda) return;
-    }
 
     const [[periode]] = await db.query(
       `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
@@ -1242,6 +1468,243 @@ const removeMapFromKomitmenKirim = async (mapNomor) => {
   }
 };
 
+// ═══════════════════════════════════════════════════════════
+// AUTO-PUSH SO KE KOMITMEN KIRIM — berdasarkan DATELINE SO
+// Aturan (keputusan user 28 Okt 2026):
+// - Periode ditentukan dari dateline SO + cabang SO (bukan tgl approve).
+// - Hanya dateline mulai Senin minggu berjalan ke depan.
+// - Periode HARUS sudah ada & Open; kalau belum, dilewati (tunggu Marketing).
+// - SO yang sudah punya baris di periode mana pun, atau sudah pernah
+//   masuk (log, termasuk yang dihapus), dilewati.
+// - Rencana = Kurang, Permintaan Kirim = dateline (sama seperti Tarik SO).
+// Best-effort: kegagalan TIDAK boleh menggagalkan aksi pemanggil.
+// ═══════════════════════════════════════════════════════════
+const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
+  const params = [cab, tgl1, tgl2];
+  if (hanyaNomor) params.push(hanyaNomor);
+  const [rows] = await db.query(
+    `SELECT x.* FROM (
+       SELECT so_nomor AS Nomor,
+              (so_jumlah - IFNULL(so_jumlah_kirim,0)) AS Kurang,
+              DATE_FORMAT(so_dateline,'%Y-%m-%d') AS Dateline,
+              IFNULL(so_memo,'') AS Memo,
+              IFNULL(so_pen_nomor,'') AS PenNomor,
+              IFNULL(so_pen_id,'') AS PenId
+       FROM tsalesorder
+       WHERE so_aktif = 'Y' AND so_close = 0
+         AND so_cab = ? AND so_dateline BETWEEN ? AND ?
+     ) x
+     WHERE x.Kurang > 0
+       ${hanyaNomor ? "AND x.Nomor = ?" : ""}
+       AND NOT EXISTS (
+         SELECT 1 FROM tpenjadwalan_ppic_so_log l WHERE l.pso_so_nomor = x.Nomor
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM tpenjadwalan_ppic_dtl d
+         WHERE d.pjwd_so_nomor = x.Nomor
+            OR (x.Memo <> '' AND d.pjwd_tipe <> 'MAP' AND d.pjwd_map_nomor = x.Memo)
+            OR (x.PenNomor <> '' AND d.pjwd_pen_nomor = x.PenNomor
+                AND d.pjwd_pen_id = x.PenId)
+            OR (x.PenNomor <> '' AND d.pjwd_mh_nomor IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM tpenawaran_dtl pd
+                  WHERE pd.pend_minta = d.pjwd_mh_nomor
+                    AND pd.pend_pen_nomor = x.PenNomor AND pd.pend_id = x.PenId))
+       )
+     ORDER BY x.Dateline, x.Nomor`,
+    params,
+  );
+  return rows;
+};
+
+// Sapu satu periode: masukkan SO yang dateline-nya jatuh di periode ini.
+// Mengembalikan jumlah SO yang berhasil dimasukkan.
+const sinkronSoKePeriode = async (
+  pjwNomor,
+  userKode = "SYSTEM",
+  hanyaNomor = null,
+) => {
+  try {
+    const [[hdr]] = await db.query(
+      `SELECT pjw_cab, pjw_close,
+              DATE_FORMAT(pjw_tgl1, '%Y-%m-%d') AS tgl1,
+              DATE_FORMAT(pjw_tgl2, '%Y-%m-%d') AS tgl2
+       FROM tpenjadwalan_ppic_hdr WHERE pjw_nomor = ?`,
+      [pjwNomor],
+    );
+    if (!hdr || hdr.pjw_close === "Y") return 0;
+    if (!KOMITMEN_KIRIM_CABANG.includes(hdr.pjw_cab)) return 0;
+
+    // Dateline lampau tidak diotomatiskan: mulai Senin minggu berjalan
+    const { tgl1: senin } = getWeekRange(toLocalDate(new Date()));
+    const awal = hdr.tgl1 > senin ? hdr.tgl1 : senin;
+    if (awal > hdr.tgl2) return 0;
+
+    const kandidat = await cariKandidatSoPeriode(
+      hdr.pjw_cab,
+      awal,
+      hdr.tgl2,
+      hanyaNomor,
+    );
+
+    let masuk = 0;
+    for (const k of kandidat) {
+      try {
+        await db.query(
+          `INSERT INTO tpenjadwalan_ppic_dtl
+             (pjwd_pjw_nomor, pjwd_tipe, pjwd_so_nomor, pjwd_rencana,
+              pjwd_tgl_permintaan_kirim, pjwd_status_permintaan, pjwd_user_create)
+           VALUES (?, 'SO', ?, ?, ?, 'CLOSE', ?)`,
+          [pjwNomor, k.Nomor, Number(k.Kurang) || 0, k.Dateline, userKode],
+        );
+        await db.query(
+          `INSERT IGNORE INTO tpenjadwalan_ppic_so_log
+             (pso_so_nomor, pso_pjw_nomor, pso_sumber) VALUES (?, ?, 'AUTO')`,
+          [k.Nomor, pjwNomor],
+        );
+        masuk++;
+      } catch (e) {
+        console.error(`Auto-push SO ${k.Nomor} gagal:`, e.message);
+      }
+    }
+    return masuk;
+  } catch (e) {
+    console.error(`Sinkron SO ke periode ${pjwNomor} gagal:`, e);
+    return 0;
+  }
+};
+
+// Dipanggil dari save SO (event). Cari periode Open yang cocok dengan
+// cabang + dateline SO; kalau tidak ada, tidak melakukan apa-apa.
+const pushSoToKomitmenKirim = async (soNomor, userKode = "SYSTEM") => {
+  try {
+    const [[so]] = await db.query(
+      `SELECT so_cab, DATE_FORMAT(so_dateline, '%Y-%m-%d') AS dateline
+       FROM tsalesorder
+       WHERE so_nomor = ? AND so_aktif = 'Y' AND so_close = 0`,
+      [soNomor],
+    );
+    if (!so || !so.dateline) return;
+    if (!KOMITMEN_KIRIM_CABANG.includes(so.so_cab)) return;
+
+    const [[periode]] = await db.query(
+      `SELECT pjw_nomor FROM tpenjadwalan_ppic_hdr
+       WHERE pjw_cab = ? AND pjw_close = 'N' AND ? BETWEEN pjw_tgl1 AND pjw_tgl2
+       ORDER BY pjw_tgl1 DESC LIMIT 1`,
+      [so.so_cab, so.dateline],
+    );
+    if (!periode) return;
+
+    await sinkronSoKePeriode(periode.pjw_nomor, userKode, soNomor);
+  } catch (e) {
+    console.error(`Gagal auto-push SO ${soNomor} ke Komitmen Kirim:`, e);
+  }
+};
+
+// Simpan jadwal sepakat. items: [{ Tanggal: 'YYYY-MM-DD', Qty: number }]
+// 0 baris  = kosongkan kesepakatan
+// 1 baris  = hanya tanggal (tanpa breakdown)
+// >=2 baris = breakdown, total Qty wajib sama dengan Rencana
+const simpanKesepakatan = async (pjwdId, items, userKode, userBagian) => {
+  assertFieldOwnership(
+    "pjwd_tgl_kesepakatan",
+    FIELD_OWNERSHIP,
+    userKode,
+    userBagian,
+  );
+  const daftar = Array.isArray(items) ? items : [];
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[row]] = await conn.query(
+      `SELECT d.pjwd_rencana, h.pjw_close,
+          DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS tgl1,
+          DATE_FORMAT(h.pjw_tgl2, '%Y-%m-%d') AS tgl2
+       FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       WHERE d.pjwd_id = ? FOR UPDATE`,
+      [pjwdId],
+    );
+    if (!row) throw new Error("Baris komitmen tidak ditemukan.");
+    if (row.pjw_close === "Y") throw new Error("Periode sudah ditutup.");
+
+    for (const it of daftar) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(it.Tanggal || "")))
+        throw new Error("Tanggal kesepakatan tidak valid.");
+      if (!(Number(it.Qty) > 0) && daftar.length > 1)
+        throw new Error("Qty setiap baris breakdown harus lebih dari 0.");
+    }
+
+    // Tanggal paling awal harus di dalam periode ini. Memundurkan SELURUH
+    // kiriman ke periode lain tetap lewat ubah tanggal Kesepakatan biasa
+    // (alur pindah periode). Pecahan berikutnya boleh melewati akhir periode.
+    if (daftar.length) {
+      const awal = daftar.map((it) => it.Tanggal).sort()[0];
+      if (awal < row.tgl1 || awal > row.tgl2)
+        throw new Error(
+          "Tanggal paling awal harus di dalam periode ini. Untuk memindahkan seluruh kiriman ke periode lain, ubah tanggal Kesepakatan langsung.",
+        );
+    }
+
+    if (daftar.length > 1) {
+      const total = daftar.reduce((a, it) => a + Number(it.Qty), 0);
+      const rencana = Number(row.pjwd_rencana) || 0;
+      if (Math.abs(total - rencana) > 0.0001)
+        throw new Error(
+          `Total breakdown (${total}) harus sama dengan Rencana (${rencana}).`,
+        );
+    }
+
+    await conn.query(
+      `DELETE FROM tpenjadwalan_ppic_kesepakatan WHERE pjwk_pjwd_id = ?`,
+      [pjwdId],
+    );
+    if (daftar.length > 1) {
+      await conn.query(
+        `INSERT INTO tpenjadwalan_ppic_kesepakatan
+           (pjwk_pjwd_id, pjwk_tgl, pjwk_qty, pjwk_user) VALUES ?`,
+        [
+          daftar.map((it) => [
+            pjwdId,
+            it.Tanggal,
+            Number(it.Qty),
+            userKode || null,
+          ]),
+        ],
+      );
+    }
+
+    // Tanggal kesepakatan utama = tanggal paling awal
+    const tglUtama = daftar.length
+      ? daftar.map((it) => it.Tanggal).sort()[0]
+      : null;
+    const totalQty =
+      daftar.length > 1
+        ? daftar.reduce((a, it) => a + Number(it.Qty), 0)
+        : null;
+    await conn.query(
+      `UPDATE tpenjadwalan_ppic_dtl
+       SET pjwd_tgl_kesepakatan = ?,
+           pjwd_qty_kesepakatan = COALESCE(?, pjwd_qty_kesepakatan)
+       WHERE pjwd_id = ?`,
+      [tglUtama, totalQty, pjwdId],
+    );
+
+    await conn.commit();
+    return {
+      pjwdId: Number(pjwdId),
+      tglKesepakatan: tglUtama,
+      items: daftar.length > 1 ? daftar : [],
+      qtyKesepakatan: totalQty,
+    };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   generateNomor,
   getCabangOptions,
@@ -1266,4 +1729,8 @@ module.exports = {
   moveDetailRowToPeriod,
   pushMapToKomitmenKirim,
   removeMapFromKomitmenKirim,
+  rapikanRevisiMapKomitmen,
+  simpanKesepakatan,
+  pushSoToKomitmenKirim,
+  sinkronSoKePeriode,
 };
