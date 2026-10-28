@@ -173,7 +173,7 @@ const getStatusBahanBySpk = async (spkList) => {
     result[spk] = {
       StatusBahan: status,
       MkbNomor: mkb,
-      EstimasiKedatangan: status === "PO" ? planByKunci[kunci] || "" : "",
+      EstimasiKedatangan: planByKunci[kunci] || "",
     };
   }
   return result;

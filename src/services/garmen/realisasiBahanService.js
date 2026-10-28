@@ -95,6 +95,7 @@ const getDetail = async (nomor) => {
       d.promind_promin_nomor AS Nomor, 
       d.promind_bhn_kode AS Kode, 
       b.bhn_name AS Nama,
+      IFNULL(st.bs_nama, '') AS Setting,
       b.bhn_satuan AS Satuan, 
       d.promind_jumlah AS Net, 
       d.promind_gross AS Gross, 
@@ -102,6 +103,7 @@ const getDetail = async (nomor) => {
     FROM tproduksiminta_dtl d
     INNER JOIN tproduksiminta_hdr h ON h.promin_nomor = d.promind_promin_nomor 
     LEFT JOIN tbahan b ON b.bhn_kode = d.promind_bhn_kode 
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
     WHERE h.promin_nomor = ?
     ORDER BY d.promind_bhn_kode
   `;
@@ -118,6 +120,7 @@ const getBrowseDetail = async (startDate, endDate) => {
       d.promind_promin_nomor AS Nomor, 
       d.promind_bhn_kode AS Kode, 
       b.bhn_name AS Nama,
+      IFNULL(st.bs_nama, '') AS Setting,
       b.bhn_satuan AS Satuan, 
       d.promind_jumlah AS Net, 
       d.promind_gross AS Gross, 
@@ -125,6 +128,7 @@ const getBrowseDetail = async (startDate, endDate) => {
     FROM tproduksiminta_dtl d
     INNER JOIN tproduksiminta_hdr h ON h.promin_nomor = d.promind_promin_nomor 
     LEFT JOIN tbahan b ON b.bhn_kode = d.promind_bhn_kode 
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
     WHERE h.promin_tanggal >= ? AND h.promin_tanggal <= ?
     ORDER BY d.promind_promin_nomor, h.promin_tanggal, d.promind_bhn_kode
   `;

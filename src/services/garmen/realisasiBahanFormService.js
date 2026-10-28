@@ -706,10 +706,12 @@ const getPrintData = async (nomor) => {
     SELECT 
       b.Bhn_kode AS kode, 
       b.Bhn_Name AS nama, 
-      b.Bhn_satuan AS satuan, 
+      IFNULL(st.bs_nama, '') AS setting,
+      b.Bhn_satuan AS satuan,
       d.promind_jumlah AS jumlah
     FROM tproduksiminta_dtl d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
     WHERE d.promind_promin_nomor = ?
     ORDER BY b.Bhn_Name ASC
   `;
