@@ -242,6 +242,7 @@ const getSpkDetail = async (spkNomor, gudangKode, excludeNomor = "") => {
       KodeKaosan: r.spkd_kode,
       NamaKaosan: r.Nama,
       Size: r.spkd_ukuran,
+      QtyOrder: Number(r.spkd_qtyorder) || 0,
       Jumlah: 0,
     }));
   }

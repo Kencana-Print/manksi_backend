@@ -1538,7 +1538,7 @@ const saveData = async (payload, user) => {
 
     await validasiPoLain(conn, detail);
     await validasiKlaimKasKecil(conn, detail, rek_kode, actualNomor);
-    await assertSupplierKlaimHanyaLewatKlaim(conn, detail, tanggal);
+    // await assertSupplierKlaimHanyaLewatKlaim(conn, detail, tanggal);
     await validasiVoucher(conn, detail, actualNomor);
 
     // Delphi: delete link voucher & po external lama
