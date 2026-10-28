@@ -146,6 +146,9 @@ const getDetail = async (nomor) => {
   );
 
   // ── Realisasi SO/SPK: 2 query agregat, terbatas pada nomor yang tampil ──
+  // Lalu = STBJ sebelum tgl awal periode yang belum terkirim, dihitung
+  //        per tgl awal periode (STBJ sebelum - SJ sebelum).
+  // Ini  = STBJ di dalam periode (tidak dikurangi kirim).
   const refs = [
     ...new Set(
       rows.filter((r) => r.Realisasi === null && r.EffRef).map((r) => r.EffRef),
@@ -156,25 +159,27 @@ const getDetail = async (nomor) => {
   if (refs.length) {
     const [stbjRows] = await db.query(
       `SELECT td.stbjd_spk_nomor AS ref,
-              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, td.stbjd_jumlah, 0)) AS inRange,
-              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, 0, td.stbjd_jumlah)) AS outRange
+              SUM(IF(th.stbj_tanggal < ?, td.stbjd_jumlah, 0)) AS beforeQty,
+              SUM(IF(th.stbj_tanggal >= ?
+                     AND th.stbj_tanggal < DATE_ADD(?, INTERVAL 1 DAY),
+                     td.stbjd_jumlah, 0)) AS inRange
        FROM tstbj_dtl td
        INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
        WHERE td.stbjd_spk_nomor IN (?)
        GROUP BY td.stbjd_spk_nomor`,
-      [hdr.t1, hdr.t2, hdr.t1, hdr.t2, refs],
+      [hdr.t1, hdr.t1, hdr.t2, refs],
     );
     stbjRows.forEach((r) => (stbj[r.ref] = r));
 
     const [sjRows] = await db.query(
       `SELECT sd.sjd_spk_nomor AS ref,
               SUM(IF(sh.sj_tanggal BETWEEN ? AND ?, sd.sjd_jumlah, 0)) AS inRange,
-              SUM(sd.sjd_jumlah) AS allQty
+              SUM(IF(sh.sj_tanggal < ?, sd.sjd_jumlah, 0)) AS beforeQty
        FROM tsj_dtl sd
        INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
        WHERE sd.sjd_spk_nomor IN (?) AND sh.sj_approve <> 2
        GROUP BY sd.sjd_spk_nomor`,
-      [hdr.t1, hdr.t2, refs],
+      [hdr.t1, hdr.t2, hdr.t1, refs],
     );
     sjRows.forEach((r) => (sj[r.ref] = r));
   }
@@ -184,11 +189,22 @@ const getDetail = async (nomor) => {
     if (r.Realisasi === null) {
       const s = stbj[r.EffRef];
       const j = sj[r.EffRef];
-      r.Realisasi = isP02
-        ? Number(j?.inRange) || 0
-        : (Number(s?.inRange) || 0) +
-          Math.max((Number(s?.outRange) || 0) - (Number(j?.allQty) || 0), 0);
+      if (isP02) {
+        r.RealisasiLalu = 0;
+        r.RealisasiIni = Number(j?.inRange) || 0;
+      } else {
+        const stbjLalu = Number(s?.beforeQty) || 0;
+        const terkirimSebelum = Number(j?.beforeQty) || 0;
+        r.RealisasiLalu = Math.max(stbjLalu - terkirimSebelum, 0);
+        r.RealisasiIni = Number(s?.inRange) || 0;
+      }
+    } else {
+      // MAP & baris manual: nilai lama masuk kolom minggu ini
+      r.RealisasiLalu = 0;
+      r.RealisasiIni = Number(r.Realisasi) || 0;
     }
+    // Realisasi tetap ada = RealisasiIni supaya frontend lama tidak pecah.
+    r.Realisasi = r.RealisasiIni;
     delete r.EffRef;
   }
   return rows;
@@ -240,7 +256,7 @@ const getPencapaian = async (nomor) => {
   const sumRencana = (rows) =>
     rows.reduce((s, d) => s + (Number(d.Rencana) || 0), 0);
   const sumRealisasi = (rows) =>
-    rows.reduce((s, d) => s + (Number(d.Realisasi) || 0), 0);
+    rows.reduce((s, d) => s + (Number(d.RealisasiIni) || 0), 0);
 
   const [rows] = await db.query(
     `SELECT pjwp_id AS Id, pjwp_tipe AS Tipe, pjwp_kategori AS Kategori,
