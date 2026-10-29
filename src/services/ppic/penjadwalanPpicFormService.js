@@ -469,7 +469,21 @@ const resolveSourceForPeriod = async (pjwNomor) => {
       }
     }
 
-    if (soList.length === 0) continue; // belum jadi SO, biarkan tetap MH/PENAWARAN
+    soList = [...new Set(soList)];
+
+    // SO yang sudah punya baris di periode ini dilewati. Tanpa ini UPDATE/INSERT di
+    // bawah menabrak UNIQUE uq_pjwd_so dan form periode tidak bisa dibuka sama sekali.
+    if (soList.length) {
+      const [sudah] = await db.query(
+        `SELECT pjwd_so_nomor AS so FROM tpenjadwalan_ppic_dtl
+         WHERE pjwd_pjw_nomor = ? AND pjwd_so_nomor IN (?)`,
+        [pjwNomor, soList],
+      );
+      const terpakai = new Set(sudah.map((r) => r.so));
+      soList = soList.filter((n) => !terpakai.has(n));
+    }
+
+    if (soList.length === 0) continue; // belum jadi SO / SO-nya sudah ada di periode ini
 
     // Baris pertama: update baris existing
     await db.query(
@@ -509,7 +523,11 @@ const getFormDetail = async (nomor) => {
   );
   if (!hdrRows.length) return null;
 
-  await resolveSourceForPeriod(nomor);
+  try {
+    await resolveSourceForPeriod(nomor);
+  } catch (e) {
+    console.error(`Resolve sumber periode ${nomor} gagal:`, e.message);
+  }
   await sinkronSoKePeriode(nomor);
 
   const penjadwalanPpicService = require("./penjadwalanPpicService");
@@ -1509,6 +1527,20 @@ const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
                   SELECT 1 FROM tpenawaran_dtl pd
                   WHERE pd.pend_minta = d.pjwd_mh_nomor
                     AND pd.pend_pen_nomor = x.PenNomor AND pd.pend_id = x.PenId))
+            -- SO hasil MAP: baris Permintaan Harga yang MAP-nya = memo SO ini
+            OR (x.Memo <> '' AND d.pjwd_mh_nomor IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM tpenawaran_dtl pd2
+                  INNER JOIN tmemospk mp2
+                    ON mp2.mspk_pen_nomor = pd2.pend_pen_nomor
+                   AND mp2.mspk_pen_id = pd2.pend_id
+                  WHERE pd2.pend_minta = CONVERT(d.pjwd_mh_nomor USING latin1)
+                    AND mp2.mspk_nomor = x.Memo))
+            -- idem untuk baris Penawaran langsung
+            OR (x.Memo <> '' AND d.pjwd_pen_nomor IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM tmemospk mp3
+                  WHERE mp3.mspk_pen_nomor = CONVERT(d.pjwd_pen_nomor USING latin1)
+                    AND mp3.mspk_pen_id = CONVERT(d.pjwd_pen_id USING latin1)
+                    AND mp3.mspk_nomor = x.Memo))
        )
      ORDER BY x.Dateline, x.Nomor`,
     params,
