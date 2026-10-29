@@ -523,7 +523,7 @@ const save = async (data, userKode, isNew) => {
   const tutupBuku = await cekTutupBuku(Tanggal, Xminta5);
   if (!tutupBuku.boleh) throw new Error(tutupBuku.message);
 
-  const divisiStr = String(Divisi).charAt(0);
+  const divisiStr = String(Divisi);
   const xppn = StsPpn ? Number(Ppn) : 0;
   const xdisc = Number(Disc) || 0;
   const cpph = Pph === "PPh" ? "PPh" : "";
@@ -565,6 +565,7 @@ const save = async (data, userKode, isNew) => {
     } else {
       await conn.query(
         `UPDATE tinv_hdr SET
+           inv_divisi = ?,
            inv_tanggal = ?, inv_keterangan = ?,
            inv_perush_kode = ?, inv_cus_kode = ?, inv_cus_alamat = ?,
            inv_tanggal_tempo = ?, inv_rekening = ?,
@@ -572,6 +573,7 @@ const save = async (data, userKode, isNew) => {
            date_modified = NOW(), user_modified = ?
          WHERE inv_nomor = ?`,
         [
+          divisiStr,
           Tanggal,
           Keterangan,
           KodePerush,
