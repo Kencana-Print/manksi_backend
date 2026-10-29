@@ -238,8 +238,8 @@ const getBkkOptions = async (search = "") => {
 // Dipakai di lookup dan validasi simpan supaya angkanya selalu sama.
 const SQL_TOTAL_PO_LAIN = `
   ROUND(
-    SUM(d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100)
-    * IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1),
+    SUM(d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100
+        * (100 + d.pod_ppn) / 100),
   2)`;
 
 // excludeNomor = nomor pengajuan yang sedang diedit, supaya baris miliknya
@@ -773,11 +773,11 @@ const getKlaimKasKecilOptions = async (search = "", excludeNomor = "") => {
 const pastikanNominalBkk = async (conn, klaim) => {
   const [dtl] = await conn.query(
     `SELECT kkd_jur_no, kkd_nominal FROM tklaim_kaskecil_dtl
-     WHERE kkd_kkh_nomor = ?`,
+     WHERE kkd_kkh_nomor = ? AND kkd_tipe = 'BKK'`,
     [klaim.kkh_nomor],
   );
-  if (!dtl.length)
-    throw new Error(`Klaim ${klaim.kkh_nomor} tidak memiliki BKK.`);
+  // Klaim yang seluruhnya baris manual tidak punya BKK untuk dicocokkan
+  if (!dtl.length) return;
 
   const [jur] = await conn.query(
     `SELECT jurd_jur_no AS bkk, SUM(jurd_kredit) AS nominal
@@ -938,13 +938,13 @@ const terapkanKlaimRealisasi = async (conn, nomorPjt, d, rekKode) => {
      WHERE ptd_nomor = ? AND ptd_nourut = ?`,
     [nomorPjt, d.nourut],
   );
-  if (!row || !row.ptd_trs) return;
+  if (!row || !row.ptd_trs) return null;
   const [[k]] = await conn.query(
     `SELECT kkh_nomor, kkh_status, kkh_total, kkh_rek_tujuan
      FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
     [row.ptd_trs],
   );
-  if (!k) return;
+  if (!k) return null;
 
   if (k.kkh_status !== "AKTIF")
     throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
@@ -960,6 +960,70 @@ const terapkanKlaimRealisasi = async (conn, nomorPjt, d, rekKode) => {
   d.dckode = 0;
 
   if (!d.jurnal && d.tglRealisasi) await pastikanNominalBkk(conn, k);
+  return { nomor: k.kkh_nomor, rek: k.kkh_rek_tujuan };
+};
+
+// Biaya baris manual klaim ATM: BBK otomatis, Dr akun biaya / Cr kas ATM,
+// satu jurnal per baris (tanggal = tanggal baris). Nomor mengikuti pola
+// BKM/BBM otomatis (NN + nomor PJT) sehingga ikut terhapus oleh delete
+// jur_otomatis di awal mode realisasi dan dibuat ulang tiap simpan.
+const postingBiayaManual = async (conn, nomorPjt, klaimNomor, rekKas, user) => {
+  const [rows] = await conn.query(
+    `SELECT DATE_FORMAT(kkd_tanggal,'%Y-%m-%d') AS tanggal,
+            kkd_uraian AS uraian, kkd_nominal AS nominal,
+            kkd_akun_biaya AS akun,
+            kkd_cc_kode AS cc, kkd_dc_nama AS dc
+     FROM tklaim_kaskecil_dtl
+     WHERE kkd_kkh_nomor = ? AND kkd_tipe = 'MANUAL'
+     ORDER BY kkd_jur_no`,
+    [klaimNomor],
+  );
+  for (const m of rows) {
+    await assertBolehPosting([m.akun, rekKas], m.tanggal, conn);
+
+    const [[mx]] = await conn.query(
+      `SELECT IFNULL(MAX(CAST(LEFT(jur_no,2) AS UNSIGNED)),0) AS max_val
+       FROM finance.tjurnal WHERE jur_otomatis=1 AND SUBSTRING(jur_no,3)=?`,
+      [nomorPjt],
+    );
+    const urut = Number(mx.max_val) + 1;
+    if (urut > 99)
+      throw new Error(
+        `Jurnal otomatis ${nomorPjt} melebihi 99. Kurangi baris manual atau klaim dalam satu pengajuan.`,
+      );
+    const noJur = String(100 + urut).slice(-2) + nomorPjt;
+    const uraian = String(m.uraian || "");
+
+    await conn.query(
+      `INSERT INTO finance.tjurnal
+         (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang,
+          jur_keterangan, jur_rek_kode, jur_otomatis, date_create, user_create)
+       VALUES (?, ?, 'BBK', 'P01', ?, ?, 1, NOW(), ?)`,
+      [
+        noJur,
+        m.tanggal,
+        `BBK OTOMATIS: BIAYA MANUAL KLAIM ${klaimNomor}`,
+        rekKas,
+        user.kode,
+      ],
+    );
+    await conn.query(`DELETE FROM finance.tjurnalitem WHERE jurd_jur_no = ?`, [
+      noJur,
+    ]);
+    await conn.query(
+      `INSERT INTO finance.tjurnalitem
+         (jurd_jur_no, jurd_rek_kode, jurd_kredit, jurd_uraian, jurd_nourut)
+       VALUES (?, ?, ?, ?, 0)`,
+      [noJur, rekKas, m.nominal, uraian],
+    );
+    await conn.query(
+      `INSERT INTO finance.tjurnalitem
+         (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
+          jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama)
+       VALUES (?, 'BBK', 1, ?, ?, ?, ?, ?)`,
+      [noJur, uraian, m.nominal, m.akun, m.cc, m.dc],
+    );
+  }
 };
 
 const getAccountAll = async (search = "") => {
@@ -1159,10 +1223,23 @@ const saveData = async (payload, user) => {
         if (!d.nama) continue;
 
         // Baris Klaim Kas Kecil: akun dan nominal dipaksa dari data server
-        if (!d.batal) await terapkanKlaimRealisasi(conn, nomor, d, rek_kode);
+        const klaimInfo = d.batal
+          ? null
+          : await terapkanKlaimRealisasi(conn, nomor, d, rek_kode);
 
         if (d.tglRealisasi)
           await assertBolehPosting([d.rekkode], d.tglRealisasi, conn);
+
+        // Biaya baris manual klaim ATM (aman dipanggil ulang: jurnal lama sudah
+        // terhapus oleh delete jur_otomatis di awal mode realisasi)
+        if (klaimInfo && d.tglRealisasi)
+          await postingBiayaManual(
+            conn,
+            nomor,
+            klaimInfo.nomor,
+            klaimInfo.rek,
+            user,
+          );
 
         if (d.jurnal) {
           // ── Realisasi existing → edit atau hapus ──

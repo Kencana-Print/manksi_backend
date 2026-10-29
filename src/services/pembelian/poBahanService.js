@@ -1,6 +1,9 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// PPN (%) efektif per baris: PO Lain-lain dari detail, jenis lain dari header
+const PPN_EXPR = `IF(h.po_jenis = 4, d.pod_ppn, IF(h.po_status_ppn = 1, h.po_ppn, 0))`;
+
 // --- 1. GET BROWSE HEADER ---
 const getBrowse = async (query, canLihatSup = false) => {
   const { startDate, endDate, search } = query;
@@ -106,8 +109,8 @@ const getBrowseDetail = async (
   canLihatSup = false,
 ) => {
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS Disc,";
+    ? `d.pod_hargabeli AS Harga, d.pod_disc AS Disc, ${PPN_EXPR} AS Ppn,`
+    : "NULL AS Harga, NULL AS Disc, NULL AS Ppn,";
   // Supplier per baris (PO Lain-lain); PO lain jatuh ke supplier header
   const supCol = canLihatSup ? "sp.sup_nama AS Supplier," : "NULL AS Supplier,";
 
@@ -140,12 +143,13 @@ const getBrowseDetail = async (
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
       d.pod_spk_nomor AS SPK,
-      IF(d.pod_spk_nomor <> "", IFNULL(s.spk_nama, m.Mspk_nama), "") AS Nama_SPK
+      IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, s.spk_nama, m.Mspk_nama), "") AS Nama_SPK
 
     FROM tpo_dtl d
     LEFT JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
     LEFT JOIN tsupplier sp ON sp.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor
     LEFT JOIN tspk s ON s.spk_nomor = d.pod_spk_nomor
     LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
     WHERE d.pod_po_nomor = ?
@@ -284,7 +288,7 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
     // sama dengan voucher. Hapus voucher dahulu bila memang perlu diubah.
     const [cekVoucher] = await conn.query(
       `SELECT voud_vou_nomor FROM tvoucher_dtl
-       WHERE voud_nota = ? AND voud_type = 'POB' LIMIT 1`,
+       WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
       [nomor],
     );
     if (cekVoucher.length > 0) {
@@ -346,8 +350,8 @@ const getAllDetail = async (
     : "NULL AS KodeSupplier, NULL AS Supplier,";
 
   const hargaCols = canLihatBeli
-    ? "d.pod_hargabeli AS Harga, d.pod_disc AS Disc,"
-    : "NULL AS Harga, NULL AS Disc,";
+    ? `d.pod_hargabeli AS Harga, d.pod_disc AS Disc, ${PPN_EXPR} AS Ppn,`
+    : "NULL AS Harga, NULL AS Disc, NULL AS Ppn,";
 
   let sql = `
     SELECT 
@@ -355,6 +359,7 @@ const getAllDetail = async (
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
       IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
+      h.po_keterangan AS Keterangan,
       ${supCols}
       d.pod_bhn_kode AS Kode,
       b.bhn_name AS Nama,
@@ -369,11 +374,12 @@ const getAllDetail = async (
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
       d.pod_spk_nomor AS SPK,
-      IF(d.pod_spk_nomor <> "", IFNULL(spk.spk_nama, m.Mspk_nama), "") AS Nama_SPK
+      IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, spk.spk_nama, m.Mspk_nama), "") AS Nama_SPK
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
     INNER JOIN tsupplier s ON s.sup_kode = COALESCE(NULLIF(d.pod_sup_kode, ''), h.po_sup_kode)
+    LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor
     LEFT JOIN tspk spk ON spk.spk_nomor = d.pod_spk_nomor
     LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
     WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?

@@ -7,11 +7,20 @@ const {
   LABEL_JENIS_PO,
   TANGGAL_MULAI_PO_BAHAN,
   SQL_BPB_MILIK_PO,
+  perluBreakdownCelup,
 } = require("./voucherPoBahanKonstanta");
 
 // ── PO Lain-lain (tipe nota POL) ──────────────────────────────────────
-// Rumus total sama persis dengan SQL_TOTAL_PO_LAIN di pengajuanTransferService.js
+// PPN per baris (tpo_dtl.pod_ppn), bukan header: beda supplier beda ketentuan.
+// Rumus total sama persis dengan SQL_TOTAL_PO_LAIN di pengajuanTransferFormService.js
 const SQL_TOTAL_PO_LAIN = `
+  ROUND(
+    SUM(d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100
+        * (100 + d.pod_ppn) / 100),
+  2)`;
+
+// PO Bahan/Greige/Celup (tipe nota POB): PPN tetap di header PO
+const SQL_TOTAL_PO_BAHAN = `
   ROUND(
     SUM(d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100)
     * IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1),
@@ -43,8 +52,8 @@ const getInfoPoLain = async (po, sup, excludeVou = "", statusPpn = null) => {
      INNER JOIN tpo_dtl d
        ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
      WHERE h.po_nomor = ? AND h.po_jenis = 4 AND d.pod_sup_kode = ?
-       ${statusPpn === null ? "" : "AND h.po_status_ppn = ?"}
-     GROUP BY h.po_nomor, h.po_tanggal, h.po_status_ppn, h.po_ppn`,
+     GROUP BY h.po_nomor, h.po_tanggal
+     ${statusPpn === null ? "" : "HAVING (MAX(d.pod_ppn) > 0) = ?"}`,
     statusPpn === null ? [po, sup] : [po, sup, statusPpn],
   );
   if (!tot) return null;
@@ -100,7 +109,7 @@ const getInfoPoBahan = async (
   const [[tot]] = await db.query(
     `SELECT h.po_nomor AS nomor, h.po_jenis AS jenis,
             DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS tanggal,
-            ${SQL_TOTAL_PO_LAIN} AS total
+            ${SQL_TOTAL_PO_BAHAN} AS total
      FROM tpo_hdr h
      INNER JOIN tpo_dtl d
        ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
@@ -162,6 +171,73 @@ const alasanPoBahanTidakValid = async (po, sup, statusPpn) => {
     return `PO ${po} bertanggal sebelum ${TANGGAL_MULAI_PO_BAHAN} dan tidak bisa dibayar lewat tipe PO Bahan.`;
   }
   return `PO ${po} tidak memiliki baris bahan.`;
+};
+
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+// Rincian bahan PO Celup. Nilai bahan = jumlah × harga × (100−disc)/100 × faktor PPN header.
+// Dibulatkan 2 desimal per bahan; selisih pembulatan ditaruh di bahan terakhir supaya
+// jumlah semua bahan = total PO. Dengan begitu sisa PO (rupiah) tetap konsisten
+// untuk Rekap, browse, dan daftar nota POB.
+// vouIni = voucher yang sedang diedit (bahannya dianggap milik sendiri, bukan "dibayar lain").
+const getItemsCelup = async (po, vouIni = "") => {
+  const [rows] = await db.query(
+    `SELECT d.pod_nourut AS nourut, d.pod_bhn_kode AS kode,
+            IFNULL(b.Bhn_Name, '') AS nama, IFNULL(b.Bhn_satuan, '') AS satuan,
+            d.pod_Jumlah AS jumlah, d.pod_hargabeli AS harga, d.pod_disc AS disc,
+            d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100 AS dasar,
+            IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1) AS faktor,
+            IFNULL(vi.vdi_vou_nomor, '') AS vou
+     FROM tpo_hdr h
+     INNER JOIN tpo_dtl d
+       ON d.pod_po_Nomor = h.po_nomor AND d.pod_bhn_kode <> ''
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pod_bhn_kode
+     LEFT JOIN tvoucher_dtl_item vi
+       ON vi.vdi_nota = h.po_nomor AND vi.vdi_pod_nourut = d.pod_nourut
+     WHERE h.po_nomor = ?
+     ORDER BY d.pod_nourut`,
+    [po],
+  );
+  if (!rows.length) return [];
+  const faktor = Number(rows[0].faktor);
+  const total = round2(rows.reduce((s, r) => s + Number(r.dasar), 0) * faktor);
+  let jml = 0;
+  const items = rows.map((r) => {
+    const nilai = round2(Number(r.dasar) * faktor);
+    jml = round2(jml + nilai);
+    return {
+      nourut: Number(r.nourut),
+      kode: r.kode,
+      nama: r.nama,
+      satuan: r.satuan,
+      jumlah: Number(r.jumlah),
+      harga: Number(r.harga),
+      disc: Number(r.disc),
+      nilai,
+      vouLain: r.vou && r.vou !== vouIni ? r.vou : "",
+      milikIni: !!r.vou && r.vou === vouIni,
+    };
+  });
+  const last = items[items.length - 1];
+  last.nilai = round2(last.nilai + (total - jml));
+  return items;
+};
+
+// Voucher POB lama untuk PO ini yang TIDAK punya rincian bahan (dibayar utuh).
+// utuhLain → PO tidak boleh dibreakdown. utuhIni → baris lama di voucher yang sedang diedit.
+const cekModeCelup = async (po, vouIni = "") => {
+  const [rows] = await db.query(
+    `SELECT v.voud_vou_nomor AS vou, (i.vdi_nota IS NOT NULL) AS punyaItem
+     FROM tvoucher_dtl v
+     LEFT JOIN (SELECT DISTINCT vdi_vou_nomor, vdi_nota FROM tvoucher_dtl_item) i
+            ON i.vdi_vou_nomor = v.voud_vou_nomor AND i.vdi_nota = v.voud_nota
+     WHERE v.voud_nota = ? AND v.voud_type = 'POB'`,
+    [po],
+  );
+  return {
+    utuhLain: rows.some((r) => !r.punyaItem && r.vou !== vouIni),
+    utuhIni: rows.some((r) => !r.punyaItem && r.vou === vouIni),
+  };
 };
 
 // ── Cek tutup buku — sama pola dengan voucherPembayaranService.js ────
@@ -325,6 +401,35 @@ const getNotaDetail = async (
         `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lewat PO Bahan.`,
       );
     }
+    if (perluBreakdownCelup(info.jenis, supKode)) {
+      const mode = await cekModeCelup(info.nomor);
+      if (mode.utuhLain) {
+        throw new Error(
+          `PO ${info.nomor} sudah pernah divoucher utuh (tanpa rincian bahan). Tidak bisa dibreakdown.`,
+        );
+      }
+      const items = await getItemsCelup(info.nomor);
+      const tersedia = items.filter((i) => !i.vouLain);
+      if (!tersedia.length) {
+        throw new Error(`Semua bahan PO ${info.nomor} sudah dibayar.`);
+      }
+      return {
+        tipe: "POB",
+        nomor: info.nomor,
+        tanggal: info.tanggal,
+        keterangan: LABEL_JENIS_PO[info.jenis] || "PO Celup",
+        jenis: "",
+        breakdown: true,
+        items: items.map((i) => ({ ...i, checked: false })),
+        nilai: 0,
+        nilaiMax: round2(tersedia.reduce((s, i) => s + i.nilai, 0)),
+        bs: 0,
+        tarif: 0,
+        potongan: 0,
+        total: 0,
+      };
+    }
+
     const nilai = Math.round((info.total - info.sudah) * 100) / 100;
     if (nilai <= 0.005) {
       throw new Error(`PO ${info.nomor} sudah terbayar seluruhnya.`);
@@ -617,11 +722,12 @@ const searchNota = async (type, supKode, search = "") => {
     if (search) params.push(like, like, like);
   } else if (type === "POL") {
     sql = `SELECT x.Nomor, x.Tanggal, x.Supplier,
-                  CONCAT('Sisa: ', FORMAT(x.Total - x.Sudah, 0)) AS Keterangan
+                  CONCAT(x.StatusPpn, ' | Sisa: ', FORMAT(x.Total - x.Sudah, 0)) AS Keterangan
            FROM (
              SELECT h.po_nomor AS Nomor,
                     DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS Tanggal,
                     IFNULL(s.sup_nama,'') AS Supplier,
+                    IF(MAX(d.pod_ppn) > 0, 'PPN', 'Non PPN') AS StatusPpn,
                     ${SQL_TOTAL_PO_LAIN} AS Total,
                     IFNULL((
                       SELECT SUM(v.voud_total)
@@ -670,7 +776,7 @@ const searchNota = async (type, supKode, search = "") => {
                     DATE_FORMAT(h.po_tanggal,'%Y-%m-%d') AS Tanggal,
                     IFNULL(s.sup_nama,'') AS Supplier,
                     h.po_jenis AS JenisPo,
-                    ${SQL_TOTAL_PO_LAIN} AS Total,
+                    ${SQL_TOTAL_PO_BAHAN} AS Total,
                     IFNULL((
                       SELECT SUM(v.voud_total)
                       FROM tvoucher_dtl v
@@ -735,7 +841,7 @@ const searchNota = async (type, supKode, search = "") => {
 const getNilaiSisa = async (nota, tipe = "") => {
   if (tipe === "POB") {
     const [[pc]] = await db.query(
-      `SELECT ${SQL_TOTAL_PO_LAIN} AS total,
+      `SELECT ${SQL_TOTAL_PO_BAHAN} AS total,
               IFNULL((SELECT SUM(v.voud_total) FROM tvoucher_dtl v
                       WHERE v.voud_nota = h.po_nomor AND v.voud_type = 'POB'), 0) AS sudah
        FROM tpo_hdr h
@@ -792,7 +898,7 @@ const getDetailForm = async (nomor) => {
       .map(async (r) => {
         const sisa = await getNilaiSisa(r.voud_nota, r.voud_type);
         const potongan = Number(r.voud_bs) * Number(r.voud_tarifbs);
-        return {
+        const baris = {
           tipe: r.voud_type,
           nomor: r.voud_nota,
           tanggal: r.voud_tgl_nota,
@@ -804,6 +910,23 @@ const getDetailForm = async (nomor) => {
           potongan,
           total: Number(r.voud_nilai) - potongan,
         };
+        // PO Celup yang dibayar per bahan: kirim rincian + status ceklis
+        if (r.voud_type === "POB") {
+          const [[ada]] = await db.query(
+            `SELECT COUNT(*) AS n FROM tvoucher_dtl_item
+             WHERE vdi_vou_nomor = ? AND vdi_nota = ?`,
+            [nomor, r.voud_nota],
+          );
+          if (Number(ada.n) > 0) {
+            const items = await getItemsCelup(r.voud_nota, nomor);
+            baris.breakdown = true;
+            baris.items = items.map((i) => ({ ...i, checked: i.milikIni }));
+            baris.nilaiMax = round2(
+              items.filter((i) => !i.vouLain).reduce((s, i) => s + i.nilai, 0),
+            );
+          }
+        }
+        return baris;
       }),
   );
 
@@ -1021,10 +1144,15 @@ const save = async (payload, userKode) => {
   }
 
   for (const d of detail.filter((x) => x.tipe === "POL" && x.nomor)) {
-    const info = await getInfoPoLain(d.nomor, supKode, isEdit ? nomor : "");
+    const info = await getInfoPoLain(
+      d.nomor,
+      supKode,
+      isEdit ? nomor : "",
+      Number(statusPpn),
+    );
     if (!info) {
       throw new Error(
-        `PO ${d.nomor} tidak ditemukan untuk supplier ${supKode}.`,
+        `PO ${d.nomor} tidak ditemukan untuk supplier ${supKode}, atau status PPN-nya tidak sama dengan voucher.`,
       );
     }
     if (info.adaUangMuka) {
@@ -1094,13 +1222,57 @@ const save = async (payload, userKode) => {
         `BPB dari PO ${info.nomor} sudah pernah divoucher. Tidak bisa dibayar lewat PO Bahan.`,
       );
     }
+    d.nomor = info.nomor;
+    d.itemSimpan = null;
+
+    // PO Celup supplier breakdown: nilai ditentukan SERVER dari bahan yang dicentang
+    if (perluBreakdownCelup(info.jenis, supKode)) {
+      const mode = await cekModeCelup(info.nomor, isEdit ? nomor : "");
+      if (mode.utuhLain) {
+        throw new Error(
+          `PO ${info.nomor} sudah pernah divoucher utuh (tanpa rincian bahan). Tidak bisa dibreakdown.`,
+        );
+      }
+      if (!mode.utuhIni) {
+        const dipilih = new Set(
+          (Array.isArray(d.items) ? d.items : [])
+            .filter((i) => i.checked)
+            .map((i) => Number(i.nourut)),
+        );
+        if (!dipilih.size) {
+          throw new Error(
+            `PO Celup ${info.nomor}: centang minimal satu bahan.`,
+          );
+        }
+        const semua = await getItemsCelup(info.nomor, isEdit ? nomor : "");
+        const terpilih = semua.filter((i) => dipilih.has(i.nourut));
+        if (terpilih.length !== dipilih.size) {
+          throw new Error(
+            `PO ${info.nomor}: ada bahan yang tidak ditemukan. Muat ulang nota.`,
+          );
+        }
+        const bentrok = terpilih.filter((i) => i.vouLain);
+        if (bentrok.length) {
+          throw new Error(
+            `PO ${info.nomor}: bahan ${bentrok.map((i) => `${i.kode} (${i.vouLain})`).join(", ")} sudah dibayar di voucher lain.`,
+          );
+        }
+        d.nilai = round2(terpilih.reduce((s, i) => s + i.nilai, 0));
+        d.total = round2(
+          d.nilai - (Number(d.bs) || 0) * (Number(d.tarif) || 0),
+        );
+        d.itemSimpan = terpilih;
+        continue;
+      }
+      // utuhIni: baris lama voucher ini (dibuat sebelum fitur rincian) → jalur lama di bawah
+    }
+
     const sisa = info.total - info.sudah;
     if (Number(d.nilai) > sisa + 0.005) {
       throw new Error(
         `Nilai PO ${info.nomor} melebihi sisa. Sisa: ${sisa.toLocaleString("id-ID")}.`,
       );
     }
-    d.nomor = info.nomor;
   }
 
   // Hitung total — Delphi hitung():
@@ -1178,6 +1350,9 @@ const save = async (payload, userKode) => {
 
     // Delphi: DELETE FROM tvoucher_dtl WHERE vouD_vou_nomor = FID
     const deleteNomor = isEdit ? nomor : anomor;
+    await conn.query(`DELETE FROM tvoucher_dtl_item WHERE vdi_vou_nomor = ?`, [
+      deleteNomor,
+    ]);
     await conn.query(`DELETE FROM tvoucher_dtl WHERE voud_vou_nomor = ?`, [
       deleteNomor,
     ]);
@@ -1198,6 +1373,14 @@ const save = async (payload, userKode) => {
             Number(d.tarif) || 0,
           ],
         );
+        for (const it of d.itemSimpan || []) {
+          await conn.query(
+            `INSERT INTO tvoucher_dtl_item
+               (vdi_vou_nomor, vdi_nota, vdi_pod_nourut, vdi_nilai)
+             VALUES (?, ?, ?, ?)`,
+            [anomor, d.nomor, it.nourut, it.nilai],
+          );
+        }
       }
     }
 
@@ -1278,6 +1461,15 @@ const save = async (payload, userKode) => {
     return { nomor: anomor };
   } catch (e) {
     await conn.rollback();
+    // Dua user menyimpan bahan yang sama bersamaan → ditahan UNIQUE (vdi_nota, vdi_pod_nourut)
+    if (
+      e.code === "ER_DUP_ENTRY" &&
+      String(e.message).includes("uq_vdi_item")
+    ) {
+      throw new Error(
+        "Ada bahan PO Celup yang baru saja dibayar di voucher lain. Muat ulang nota lalu centang ulang.",
+      );
+    }
     throw e;
   } finally {
     conn.release();

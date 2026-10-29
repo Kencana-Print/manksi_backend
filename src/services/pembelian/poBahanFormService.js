@@ -260,6 +260,9 @@ const saveData = async (payload, userKode) => {
     const isLainLain = jpo === 4;
     // PO Lain-lain: supplier ada di detail, header dibiarkan NULL
     const supHeader = isLainLain ? null : header.po_sup_kode;
+    // PO Lain-lain: PPN ada di detail (beda supplier beda ketentuan), header selalu 0
+    const statusPpnHeader = isLainLain ? 0 : header.po_status_ppn;
+    const ppnHeader = isLainLain ? 0 : header.po_ppn;
     let jenisTersimpan = jpo; // bisa dipertahankan ke nilai lama saat edit (lihat bawah)
     let nomorBPB = header.no_bpb || "";
 
@@ -298,6 +301,11 @@ const saveData = async (payload, userKode) => {
         if ((Number(it.harga) || 0) <= 0)
           throw new Error(
             `Baris ${idx + 1}: Harga Beli untuk bahan ${it.kode} wajib diisi.`,
+          );
+        const ppn = Number(it.ppn) || 0;
+        if (ppn < 0 || ppn > 100)
+          throw new Error(
+            `Baris ${idx + 1}: PPN untuk bahan ${it.kode} harus antara 0 dan 100.`,
           );
         const kunci = `${it.kode}|${sup}|${spk.toUpperCase()}`;
         if (kunciSet.has(kunci))
@@ -361,8 +369,8 @@ const saveData = async (payload, userKode) => {
         header.po_keterangan,
         supHeader,
         header.po_mppb_nomor,
-        header.po_status_ppn,
-        header.po_ppn,
+        statusPpnHeader,
+        ppnHeader,
         userKode,
         header.po_note || "",
       ]);
@@ -467,8 +475,8 @@ const saveData = async (payload, userKode) => {
         header.po_keterangan,
         supHeader,
         header.po_mppb_nomor,
-        header.po_status_ppn,
-        header.po_ppn,
+        statusPpnHeader,
+        ppnHeader,
         header.po_note || "",
         userKode,
         nomorPO,
@@ -510,8 +518,8 @@ const saveData = async (payload, userKode) => {
           `
             INSERT INTO tpo_dtl (
               pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode, pod_ppn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomorPO,
@@ -529,6 +537,7 @@ const saveData = async (payload, userKode) => {
             String(item.spk || "").trim(),
             item.mkb || "",
             isLainLain ? item.supKode : null,
+            isLainLain ? Number(item.ppn) || 0 : 0,
           ],
         );
 

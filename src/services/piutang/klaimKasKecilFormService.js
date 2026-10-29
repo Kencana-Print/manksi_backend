@@ -1,5 +1,6 @@
 const db = require("../../config/database");
-const { assertBolehPosting } = require("../postingGuardService");
+const { assertBolehPosting, sqlTanpaInduk } = require("../postingGuardService");
+const { assertTidakKeKasKlaim } = require("./klaimKasKecilGuardService");
 const {
   TANGGAL_MULAI_KLAIM,
   aksesPenuh,
@@ -13,6 +14,73 @@ const httpError = (msg, status = 400) =>
   Object.assign(new Error(msg), { status });
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 const TGL_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const MAKS_MANUAL = 50;
+const MIN_URAIAN_MANUAL = 10;
+const hariIni = () =>
+  new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+
+// Validasi bentuk baris manual (hanya klaim ATM). Akun dicek ke DB di saveData.
+const normalisasiManual = (rows, kas) => {
+  const arr = Array.isArray(rows) ? rows : [];
+  if (!arr.length) return [];
+  if (kas.jenis !== "ATM")
+    throw httpError("Baris manual hanya untuk klaim ATM.");
+  if (arr.length > MAKS_MANUAL)
+    throw httpError(`Baris manual maksimal ${MAKS_MANUAL}.`);
+  const today = hariIni();
+  return arr.map((r, i) => {
+    const no = i + 1;
+    const tanggal = String(r.tanggal || "").trim();
+    const akun = String(r.akun || "").trim();
+    const cc = String(r.cc || "").trim();
+    const dc = String(r.dc || "").trim();
+    const uraian = String(r.uraian || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    const nominal = round2(r.nominal);
+    if (!TGL_RE.test(tanggal))
+      throw httpError(`Baris manual ${no}: tanggal tidak valid.`);
+    if (tanggal < TANGGAL_MULAI_KLAIM)
+      throw httpError(
+        `Baris manual ${no}: tanggal sebelum tanggal mulai klaim (${TANGGAL_MULAI_KLAIM}).`,
+      );
+    if (tanggal > today)
+      throw httpError(`Baris manual ${no}: tanggal tidak boleh masa depan.`);
+    if (!akun) throw httpError(`Baris manual ${no}: akun biaya wajib dipilih.`);
+    if (!cc || !dc)
+      throw httpError(`Baris manual ${no}: cost center wajib dipilih.`);
+    if (uraian.length < MIN_URAIAN_MANUAL)
+      throw httpError(
+        `Baris manual ${no}: uraian minimal ${MIN_URAIAN_MANUAL} karakter.`,
+      );
+    if (!(nominal > 0))
+      throw httpError(`Baris manual ${no}: nominal harus lebih dari 0.`);
+    return { tanggal, akun, cc, dc, uraian: uraian.slice(0, 250), nominal };
+  });
+};
+
+// Nama cost center dari master (query terpisah)
+const petaNamaCc = async (daftar) => {
+  const kode = [...new Set(daftar.filter(Boolean))];
+  if (!kode.length) return new Map();
+  const [rows] = await db.query(
+    `SELECT cc_kode, cc_nama FROM finance.tcostcenter WHERE cc_kode IN (?)`,
+    [kode],
+  );
+  return new Map(rows.map((r) => [String(r.cc_kode), r.cc_nama]));
+};
+
+// Nama akun dari master (query terpisah, hindari collation mismatch)
+const petaNamaAkun = async (daftar) => {
+  const kode = [...new Set(daftar.filter(Boolean))];
+  if (!kode.length) return new Map();
+  const [rek] = await db.query(
+    `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
+    [kode],
+  );
+  return new Map(rek.map((r) => [r.rek_kode, r.rek_nama]));
+};
 
 // Kas tujuan: satu cabang bisa punya lebih dari satu kas (pusat = beberapa ATM).
 // Bila cabang hanya punya satu kas, rek boleh kosong; bila lebih, wajib dipilih.
@@ -225,14 +293,18 @@ const getDetailForm = async (
 
   const [dtl] = await db.query(
     `SELECT kkd_jur_no AS bkk, kkd_bon_nomor AS bon,
+            kkd_tipe AS tipe, kkd_akun_biaya AS akun,
+            kkd_cc_kode AS cc, kkd_dc_nama AS dc,
             DATE_FORMAT(kkd_tanggal,'%Y-%m-%d') AS tanggal,
             kkd_uraian AS uraian, kkd_nominal AS nominal
      FROM tklaim_kaskecil_dtl WHERE kkd_kkh_nomor = ?
-     ORDER BY kkd_tanggal, kkd_jur_no`,
+     ORDER BY kkd_tipe, kkd_tanggal, kkd_jur_no`,
     [nomor],
   );
 
   const nomorPjt = await cariPjtAktif(nomor);
+  const namaAkun = await petaNamaAkun(dtl.map((d) => d.akun));
+  const namaCc = await petaNamaCc(dtl.map((d) => d.cc));
   const bolehTulis = penuh || (!!cabangTulis && cabangTulis === h.kkh_cabang);
   return {
     nomor: h.kkh_nomor,
@@ -248,7 +320,12 @@ const getDetailForm = async (
     // Boleh diubah hanya bila AKTIF, belum dipanggil Pengajuan Transfer,
     // dan user punya hak tulis atas klaim ini (cabang sendiri atau akses penuh)
     bisaUbah: h.kkh_status === "AKTIF" && !nomorPjt && bolehTulis,
-    detail: dtl.map((d) => ({ ...d, nominal: Number(d.nominal) })),
+    detail: dtl.map((d) => ({
+      ...d,
+      nominal: Number(d.nominal),
+      akunNama: namaAkun.get(d.akun) || "",
+      ccNama: namaCc.get(d.cc) || "",
+    })),
   };
 };
 
@@ -302,14 +379,16 @@ const saveData = async (payload, user) => {
   const dipilih = (Array.isArray(detail) ? detail : [])
     .map((d) => String(d.bkk || "").trim())
     .filter(Boolean);
-  if (dipilih.length === 0) throw httpError("Pilih minimal satu BKK.");
+  const manual = normalisasiManual(payload.detailManual, kas);
+  if (dipilih.length === 0 && manual.length === 0)
+    throw httpError("Pilih minimal satu BKK atau isi satu baris manual.");
   const daftar = [...new Set(dipilih)];
   if (daftar.length !== dipilih.length)
     throw httpError("Ada BKK yang dipilih lebih dari satu kali.");
 
   // Pagar posting yang sama dengan modul Finance lain (hanya kas klaim;
   // bank asal dijaga di Pengajuan Transfer)
-  await assertBolehPosting([rekTujuan], tanggal);
+  await assertBolehPosting([rekTujuan, ...manual.map((m) => m.akun)], tanggal);
 
   const conn = await db.getConnection();
   let lockName = null;
@@ -349,7 +428,10 @@ const saveData = async (payload, user) => {
     }
 
     // Validasi ulang di server — daftar BKK dari klien tidak dipercaya
-    const eligible = await cariBkkEligible({ kas, daftarBkk: daftar }, conn);
+    // Daftar kosong (klaim hanya baris manual) → hindari "IN ()"
+    const eligible = daftar.length
+      ? await cariBkkEligible({ kas, daftarBkk: daftar }, conn)
+      : [];
     const peta = new Map(eligible.map((e) => [e.bkk, e]));
     const tidakValid = daftar.filter((b) => !peta.has(b));
     if (tidakValid.length > 0)
@@ -357,7 +439,49 @@ const saveData = async (payload, user) => {
         `BKK berikut tidak memenuhi syarat klaim (sudah diklaim atau diajukan, sebelum tanggal mulai, atau bukan kas ${rekTujuan}): ${tidakValid.join(", ")}`,
       );
 
-    const total = round2(eligible.reduce((s, e) => s + e.nominal, 0));
+    // Akun biaya baris manual: semua akun boleh, kecuali kas klaim, nonaktif, atau induk
+    if (manual.length) {
+      const akunSet = [...new Set(manual.map((m) => m.akun))];
+      try {
+        assertTidakKeKasKlaim(akunSet, tanggal);
+      } catch (e) {
+        throw httpError(e.message);
+      }
+      const [okAkun] = await conn.query(
+        `SELECT rek_kode FROM finance.trekening
+         WHERE rek_isaktif = 0${sqlTanpaInduk()} AND rek_kode IN (?)`,
+        [akunSet],
+      );
+      const ada = new Set(okAkun.map((r) => r.rek_kode));
+      const salah = akunSet.filter((a) => !ada.has(a));
+      if (salah.length)
+        throw httpError(
+          `Akun biaya tidak valid (nonaktif / induk / tidak ada): ${salah.join(", ")}`,
+        );
+
+      // Cost center + departemen: pasangannya harus ada di master
+      // (filter sama dengan lookup: kode 7 atau >= 10)
+      const kodeCc = [...new Set(manual.map((m) => m.cc))];
+      const [okCc] = await conn.query(
+        `SELECT dc_kode, dc_nama FROM finance.tcostcenteritem
+         WHERE dc_kode IN (?)
+           AND (CAST(dc_kode AS UNSIGNED) = 7 OR CAST(dc_kode AS UNSIGNED) >= 10)`,
+        [kodeCc],
+      );
+      const pasangan = new Set(okCc.map((r) => `${r.dc_kode}|${r.dc_nama}`));
+      const ccSalah = manual.filter((m) => !pasangan.has(`${m.cc}|${m.dc}`));
+      if (ccSalah.length)
+        throw httpError(
+          `Cost center / departemen tidak valid: ${[
+            ...new Set(ccSalah.map((m) => `${m.cc} ${m.dc}`)),
+          ].join(", ")}`,
+        );
+    }
+
+    const total = round2(
+      eligible.reduce((s, e) => s + e.nominal, 0) +
+        manual.reduce((s, m) => s + m.nominal, 0),
+    );
 
     if (isEdit) {
       await conn.query(
@@ -400,6 +524,28 @@ const saveData = async (payload, user) => {
           String(e.keterangan || "").slice(0, 250),
           e.nominal,
           bkk,
+        ],
+      );
+    }
+
+    let noM = 0;
+    for (const m of manual) {
+      noM++;
+      await conn.query(
+        `INSERT INTO tklaim_kaskecil_dtl
+           (kkd_kkh_nomor, kkd_jur_no, kkd_tipe, kkd_bon_nomor, kkd_tanggal,
+            kkd_uraian, kkd_nominal, kkd_kunci, kkd_akun_biaya,
+            kkd_cc_kode, kkd_dc_nama)
+         VALUES (?, ?, 'MANUAL', '', ?, ?, ?, NULL, ?, ?, ?)`,
+        [
+          actualNomor,
+          `MNL-${String(noM).padStart(3, "0")}`,
+          m.tanggal,
+          m.uraian,
+          m.nominal,
+          m.akun,
+          m.cc,
+          m.dc,
         ],
       );
     }
@@ -449,14 +595,17 @@ const getPrintData = async (nomor, cabangScope) => {
     throw httpError("Klaim sudah dibatalkan. Tidak bisa dicetak.");
 
   const [dtl] = await db.query(
-    `SELECT kkd_jur_no AS bkk,
+    `SELECT kkd_jur_no AS bkk, kkd_tipe AS tipe, kkd_akun_biaya AS akun,
+            kkd_cc_kode AS cc, kkd_dc_nama AS dc,
             DATE_FORMAT(kkd_tanggal,'%Y-%m-%d') AS tanggal,
             kkd_uraian AS uraian, kkd_nominal AS nominal
      FROM tklaim_kaskecil_dtl WHERE kkd_kkh_nomor = ?
-     ORDER BY kkd_tanggal, kkd_jur_no`,
+     ORDER BY kkd_tipe, kkd_tanggal, kkd_jur_no`,
     [nomor],
   );
 
+  const namaAkun = await petaNamaAkun(dtl.map((d) => d.akun));
+  const namaCc = await petaNamaCc(dtl.map((d) => d.cc));
   return {
     nomor: h.nomor,
     tanggal: h.tanggal,
@@ -465,13 +614,19 @@ const getPrintData = async (nomor, cabangScope) => {
     keterangan: h.keterangan || "",
     kasir: h.kasir || "",
     total: Number(h.total),
-    detail: dtl.map((d, i) => ({
-      no: i + 1,
-      bkk: d.bkk,
-      tanggal: d.tanggal,
-      uraian: d.uraian,
-      nominal: Number(d.nominal),
-    })),
+    detail: dtl.map((d, i) => {
+      const manual = d.tipe === "MANUAL";
+      return {
+        no: i + 1,
+        bkk: manual ? "MANUAL" : d.bkk,
+        manual,
+        tanggal: d.tanggal,
+        uraian: d.uraian,
+        akun: manual ? `${d.akun} - ${namaAkun.get(d.akun) || ""}` : "",
+        costCenter: manual ? `${namaCc.get(d.cc) || d.cc} - ${d.dc}` : "",
+        nominal: Number(d.nominal),
+      };
+    }),
   };
 };
 

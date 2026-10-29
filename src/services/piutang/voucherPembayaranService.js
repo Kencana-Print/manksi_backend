@@ -184,6 +184,11 @@ const deleteData = async (nomor) => {
     );
     // Hapus detail dulu (jika tidak ada CASCADE FK)
     await conn.query(
+      `DELETE FROM tvoucher_dtl_item
+       WHERE vdi_vou_nomor = ?`,
+      [nomor],
+    );
+    await conn.query(
       `DELETE FROM tvoucher_dtl
        WHERE voud_vou_nomor = ?`,
       [nomor],
@@ -375,7 +380,27 @@ const getPrintData = async (nomor) => {
     nilai: Number(b.jumlah) * Number(b.harga),
     tambah: Number(b.tambah) === 1,
   }));
-  return rows.map((r) => ({ ...r, bahan: bahanList }));
+  const [rincian] = await db.query(
+    `SELECT i.vdi_nota AS nota, d.pod_bhn_kode AS kode,
+            IFNULL(b.Bhn_Name, '') AS nama, IFNULL(b.Bhn_satuan, '') AS satuan,
+            d.pod_Jumlah AS jumlah, i.vdi_nilai AS nilai
+     FROM tvoucher_dtl_item i
+     INNER JOIN tpo_dtl d
+        ON d.pod_po_Nomor = i.vdi_nota AND d.pod_nourut = i.vdi_pod_nourut
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pod_bhn_kode
+     WHERE i.vdi_vou_nomor = ?
+     ORDER BY i.vdi_nota, i.vdi_pod_nourut`,
+    [nomor],
+  );
+  const rincianList = rincian.map((x) => ({
+    nota: x.nota,
+    kode: x.kode,
+    nama: x.nama,
+    satuan: x.satuan,
+    jumlah: Number(x.jumlah),
+    nilai: Number(x.nilai),
+  }));
+  return rows.map((r) => ({ ...r, bahan: bahanList, rincian: rincianList }));
 };
 
 // Khusus filter pending dari dashboard — semua periode, belum ada PT

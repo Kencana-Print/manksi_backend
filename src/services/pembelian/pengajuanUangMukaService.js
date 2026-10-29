@@ -6,10 +6,10 @@ const {
 // ── Konstanta & fragmen SQL bersama (dipakai uangMukaService, Realisasi, dst.) ──
 const BKK_P04_MULAI = "2026-09-28";
 
-// Nilai satu baris PO Lain-lain (alias tabel: h = tpo_hdr, d = tpo_dtl)
+// Nilai satu baris PO Lain-lain, sudah termasuk PPN baris (alias tabel: d = tpo_dtl)
 const SQL_NOMINAL_BARIS_PO = `
   d.pod_Jumlah * d.pod_hargabeli * (100 - d.pod_disc) / 100
-  * IF(h.po_status_ppn = 1, (100 + h.po_ppn) / 100, 1)`;
+  * (100 + d.pod_ppn) / 100`;
 
 // Sumber fee per SPK/SO — sama dengan query cetak Pengajuan Insentif
 const SQL_SUMBER_FEE = `
