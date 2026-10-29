@@ -6373,7 +6373,9 @@ const buildOutstandingPP = (cabang) => {
         WHERE h.po_status LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
         GROUP BY h.po_mb_nomor, i.bpbd_brg_kode
       ) k4 ON k4.mb_nomor = d.mbd_nomor AND k4.brg_kode = d.mbd_brg_kode
-      WHERE d.mbd_closed_manual = 0 AND h.mb_tanggal >= ?${c.sql}
+      WHERE d.mbd_closed_manual = 0
+        AND IFNULL(h.mb_status, '') NOT LIKE '%CLOSE%'
+        AND h.mb_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > x.QtyDtl2
     ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
