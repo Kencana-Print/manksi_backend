@@ -2633,7 +2633,8 @@ const getInkasoDashboard = async (user) => {
        k.date_create AS DateCreate,
        ${INKASO_SISA_CORR} AS Sisa
      FROM tproyeksi_inkaso k
-     INNER JOIN piutang_debet p ON p.nota = k.pik_nota AND p.is_writeoff = 0
+     INNER JOIN piutang_debet p ON p.nota = k.pik_nota
+       ${INKASO_VALID_FILTER}
      LEFT JOIN tcustomer c ON c.cus_kode = k.pik_cus_kode
      LEFT JOIN tsales s ON s.sal_kode = k.pik_sal_kode
      WHERE k.pik_status <> 'BATAL'`,
