@@ -83,10 +83,9 @@ const getDetail = async (nomor) => {
 
 // ─────────────────────────────────────────────────────────
 // CEK BISA HAPUS / UBAH
-// Beda dari STBJ: kuncinya "belum ada progress penerimaan sama
-// sekali" (qty_terima & qty_bs semua baris masih 0), bukan soal
-// "sudah ada dokumen terima" — karena stok & progress di sini
-// sudah terikat trigger begitu SJ Maklon masuk.
+// Stok polos bergerak lewat trigger SJ Keluar dan stok barang jadi lewat
+// trigger Terima, bukan saat Maklon dibuat. Maklon yang sudah punya
+// SJ Keluar tidak boleh diubah/dihapus.
 // ─────────────────────────────────────────────────────────
 const cekBisaHapusUbah = async (nomor) => {
   const [[hdr]] = await db.query(
@@ -117,44 +116,135 @@ const cekBisaHapusUbah = async (nomor) => {
   return hdr;
 };
 
+const STATUS_BISA_HAPUS = ["DRAFT", "SEBAGIAN DIKIRIM", "DIKIRIM"];
+
+// Pemeriksa tutup buku; sama dengan logika cekBisaHapusUbah
+const getCekClose = async () => {
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const zClose = await tutupBukuService.getManualTutupBuku("MAKLON BARANG");
+  return (tgl) => new Date(tgl) < (zClose || zdtClose);
+};
+
 // ─────────────────────────────────────────────────────────
 // DELETE
-// Hapus gambar → detail (trigger after_delete otomatis kembalikan
-// stok polos yang sudah terlanjur keluar) → header.
+// Boleh selama workshop tujuan belum memproses (belum selesai DTF,
+// belum OTW gudang, belum ada SJ Hasil Maklon / terima).
+// SJ Keluar ikut dihapus; trigger tmaklon_sj_keluar_dtl_after_delete
+// membalik stok polos (asal & tujuan) dan qty_sudah_kirim.
+// Urutan WAJIB: SJ Keluar detail -> SJ Keluar header -> gambar
+// -> target jadi -> detail -> header. Trigger butuh tmaklon_dtl/hdr
+// masih ada; kalau tidak, pembalikan stok dilewati tanpa error.
 // ─────────────────────────────────────────────────────────
 const deleteData = async (nomor, userKode, userCab) => {
-  const hdr = await cekBisaHapusUbah(nomor);
-
-  if (userCab && !userCab.startsWith("HO")) {
-    if (hdr.mkl_user_create !== userKode) {
-      throw new Error(
-        `Data ini milik ${hdr.mkl_user_create}. Anda tidak boleh menghapus.`,
-      );
-    }
-  }
+  const sudahClose = await getCekClose();
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
+    const [[hdr]] = await conn.query(
+      `SELECT mkl_nomor, mkl_status, mkl_user_create,
+              mkl_tgl_selesai_dtf, mkl_tgl_otw_gudang,
+              DATE_FORMAT(mkl_tanggal, '%Y-%m-%d') AS mkl_tanggal
+       FROM tmaklon_hdr WHERE mkl_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!hdr) throw new Error("Data tidak ditemukan.");
+
+    if (userCab && !userCab.startsWith("HO")) {
+      if (hdr.mkl_user_create !== userKode) {
+        throw new Error(
+          `Data ini milik ${hdr.mkl_user_create}. Anda tidak boleh menghapus.`,
+        );
+      }
+    }
+
     const [dtlRows] = await conn.query(
-      `SELECT mkld_id FROM tmaklon_dtl WHERE mkld_mkl_nomor = ?`,
+      `SELECT mkld_id, mkld_qty_terima, mkld_qty_bs
+       FROM tmaklon_dtl WHERE mkld_mkl_nomor = ?`,
       [nomor],
     );
     const dtlIds = dtlRows.map((r) => r.mkld_id);
 
+    // ── Belum diproses workshop tujuan ──
+    const adaTerima = dtlRows.some(
+      (d) => Number(d.mkld_qty_terima) > 0 || Number(d.mkld_qty_bs) > 0,
+    );
+    if (
+      !STATUS_BISA_HAPUS.includes(hdr.mkl_status) ||
+      hdr.mkl_tgl_selesai_dtf ||
+      hdr.mkl_tgl_otw_gudang ||
+      adaTerima
+    ) {
+      throw new Error(
+        "Maklon sudah diproses workshop tujuan (selesai DTF / OTW gudang / diterima), tidak bisa dihapus.",
+      );
+    }
     if (dtlIds.length) {
-      await conn.query(`DELETE FROM tmaklon_gambar WHERE mkld_mkld_id IN (?)`, [
-        dtlIds,
-      ]);
-      // Hapus baris SATU-PER-SATU (bukan bulk WHERE IN) supaya trigger
-      // tmaklon_dtl_after_delete jalan per baris dan stok polos
-      // dikembalikan dengan benar di tiap barisnya.
-      for (const id of dtlIds) {
-        await conn.query(`DELETE FROM tmaklon_dtl WHERE mkld_id = ?`, [id]);
+      const [[sjm]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM tsj_maklon_dtl WHERE sjmd_mkld_id IN (?)`,
+        [dtlIds],
+      );
+      if (Number(sjm.n) > 0) {
+        throw new Error(
+          "SJ Hasil Maklon sudah dibuat untuk Maklon ini, tidak bisa dihapus.",
+        );
       }
     }
 
+    // ── Tutup buku: tanggal Maklon dan tanggal tiap SJ Keluar ──
+    const [sjkRows] = await conn.query(
+      `SELECT sjk_nomor, DATE_FORMAT(sjk_tanggal, '%Y-%m-%d') AS sjk_tanggal
+       FROM tmaklon_sj_keluar_hdr WHERE sjk_mkl_nomor = ?`,
+      [nomor],
+    );
+    const tanggalCek = [hdr.mkl_tanggal, ...sjkRows.map((s) => s.sjk_tanggal)];
+    if (tanggalCek.some((t) => sudahClose(t))) {
+      throw new Error("Transaksi tsb sudah close. Tidak bisa dihapus.");
+    }
+
+    // ── SJ Keluar: detail dulu (trigger membalik stok), verifikasi, baru header ──
+    const sjkNomors = sjkRows.map((s) => s.sjk_nomor);
+    if (sjkNomors.length) {
+      await conn.query(
+        `DELETE FROM tmaklon_sj_keluar_dtl WHERE sjkd_sjk_nomor IN (?)`,
+        [sjkNomors],
+      );
+
+      const [[sisa]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM tmasterstok_acc
+         WHERE mst_noreferensi IN (?)
+           AND (ABS(mst_stok_in) > 0.0001 OR ABS(mst_stok_out) > 0.0001)`,
+        [sjkNomors],
+      );
+      if (Number(sisa.n) > 0) {
+        throw new Error(
+          "Pembalikan stok SJ Keluar tidak tuntas. Penghapusan dibatalkan.",
+        );
+      }
+
+      await conn.query(
+        `DELETE FROM tmaklon_sj_keluar_hdr WHERE sjk_nomor IN (?)`,
+        [sjkNomors],
+      );
+    }
+
+    // ── Struktur Maklon: gambar -> target jadi -> detail -> header ──
+    if (dtlIds.length) {
+      await conn.query(
+        `DELETE g FROM tmaklon_gambar g
+         INNER JOIN tmaklon_dtl_jadi j ON j.mkldj_id = g.mklg_mkldj_id
+         WHERE j.mkldj_mkld_id IN (?)`,
+        [dtlIds],
+      );
+      await conn.query(
+        `DELETE FROM tmaklon_dtl_jadi WHERE mkldj_mkld_id IN (?)`,
+        [dtlIds],
+      );
+      await conn.query(`DELETE FROM tmaklon_dtl WHERE mkld_id IN (?)`, [
+        dtlIds,
+      ]);
+    }
     await conn.query(`DELETE FROM tmaklon_hdr WHERE mkl_nomor = ?`, [nomor]);
 
     await conn.commit();
