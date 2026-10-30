@@ -750,9 +750,17 @@ const saveData = async (payload, user) => {
     }
     header.spk_cabkaos = user.cabangKaos || "";
 
+    header.spk_hargafee =
+      Math.round(
+        ((Number(header.spk_harga) || 0) -
+          (Number(header.spk_hargariil) || 0)) *
+          100,
+      ) / 100;
+
     // ==========================================
     // 2. EKSEKUSI HEADER — target tsalesorder
     // ==========================================
+
     const currentYear = new Date().getFullYear();
     const piutang = isSalesOrder
       ? 0
@@ -849,9 +857,7 @@ const saveData = async (payload, user) => {
       const hargaBerubah =
         Number(existingData.so_harga || 0) !== Number(header.spk_harga || 0) ||
         Number(existingData.so_hargariil || 0) !==
-          Number(header.spk_hargariil || 0) ||
-        Number(existingData.so_hargafee || 0) !==
-          Number(header.spk_hargafee || 0);
+          Number(header.spk_hargariil || 0);
 
       if (hargaBerubah && (await isSoInvoiced(conn, nomor, ppicInfo.SpkPpic))) {
         approvedInvoiceUrut = await getApprovedInvoicePin(conn, nomor);
