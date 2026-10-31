@@ -87,11 +87,22 @@ const getBrowseList = async (filters) => {
 
   const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
 
+  const isCmoDivisi3 =
+    ["LUTFI", "ESTU"].includes(userKode) ||
+    isCmo3 ||
+    (String(userDivisi) === "3" && isCmo)
+      ? 1
+      : 0;
+  const isCabangPusat = !userCabang || userCabang === "HO-";
+
   if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
     // Bisa lihat SO cabangnya sendiri, DITAMBAH SO workshop manapun
     // yang statusnya sublim (spk_sublim = 'Y'), lepas dari cabang.
     whereClause += ` AND (y.spk_cab = ? OR y.spk_sublim = 'Y')`;
     params.push(userCabang || "");
+  } else if (isCmoDivisi3 && isCabangPusat) {
+    // ← BARU: CMO Kaosan di pusat hanya boleh melihat divisi 3
+    whereClause += ` AND LEFT(y.spk_divisi, 1) = '3'`;
   } else if (
     userCabang &&
     userCabang !== "HO-" &&
@@ -100,11 +111,6 @@ const getBrowseList = async (filters) => {
     userKode !== "DINDUN" &&
     userKode !== "ANTA"
   ) {
-    const isCmoDivisi3 =
-      ["LUTFI", "ESTU"].includes(userKode) ||
-      (String(userDivisi) === "3" && (isCmo || isCmo3))
-        ? 1
-        : 0;
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     const isDonaExtraCab = userKode === "DONADONG" ? 1 : 0;
     const isDonaDivisi4 = userKode === "DONADONG" ? 1 : 0;
