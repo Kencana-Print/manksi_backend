@@ -86,18 +86,12 @@ const getBrowseList = async (filters) => {
   }
 
   const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
+  const SEMUA_DIVISI_USERS = ["ADMIN"];
 
-  const isCmoDivisi3 =
-    isCmo3 === true || ["LUTFI", "ESTU"].includes(userKode) ? 1 : 0;
+  const KAOSAN_ONLY_USERS = ["LUTFI", "ESTU"];
+  const isCmoDivisi3 = KAOSAN_ONLY_USERS.includes(userKode) ? 1 : 0;
+  const isCmoDivisi3Extra = isCmo3 === true ? 1 : 0;
   const isCabangPusat = !userCabang || userCabang === "HO-";
-
-  console.log("[browse-so]", {
-    userKode,
-    userCabang,
-    isCmo3,
-    isCmoDivisi3,
-    isCabangPusat,
-  });
 
   if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
     // Bisa lihat SO cabangnya sendiri, DITAMBAH SO workshop manapun
@@ -127,7 +121,7 @@ const getBrowseList = async (filters) => {
     params.push(
       userCabang,
       userKode || "",
-      isCmoDivisi3,
+      isCmoDivisi3Extra,
       isDonaExtraCab,
       isMdiP01,
       isDonaDivisi4,
