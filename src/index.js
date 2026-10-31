@@ -113,6 +113,8 @@ const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcod
 
 const cetakBarcodeKaosanRoutes = require("./routes/garmen/cetakBarcodeKaosanRoutes");
 const cetakBarcodeKaosanFormRoutes = require("./routes/garmen/cetakBarcodeKaosanFormRoutes");
+const cetakBarcodeKoliRoutes = require("./routes/garmen/cetakBarcodeKoliRoutes");
+const cetakBarcodeKoliFormRoutes = require("./routes/garmen/cetakBarcodeKoliFormRoutes");
 const stbjRoutes = require("./routes/garmen/stbjRoutes");
 const stbjFormRoutes = require("./routes/garmen/stbjFormRoutes");
 const cetakBkbjRoutes = require("./routes/garmen/cetakBkbjRoutes");
@@ -352,6 +354,7 @@ const laporanSpandukMonitoringKoliRoutes = require("./routes/laporan/spanduk/mon
 const laporanSpandukMonitoringHasilProofRoutes = require("./routes/laporan/spanduk/monitoringHasilProofRoutes");
 const laporanSpandukRekapMonitoringBySpkRoutes = require("./routes/laporan/spanduk/rekapMonitoringBySpkRoutes");
 const laporanSpandukPemakaianBahanRoutes = require("./routes/laporan/spanduk/pemakaianBahanRoutes");
+const laporanSpandukKetercapaianKomitmenKirimRoutes = require("./routes/laporan/spanduk/ketercapaianKomitmenKirimRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -620,6 +623,11 @@ app.use(
 app.use(
   "/api/garmen/bahan-jadi/cetak-barcode-kaosan/form",
   cetakBarcodeKaosanFormRoutes,
+);
+app.use("/api/garmen/bahan-jadi/cetak-barcode-koli", cetakBarcodeKoliRoutes);
+app.use(
+  "/api/garmen/bahan-jadi/cetak-barcode-koli/form",
+  cetakBarcodeKoliFormRoutes,
 );
 app.use("/api/garmen/stbj", stbjRoutes);
 app.use("/api/garmen/stbj-form", stbjFormRoutes);
@@ -975,6 +983,10 @@ app.use(
 app.use(
   "/api/laporan/spanduk/pemakaian-bahan",
   laporanSpandukPemakaianBahanRoutes,
+);
+app.use(
+  "/api/laporan/spanduk/ketercapaian-komitmen-kirim",
+  laporanSpandukKetercapaianKomitmenKirimRoutes,
 );
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);

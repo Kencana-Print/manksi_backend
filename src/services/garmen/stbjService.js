@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const koliSvc = require("./cetakBarcodeKoliFormService");
 
 // ─────────────────────────────────────────────────────────
 // BROWSE — sesuai Delphi btnRefreshClick
@@ -149,6 +150,10 @@ const deleteData = async (nomor, userKode, userCab) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    // QR koli: tolak bila masih ada koli aktif, lalu lepas kaitan koli lama
+    // dari nomor STBJ ini (nomor STBJ terakhir bisa dipakai ulang)
+    await koliSvc.lepasKoliStbj(conn, nomor);
 
     // Hapus header (detail terhapus via CASCADE atau hapus manual)
     await conn.query(`DELETE FROM tstbj_hdr WHERE stbj_nomor = ?`, [nomor]);

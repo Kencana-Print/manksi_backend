@@ -54,8 +54,12 @@ const getPackingDetail = async (req, res) => {
 const save = async (req, res) => {
   try {
     const userKode = req.user?.kode || req.user?.user_kode || "";
-    const nomor = await svc.save(req.body, userKode, true);
-    res.json({ success: true, data: { nomor }, message: "Berhasil disimpan." });
+    const { nomor, qr } = await svc.save(req.body, userKode, true, req.ip);
+    res.json({
+      success: true,
+      data: { nomor, qr },
+      message: "Berhasil disimpan.",
+    });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -64,8 +68,12 @@ const save = async (req, res) => {
 const update = async (req, res) => {
   try {
     const userKode = req.user?.kode || req.user?.user_kode || "";
-    const nomor = await svc.save(req.body, userKode, false);
-    res.json({ success: true, data: { nomor }, message: "Berhasil diupdate." });
+    const { nomor, qr } = await svc.save(req.body, userKode, false, req.ip);
+    res.json({
+      success: true,
+      data: { nomor, qr },
+      message: "Berhasil diupdate.",
+    });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }

@@ -1,6 +1,18 @@
 const db = require("../../config/database");
 const { resolveSoLocation } = require("../penjualan/salesOrderService");
 const realisasiBahanFormService = require("../garmen/realisasiBahanFormService");
+// Sesuaikan path dengan lokasi customerService.js di project.
+const {
+  getTierPlafon,
+  BATAS_PLAFON_DIREKTUR,
+} = require("../master/customerService");
+
+// Kode user yang berhak meng-ACC plafon customer, per level.
+// MM = Manager Marketing (WIDI), DIREKTUR = DIR. DIR boleh meng-ACC level MM.
+const APPROVER_PLAFON = {
+  MM: ["WIDI", "DIR"],
+  DIREKTUR: ["DIR"],
+};
 
 // =========================================================================
 // HELPER: HITUNG ULANG STATUS AKTIF SO/SPK SETELAH ADA APPROVAL
@@ -793,7 +805,7 @@ const submitHapusDataOtorisasi = async (
 };
 
 // =========================================================================
-// APPROVAL PLAFON CUSTOMER (MENU_ID: 262 = Manager, 263 = Direksi)
+// APPROVAL PLAFON CUSTOMER (MENU_ID: 263 = Manager, 264 = Direksi)
 // =========================================================================
 
 // --- GET DAFTAR PLAFON PENDING (BROWSE) ---
@@ -810,11 +822,12 @@ const getPlafonList = async (query) => {
   const jenisFilter = jenis || "PENDING_MANAGER";
 
   // Tentukan range plafon berdasarkan jenis
-  // Manager = plafon <= 20jt, Direksi = plafon > 20jt
+  // MM = plafon < 50jt (Small, Extra Small); Direktur = plafon >= 50jt
+  // (Medium, Large, Prioritas). Batas diambil dari TIER_PLAFON.
   const plafonClause =
     jenisFilter === "PENDING_MANAGER"
-      ? `AND c.cus_plafon <= 20000000`
-      : `AND c.cus_plafon > 20000000`;
+      ? `AND c.cus_plafon < ${BATAS_PLAFON_DIREKTUR}`
+      : `AND c.cus_plafon >= ${BATAS_PLAFON_DIREKTUR}`;
 
   let statusClause = "";
   if (belumAccSaja === "true" || belumAccSaja === true) {
@@ -846,7 +859,10 @@ const getPlafonList = async (query) => {
   `;
 
   const [rows] = await db.query(sql, [dStart, dEnd, jenisFilter]);
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    Kategori: getTierPlafon(r.Plafon)?.kategori || "",
+  }));
 };
 
 // --- EKSEKUSI OTORISASI PLAFON ---
@@ -856,29 +872,45 @@ const approvalPlafon = async (cusKode, statusAcc, userKode, userBagian) => {
     [cusKode],
   );
   if (!cus) throw new Error("Customer tidak ditemukan.");
+  if (!String(cus.cus_plafon_acc || "").startsWith("PENDING")) {
+    throw new Error(
+      "Plafon customer ini tidak sedang menunggu persetujuan (sudah di-ACC/ditolak).",
+    );
+  }
 
-  const bagianUpper = String(userBagian).toUpperCase();
+  // Hak ACC ditentukan dari TIER plafon saat ini + kode user,
+  // bukan dari teks status pending atau bagian.
+  const tier = getTierPlafon(cus.cus_plafon);
+  if (!tier) throw new Error("Customer belum punya plafon untuk di-ACC.");
 
-  // Validasi hak akses berdasarkan status pending
-  if (
-    cus.cus_plafon_acc === "PENDING_DIREKSI" &&
-    !["DIREKSI", "OWNER"].includes(bagianUpper)
-  ) {
-    throw new Error("Hanya Direksi/Owner yang bisa ACC plafon > 20 juta.");
+  const kodeUser = String(userKode || "")
+    .trim()
+    .toUpperCase();
+  if (!(APPROVER_PLAFON[tier.approver] || []).includes(kodeUser)) {
+    throw new Error(
+      tier.approver === "DIREKTUR"
+        ? `Plafon kategori ${tier.kategori} hanya bisa di-ACC Direktur.`
+        : `Plafon kategori ${tier.kategori} hanya bisa di-ACC Manager Marketing atau Direktur.`,
+    );
   }
 
   const newPlafonAcc = statusAcc === "Y" ? "ACC" : "TOLAK";
   const newAktif = statusAcc === "Y" ? 0 : 1; // 0 = aktif di DB Delphi
 
-  await db.query(
+  // Syarat status pending diulang di WHERE: dua approver yang menekan bersamaan
+  // tidak bisa saling menimpa keputusan.
+  const [hasil] = await db.query(
     `UPDATE tcustomer SET
        cus_plafon_acc = ?,
        cus_plafon_tgl_acc = NOW(),
        cus_plafon_user_acc = ?,
        cus_aktif = ?
-     WHERE Cus_kode = ?`,
-    [newPlafonAcc, userKode, newAktif, cusKode],
+     WHERE Cus_kode = ? AND cus_plafon_acc = ?`,
+    [newPlafonAcc, userKode, newAktif, cusKode, cus.cus_plafon_acc],
   );
+  if (hasil.affectedRows !== 1) {
+    throw new Error("Status plafon sudah berubah. Muat ulang daftar.");
+  }
 
   // Ambil peminta untuk notifikasi frontend
   const [[cusData]] = await db.query(

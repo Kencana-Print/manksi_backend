@@ -209,11 +209,16 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // G. Get No BPB (Jika PO Celup)
-  let noBPB = "";
+  // G. Get No BPB (Jika PO Celup) — hanya BPB otomatis; BPB dari QC Bahan
+  // (punya lot di tbpb_qc_lot) memakai bpb_po_nomor yang sama tetapi bukan miliknya
   if (header.po_jenis === 2) {
     const [bpb] = await db.query(
-      `SELECT bpb_nomor FROM tbpb_hdr WHERE bpb_keterangan = ? OR bpb_po_nomor = ? LIMIT 1`,
+      `SELECT h.bpb_nomor FROM tbpb_hdr h
+       WHERE (h.bpb_keterangan = ? OR h.bpb_po_nomor = ?)
+         AND NOT EXISTS (
+           SELECT 1 FROM tbpb_qc_lot q WHERE q.bql_bpb_nomor = h.bpb_nomor
+         )
+       ORDER BY h.bpb_nomor LIMIT 1`,
       [nomor, nomor],
     );
     if (bpb.length > 0) noBPB = bpb[0].bpb_nomor;
@@ -425,6 +430,17 @@ const saveData = async (payload, userKode) => {
       if (cekMKB[0].total > 0) {
         throw new Error("PO ini sudah link di MKB, tidak bisa di edit");
       }
+      // 2b. QC Bahan menyimpan nomor urut baris PO (qc_pod_nourut), sedangkan
+      // simpan PO menulis ulang tpo_dtl dengan nomor urut baru.
+      const [cekQc] = await conn.query(
+        `SELECT qc_nomor FROM tqc_bahan_hdr WHERE qc_po_nomor = ? LIMIT 1`,
+        [nomorPO],
+      );
+      if (cekQc.length > 0) {
+        throw new Error(
+          `PO ini sudah punya QC Bahan ${cekQc[0].qc_nomor}, tidak bisa di edit.`,
+        );
+      }
       // PO yang sudah divoucher tidak boleh diedit
       // (POB: Bahan/Greige/Celup, POL: Lain-lain)
       const [cekVoucher] = await conn.query(
@@ -442,12 +458,17 @@ const saveData = async (payload, userKode) => {
       // ini, dan BPB itu tidak boleh sudah divoucher.
       if (jenisDb === 2 && nomorBPB) {
         const [bpbSah] = await conn.query(
-          `SELECT bpb_nomor FROM tbpb_hdr
-           WHERE bpb_nomor = ? AND (bpb_keterangan = ? OR bpb_po_nomor = ?)`,
+          `SELECT h.bpb_nomor FROM tbpb_hdr h
+           WHERE h.bpb_nomor = ? AND (h.bpb_keterangan = ? OR h.bpb_po_nomor = ?)
+             AND NOT EXISTS (
+               SELECT 1 FROM tbpb_qc_lot q WHERE q.bql_bpb_nomor = h.bpb_nomor
+             )`,
           [nomorBPB, nomorPO, nomorPO],
         );
         if (bpbSah.length === 0) {
-          throw new Error("No. BPB tidak sesuai dengan PO ini.");
+          throw new Error(
+            "No. BPB tidak sesuai dengan PO ini, atau BPB tersebut dibuat dari QC Bahan.",
+          );
         }
         const [cekVoucherBpb] = await conn.query(
           `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`,

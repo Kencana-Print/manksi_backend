@@ -1,5 +1,52 @@
 const db = require("../../config/database");
 
+// Tier plafon piutang — satu sumber kebenaran (dipakai juga approvalService).
+// Urut dari besar ke kecil; batas bawah INKLUSIF (>=).
+const TIER_PLAFON = [
+  {
+    kategori: "PRIORITAS",
+    min: 250_000_000,
+    approver: "DIREKTUR",
+    statusPending: "PENDING_DIREKSI",
+  },
+  {
+    kategori: "LARGE",
+    min: 100_000_000,
+    approver: "DIREKTUR",
+    statusPending: "PENDING_DIREKSI",
+  },
+  {
+    kategori: "MEDIUM",
+    min: 50_000_000,
+    approver: "DIREKTUR",
+    statusPending: "PENDING_DIREKSI",
+  },
+  {
+    kategori: "SMALL",
+    min: 10_000_000,
+    approver: "MM",
+    statusPending: "PENDING_MANAGER",
+  },
+  {
+    kategori: "EXTRA SMALL",
+    min: 0,
+    approver: "MM",
+    statusPending: "PENDING_MANAGER",
+  },
+];
+
+// Plafon >= batas ini harus di-ACC Direktur (tier terkecil yang approver-nya DIREKTUR).
+const BATAS_PLAFON_DIREKTUR = Math.min(
+  ...TIER_PLAFON.filter((t) => t.approver === "DIREKTUR").map((t) => t.min),
+);
+
+// null kalau plafon kosong / <= 0
+const getTierPlafon = (plafon) => {
+  const p = Number(plafon) || 0;
+  if (p <= 0) return null;
+  return TIER_PLAFON.find((t) => p >= t.min) || null;
+};
+
 // Normalisasi: huruf besar, buang semua selain huruf/angka.
 const normalisasiNama = (s) =>
   String(s || "")
@@ -50,6 +97,14 @@ const errNamaKembar = (k) => {
   return err;
 };
 
+const wajibPlafon = (plafon) => {
+  if (!(Number(plafon) > 0)) {
+    const err = new Error("Plafon piutang wajib diisi (harus lebih dari 0).");
+    err.status = 400;
+    throw err;
+  }
+};
+
 const getBrowse = async (filterKorporasi) => {
   // Filter status korporasi
   let korporasiClause = "";
@@ -89,7 +144,10 @@ const getBrowse = async (filterKorporasi) => {
     ORDER BY cus_nama ASC
   `;
   const [rows] = await db.query(query);
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    Kategori: getTierPlafon(r.Plafon)?.kategori || "",
+  }));
 };
 
 const getById = async (kode) => {
@@ -137,24 +195,12 @@ const insertCustomer = async (data, user, conn) => {
   const kode = await generateKode(conn);
   const plafon = Number(data.Plafon) || 0;
 
-  // Tentukan status plafon dan aktif/pasif
-  let plafonAcc = "";
-  let aktif = 0; // 0 = aktif di DB
-  let plafonTglMinta = null;
-  let plafonUserMinta = "";
-
-  if (plafon > 0 && plafon <= 20_000_000) {
-    plafonAcc = "PENDING_MANAGER";
-    aktif = 1; // pasif dulu
-    plafonTglMinta = new Date();
-    plafonUserMinta = user;
-  } else if (plafon > 20_000_000) {
-    plafonAcc = "PENDING_DIREKSI";
-    aktif = 1; // pasif dulu
-    plafonTglMinta = new Date();
-    plafonUserMinta = user;
-  }
-  // plafon = 0 → tidak butuh approval, langsung aktif
+  // Plafon wajib (divalidasi di create) dan SEMUA plafon butuh ACC sesuai tier.
+  // Customer pasif dulu sampai di-ACC.
+  const plafonAcc = getTierPlafon(plafon).statusPending;
+  const aktif = 1; // 1 = pasif di DB
+  const plafonTglMinta = new Date();
+  const plafonUserMinta = user;
 
   const query = `
     INSERT INTO tcustomer (
@@ -204,6 +250,7 @@ const insertCustomer = async (data, user, conn) => {
 };
 
 const create = async (data, user) => {
+  wajibPlafon(data.Plafon);
   const conn = await db.getConnection();
   try {
     const [[lock]] = await conn.query(
@@ -225,6 +272,7 @@ const create = async (data, user) => {
 
 const update = async (kode, data, user) => {
   const plafon = Number(data.Plafon) || 0;
+  wajibPlafon(plafon);
 
   // Ambil data lama dulu
   const [[existing]] = await db.query(
@@ -245,12 +293,8 @@ const update = async (kode, data, user) => {
   let plafonFields = "";
   const extraParams = [];
 
-  if (plafonBerubah && plafon > 0) {
-    if (plafon <= 20_000_000) {
-      plafonAcc = "PENDING_MANAGER";
-    } else {
-      plafonAcc = "PENDING_DIREKSI";
-    }
+  if (plafonBerubah) {
+    plafonAcc = getTierPlafon(plafon).statusPending;
     plafonFields = `
       cus_plafon = ?,
       cus_plafon_acc = ?,
@@ -261,16 +305,6 @@ const update = async (kode, data, user) => {
       cus_aktif = 1,
     `;
     extraParams.push(plafon, plafonAcc, user);
-  } else if (plafonBerubah && plafon === 0) {
-    // Plafon dihapus → reset
-    plafonFields = `
-      cus_plafon = 0,
-      cus_plafon_acc = '',
-      cus_plafon_tgl_minta = NULL,
-      cus_plafon_user_minta = '',
-      cus_plafon_tgl_acc = NULL,
-      cus_plafon_user_acc = '',
-    `;
   } else {
     plafonFields = `cus_plafon = ?,`;
     extraParams.push(plafon);
@@ -329,6 +363,9 @@ const remove = async (kode) => {
 };
 
 module.exports = {
+  TIER_PLAFON,
+  BATAS_PLAFON_DIREKTUR,
+  getTierPlafon,
   cariNamaKembar,
   cariNamaMirip,
   getBrowse,

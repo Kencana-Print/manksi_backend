@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const koliSvc = require("./cetakBarcodeKoliFormService");
 
 // ─────────────────────────────────────────────────────────
 // GENERATE NOMOR — STBJ/NNNNN/YYYY
@@ -454,7 +455,7 @@ const getSpgList = async (q = "") => {
 // SAVE (INSERT / UPDATE)
 // Sesuai Delphi simpandata
 // ─────────────────────────────────────────────────────────
-const save = async (data, userKode, isNew) => {
+const save = async (data, userKode, isNew, perangkat = "") => {
   const {
     Tanggal,
     GudangKode,
@@ -574,8 +575,15 @@ const save = async (data, userKode, isNew) => {
       }
     }
 
+    // QR koli: satu transaksi dengan STBJ. Gagal (gate LHK, koli tidak valid,
+    // koli dikurangi tanpa VOID) → STBJ ikut batal.
+    const qr = await koliSvc.generateKoliStbj(conn, nomor, {
+      user: { kode: userKode },
+      perangkat,
+    });
+
     await conn.commit();
-    return nomor;
+    return { nomor, qr };
   } catch (err) {
     await conn.rollback();
     throw err;

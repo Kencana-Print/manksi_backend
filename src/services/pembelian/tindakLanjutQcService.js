@@ -32,6 +32,7 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
       h.qc_nomor AS Nomor,
       DATE_FORMAT(h.qc_tgl_datang, "%Y-%m-%d") AS TglDatang,
       h.qc_po_nomor AS Nomor_PO,
+      pd.pod_spk_nomor AS Nomor_SPK,
       h.qc_vendor_greige AS VendorGreige,
       h.qc_vendor_celup AS VendorCelup,
       h.qc_jenis_kain AS JenisKain,
