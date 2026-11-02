@@ -1539,7 +1539,7 @@ const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
                   SELECT 1 FROM tpenawaran_dtl pd2
                   INNER JOIN tmemospk mp2
                     ON mp2.mspk_pen_nomor = pd2.pend_pen_nomor
-                   AND mp2.mspk_pen_id = pd2.pend_pen_id
+                  AND mp2.mspk_pen_id = pd2.pend_id
                   WHERE pd2.pend_minta = CONVERT(d.pjwd_mh_nomor USING latin1)
                     AND mp2.mspk_nomor = x.Memo))
             -- idem untuk baris Penawaran langsung
