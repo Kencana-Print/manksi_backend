@@ -6531,7 +6531,9 @@ const loadOutstandingBeliAll = (cabang) => {
 const sumberCatatanBeli = (tab) => (tab === "PENGAJUAN_DANA" ? "PD" : "PP");
 
 const canEditCatatanBeli = (user) =>
-  ["PEMBELIAN", "FINANCE"].includes((user?.bagian || "").toUpperCase());
+  ["PEMBELIAN", "FINANCE", "EDP", "AUDIT", "DIR"].includes(
+    (user?.bagian || "").toUpperCase(),
+  );
 
 const loadCatatanBeli = async (tab, nomorList) => {
   const map = new Map();
@@ -6553,7 +6555,7 @@ const setCatatanOutstandingBeli = async (
 ) => {
   if (!canEditCatatanBeli(user)) {
     throw new Error(
-      "Hanya bagian Pembelian dan Finance yang dapat mengisi catatan.",
+      "Hanya bagian Pembelian, Finance, EDP, Audit, dan Dir yang dapat mengisi catatan.",
     );
   }
   const key = String(tab || "").toUpperCase();
