@@ -197,10 +197,11 @@ const insertCustomer = async (data, user, conn) => {
 
   // Plafon wajib (divalidasi di create) dan SEMUA plafon butuh ACC sesuai tier.
   // Customer pasif dulu sampai di-ACC.
-  const plafonAcc = getTierPlafon(plafon).statusPending;
-  const aktif = 1; // 1 = pasif di DB
-  const plafonTglMinta = new Date();
-  const plafonUserMinta = user;
+  const tier = getTierPlafon(plafon);
+  const plafonAcc = tier ? tier.statusPending : "";
+  const aktif = tier ? 1 : 0; // tanpa plafon tidak perlu ACC, langsung aktif
+  const plafonTglMinta = tier ? new Date() : null;
+  const plafonUserMinta = tier ? user : "";
 
   const query = `
     INSERT INTO tcustomer (
@@ -250,7 +251,7 @@ const insertCustomer = async (data, user, conn) => {
 };
 
 const create = async (data, user) => {
-  wajibPlafon(data.Plafon);
+  // wajibPlafon(data.Plafon);
   const conn = await db.getConnection();
   try {
     const [[lock]] = await conn.query(
@@ -272,7 +273,7 @@ const create = async (data, user) => {
 
 const update = async (kode, data, user) => {
   const plafon = Number(data.Plafon) || 0;
-  wajibPlafon(plafon);
+  // wajibPlafon(plafon);
 
   // Ambil data lama dulu
   const [[existing]] = await db.query(
@@ -293,18 +294,33 @@ const update = async (kode, data, user) => {
   let plafonFields = "";
   const extraParams = [];
 
-  if (plafonBerubah) {
-    plafonAcc = getTierPlafon(plafon).statusPending;
+  const tier = getTierPlafon(plafon);
+  if (plafonBerubah && tier) {
+    plafonAcc = tier.statusPending;
     plafonFields = `
-      cus_plafon = ?,
-      cus_plafon_acc = ?,
-      cus_plafon_tgl_minta = NOW(),
-      cus_plafon_user_minta = ?,
-      cus_plafon_tgl_acc = NULL,
-      cus_plafon_user_acc = '',
-      cus_aktif = 1,
-    `;
+    cus_plafon = ?,
+    cus_plafon_acc = ?,
+    cus_plafon_tgl_minta = NOW(),
+    cus_plafon_user_minta = ?,
+    cus_plafon_tgl_acc = NULL,
+    cus_plafon_user_acc = '',
+    cus_aktif = 1,
+  `;
     extraParams.push(plafon, plafonAcc, user);
+  } else if (plafonBerubah) {
+    // plafon dikosongkan: batalkan permintaan ACC yang masih pending
+    const masihPending = String(existing?.cus_plafon_acc || "").startsWith(
+      "PENDING",
+    );
+    plafonAcc = "";
+    plafonFields = `
+    cus_plafon = ?,
+    cus_plafon_acc = '',
+    cus_plafon_tgl_minta = NULL,
+    cus_plafon_user_minta = '',
+    ${masihPending ? "cus_aktif = 0," : ""}
+  `;
+    extraParams.push(plafon);
   } else {
     plafonFields = `cus_plafon = ?,`;
     extraParams.push(plafon);
