@@ -6393,12 +6393,9 @@ const buildCabangBeli = (kolom, cabang) => {
   return { sql: ` AND ${kolom} = ?`, params: [cabang] };
 };
 
-// Batas awal outstanding: awal bulan berjalan. Data sistem lama dianggap selesai.
+// Batas awal outstanding: awal tahun berjalan (1 Januari). Data sistem lama dianggap selesai.
 // Kalau mau "sejak go-live MANKSI", ganti isi fungsi ini jadi: return "2026-09-01";
-const batasAwalOutstandingBeli = () => {
-  const n = new Date();
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`;
-};
+const batasAwalOutstandingBeli = () => `${new Date().getFullYear()}-01-01`;
 
 const buildOutstandingPP = (cabang) => {
   const c = buildCabangBeli("h.mb_mintake", cabang);
@@ -6461,7 +6458,7 @@ const buildOutstandingPP = (cabang) => {
         AND h.mb_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > x.QtyDtl2
-    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+    ORDER BY x.Tanggal DESC, x.Nomor DESC, x.Nourut ASC
   `;
   return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
 };
@@ -6497,7 +6494,7 @@ const buildOutstandingPD = (cabang) => {
         AND a.pjh_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > 0
-    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+    ORDER BY x.Tanggal DESC, x.Nomor DESC, x.Nourut ASC
   `;
   return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
 };
