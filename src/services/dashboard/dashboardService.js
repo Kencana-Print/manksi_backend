@@ -11,6 +11,7 @@ const rekapMapService = require("../laporan/marketing/rekapMapService");
 const proyeksiVsRealisasiService = require("../laporan/marketing/proyeksiVsRealisasiService");
 const proyeksiBulananService = require("../laporan/marketing/proyeksiBulananService");
 const { isSetelahCutoff } = require("../postingGuardService");
+const { BATAS_PLAFON_DIREKTUR } = require("../master/customerService");
 
 // ══════════════════════════════════════════════
 // CACHE: stale-while-revalidate + pembaruan diam-diam
@@ -4810,32 +4811,114 @@ const getTrendSpk7Hari = async () => {
   return rows;
 };
 
-const getApprovalPendingCount = async () => {
-  const sql = `
-    SELECT
-      (SELECT COUNT(*) FROM tcustomer_pin 
-       WHERE cusp_acc = '') AS piutang,
+// Definisi "pending" per jenis approval. HARUS sama dengan filter "belumAccSaja"
+// di daftar masing-masing (approvalService.js) agar bulatan = isi daftar.
+// `id` sama dengan id di ToolsApprovalView.vue; `menuId` = hak view di thakuser.
+const APPROVAL_PENDING = [
+  {
+    id: "piutang_90",
+    menuId: 256,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer_pin WHERE cusp_acc = ''`,
+  },
+  {
+    id: "harga_nol",
+    menuId: 257,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin WHERE pin_acc = ''`,
+  },
+  {
+    id: "prioritas",
+    menuId: 258,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin_prioritas WHERE pin_acc = ''`,
+  },
+  {
+    id: "perubahan_data",
+    menuId: 259,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis IN ('UBAH', 'TUTUPBUKU', 'INVOICE') AND pin_acc = ''`,
+  },
+  {
+    id: "invoice_blmsj",
+    menuId: 260,
+    sql: `SELECT COUNT(*) AS n FROM tapprove p
+          INNER JOIN tinv_hdr h ON h.INV_nomor = p.pin_nomor
+          WHERE p.pin_jenis = 'INVBLMSJ' AND p.pin_acc = ''`,
+  },
+  {
+    id: "hapus_data",
+    menuId: 261,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'HAPUS' AND pin_acc = ''`,
+  },
+  {
+    id: "pembatalan_spk",
+    menuId: 262,
+    sql: `SELECT COUNT(*) AS n FROM tspk_formbatal WHERE fb_apv_user = ''`,
+  },
+  {
+    id: "plafon_manager",
+    menuId: 263,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer
+          WHERE cus_plafon_acc = 'PENDING_MANAGER'
+            AND cus_plafon > 0 AND cus_plafon < ?`,
+    params: [BATAS_PLAFON_DIREKTUR],
+  },
+  {
+    id: "plafon_direksi",
+    menuId: 264,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer
+          WHERE cus_plafon_acc = 'PENDING_DIREKSI'
+            AND cus_plafon >= ?`,
+    params: [BATAS_PLAFON_DIREKTUR],
+  },
+  {
+    id: "ganti_qty_kain",
+    menuId: 265,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'GANTI' AND pin_acc = ''`,
+  },
+  {
+    id: "mutasi_noplan",
+    menuId: 266,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'MUTASI PRODUKSI NOPLAN' AND pin_acc = ''`,
+  },
+  {
+    id: "spk_cetak_ulang",
+    menuId: 267,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'SPK CETAK ULANG' AND pin_acc = ''`,
+  },
+  {
+    id: "nopo",
+    menuId: 268,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'NOPO' AND pin_trs IN ('SO', 'MAP') AND pin_acc = ''`,
+  },
+  {
+    id: "realisasi_beda_bahan",
+    menuId: 269,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'REALISASI BEDA BAHAN' AND pin_acc = ''`,
+  },
+];
 
-      (SELECT COUNT(*) FROM tspk_pin 
-       WHERE pin_acc = '') AS harga_nol,
+// Hanya jenis yang user punya hak view-nya (sama dengan availableApprovals di
+// ToolsApprovalView.vue). Jenis tanpa hak tidak ikut dikembalikan.
+const getApprovalPendingCount = async (userKode) => {
+  const [hak] = await db.query(
+    `SELECT hak_men_id AS id FROM thakuser
+     WHERE hak_user_kode = ? AND hak_men_view = 'Y' AND hak_men_id IN (?)`,
+    [userKode, APPROVAL_PENDING.map((a) => a.menuId)],
+  );
+  const boleh = new Set(hak.map((r) => Number(r.id)));
 
-      (SELECT COUNT(*) FROM tspk_pin_prioritas 
-       WHERE pin_acc = '') AS prioritas,
-
-      (SELECT COUNT(*) FROM tapprove 
-       WHERE pin_jenis = 'INVBLMSJ' AND pin_acc = '') AS inv_blm_sj,
-
-      (SELECT COUNT(*) FROM tspk_pin5 
-       WHERE pin_jenis = 'UBAH' AND pin_acc = '' AND pin_dipakai = '') AS perubahan,
-
-      (SELECT COUNT(*) FROM tspk_pin5 
-       WHERE pin_jenis = 'HAPUS' AND pin_acc = '' AND pin_dipakai = '') AS hapus,
-
-      (SELECT COUNT(*) FROM tcustomer 
-       WHERE cus_plafon_acc IN ('PENDING_MANAGER', 'PENDING_DIREKSI')) AS plafon
-  `;
-  const [rows] = await db.query(sql);
-  return rows[0];
+  const hasil = await Promise.all(
+    APPROVAL_PENDING.filter((a) => boleh.has(a.menuId)).map(async (a) => {
+      const [[row]] = await db.query(a.sql, a.params || []);
+      return [a.id, Number(row.n)];
+    }),
+  );
+  return Object.fromEntries(hasil);
 };
 
 // ── Pipeline SPK → Produksi (funnel), filter by spk_dateline ──

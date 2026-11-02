@@ -671,7 +671,7 @@ const getTrendSpk7Hari = async (req, res) => {
 
 const getApprovalPendingCount = async (req, res) => {
   try {
-    const data = await service.getApprovalPendingCount();
+    const data = await service.getApprovalPendingCount(req.user.kode);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

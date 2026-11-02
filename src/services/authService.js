@@ -248,8 +248,8 @@ const changePassword = async (userKode, oldPassword, newPassword) => {
 
   // 2. Eksekusi update password baru
   await pool.query(
-    `UPDATE tuser SET user_password = ?, date_modified = NOW(), user_modified = ? WHERE UPPER(user_kode) = UPPER(?)`,
-    [newPassword, userKode, userKode],
+    `UPDATE tuser SET user_password = ? WHERE UPPER(user_kode) = UPPER(?)`,
+    [newPassword, userKode],
   );
 
   return true;
