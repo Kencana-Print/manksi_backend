@@ -1497,8 +1497,14 @@ const removeMapFromKomitmenKirim = async (mapNomor) => {
 // - Rencana = Kurang, Permintaan Kirim = dateline (sama seperti Tarik SO).
 // Best-effort: kegagalan TIDAK boleh menggagalkan aksi pemanggil.
 // ═══════════════════════════════════════════════════════════
+// Divisi SO yang TIDAK ditarik otomatis ke Komitmen Kirim, per cabang.
+// P04 divisi 3 tidak masuk Komitmen Kirim (permintaan user 2 Nov 2026).
+const DIVISI_TANPA_AUTO_PUSH = { P04: ["3"] };
+
 const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
+  const dikecualikan = DIVISI_TANPA_AUTO_PUSH[cab] || [];
   const params = [cab, tgl1, tgl2];
+  if (dikecualikan.length) params.push(dikecualikan);
   if (hanyaNomor) params.push(hanyaNomor);
   const [rows] = await db.query(
     `SELECT x.* FROM (
@@ -1511,6 +1517,7 @@ const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
        FROM tsalesorder
        WHERE so_aktif = 'Y' AND so_close = 0
          AND so_cab = ? AND so_dateline BETWEEN ? AND ?
+         ${dikecualikan.length ? "AND (so_divisi IS NULL OR so_divisi NOT IN (?))" : ""}
      ) x
      WHERE x.Kurang > 0
        ${hanyaNomor ? "AND x.Nomor = ?" : ""}
@@ -1532,7 +1539,7 @@ const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
                   SELECT 1 FROM tpenawaran_dtl pd2
                   INNER JOIN tmemospk mp2
                     ON mp2.mspk_pen_nomor = pd2.pend_pen_nomor
-                   AND mp2.mspk_pen_id = pd2.pend_id
+                   AND mp2.mspk_pen_id = pd2.pend_pen_id
                   WHERE pd2.pend_minta = CONVERT(d.pjwd_mh_nomor USING latin1)
                     AND mp2.mspk_nomor = x.Memo))
             -- idem untuk baris Penawaran langsung
