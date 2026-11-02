@@ -65,8 +65,8 @@ const searchSpk = async (
       params.push(`%${keyword}%`, `%${keyword}%`);
     }
   } else if (filterMode === "so-map") {
-    // Lookup SO/MAP untuk Close PD Permintaan Desain:
-    // aktif saja (tanpa syarat CMO) dan belum dipakai PDM lain
+    // Lookup SO/MAP untuk ACC PD Permintaan Desain (link di level LHK):
+    // aktif saja (tanpa syarat CMO); satu SO/MAP boleh dipakai banyak LHK.
     baseQuery = `
       FROM (
         SELECT so_nomor AS Nomor, so_nama AS Nama, so_nama2 AS Nama2,
@@ -86,9 +86,6 @@ const searchSpk = async (
         FROM tmemospk
       ) a
       WHERE Aktif = 'Y'
-        AND NOT EXISTS (
-          SELECT 1 FROM tpermintaan_desain p WHERE p.pd_so_map_nomor = a.Nomor
-        )
     `;
     if (keyword) {
       whereSearch = ` AND (Nomor LIKE ? OR Nama LIKE ? OR Nama2 LIKE ?)`;

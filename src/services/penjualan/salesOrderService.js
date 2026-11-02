@@ -280,14 +280,14 @@ const getBrowseList = async (filters) => {
       ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
 
       LEFT JOIN (
-        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
-        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
-      ) pdSo ON pdSo.pd_so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
+        SELECT so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM vlink_desain GROUP BY so_map_nomor
+      ) pdSo ON pdSo.so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
       LEFT JOIN (
-        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
-        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
+        SELECT so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM vlink_desain GROUP BY so_map_nomor
       ) pdMap ON y.spk_memo IS NOT NULL AND y.spk_memo <> ''
-        AND pdMap.pd_so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
+        AND pdMap.so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
       ${whereClause}
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC
@@ -955,15 +955,11 @@ const searchAvailableForSpk = async (
         (s.so_divisi LIKE '3%' OR s.so_divisi LIKE '4%' OR s.so_divisi LIKE '1%')
         OR EXISTS (
           SELECT 1
-          FROM tpermintaan_desain pd
-          WHERE pd.pd_nomor IS NOT NULL
-            AND pd.pd_nomor <> ''
-            AND (
-              pd.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
-              OR (
-                s.so_memo IS NOT NULL AND s.so_memo <> ''
-                AND pd.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4)
-              )
+          FROM vlink_desain vd
+          WHERE vd.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+            OR (
+              s.so_memo IS NOT NULL AND s.so_memo <> ''
+              AND vd.so_map_nomor = CONVERT(s.so_memo USING utf8mb4)
             )
         )
       )
@@ -992,9 +988,10 @@ const searchAvailableForSpk = async (
        ${custNameCol} AS Customer,
        s.so_memo AS MAP,
        IFNULL(
-         (SELECT pd2.pd_nomor FROM tpermintaan_desain pd2
-          WHERE pd2.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
-             OR (s.so_memo <> '' AND pd2.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4))
+         (SELECT vd2.pd_nomor FROM vlink_desain vd2
+          WHERE vd2.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+             OR (s.so_memo <> '' AND vd2.so_map_nomor = CONVERT(s.so_memo USING utf8mb4))
+          ORDER BY (vd2.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)) DESC, vd2.pd_nomor
           LIMIT 1),
          ''
        ) AS PdNomor,

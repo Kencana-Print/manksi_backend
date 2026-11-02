@@ -117,28 +117,33 @@ const isSoInvoiced = async (conn, nomor, ppicNomor) => {
   return rows.length > 0;
 };
 
-// Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di SO).
-// Dicari lewat nomor SO sendiri, atau nomor MAP yang dipakai SO (prioritas SO).
+// Link ke Permintaan Desain/LHK — diisi tim Desain saat ACC PDM (read-only di SO).
+// Sumber: view vlink_desain (link level LHK + cadangan PD lama tanpa LHK).
+// Link langsung ke nomor SO diprioritaskan; kalau tidak ada, pakai link ke MAP-nya.
 const getPdLink = async (nomor, memo = "", fallbackLhk = "") => {
-  const [[pdm]] = await db.query(
-    `SELECT pd_nomor, pd_path_desain FROM tpermintaan_desain
-     WHERE pd_so_map_nomor IN (?, ?)
-     ORDER BY (pd_so_map_nomor = ?) DESC LIMIT 1`,
-    [nomor, memo || "", nomor],
+  const [rows] = await db.query(
+    `SELECT so_map_nomor, pd_nomor, lhk_nomor, path_desain
+     FROM vlink_desain
+     WHERE so_map_nomor IN (?, ?)
+     ORDER BY pd_nomor, lhk_nomor`,
+    [nomor, memo || ""],
   );
-  let lhkList = [];
-  if (pdm) {
-    const [lhkRows] = await db.query(
-      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
-      [pdm.pd_nomor],
-    );
-    lhkList = lhkRows.map((r) => r.lhk_nomor);
-  }
+  const langsung = rows.filter((r) => r.so_map_nomor === nomor);
+  const pakai = langsung.length > 0 ? langsung : rows;
+  const lhkDetail = pakai
+    .filter((r) => r.lhk_nomor)
+    .map((r) => ({
+      nomor: r.lhk_nomor,
+      pd: r.pd_nomor,
+      path: r.path_desain || "",
+    }));
+  const lhkList = lhkDetail.map((r) => r.nomor);
   return {
-    PdNomor: pdm?.pd_nomor || "",
-    PdPath: pdm?.pd_path_desain || "",
+    PdNomor: pakai[0]?.pd_nomor || "",
+    PdPath: pakai.find((r) => r.path_desain)?.path_desain || "",
     // data lama (sebelum alur PDM) tetap tampil sebagai cadangan
     LhkList: lhkList.length > 0 ? lhkList : fallbackLhk ? [fallbackLhk] : [],
+    LhkDetail: lhkDetail,
   };
 };
 
@@ -585,6 +590,7 @@ const HEADER_EXTRA_FIELDS = [
   "PdNomor",
   "PdPath",
   "LhkList",
+  "LhkDetail",
   "spk_lhk_nomor",
   "isSalesOrder",
   "isSalesOrder",

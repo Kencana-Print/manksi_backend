@@ -103,8 +103,11 @@ const getBrowseList = async (
       INNER JOIN tlhk_proofmmt_hdr ON (lpr_nomor=lprd_lpr_nomor)
       GROUP BY lprd_spk_nomor
     ) m ON m.lprd_spk_nomor = x.mspk_nomor
-    LEFT JOIN tpermintaan_desain pd
-      ON pd.pd_so_map_nomor = CONVERT(x.mspk_nomor USING utf8mb4)
+    LEFT JOIN (
+      SELECT so_map_nomor, MIN(pd_nomor) AS pd_nomor
+      FROM vlink_desain
+      GROUP BY so_map_nomor
+    ) pd ON pd.so_map_nomor = CONVERT(x.mspk_nomor USING utf8mb4)
     ${whereClause}
     ORDER BY x.date_create DESC
   `;

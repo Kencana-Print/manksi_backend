@@ -163,7 +163,7 @@ const closePD = async (req, res) => {
     if (hanyaDesain(req, res)) return;
     const data = await service.closePD(
       req.params.nomor,
-      { soMapNomor: req.body.soMapNomor, path: req.body.path },
+      { items: req.body.items },
       req.user,
     );
     res.json({ success: true, data });

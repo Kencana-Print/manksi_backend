@@ -441,15 +441,13 @@ const getPraOrderDariMh = async (mhNomor) => {
 };
 
 // LHK Desain yang terkait sebuah SO/MAP: referensi eksplisit di dokumennya
-// (so_lhk_nomor / mspk_lhk_nomor) + LHK milik PD yang di-close ke SO/MAP itu
-// (pd_so_map_nomor). Digabung tanpa duplikat.
+// (so_lhk_nomor / mspk_lhk_nomor) + LHK yang di-link ke SO/MAP itu saat ACC
+// (tlhk_desain_somap, lewat view vlink_desain). Digabung tanpa duplikat.
 const getLhkDesainSoMap = async (nomor, lhkRef) => {
   const [rows] = await db.query(
-    `SELECT l.lhk_nomor AS nomor
-     FROM tlhk_desain l
-     INNER JOIN tpermintaan_desain p ON p.pd_nomor = l.lhk_pd_nomor
-     WHERE p.pd_so_map_nomor = ?
-     ORDER BY l.lhk_nomor`,
+    `SELECT DISTINCT lhk_nomor AS nomor FROM vlink_desain
+     WHERE so_map_nomor = ? AND lhk_nomor IS NOT NULL
+     ORDER BY lhk_nomor`,
     [nomor],
   );
   return [
@@ -1690,16 +1688,15 @@ const getRelated = async (type, nomor) => {
       );
       mapRows.forEach((r) => tambah({ type: "MAP", nomor: r.nomor }));
 
-      // Hasil close PD: pd_so_map_nomor (bisa SO baru, SO lama di tspk, atau MAP)
-      if (lhk?.pd) {
-        const [[pd]] = await db.query(
-          `SELECT pd_so_map_nomor AS target FROM tpermintaan_desain WHERE pd_nomor = ?`,
-          [lhk.pd],
-        );
-        if (pd?.target) {
-          const resolved = await resolveProduksiNomor(pd.target);
-          if (resolved) tambah(resolved);
-        }
+      // Hasil ACC: link level LHK (bisa SO baru, SO lama di tspk, atau MAP;
+      // satu LHK boleh ke beberapa SO/MAP)
+      const [linkRows] = await db.query(
+        `SELECT DISTINCT so_map_nomor AS target FROM vlink_desain WHERE lhk_nomor = ?`,
+        [nomor],
+      );
+      for (const r of linkRows) {
+        const resolved = await resolveProduksiNomor(r.target);
+        if (resolved) tambah(resolved);
       }
       forward.push(...tujuan.values());
       break;
