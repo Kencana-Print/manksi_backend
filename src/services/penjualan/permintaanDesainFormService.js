@@ -1,4 +1,7 @@
 const db = require("../../config/database");
+// Jenis pekerjaan yang boleh dipilih saat membuat PD baru. Nilai lama
+// (BARU/REVISI/PLOTTER) tetap ada di data lama, tapi tidak bisa dipilih lagi.
+const JENIS_PEKERJAAN = ["CEK", "EDIT", "DESAIN ULANG"];
 
 const generateNomor = async (tanggal, conn) => {
   const d = new Date(tanggal);
@@ -30,6 +33,14 @@ const createPD = async (
 ) => {
   if (!namaProject || !namaProject.trim()) {
     throw new Error("Nama project wajib diisi");
+  }
+  const jenis = String(jenisPekerjaan ?? "")
+    .trim()
+    .toUpperCase();
+  if (!JENIS_PEKERJAAN.includes(jenis)) {
+    throw new Error(
+      `Jenis pekerjaan harus salah satu dari: ${JENIS_PEKERJAAN.join(", ")}`,
+    );
   }
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("Minimal 1 item desain harus diisi");
@@ -66,7 +77,7 @@ const createPD = async (
         namaProject.trim(),
         user.kode,
         customer || null,
-        jenisPekerjaan || "BARU",
+        jenis,
         dateline || null,
         keterangan || "",
         jmlTotal,

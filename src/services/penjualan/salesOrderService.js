@@ -586,11 +586,13 @@ const getPendingDesigns = async (startDate, endDate) => {
       FROM tspk
       WHERE spk_is_so = 1 AND spk_nomor LIKE 'SO-%'
         AND spk_newdesign = 'Y' AND spk_designdone = 'N'
+        AND IFNULL(spk_cmo, '') <> ''
         AND DATE(spk_tanggal) >= ? AND DATE(spk_tanggal) <= ?
       UNION ALL
       SELECT so_nomor AS Nomor, so_nama AS Nama, so_designdone AS DesignDone, so_tanggal AS Tanggal
       FROM tsalesorder
       WHERE so_newdesign = 'Y' AND so_designdone = 'N'
+        AND IFNULL(so_cmo, '') <> ''
         AND DATE(so_tanggal) >= ? AND DATE(so_tanggal) <= ?
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC

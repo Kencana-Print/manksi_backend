@@ -256,8 +256,8 @@ const getDesignList = async (startDate, endDate) => {
      FROM tmemospk
      WHERE mspk_newdesign = 'Y'
        AND mspk_designdone = 'N'
+       AND IFNULL(mspk_cmo, '') <> ''
        AND mspk_tanggal >= ?
-       AND mspk_tanggal <= ?
      ORDER BY mspk_tanggal`,
     [`${startDate} 00:00:00`, `${endDate} 23:59:59`],
   );
