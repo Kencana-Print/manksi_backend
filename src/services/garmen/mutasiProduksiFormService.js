@@ -923,7 +923,7 @@ const cekPlanning = async (nomorSpk, ppicDivisi, planSpkKolom = null) => {
 
 // Masa toleransi: validasi planning tidak memblokir sampai tanggal ini (inklusif).
 // Hapus konstanta + pemakaiannya setelah masa toleransi selesai.
-const PLANNING_GRACE_UNTIL = "2026-11-01";
+const PLANNING_GRACE_UNTIL = "2026-11-15";
 
 const isPlanningGracePeriod = () => {
   // en-CA menghasilkan format YYYY-MM-DD, dihitung di zona waktu WIB
