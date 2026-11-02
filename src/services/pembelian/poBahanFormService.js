@@ -209,8 +209,10 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
+  // GANTI:
   // G. Get No BPB (Jika PO Celup) — hanya BPB otomatis; BPB dari QC Bahan
   // (punya lot di tbpb_qc_lot) memakai bpb_po_nomor yang sama tetapi bukan miliknya
+  let noBPB = "";
   if (header.po_jenis === 2) {
     const [bpb] = await db.query(
       `SELECT h.bpb_nomor FROM tbpb_hdr h
