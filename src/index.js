@@ -152,6 +152,8 @@ const mkaGarmenRoutes = require("./routes/garmen/mkaRoutes");
 const mkaFormRoutes = require("./routes/garmen/mkaFormRoutes");
 const spkGudangRoutes = require("./routes/garmen/spkGudangRoutes");
 const spkGudangFormRoutes = require("./routes/garmen/spkGudangFormRoutes");
+const permintaanMarkerRoutes = require("./routes/garmen/permintaanMarkerRoutes");
+const permintaanMarkerFormRoutes = require("./routes/garmen/permintaanMarkerFormRoutes");
 const maklonBarangRoutes = require("./routes/garmen/maklonBarangRoutes");
 const maklonBarangFormRoutes = require("./routes/garmen/maklonBarangFormRoutes");
 const sjHasilMakloonRoutes = require("./routes/garmen/sjHasilMakloonRoutes");
@@ -411,6 +413,7 @@ const agendaKerjaRoutes = require("./routes/tools/agendaKerjaRoutes");
 const agendaPicRoutes = require("./routes/tools/agendaPicRoutes");
 const notulensiMeetingRoutes = require("./routes/tools/notulensiMeetingRoutes");
 const notulensiMeetingFormRoutes = require("./routes/tools/notulensiMeetingFormRoutes");
+const memoInternalRoutes = require("./routes/tools/memoInternalRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
 const settingHargaBahanRoutes = require("./routes/pembelian/settingHargaBahanRoutes");
@@ -672,6 +675,8 @@ app.use("/api/garmen/mka", mkaGarmenRoutes);
 app.use("/api/garmen/mka-form", mkaFormRoutes);
 app.use("/api/garmen/spk-gudang", spkGudangRoutes);
 app.use("/api/garmen/spk-gudang/form", spkGudangFormRoutes);
+app.use("/api/garmen/permintaan-marker", permintaanMarkerRoutes);
+app.use("/api/garmen/permintaan-marker-form", permintaanMarkerFormRoutes);
 app.use("/api/garmen/maklon/makloon-barang", maklonBarangRoutes);
 app.use("/api/garmen/maklon/makloon-barang/form", maklonBarangFormRoutes);
 app.use("/api/garmen/makloon/sj-hasil-makloon", sjHasilMakloonRoutes);
@@ -1060,6 +1065,7 @@ app.use("/api/tools/agenda-kerja", agendaKerjaRoutes);
 app.use("/api/tools/agenda-pic", agendaPicRoutes);
 app.use("/api/tools/notulensi-meeting", notulensiMeetingRoutes);
 app.use("/api/tools/notulensi-meeting-form", notulensiMeetingFormRoutes);
+app.use("/api/tools/memo-internal", memoInternalRoutes);
 
 app.use("/api/system/version", versionRoutes);
 

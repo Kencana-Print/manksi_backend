@@ -19,7 +19,10 @@ const getBrowse = async ({ startDate, endDate }) => {
        h.date_create AS DateCreate,
        IFNULL((SELECT COUNT(*) FROM tlhkpola_marker_dtl WHERE ldm_nomor = h.lhkp_nomor), 0) AS JmlMarker,
        (SELECT GROUP_CONCAT(d.ldm_spk_nomor ORDER BY d.ldm_urut SEPARATOR ', ')
-        FROM tlhkpola_marker_dtl d WHERE d.ldm_nomor = h.lhkp_nomor) AS SpkNomor
+        FROM tlhkpola_marker_dtl d WHERE d.ldm_nomor = h.lhkp_nomor) AS SpkNomor,
+       (SELECT GROUP_CONCAT(DISTINCT d.ldm_pm_nomor ORDER BY d.ldm_pm_nomor SEPARATOR ', ')
+        FROM tlhkpola_marker_dtl d
+        WHERE d.ldm_nomor = h.lhkp_nomor AND d.ldm_pm_nomor IS NOT NULL) AS PermintaanNomor
      FROM tlhkpola_hdr h
      WHERE h.lhkp_tanggal BETWEEN ? AND ?
        AND EXISTS (

@@ -1,4 +1,5 @@
 const svc = require("../../services/ppic/lhkMarkerService");
+const permintaanSvc = require("../../services/garmen/permintaanMarkerService");
 
 const getBrowse = async (req, res) => {
   try {
@@ -14,6 +15,16 @@ const getBrowse = async (req, res) => {
   }
 };
 
+const getAntrean = async (req, res) => {
+  try {
+    const data = await permintaanSvc.getAntrean(req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getBrowse,
+  getAntrean,
 };

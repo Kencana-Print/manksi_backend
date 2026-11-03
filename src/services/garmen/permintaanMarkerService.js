@@ -1,0 +1,188 @@
+const db = require("../../config/database");
+
+// Urutan status: PENDING/CANCEL manual > CLOSE (Tim Cutting sudah ambil hasil)
+// > DONE (semua SPK punya baris LHK Marker) > PROSES (sudah diambil PIC atau
+// sebagian SPK sudah ber-LHK) > OPEN.
+const hitungStatus = (row) => {
+  if (row.statusManual) return row.statusManual;
+  if (row.dateClose) return "CLOSE";
+  if (row.jmlSpk > 0 && row.jmlSpkSelesai >= row.jmlSpk) return "DONE";
+  if (row.pic || row.jmlSpkSelesai > 0) return "PROSES";
+  return "OPEN";
+};
+
+const SELECT_HEADER = `
+  SELECT
+    h.pm_nomor AS nomor,
+    DATE_FORMAT(h.pm_tanggal, '%Y-%m-%d') AS tanggal,
+    DATE_FORMAT(h.pm_deadline, '%Y-%m-%d') AS deadline,
+    DATEDIFF(h.pm_deadline, CURDATE()) AS sisaHari,
+    h.pm_keterangan AS keterangan,
+    h.pm_asal_nomor AS asalNomor,
+    h.pm_status_manual AS statusManual,
+    h.pm_status_keterangan AS statusKeterangan,
+    h.pm_pic AS pic,
+    IFNULL(u.user_nama, h.pm_pic) AS picNama,
+    h.pm_pic_asal AS picAsal,
+    IFNULL(ua.user_nama, h.pm_pic_asal) AS picAsalNama,
+    DATE_FORMAT(h.pm_tgl_ambil, '%Y-%m-%d %H:%i') AS tglAmbil,
+    h.pm_user_close AS userClose,
+    DATE_FORMAT(h.pm_date_close, '%Y-%m-%d %H:%i') AS dateClose,
+    h.pm_user_create AS userCreate,
+    h.pm_date_create AS dateCreate,
+    IFNULL(x.jmlBaris, 0) AS jmlBaris,
+    IFNULL(x.totalJml, 0) AS totalJml,
+    IFNULL(x.jmlSpk, 0) AS jmlSpk,
+    x.spkNomor AS spkNomor,
+    (SELECT COUNT(DISTINCT d.pm2_spk_nomor)
+       FROM tpermintaan_marker_detail d
+      WHERE d.pm2_pm_nomor = h.pm_nomor
+        AND EXISTS (
+          SELECT 1 FROM tlhkpola_marker_dtl l
+           WHERE l.ldm_pm_nomor = h.pm_nomor
+             AND l.ldm_spk_nomor = d.pm2_spk_nomor
+        )) AS jmlSpkSelesai
+  FROM tpermintaan_marker h
+  LEFT JOIN tuser u ON u.user_kode = h.pm_pic
+  LEFT JOIN tuser ua ON ua.user_kode = h.pm_pic_asal
+  LEFT JOIN (
+    SELECT pm2_pm_nomor,
+           COUNT(*) AS jmlBaris,
+           SUM(pm2_jml) AS totalJml,
+           COUNT(DISTINCT pm2_spk_nomor) AS jmlSpk,
+           GROUP_CONCAT(DISTINCT pm2_spk_nomor ORDER BY pm2_spk_nomor SEPARATOR ', ') AS spkNomor
+      FROM tpermintaan_marker_detail
+     GROUP BY pm2_pm_nomor
+  ) x ON x.pm2_pm_nomor = h.pm_nomor`;
+
+const ambilHeader = async (where, params, orderBy) => {
+  const [rows] = await db.query(
+    `${SELECT_HEADER} ${where} ORDER BY ${orderBy}`,
+    params,
+  );
+  return rows.map((r) => ({ ...r, status: hitungStatus(r) }));
+};
+
+const getBrowse = async ({ startDate, endDate, status }) => {
+  const data = await ambilHeader(
+    `WHERE h.pm_tanggal BETWEEN ? AND ?`,
+    [startDate, endDate],
+    `h.pm_tanggal DESC, h.pm_nomor DESC`,
+  );
+  return status ? data.filter((r) => r.status === status) : data;
+};
+
+// Antrean PIC: siap diambil (belum dipegang), dikerjakan saya, dikerjakan PIC lain
+const getAntrean = async (user) => {
+  const kode = String(user?.kode || "").trim();
+  const rows = await ambilHeader(
+    `WHERE h.pm_status_manual = '' AND h.pm_date_close IS NULL`,
+    [],
+    `h.pm_deadline, h.pm_nomor`,
+  );
+  const siap = [];
+  const saya = [];
+  const lain = [];
+  for (const r of rows) {
+    if (r.status !== "OPEN" && r.status !== "PROSES") continue;
+    if (!r.pic) siap.push(r);
+    else if (r.pic === kode) saya.push(r);
+    else lain.push(r);
+  }
+  return { siap, saya, lain };
+};
+
+// Detail seluruh permintaan dalam rentang tanggal (untuk expand dan Export Detail)
+const getDetail = async ({ startDate, endDate }) => {
+  const [rows] = await db.query(
+    `SELECT d.pm2_pm_nomor AS nomor,
+            d.pm2_id AS id,
+            d.pm2_spk_nomor AS spkNomor,
+            IFNULL(s.spk_nama, m.mspk_nama) AS spkNama,
+            d.pm2_bhn_kode AS kode,
+            IFNULL(b.Bhn_Name, '') AS namaBahan,
+            IFNULL(b.Bhn_satuan, '') AS satuan,
+            d.pm2_setting AS setting,
+            d.pm2_jml AS jml,
+            IFNULL(d.pm2_alasan, '') AS alasan,
+            IFNULL((
+              SELECT GROUP_CONCAT(DISTINCT l.ldm_nomor ORDER BY l.ldm_nomor SEPARATOR ', ')
+                FROM tlhkpola_marker_dtl l
+               WHERE l.ldm_pm_nomor = d.pm2_pm_nomor
+                 AND l.ldm_spk_nomor = d.pm2_spk_nomor
+            ), '') AS lhkNomor
+       FROM tpermintaan_marker_detail d
+       INNER JOIN tpermintaan_marker h ON h.pm_nomor = d.pm2_pm_nomor
+       LEFT JOIN tspk s ON s.spk_nomor = d.pm2_spk_nomor
+       LEFT JOIN tmemospk m ON m.mspk_nomor = d.pm2_spk_nomor
+       LEFT JOIN tbahan b ON b.Bhn_kode = d.pm2_bhn_kode
+      WHERE h.pm_tanggal BETWEEN ? AND ?
+      ORDER BY h.pm_tanggal DESC, h.pm_nomor DESC, d.pm2_spk_nomor, d.pm2_id`,
+    [startDate, endDate],
+  );
+  return rows;
+};
+
+const deleteData = async (nomor) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[hdr]] = await conn.query(
+      `SELECT pm_nomor FROM tpermintaan_marker WHERE pm_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (!hdr) {
+      const err = new Error("Permintaan Marker tidak ditemukan.");
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const [[lhk]] = await conn.query(
+      `SELECT COUNT(*) AS jml FROM tlhkpola_marker_dtl WHERE ldm_pm_nomor = ?`,
+      [nomor],
+    );
+    if (lhk.jml > 0) {
+      const err = new Error(
+        "Permintaan sudah punya LHK Marker, tidak bisa dihapus.",
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const [[pengganti]] = await conn.query(
+      `SELECT pm_nomor FROM tpermintaan_marker WHERE pm_asal_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+    if (pengganti) {
+      const err = new Error(
+        `Permintaan ini menjadi asal revisi ${pengganti.pm_nomor}, tidak bisa dihapus.`,
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await conn.query(
+      `DELETE FROM tpermintaan_marker_detail WHERE pm2_pm_nomor = ?`,
+      [nomor],
+    );
+    await conn.query(`DELETE FROM tpermintaan_marker WHERE pm_nomor = ?`, [
+      nomor,
+    ]);
+
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+module.exports = {
+  hitungStatus,
+  getBrowse,
+  getAntrean,
+  getDetail,
+  deleteData,
+};
