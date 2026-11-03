@@ -1,4 +1,5 @@
 const svc = require("../../services/ppic/lhkMarkerFormService");
+const permintaanSvc = require("../../services/garmen/permintaanMarkerFormService");
 
 const getDetail = async (req, res) => {
   try {
@@ -99,6 +100,33 @@ const uploadGambar = async (req, res) => {
   }
 };
 
+// Aksi PIC atas Permintaan Marker (logika tulis tetap di permintaanMarkerFormService)
+const aksiPermintaan = (fn) => async (req, res) => {
+  try {
+    if (!req.user?.kode) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User tidak dikenali." });
+    }
+    const data = await fn(req.params.nomor, { kode: req.user.kode });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res
+      .status(error.statusCode || 400)
+      .json({ success: false, message: error.message });
+  }
+};
+
+const ambilPermintaan = aksiPermintaan((nomor, user) =>
+  permintaanSvc.ambil(nomor, user),
+);
+const ambilAlihPermintaan = aksiPermintaan((nomor, user) =>
+  permintaanSvc.ambilAlih(nomor, user),
+);
+const lepasPermintaan = aksiPermintaan((nomor, user) =>
+  permintaanSvc.lepas(nomor, user),
+);
+
 module.exports = {
   getDetail,
   save,
@@ -107,4 +135,7 @@ module.exports = {
   searchSpk,
   getSpkByNomor,
   uploadGambar,
+  ambilPermintaan,
+  ambilAlihPermintaan,
+  lepasPermintaan,
 };

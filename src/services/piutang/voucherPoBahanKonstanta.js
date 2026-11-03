@@ -37,7 +37,17 @@ const SQL_BPB_MILIK_PO = (b, p) => `(
   OR (${p}.po_jenis = 2 AND ${b}.bpb_keterangan = ${p}.po_nomor)
 )`;
 
+// Supplier yang PO Celup-nya dibayar per bahan (ceklis) di Voucher Pembayaran.
+// Tambah kode supplier di sini bila ada yang menyusul.
+const SUPPLIER_BREAKDOWN_CELUP = ["00423"]; // SARANA MAKIN MULYA
+
+const perluBreakdownCelup = (jenis, supKode) =>
+  Number(jenis) === 2 &&
+  SUPPLIER_BREAKDOWN_CELUP.includes(String(supKode || "").trim());
+
 module.exports = {
+  SUPPLIER_BREAKDOWN_CELUP,
+  perluBreakdownCelup,
   TIPE_PO_BAHAN,
   JENIS_PO_BAHAN,
   LABEL_JENIS_PO,

@@ -209,11 +209,18 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // G. Get No BPB (Jika PO Celup)
+  // GANTI:
+  // G. Get No BPB (Jika PO Celup) — hanya BPB otomatis; BPB dari QC Bahan
+  // (punya lot di tbpb_qc_lot) memakai bpb_po_nomor yang sama tetapi bukan miliknya
   let noBPB = "";
   if (header.po_jenis === 2) {
     const [bpb] = await db.query(
-      `SELECT bpb_nomor FROM tbpb_hdr WHERE bpb_keterangan = ? OR bpb_po_nomor = ? LIMIT 1`,
+      `SELECT h.bpb_nomor FROM tbpb_hdr h
+       WHERE (h.bpb_keterangan = ? OR h.bpb_po_nomor = ?)
+         AND NOT EXISTS (
+           SELECT 1 FROM tbpb_qc_lot q WHERE q.bql_bpb_nomor = h.bpb_nomor
+         )
+       ORDER BY h.bpb_nomor LIMIT 1`,
       [nomor, nomor],
     );
     if (bpb.length > 0) noBPB = bpb[0].bpb_nomor;
@@ -260,6 +267,9 @@ const saveData = async (payload, userKode) => {
     const isLainLain = jpo === 4;
     // PO Lain-lain: supplier ada di detail, header dibiarkan NULL
     const supHeader = isLainLain ? null : header.po_sup_kode;
+    // PO Lain-lain: PPN ada di detail (beda supplier beda ketentuan), header selalu 0
+    const statusPpnHeader = isLainLain ? 0 : header.po_status_ppn;
+    const ppnHeader = isLainLain ? 0 : header.po_ppn;
     let jenisTersimpan = jpo; // bisa dipertahankan ke nilai lama saat edit (lihat bawah)
     let nomorBPB = header.no_bpb || "";
 
@@ -298,6 +308,11 @@ const saveData = async (payload, userKode) => {
         if ((Number(it.harga) || 0) <= 0)
           throw new Error(
             `Baris ${idx + 1}: Harga Beli untuk bahan ${it.kode} wajib diisi.`,
+          );
+        const ppn = Number(it.ppn) || 0;
+        if (ppn < 0 || ppn > 100)
+          throw new Error(
+            `Baris ${idx + 1}: PPN untuk bahan ${it.kode} harus antara 0 dan 100.`,
           );
         const kunci = `${it.kode}|${sup}|${spk.toUpperCase()}`;
         if (kunciSet.has(kunci))
@@ -361,8 +376,8 @@ const saveData = async (payload, userKode) => {
         header.po_keterangan,
         supHeader,
         header.po_mppb_nomor,
-        header.po_status_ppn,
-        header.po_ppn,
+        statusPpnHeader,
+        ppnHeader,
         userKode,
         header.po_note || "",
       ]);
@@ -417,6 +432,17 @@ const saveData = async (payload, userKode) => {
       if (cekMKB[0].total > 0) {
         throw new Error("PO ini sudah link di MKB, tidak bisa di edit");
       }
+      // 2b. QC Bahan menyimpan nomor urut baris PO (qc_pod_nourut), sedangkan
+      // simpan PO menulis ulang tpo_dtl dengan nomor urut baru.
+      const [cekQc] = await conn.query(
+        `SELECT qc_nomor FROM tqc_bahan_hdr WHERE qc_po_nomor = ? LIMIT 1`,
+        [nomorPO],
+      );
+      if (cekQc.length > 0) {
+        throw new Error(
+          `PO ini sudah punya QC Bahan ${cekQc[0].qc_nomor}, tidak bisa di edit.`,
+        );
+      }
       // PO yang sudah divoucher tidak boleh diedit
       // (POB: Bahan/Greige/Celup, POL: Lain-lain)
       const [cekVoucher] = await conn.query(
@@ -434,12 +460,17 @@ const saveData = async (payload, userKode) => {
       // ini, dan BPB itu tidak boleh sudah divoucher.
       if (jenisDb === 2 && nomorBPB) {
         const [bpbSah] = await conn.query(
-          `SELECT bpb_nomor FROM tbpb_hdr
-           WHERE bpb_nomor = ? AND (bpb_keterangan = ? OR bpb_po_nomor = ?)`,
+          `SELECT h.bpb_nomor FROM tbpb_hdr h
+           WHERE h.bpb_nomor = ? AND (h.bpb_keterangan = ? OR h.bpb_po_nomor = ?)
+             AND NOT EXISTS (
+               SELECT 1 FROM tbpb_qc_lot q WHERE q.bql_bpb_nomor = h.bpb_nomor
+             )`,
           [nomorBPB, nomorPO, nomorPO],
         );
         if (bpbSah.length === 0) {
-          throw new Error("No. BPB tidak sesuai dengan PO ini.");
+          throw new Error(
+            "No. BPB tidak sesuai dengan PO ini, atau BPB tersebut dibuat dari QC Bahan.",
+          );
         }
         const [cekVoucherBpb] = await conn.query(
           `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`,
@@ -467,8 +498,8 @@ const saveData = async (payload, userKode) => {
         header.po_keterangan,
         supHeader,
         header.po_mppb_nomor,
-        header.po_status_ppn,
-        header.po_ppn,
+        statusPpnHeader,
+        ppnHeader,
         header.po_note || "",
         userKode,
         nomorPO,
@@ -510,8 +541,8 @@ const saveData = async (payload, userKode) => {
           `
             INSERT INTO tpo_dtl (
               pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode, pod_ppn
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomorPO,
@@ -529,6 +560,7 @@ const saveData = async (payload, userKode) => {
             String(item.spk || "").trim(),
             item.mkb || "",
             isLainLain ? item.supKode : null,
+            isLainLain ? Number(item.ppn) || 0 : 0,
           ],
         );
 

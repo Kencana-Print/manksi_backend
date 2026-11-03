@@ -40,7 +40,8 @@ const getDetail = async (nomor) => {
             IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
             d.ldm_lebar_kain AS lebarKain, d.ldm_size AS size,
             d.ldm_tujuan_proses AS tujuanProses,
-            d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar
+            d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar,
+            d.ldm_pm_nomor AS pmNomor
      FROM tlhkpola_marker_dtl d
      LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
      LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
@@ -83,6 +84,60 @@ const saveData = async (payload, user, isEdit) => {
   try {
     await conn.beginTransaction();
 
+    // LHK yang menunjuk permintaan CLOSE sudah terkunci
+    if (isEdit && existingNomor) {
+      const [terkunci] = await conn.query(
+        `SELECT p.pm_nomor
+           FROM tlhkpola_marker_dtl d
+           INNER JOIN tpermintaan_marker p ON p.pm_nomor = d.ldm_pm_nomor
+          WHERE d.ldm_nomor = ? AND p.pm_date_close IS NOT NULL
+          LIMIT 1`,
+        [existingNomor],
+      );
+      if (terkunci.length > 0) {
+        throw new Error(
+          `LHK ini terkait Permintaan Marker ${terkunci[0].pm_nomor} yang sudah CLOSE, tidak bisa diubah.`,
+        );
+      }
+    }
+
+    // Validasi sambungan ke Permintaan Marker (hanya baris yang mengirim pmNomor)
+    for (const r of markerFilled) {
+      const pm = String(r.pmNomor || "").trim();
+      if (!pm) continue;
+      const [[p]] = await conn.query(
+        `SELECT pm_status_manual AS manual, pm_date_close AS closed
+           FROM tpermintaan_marker WHERE pm_nomor = ?`,
+        [pm],
+      );
+      if (!p) throw new Error(`Permintaan Marker ${pm} tidak ditemukan.`);
+      if (p.manual) {
+        throw new Error(`Permintaan Marker ${pm} berstatus ${p.manual}.`);
+      }
+      if (p.closed) throw new Error(`Permintaan Marker ${pm} sudah CLOSE.`);
+      const [[ada]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM tpermintaan_marker_detail
+          WHERE pm2_pm_nomor = ? AND pm2_spk_nomor = ?`,
+        [pm, r.spkNomor],
+      );
+      if (!Number(ada.n)) {
+        throw new Error(
+          `SPK ${r.spkNomor} tidak ada di Permintaan Marker ${pm}.`,
+        );
+      }
+      const [dup] = await conn.query(
+        `SELECT ldm_nomor FROM tlhkpola_marker_dtl
+          WHERE ldm_pm_nomor = ? AND ldm_spk_nomor = ? AND ldm_nomor <> ?
+          LIMIT 1`,
+        [pm, r.spkNomor, existingNomor || ""],
+      );
+      if (dup.length > 0) {
+        throw new Error(
+          `SPK ${r.spkNomor} di Permintaan Marker ${pm} sudah punya LHK ${dup[0].ldm_nomor}.`,
+        );
+      }
+    }
+
     let nomor;
     if (isEdit) {
       if (!existingNomor) throw new Error("Nomor LHK Marker wajib diisi.");
@@ -110,13 +165,17 @@ const saveData = async (payload, user, isEdit) => {
       );
     }
 
-    const [oldMarkerGambar] = await conn.query(
-      `SELECT ldm_spk_nomor AS spkNomor, ldm_gambar AS gambar
-       FROM tlhkpola_marker_dtl WHERE ldm_nomor = ? AND ldm_gambar IS NOT NULL`,
+    // Gambar dan link permintaan lama dipulihkan per SPK karena baris dihapus lalu disisipkan ulang
+    const [oldRows] = await conn.query(
+      `SELECT ldm_spk_nomor AS spkNomor, ldm_gambar AS gambar, ldm_pm_nomor AS pmNomor
+       FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`,
       [nomor],
     );
     const markerGambarMap = new Map(
-      oldMarkerGambar.map((r) => [r.spkNomor, r.gambar]),
+      oldRows.filter((r) => r.gambar).map((r) => [r.spkNomor, r.gambar]),
+    );
+    const markerPmMap = new Map(
+      oldRows.filter((r) => r.pmNomor).map((r) => [r.spkNomor, r.pmNomor]),
     );
 
     await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
@@ -131,11 +190,15 @@ const saveData = async (payload, user, isEdit) => {
       r.tujuanProses || "",
       r.keterangan || "",
       markerGambarMap.get(r.spkNomor) || null,
+      // pmNomor tidak dikirim (form lama): pertahankan link lama; dikirim kosong: lepas link
+      r.pmNomor === undefined
+        ? markerPmMap.get(r.spkNomor) || null
+        : String(r.pmNomor || "").trim() || null,
     ]);
     await conn.query(
       `INSERT INTO tlhkpola_marker_dtl
          (ldm_nomor, ldm_urut, ldm_spk_nomor, ldm_lebar_kain, ldm_size,
-          ldm_tujuan_proses, ldm_keterangan, ldm_gambar)
+          ldm_tujuan_proses, ldm_keterangan, ldm_gambar, ldm_pm_nomor)
        VALUES ?`,
       [vals],
     );
@@ -199,6 +262,21 @@ const deleteData = async (nomor) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const [terkunci] = await conn.query(
+      `SELECT p.pm_nomor
+         FROM tlhkpola_marker_dtl d
+         INNER JOIN tpermintaan_marker p ON p.pm_nomor = d.ldm_pm_nomor
+        WHERE d.ldm_nomor = ? AND p.pm_date_close IS NOT NULL
+        LIMIT 1`,
+      [nomor],
+    );
+    if (terkunci.length > 0) {
+      throw new Error(
+        `LHK ini terkait Permintaan Marker ${terkunci[0].pm_nomor} yang sudah CLOSE, tidak bisa dihapus.`,
+      );
+    }
+
     await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
       nomor,
     ]);

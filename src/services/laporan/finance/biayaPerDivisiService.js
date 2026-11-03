@@ -63,7 +63,8 @@ const getBiayaPerDivisi = async (cckode, startDate, endDate) => {
        LEFT JOIN finance.trekening r ON r.rek_kode = i.jurd_rek_kode
        LEFT JOIN ga2.tpermintaan_dtl gaDtl
               ON gaDtl.pmd_bon = k.bon_nomor
-             AND gaDtl.pmd_nourut = i.jurd_nourut
+            AND gaDtl.pmd_nourut = i.jurd_nourut
+            AND i.jurd_ref = CONCAT('GA|', gaDtl.pmd_pmt_nomor)
        LEFT JOIN ga2.tpermintaan_hdr gaHdr
               ON gaHdr.pmt_nomor = gaDtl.pmd_pmt_nomor
        LEFT JOIN ga2.tpengajuan2_hdr gaPjh
@@ -71,6 +72,7 @@ const getBiayaPerDivisi = async (cckode, startDate, endDate) => {
        LEFT JOIN finance.tkasbonitem2 item2
               ON item2.bond2_nomor = k.bon_nomor
              AND item2.bond2_nourut = i.jurd_nourut
+             AND i.jurd_ref = 'ITEM2'
        LEFT JOIN ga2.tpengajuan2_hdr headerPjh
               ON headerPjh.pjh_nomor = k.bon_pjh_nomor
        WHERE i.jurd_nourut <> 0

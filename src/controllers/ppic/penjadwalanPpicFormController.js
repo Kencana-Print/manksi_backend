@@ -270,6 +270,13 @@ const updateDetailField = async (req, res) => {
       ...data,
       userKode: req.user.kode,
     });
+    if (data.breakdownDihapus) {
+      io.to(pjwNomor).emit("pjw:kesepakatan-updated", {
+        pjwd_id: data.pjwd_id,
+        items: [],
+        userKode: req.user.kode,
+      });
+    }
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -330,6 +337,13 @@ const moveDetailRow = async (req, res) => {
       if (movedRow) {
         io.to(result.nomor).emit("pjw:row-moved-in", movedRow);
       }
+      if (result.breakdownTargetDihapus) {
+        io.to(result.nomor).emit("pjw:kesepakatan-updated", {
+          pjwd_id: result.mergedKe,
+          items: [],
+          userKode: req.user.kode,
+        });
+      }
     } else {
       // Tidak pindah (tanggal ternyata masih dalam rentang) — broadcast biasa
       io.to(pjwNomor || result.nomor).emit("pjw:field-updated", {
@@ -341,6 +355,41 @@ const moveDetailRow = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const saveKesepakatan = async (req, res) => {
+  try {
+    const { pjwNomor, items } = req.body;
+    const data = await penjadwalanPpicFormService.simpanKesepakatan(
+      req.params.pjwdId,
+      items,
+      req.user.kode,
+      req.user.bagian,
+    );
+    const io = req.app.get("io");
+    io.to(pjwNomor).emit("pjw:field-updated", {
+      pjwd_id: data.pjwdId,
+      field: "pjwd_tgl_kesepakatan",
+      value: data.tglKesepakatan,
+      userKode: req.user.kode,
+    });
+    if (data.qtyKesepakatan !== null) {
+      io.to(pjwNomor).emit("pjw:field-updated", {
+        pjwd_id: data.pjwdId,
+        field: "pjwd_qty_kesepakatan",
+        value: data.qtyKesepakatan,
+        userKode: req.user.kode,
+      });
+    }
+    io.to(pjwNomor).emit("pjw:kesepakatan-updated", {
+      pjwd_id: data.pjwdId,
+      items: data.items,
+      userKode: req.user.kode,
+    });
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -367,4 +416,5 @@ module.exports = {
   deleteDetailRow,
   checkTargetPeriod,
   moveDetailRow,
+  saveKesepakatan,
 };

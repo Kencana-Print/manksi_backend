@@ -12,8 +12,15 @@ const proof = require("./lhkProofShared");
 // Lini pertama tiap rantai tanpa syarat. Lini baru (mis. Koli) cukup
 // ditambahkan di sini dan di DAFTAR_LINI.
 const RANTAI = {
-  MAP: ["DESIGN", "AFDRUK", "CETAK", "PROOF"],
+  MAP: ["DESIGN", "AFDRUK", "CETAK"],
   SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT", "KOLI"],
+};
+
+// Lini di luar rantai linear: predecessor ditentukan eksplisit.
+// Proof (MAP) langsung dari Afdruk, tidak lewat Cetak.
+const CABANG = {
+  MAP: { PROOF: "AFDRUK" },
+  SPK: {},
 };
 
 // Modul LHK Hapus Plankan sudah dicabut (digabung ke Afdruk). Tabelnya tetap
@@ -177,16 +184,26 @@ const namaLini = (kode) =>
 
 // Lini tepat sebelumnya; null = lini pertama atau tidak ada di rantai jenis itu
 const liniSebelumnya = (kode, jenis) => {
+  if (CABANG[jenis]?.[kode]) return CABANG[jenis][kode];
   const i = RANTAI[jenis].indexOf(kode);
   return i > 0 ? RANTAI[jenis][i - 1] : null;
 };
 
-// Lini tepat sesudahnya; null = lini terakhir atau tidak ada di rantai jenis itu
-const liniBerikutnya = (kode, jenis) => {
+// Semua lini yang langsung sesudahnya (bisa lebih dari satu karena cabang)
+const liniBerikutnyaSemua = (kode, jenis) => {
+  const hasil = [];
   const rantai = RANTAI[jenis];
   const i = rantai.indexOf(kode);
-  return i >= 0 && i < rantai.length - 1 ? rantai[i + 1] : null;
+  if (i >= 0 && i < rantai.length - 1) hasil.push(rantai[i + 1]);
+  for (const [lini, pendahulu] of Object.entries(CABANG[jenis] ?? {})) {
+    if (pendahulu === kode) hasil.push(lini);
+  }
+  return hasil;
 };
+
+// Dipertahankan agar pemanggil lama tidak error: hanya mengembalikan yang pertama
+const liniBerikutnya = (kode, jenis) =>
+  liniBerikutnyaSemua(kode, jenis)[0] ?? null;
 
 // Dari daftar SPK/MAP: yang status terakhirnya sudah selesai di lini tersebut.
 // Lini tanpa statusSelesai dianggap selalu selesai.
@@ -268,6 +285,7 @@ module.exports = {
   namaLini,
   liniSebelumnya,
   liniBerikutnya,
+  liniBerikutnyaSemua,
   spkPunyaLhk,
   spkSudahSelesai,
   spkLamaMp13,

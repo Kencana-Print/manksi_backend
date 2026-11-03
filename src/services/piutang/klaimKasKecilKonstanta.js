@@ -2,7 +2,7 @@
 
 // BKK/BBK baru boleh diklaim mulai tanggal ini. Untuk UAT boleh diset lebih awal
 // di environment uji; WAJIB dikembalikan ke 2026-11-01 saat rilis.
-const TANGGAL_MULAI_KLAIM = "2026-10-27";
+const TANGGAL_MULAI_KLAIM = "2026-10-22";
 
 // Satu entri per akun kas yang diisi ulang lewat klaim.
 //   rek    : akun kas = TUJUAN klaim (bank asal dipilih Finance di Pengajuan Transfer)

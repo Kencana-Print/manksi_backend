@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const koliSvc = require("./cetakBarcodeKoliFormService");
 
 // ─────────────────────────────────────────────────────────
 // GENERATE NOMOR — STBJ/NNNNN/YYYY
@@ -454,7 +455,7 @@ const getSpgList = async (q = "") => {
 // SAVE (INSERT / UPDATE)
 // Sesuai Delphi simpandata
 // ─────────────────────────────────────────────────────────
-const save = async (data, userKode, isNew) => {
+const save = async (data, userKode, isNew, perangkat = "") => {
   const {
     Tanggal,
     GudangKode,
@@ -477,13 +478,13 @@ const save = async (data, userKode, isNew) => {
   if (totalKoli === 0) throw new Error("Qty Koli belum diisi.");
   if (totalJumlah === 0) throw new Error("Jumlah belum diisi.");
 
-  // Validasi WH003: total jumlah Grid1 = total jumlah Grid2
+  // Validasi WH003: total Grid1 = total Grid2, hanya bila ada data DC
   if (GudangKode === "WH003") {
     const validDetail2 = Detail2.filter(
       (r) => r.NamaKaosan && Number(r.Jumlah) !== 0,
     );
     const totalJumlah2 = validDetail2.reduce((s, r) => s + Number(r.Jumlah), 0);
-    if (totalJumlah !== totalJumlah2) {
+    if (validDetail2.length && totalJumlah !== totalJumlah2) {
       throw new Error("Total Qty STBJ vs Qty DC harus sama.");
     }
   }
@@ -574,8 +575,15 @@ const save = async (data, userKode, isNew) => {
       }
     }
 
+    // QR koli: satu transaksi dengan STBJ. Gagal (gate LHK, koli tidak valid,
+    // koli dikurangi tanpa VOID) → STBJ ikut batal.
+    const qr = await koliSvc.generateKoliStbj(conn, nomor, {
+      user: { kode: userKode },
+      perangkat,
+    });
+
     await conn.commit();
-    return nomor;
+    return { nomor, qr };
   } catch (err) {
     await conn.rollback();
     throw err;

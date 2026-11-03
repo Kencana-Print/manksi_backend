@@ -127,6 +127,7 @@ const getDetailBahan = async (nomor) => {
   const query = `
     SELECT 
       d.mind_nomor AS Nomor, d.mind_bhn_kode AS Kode, b.Bhn_Name AS NamaBahan, 
+      IFNULL(st.bs_nama, '') AS Setting,
       b.Bhn_satuan AS Satuan, d.mind_babaran AS Babaran, d.mind_pcs AS Pcs, d.mind_jumlah AS Jumlah,
       IFNULL((
         SELECT SUM(i.promind_Jumlah) 
@@ -138,6 +139,7 @@ const getDetailBahan = async (nomor) => {
     FROM tmintabahan_hdr h
     INNER JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
     WHERE h.min_nomor = ?
     ORDER BY d.mind_bhn_kode
   `;
@@ -175,11 +177,13 @@ const getDetailRealisasiDtl = async (nomor) => {
       h.promin_nomor AS NomorRealisasi,
       d.promind_bhn_kode AS Kode,
       b.Bhn_Name AS Nama,
+      IFNULL(st.bs_nama, '') AS Setting,
       b.Bhn_satuan AS Satuan,
       d.promind_Jumlah AS Jumlah
     FROM tproduksiminta_hdr h
     INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
     WHERE h.promin_minta = ?
   `;
   const [rows] = await db.query(query, [nomor]);
@@ -348,7 +352,8 @@ const getAllDetail = async (startDate, endDate, cabang) => {
       h.min_cab AS Cab, v.Divisi AS Divisi, h.min_spk_nomor AS SPK,
       IFNULL(s.spk_nama, m.Mspk_nama) AS NamaSpk,
       IF(h.min_close=0, "OPEN", IF(h.min_close=1, "CLOSE", IF(h.min_close=9, "DICLOSE", "ONPROSES"))) AS Status,
-      d.mind_bhn_kode AS KodeBahan, b.Bhn_Name AS NamaBahan, b.Bhn_satuan AS Satuan,
+      d.mind_bhn_kode AS KodeBahan, b.Bhn_Name AS NamaBahan,
+      IFNULL(st.bs_nama, '') AS Setting, b.Bhn_satuan AS Satuan,
       d.mind_babaran AS Babaran, d.mind_pcs AS Pcs, d.mind_jumlah AS Jumlah,
       IFNULL((
         SELECT SUM(i.promind_Jumlah)
@@ -360,6 +365,7 @@ const getAllDetail = async (startDate, endDate, cabang) => {
     FROM tmintabahan_hdr h
     INNER JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
     LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
     LEFT JOIN tdivisi v ON v.kode = IFNULL(s.spk_divisi, m.mspk_divisi)

@@ -20,5 +20,11 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getSearch,
 );
+router.get(
+  "/types",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getTypes,
+);
 
 module.exports = router;

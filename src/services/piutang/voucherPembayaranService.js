@@ -1,5 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { assertVoucherTidakDiRekap } = require("./rekapVoucherGuardService");
 
 // Baris tipe POB (PO Bahan/Greige/Celup dipanggil langsung ke voucher):
 // voud_nota = nomor PO, jenisnya dibaca dari tpo_hdr.po_jenis.
@@ -63,7 +64,7 @@ const getBrowse = async (startDate, endDate) => {
      LEFT JOIN tsupplier b
             ON b.sup_kode = a.vou_sup_kode
      LEFT JOIN finance.tpengajuan_transfer_dtl pt
-            ON pt.ptd_trs = a.vou_nomor
+            ON pt.ptd_trs = a.vou_nomor AND pt.ptd_batal = ''
      LEFT JOIN finance.trekening rek
             ON rek.rek_kode = pt.ptd_akun
      LEFT JOIN finance.tcostcenter cc
@@ -146,6 +147,7 @@ const deleteData = async (nomor) => {
   if (real && String(real.vou_status_realisasi) === "1") {
     throw new Error("Voucher sudah direalisasi. Tidak bisa dihapus.");
   }
+  await assertVoucherTidakDiRekap(nomor);
 
   // Cek tutup buku — pola sama dengan modul-modul jurnal sebelumnya:
   // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
@@ -176,10 +178,16 @@ const deleteData = async (nomor) => {
   await conn.beginTransaction();
   try {
     await conn.query(
-      `UPDATE trekap_bayar_dtl SET rkbd_vou_nomor = '' WHERE rkbd_vou_nomor = ?`,
+      `UPDATE trekap_bayar_dtl SET rkbd_vou_nomor = ''
+       WHERE rkbd_vou_nomor = ? AND rkbd_tipe <> 'VOU'`,
       [nomor],
     );
     // Hapus detail dulu (jika tidak ada CASCADE FK)
+    await conn.query(
+      `DELETE FROM tvoucher_dtl_item
+       WHERE vdi_vou_nomor = ?`,
+      [nomor],
+    );
     await conn.query(
       `DELETE FROM tvoucher_dtl
        WHERE voud_vou_nomor = ?`,
@@ -372,7 +380,27 @@ const getPrintData = async (nomor) => {
     nilai: Number(b.jumlah) * Number(b.harga),
     tambah: Number(b.tambah) === 1,
   }));
-  return rows.map((r) => ({ ...r, bahan: bahanList }));
+  const [rincian] = await db.query(
+    `SELECT i.vdi_nota AS nota, d.pod_bhn_kode AS kode,
+            IFNULL(b.Bhn_Name, '') AS nama, IFNULL(b.Bhn_satuan, '') AS satuan,
+            d.pod_Jumlah AS jumlah, i.vdi_nilai AS nilai
+     FROM tvoucher_dtl_item i
+     INNER JOIN tpo_dtl d
+        ON d.pod_po_Nomor = i.vdi_nota AND d.pod_nourut = i.vdi_pod_nourut
+     LEFT JOIN tbahan b ON b.Bhn_kode = d.pod_bhn_kode
+     WHERE i.vdi_vou_nomor = ?
+     ORDER BY i.vdi_nota, i.vdi_pod_nourut`,
+    [nomor],
+  );
+  const rincianList = rincian.map((x) => ({
+    nota: x.nota,
+    kode: x.kode,
+    nama: x.nama,
+    satuan: x.satuan,
+    jumlah: Number(x.jumlah),
+    nilai: Number(x.nilai),
+  }));
+  return rows.map((r) => ({ ...r, bahan: bahanList, rincian: rincianList }));
 };
 
 // Khusus filter pending dari dashboard — semua periode, belum ada PT
@@ -422,7 +450,7 @@ const getBrowsePendingAll = async () => {
             ON b.sup_kode = a.vou_sup_kode
      WHERE NOT EXISTS (
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
-       WHERE pt.ptd_trs = a.vou_nomor
+       WHERE pt.ptd_trs = a.vou_nomor AND pt.ptd_batal = ''
      )
      ORDER BY a.vou_tanggal`,
   );
@@ -456,7 +484,7 @@ const getBrowseDetailPendingAll = async () => {
      ${SQL_JOIN_POB}           
      WHERE NOT EXISTS (
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
-       WHERE pt.ptd_trs = h.vou_nomor
+       WHERE pt.ptd_trs = h.vou_nomor AND pt.ptd_batal = ''
      )
      ORDER BY d.voud_vou_nomor`,
   );

@@ -113,6 +113,8 @@ const pembuatanBarcodeBahanFormRoutes = require("./routes/garmen/pembuatanBarcod
 
 const cetakBarcodeKaosanRoutes = require("./routes/garmen/cetakBarcodeKaosanRoutes");
 const cetakBarcodeKaosanFormRoutes = require("./routes/garmen/cetakBarcodeKaosanFormRoutes");
+const cetakBarcodeKoliRoutes = require("./routes/garmen/cetakBarcodeKoliRoutes");
+const cetakBarcodeKoliFormRoutes = require("./routes/garmen/cetakBarcodeKoliFormRoutes");
 const stbjRoutes = require("./routes/garmen/stbjRoutes");
 const stbjFormRoutes = require("./routes/garmen/stbjFormRoutes");
 const cetakBkbjRoutes = require("./routes/garmen/cetakBkbjRoutes");
@@ -150,6 +152,8 @@ const mkaGarmenRoutes = require("./routes/garmen/mkaRoutes");
 const mkaFormRoutes = require("./routes/garmen/mkaFormRoutes");
 const spkGudangRoutes = require("./routes/garmen/spkGudangRoutes");
 const spkGudangFormRoutes = require("./routes/garmen/spkGudangFormRoutes");
+const permintaanMarkerRoutes = require("./routes/garmen/permintaanMarkerRoutes");
+const permintaanMarkerFormRoutes = require("./routes/garmen/permintaanMarkerFormRoutes");
 const maklonBarangRoutes = require("./routes/garmen/maklonBarangRoutes");
 const maklonBarangFormRoutes = require("./routes/garmen/maklonBarangFormRoutes");
 const sjHasilMakloonRoutes = require("./routes/garmen/sjHasilMakloonRoutes");
@@ -352,6 +356,7 @@ const laporanSpandukMonitoringKoliRoutes = require("./routes/laporan/spanduk/mon
 const laporanSpandukMonitoringHasilProofRoutes = require("./routes/laporan/spanduk/monitoringHasilProofRoutes");
 const laporanSpandukRekapMonitoringBySpkRoutes = require("./routes/laporan/spanduk/rekapMonitoringBySpkRoutes");
 const laporanSpandukPemakaianBahanRoutes = require("./routes/laporan/spanduk/pemakaianBahanRoutes");
+const laporanSpandukKetercapaianKomitmenKirimRoutes = require("./routes/laporan/spanduk/ketercapaianKomitmenKirimRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -408,6 +413,7 @@ const agendaKerjaRoutes = require("./routes/tools/agendaKerjaRoutes");
 const agendaPicRoutes = require("./routes/tools/agendaPicRoutes");
 const notulensiMeetingRoutes = require("./routes/tools/notulensiMeetingRoutes");
 const notulensiMeetingFormRoutes = require("./routes/tools/notulensiMeetingFormRoutes");
+const memoInternalRoutes = require("./routes/tools/memoInternalRoutes");
 
 const versionRoutes = require("./routes/system/versionRoutes");
 const settingHargaBahanRoutes = require("./routes/pembelian/settingHargaBahanRoutes");
@@ -720,6 +726,11 @@ app.use(
   "/api/garmen/bahan-jadi/cetak-barcode-kaosan/form",
   cetakBarcodeKaosanFormRoutes,
 );
+app.use("/api/garmen/bahan-jadi/cetak-barcode-koli", cetakBarcodeKoliRoutes);
+app.use(
+  "/api/garmen/bahan-jadi/cetak-barcode-koli/form",
+  cetakBarcodeKoliFormRoutes,
+);
 app.use("/api/garmen/stbj", stbjRoutes);
 app.use("/api/garmen/stbj-form", stbjFormRoutes);
 app.use("/api/garmen/bahan-jadi/cetak-bkbj", cetakBkbjRoutes);
@@ -763,6 +774,8 @@ app.use("/api/garmen/mka", mkaGarmenRoutes);
 app.use("/api/garmen/mka-form", mkaFormRoutes);
 app.use("/api/garmen/spk-gudang", spkGudangRoutes);
 app.use("/api/garmen/spk-gudang/form", spkGudangFormRoutes);
+app.use("/api/garmen/permintaan-marker", permintaanMarkerRoutes);
+app.use("/api/garmen/permintaan-marker-form", permintaanMarkerFormRoutes);
 app.use("/api/garmen/maklon/makloon-barang", maklonBarangRoutes);
 app.use("/api/garmen/maklon/makloon-barang/form", maklonBarangFormRoutes);
 app.use("/api/garmen/makloon/sj-hasil-makloon", sjHasilMakloonRoutes);
@@ -1075,6 +1088,10 @@ app.use(
   "/api/laporan/spanduk/pemakaian-bahan",
   laporanSpandukPemakaianBahanRoutes,
 );
+app.use(
+  "/api/laporan/spanduk/ketercapaian-komitmen-kirim",
+  laporanSpandukKetercapaianKomitmenKirimRoutes,
+);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);
@@ -1147,6 +1164,7 @@ app.use("/api/tools/agenda-kerja", agendaKerjaRoutes);
 app.use("/api/tools/agenda-pic", agendaPicRoutes);
 app.use("/api/tools/notulensi-meeting", notulensiMeetingRoutes);
 app.use("/api/tools/notulensi-meeting-form", notulensiMeetingFormRoutes);
+app.use("/api/tools/memo-internal", memoInternalRoutes);
 
 app.use("/api/system/version", versionRoutes);
 

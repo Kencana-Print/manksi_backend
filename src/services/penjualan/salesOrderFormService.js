@@ -117,28 +117,33 @@ const isSoInvoiced = async (conn, nomor, ppicNomor) => {
   return rows.length > 0;
 };
 
-// Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di SO).
-// Dicari lewat nomor SO sendiri, atau nomor MAP yang dipakai SO (prioritas SO).
+// Link ke Permintaan Desain/LHK — diisi tim Desain saat ACC PDM (read-only di SO).
+// Sumber: view vlink_desain (link level LHK + cadangan PD lama tanpa LHK).
+// Link langsung ke nomor SO diprioritaskan; kalau tidak ada, pakai link ke MAP-nya.
 const getPdLink = async (nomor, memo = "", fallbackLhk = "") => {
-  const [[pdm]] = await db.query(
-    `SELECT pd_nomor, pd_path_desain FROM tpermintaan_desain
-     WHERE pd_so_map_nomor IN (?, ?)
-     ORDER BY (pd_so_map_nomor = ?) DESC LIMIT 1`,
-    [nomor, memo || "", nomor],
+  const [rows] = await db.query(
+    `SELECT so_map_nomor, pd_nomor, lhk_nomor, path_desain
+     FROM vlink_desain
+     WHERE so_map_nomor IN (?, ?)
+     ORDER BY pd_nomor, lhk_nomor`,
+    [nomor, memo || ""],
   );
-  let lhkList = [];
-  if (pdm) {
-    const [lhkRows] = await db.query(
-      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
-      [pdm.pd_nomor],
-    );
-    lhkList = lhkRows.map((r) => r.lhk_nomor);
-  }
+  const langsung = rows.filter((r) => r.so_map_nomor === nomor);
+  const pakai = langsung.length > 0 ? langsung : rows;
+  const lhkDetail = pakai
+    .filter((r) => r.lhk_nomor)
+    .map((r) => ({
+      nomor: r.lhk_nomor,
+      pd: r.pd_nomor,
+      path: r.path_desain || "",
+    }));
+  const lhkList = lhkDetail.map((r) => r.nomor);
   return {
-    PdNomor: pdm?.pd_nomor || "",
-    PdPath: pdm?.pd_path_desain || "",
+    PdNomor: pakai[0]?.pd_nomor || "",
+    PdPath: pakai.find((r) => r.path_desain)?.path_desain || "",
     // data lama (sebelum alur PDM) tetap tampil sebagai cadangan
     LhkList: lhkList.length > 0 ? lhkList : fallbackLhk ? [fallbackLhk] : [],
+    LhkDetail: lhkDetail,
   };
 };
 
@@ -585,6 +590,7 @@ const HEADER_EXTRA_FIELDS = [
   "PdNomor",
   "PdPath",
   "LhkList",
+  "LhkDetail",
   "spk_lhk_nomor",
   "isSalesOrder",
   "isSalesOrder",
@@ -750,9 +756,17 @@ const saveData = async (payload, user) => {
     }
     header.spk_cabkaos = user.cabangKaos || "";
 
+    header.spk_hargafee =
+      Math.round(
+        ((Number(header.spk_harga) || 0) -
+          (Number(header.spk_hargariil) || 0)) *
+          100,
+      ) / 100;
+
     // ==========================================
     // 2. EKSEKUSI HEADER — target tsalesorder
     // ==========================================
+
     const currentYear = new Date().getFullYear();
     const piutang = isSalesOrder
       ? 0
@@ -849,9 +863,7 @@ const saveData = async (payload, user) => {
       const hargaBerubah =
         Number(existingData.so_harga || 0) !== Number(header.spk_harga || 0) ||
         Number(existingData.so_hargariil || 0) !==
-          Number(header.spk_hargariil || 0) ||
-        Number(existingData.so_hargafee || 0) !==
-          Number(header.spk_hargafee || 0);
+          Number(header.spk_hargariil || 0);
 
       if (hargaBerubah && (await isSoInvoiced(conn, nomor, ppicInfo.SpkPpic))) {
         approvedInvoiceUrut = await getApprovedInvoicePin(conn, nomor);
@@ -1348,6 +1360,14 @@ const saveData = async (payload, user) => {
     }
 
     await conn.commit();
+
+    // Auto-push ke Komitmen Kirim PPIC berdasarkan dateline (best-effort,
+    // tidak menggagalkan penyimpanan SO).
+    await require("../ppic/penjadwalanPpicFormService").pushSoToKomitmenKirim(
+      nomor,
+      user.kode,
+    );
+
     return { nomor };
   } catch (error) {
     await conn.rollback();
@@ -1357,7 +1377,7 @@ const saveData = async (payload, user) => {
   }
 };
 
-// --- VALIDASI FIELD FORM — UNION tspk + tsalesorder karena data
+// --- VALIDASI FIELD FORM— UNION tspk + tsalesorder karena data
 // historis (Delphi-created) tetap di tspk, data baru di tsalesorder.
 // Duplikasi/keberadaan harus dicek di KEDUANYA. ---
 const validateField = async (type, value, extraParam = "") => {

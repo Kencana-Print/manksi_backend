@@ -89,11 +89,15 @@ const getBrowseDetail = async (startDate, endDate, cabang, jenis = "") => {
   const rekJenis = filterRekJenis(jenis);
   let sql = `
     SELECT d.kkd_kkh_nomor AS Nomor,
-      d.kkd_jur_no AS Bkk,
+      IF(d.kkd_tipe = 'MANUAL', 'MANUAL', d.kkd_jur_no) AS Bkk,
       d.kkd_bon_nomor AS Bon,
       DATE_FORMAT(d.kkd_tanggal,'%Y-%m-%d') AS Tanggal,
       d.kkd_uraian AS Uraian,
-      d.kkd_nominal AS Nominal
+      d.kkd_nominal AS Nominal,
+      d.kkd_tipe AS Tipe,
+      d.kkd_akun_biaya AS Akun,
+      d.kkd_cc_kode AS Cc,
+      d.kkd_dc_nama AS Dc
     FROM tklaim_kaskecil_dtl d
     INNER JOIN tklaim_kaskecil_hdr h ON h.kkh_nomor = d.kkd_kkh_nomor
     WHERE h.kkh_tanggal BETWEEN ? AND ?`;
@@ -106,10 +110,34 @@ const getBrowseDetail = async (startDate, endDate, cabang, jenis = "") => {
     sql += ` AND h.kkh_rek_tujuan IN (?)`;
     params.push(rekJenis);
   }
-  sql += ` ORDER BY d.kkd_kkh_nomor, d.kkd_jur_no`;
+  sql += ` ORDER BY d.kkd_kkh_nomor, d.kkd_tipe, d.kkd_jur_no`;
 
   const [rows] = await db.query(sql, params);
-  return rows.map((r) => ({ ...r, Nominal: Number(r.Nominal) }));
+
+  // Nama akun biaya & cost center baris manual (query terpisah, bukan JOIN lintas DB)
+  const kodeAkun = [...new Set(rows.map((r) => r.Akun).filter(Boolean))];
+  const kodeCc = [...new Set(rows.map((r) => r.Cc).filter(Boolean))];
+  const [rekAkun] = kodeAkun.length
+    ? await db.query(
+        `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
+        [kodeAkun],
+      )
+    : [[]];
+  const [rekCc] = kodeCc.length
+    ? await db.query(
+        `SELECT cc_kode, cc_nama FROM finance.tcostcenter WHERE cc_kode IN (?)`,
+        [kodeCc],
+      )
+    : [[]];
+  const namaAkun = new Map(rekAkun.map((r) => [r.rek_kode, r.rek_nama]));
+  const namaCc = new Map(rekCc.map((r) => [String(r.cc_kode), r.cc_nama]));
+
+  return rows.map(({ Akun, Cc, Dc, ...r }) => ({
+    ...r,
+    Nominal: Number(r.Nominal),
+    Akun: Akun ? `${Akun} - ${namaAkun.get(Akun) || ""}`.trim() : "",
+    CostCenter: Cc ? `${namaCc.get(Cc) || Cc} - ${Dc}` : "",
+  }));
 };
 
 // ── Batal klaim ───────────────────────────────────────────────────────

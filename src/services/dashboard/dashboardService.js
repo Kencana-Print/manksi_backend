@@ -11,6 +11,7 @@ const rekapMapService = require("../laporan/marketing/rekapMapService");
 const proyeksiVsRealisasiService = require("../laporan/marketing/proyeksiVsRealisasiService");
 const proyeksiBulananService = require("../laporan/marketing/proyeksiBulananService");
 const { isSetelahCutoff } = require("../postingGuardService");
+const { BATAS_PLAFON_DIREKTUR } = require("../master/customerService");
 
 // ══════════════════════════════════════════════
 // CACHE: stale-while-revalidate + pembaruan diam-diam
@@ -2633,7 +2634,8 @@ const getInkasoDashboard = async (user) => {
        k.date_create AS DateCreate,
        ${INKASO_SISA_CORR} AS Sisa
      FROM tproyeksi_inkaso k
-     INNER JOIN piutang_debet p ON p.nota = k.pik_nota AND p.is_writeoff = 0
+     INNER JOIN piutang_debet p ON p.nota = k.pik_nota
+       ${INKASO_VALID_FILTER}
      LEFT JOIN tcustomer c ON c.cus_kode = k.pik_cus_kode
      LEFT JOIN tsales s ON s.sal_kode = k.pik_sal_kode
      WHERE k.pik_status <> 'BATAL'`,
@@ -4809,32 +4811,114 @@ const getTrendSpk7Hari = async () => {
   return rows;
 };
 
-const getApprovalPendingCount = async () => {
-  const sql = `
-    SELECT
-      (SELECT COUNT(*) FROM tcustomer_pin 
-       WHERE cusp_acc = '') AS piutang,
+// Definisi "pending" per jenis approval. HARUS sama dengan filter "belumAccSaja"
+// di daftar masing-masing (approvalService.js) agar bulatan = isi daftar.
+// `id` sama dengan id di ToolsApprovalView.vue; `menuId` = hak view di thakuser.
+const APPROVAL_PENDING = [
+  {
+    id: "piutang_90",
+    menuId: 256,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer_pin WHERE cusp_acc = ''`,
+  },
+  {
+    id: "harga_nol",
+    menuId: 257,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin WHERE pin_acc = ''`,
+  },
+  {
+    id: "prioritas",
+    menuId: 258,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin_prioritas WHERE pin_acc = ''`,
+  },
+  {
+    id: "perubahan_data",
+    menuId: 259,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis IN ('UBAH', 'TUTUPBUKU', 'INVOICE') AND pin_acc = ''`,
+  },
+  {
+    id: "invoice_blmsj",
+    menuId: 260,
+    sql: `SELECT COUNT(*) AS n FROM tapprove p
+          INNER JOIN tinv_hdr h ON h.INV_nomor = p.pin_nomor
+          WHERE p.pin_jenis = 'INVBLMSJ' AND p.pin_acc = ''`,
+  },
+  {
+    id: "hapus_data",
+    menuId: 261,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'HAPUS' AND pin_acc = ''`,
+  },
+  {
+    id: "pembatalan_spk",
+    menuId: 262,
+    sql: `SELECT COUNT(*) AS n FROM tspk_formbatal WHERE fb_apv_user = ''`,
+  },
+  {
+    id: "plafon_manager",
+    menuId: 263,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer
+          WHERE cus_plafon_acc = 'PENDING_MANAGER'
+            AND cus_plafon > 0 AND cus_plafon < ?`,
+    params: [BATAS_PLAFON_DIREKTUR],
+  },
+  {
+    id: "plafon_direksi",
+    menuId: 264,
+    sql: `SELECT COUNT(*) AS n FROM tcustomer
+          WHERE cus_plafon_acc = 'PENDING_DIREKSI'
+            AND cus_plafon >= ?`,
+    params: [BATAS_PLAFON_DIREKTUR],
+  },
+  {
+    id: "ganti_qty_kain",
+    menuId: 265,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'GANTI' AND pin_acc = ''`,
+  },
+  {
+    id: "mutasi_noplan",
+    menuId: 266,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'MUTASI PRODUKSI NOPLAN' AND pin_acc = ''`,
+  },
+  {
+    id: "spk_cetak_ulang",
+    menuId: 267,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'SPK CETAK ULANG' AND pin_acc = ''`,
+  },
+  {
+    id: "nopo",
+    menuId: 268,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_jenis = 'NOPO' AND pin_trs IN ('SO', 'MAP') AND pin_acc = ''`,
+  },
+  {
+    id: "realisasi_beda_bahan",
+    menuId: 269,
+    sql: `SELECT COUNT(*) AS n FROM tspk_pin5
+          WHERE pin_trs = 'REALISASI BEDA BAHAN' AND pin_acc = ''`,
+  },
+];
 
-      (SELECT COUNT(*) FROM tspk_pin 
-       WHERE pin_acc = '') AS harga_nol,
+// Hanya jenis yang user punya hak view-nya (sama dengan availableApprovals di
+// ToolsApprovalView.vue). Jenis tanpa hak tidak ikut dikembalikan.
+const getApprovalPendingCount = async (userKode) => {
+  const [hak] = await db.query(
+    `SELECT hak_men_id AS id FROM thakuser
+     WHERE hak_user_kode = ? AND hak_men_view = 'Y' AND hak_men_id IN (?)`,
+    [userKode, APPROVAL_PENDING.map((a) => a.menuId)],
+  );
+  const boleh = new Set(hak.map((r) => Number(r.id)));
 
-      (SELECT COUNT(*) FROM tspk_pin_prioritas 
-       WHERE pin_acc = '') AS prioritas,
-
-      (SELECT COUNT(*) FROM tapprove 
-       WHERE pin_jenis = 'INVBLMSJ' AND pin_acc = '') AS inv_blm_sj,
-
-      (SELECT COUNT(*) FROM tspk_pin5 
-       WHERE pin_jenis = 'UBAH' AND pin_acc = '' AND pin_dipakai = '') AS perubahan,
-
-      (SELECT COUNT(*) FROM tspk_pin5 
-       WHERE pin_jenis = 'HAPUS' AND pin_acc = '' AND pin_dipakai = '') AS hapus,
-
-      (SELECT COUNT(*) FROM tcustomer 
-       WHERE cus_plafon_acc IN ('PENDING_MANAGER', 'PENDING_DIREKSI')) AS plafon
-  `;
-  const [rows] = await db.query(sql);
-  return rows[0];
+  const hasil = await Promise.all(
+    APPROVAL_PENDING.filter((a) => boleh.has(a.menuId)).map(async (a) => {
+      const [[row]] = await db.query(a.sql, a.params || []);
+      return [a.id, Number(row.n)];
+    }),
+  );
+  return Object.fromEntries(hasil);
 };
 
 // ── Pipeline SPK → Produksi (funnel), filter by spk_dateline ──
@@ -6309,12 +6393,9 @@ const buildCabangBeli = (kolom, cabang) => {
   return { sql: ` AND ${kolom} = ?`, params: [cabang] };
 };
 
-// Batas awal outstanding: awal bulan berjalan. Data sistem lama dianggap selesai.
+// Batas awal outstanding: awal tahun berjalan (1 Januari). Data sistem lama dianggap selesai.
 // Kalau mau "sejak go-live MANKSI", ganti isi fungsi ini jadi: return "2026-09-01";
-const batasAwalOutstandingBeli = () => {
-  const n = new Date();
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`;
-};
+const batasAwalOutstandingBeli = () => `${new Date().getFullYear()}-01-01`;
 
 const buildOutstandingPP = (cabang) => {
   const c = buildCabangBeli("h.mb_mintake", cabang);
@@ -6372,10 +6453,12 @@ const buildOutstandingPP = (cabang) => {
         WHERE h.po_status LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
         GROUP BY h.po_mb_nomor, i.bpbd_brg_kode
       ) k4 ON k4.mb_nomor = d.mbd_nomor AND k4.brg_kode = d.mbd_brg_kode
-      WHERE d.mbd_closed_manual = 0 AND h.mb_tanggal >= ?${c.sql}
+      WHERE d.mbd_closed_manual = 0
+        AND IFNULL(h.mb_status, '') NOT LIKE '%CLOSE%'
+        AND h.mb_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > x.QtyDtl2
-    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+    ORDER BY x.Tanggal DESC, x.Nomor DESC, x.Nourut ASC
   `;
   return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
 };
@@ -6411,7 +6494,7 @@ const buildOutstandingPD = (cabang) => {
         AND a.pjh_tanggal >= ?${c.sql}
     ) x
     WHERE (x.QtyMinta - x.QtyBeli) > 0
-    ORDER BY x.Tanggal ASC, x.Nomor ASC, x.Nourut ASC
+    ORDER BY x.Tanggal DESC, x.Nomor DESC, x.Nourut ASC
   `;
   return { sql, params: [batasAwalOutstandingBeli(), ...c.params] };
 };
@@ -6448,7 +6531,9 @@ const loadOutstandingBeliAll = (cabang) => {
 const sumberCatatanBeli = (tab) => (tab === "PENGAJUAN_DANA" ? "PD" : "PP");
 
 const canEditCatatanBeli = (user) =>
-  ["PEMBELIAN", "FINANCE"].includes((user?.bagian || "").toUpperCase());
+  ["PEMBELIAN", "FINANCE", "EDP", "AUDIT", "DIR"].includes(
+    (user?.bagian || "").toUpperCase(),
+  );
 
 const loadCatatanBeli = async (tab, nomorList) => {
   const map = new Map();
@@ -6470,7 +6555,7 @@ const setCatatanOutstandingBeli = async (
 ) => {
   if (!canEditCatatanBeli(user)) {
     throw new Error(
-      "Hanya bagian Pembelian dan Finance yang dapat mengisi catatan.",
+      "Hanya bagian Pembelian, Finance, EDP, Audit, dan Dir yang dapat mengisi catatan.",
     );
   }
   const key = String(tab || "").toUpperCase();

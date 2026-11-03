@@ -22,6 +22,25 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.searchSpk,
 );
+// Aksi PIC atas Permintaan Marker
+router.post(
+  "/permintaan/:nomor/ambil",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.ambilPermintaan,
+);
+router.post(
+  "/permintaan/:nomor/ambil-alih",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.ambilAlihPermintaan,
+);
+router.post(
+  "/permintaan/:nomor/lepas",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.lepasPermintaan,
+);
 router.get(
   "/lookup/spk/:nomor",
   verifyToken,

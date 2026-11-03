@@ -109,8 +109,11 @@ const getReport = async (filters) => {
        SUM(x.cancel_alt) AS CancelAlt,
        h.pd_status AS Status,
        h.pd_keterangan AS Keterangan,
-       IFNULL(h.pd_so_map_nomor, '') AS SoMap,
-       IFNULL(h.pd_path_desain, '') AS PathDesain,
+       IFNULL((SELECT GROUP_CONCAT(DISTINCT v.so_map_nomor ORDER BY v.so_map_nomor SEPARATOR ', ')
+               FROM vlink_desain v WHERE v.pd_nomor = h.pd_nomor), '') AS SoMap,
+       IFNULL((SELECT GROUP_CONCAT(DISTINCT v.path_desain ORDER BY v.path_desain SEPARATOR ' | ')
+               FROM vlink_desain v
+               WHERE v.pd_nomor = h.pd_nomor AND IFNULL(v.path_desain, '') <> ''), '') AS PathDesain,
        GROUP_CONCAT(DISTINCT x.lhk SEPARATOR ', ') AS LhkNomor,
        DATE_FORMAT(MAX(x.tgl_selesai), '%Y-%m-%d %H:%i') AS TglSelesai
      FROM (${linesSql(where)}) x

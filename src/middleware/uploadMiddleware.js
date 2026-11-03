@@ -66,6 +66,40 @@ const excelFileFilter = (req, file, cb) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// Instance multer khusus PDF (Memo Internal): hanya PDF, maks 10MB,
+// satu file. Isi file tetap divalidasi di service (header %PDF-).
+// ─────────────────────────────────────────────────────────
+const pdfFileFilter = (req, file, cb) => {
+  if (
+    file.mimetype === "application/pdf" &&
+    /\.pdf$/i.test(file.originalname)
+  ) {
+    cb(null, true);
+  } else {
+    cb(new Error("File harus berupa PDF."), false);
+  }
+};
+
+const uploadPdf = multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, tempDir);
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      cb(null, "temp-memo-" + uniqueSuffix + ".pdf");
+    },
+  }),
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: pdfFileFilter,
+});
+
+upload.pdf = uploadPdf;
+
 const uploadExcel = multer({
   storage: multer.diskStorage({
     destination: function (req, file, cb) {

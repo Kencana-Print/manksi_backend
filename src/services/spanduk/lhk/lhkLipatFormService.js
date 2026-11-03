@@ -517,10 +517,9 @@ const updateLhkLipat = async (nomor, body, user) => {
 
     const [lama] = await conn.query(
       `SELECT DATE_FORMAT(llh_tanggal, '%Y-%m-%d') AS tgl,
-              llh_pab_kode AS pabrik,
-              llh_sesi AS sesi,
-              TIME_FORMAT(llh_jam_input, '%H:%i:%s') AS jam
-       FROM ${T.hdr} WHERE llh_nomor = ? FOR UPDATE`,
+            llh_pab_kode AS pabrik,
+            TIME_FORMAT(llh_jam_input, '%H:%i:%s') AS jam
+      FROM ${T.hdr} WHERE llh_nomor = ? FOR UPDATE`,
       [no],
     );
     if (lama.length === 0) {
@@ -542,7 +541,8 @@ const updateLhkLipat = async (nomor, body, user) => {
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });
-    const legacy = lama[0].sesi === "";
+    // LHK lama = tanpa jam input (sama dengan penanda Legacy di getLhkLipatById)
+    const legacy = lama[0].jam === null;
     if (!legacy) {
       const sekarang = await sekarangServer(conn);
       const jamSkrg = detik(sekarang.jam) ?? 0;

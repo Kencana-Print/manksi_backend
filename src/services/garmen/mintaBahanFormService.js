@@ -167,10 +167,12 @@ const getSpkDetailsAndMkb = async (
     SELECT j.mkb_nomor, DATE_FORMAT(j.mkb_tanggal, '%Y-%m-%d') as mkb_tanggal, 
            i.mkbd_bhn_kode, SUM(i.mkbd_babaran) AS babaran, SUM(i.mkbd_jumlah) AS butuh, 
            IFNULL(b.Bhn_Name,"") AS nama, IFNULL(b.Bhn_satuan,"") AS sat,
+           IFNULL(MAX(st.bs_nama),"") AS setting,
            CAST(GROUP_CONCAT(i.mkbd_komponen SEPARATOR ", ") AS CHAR) AS komponen
     FROM tmkb_hdr j
     INNER JOIN tmkb_dtl i ON i.mkbd_mkb_nomor = j.MKB_NOMOR
     LEFT JOIN tbahan b ON b.Bhn_kode = i.mkbd_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(i.mkbd_bhn_kode, 8, 2)
     WHERE j.MKB_SPK_NOMOR IN (?)
     GROUP BY i.mkbd_bhn_kode
   `;
@@ -214,6 +216,7 @@ const getSpkDetailsAndMkb = async (
         kode: r.mkbd_bhn_kode,
         nama: r.nama,
         satuan: r.sat,
+        setting: r.setting,
         babaran: r.babaran,
         pcs: pcs,
         butuh: r.butuh,
@@ -259,6 +262,7 @@ const getMintaBahan = async (nomor) => {
   const queryDtl = `
     SELECT 
       d.mind_bhn_kode AS kode, b.Bhn_Name AS nama, b.Bhn_satuan AS satuan,
+      IFNULL(st.bs_nama, '') AS setting,
       d.mind_babaran AS babaran, d.mind_pcs AS pcs, d.mind_jumlah AS jumlah,
       d.mind_komponen AS komponen, d.mind_ket AS ket,
       IFNULL((
@@ -270,6 +274,7 @@ const getMintaBahan = async (nomor) => {
     FROM tmintabahan_dtl d
     INNER JOIN tmintabahan_hdr h ON d.mind_nomor = h.min_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
     WHERE d.mind_nomor = ?
   `;
   const [dtl] = await db.query(queryDtl, [nomor]);
@@ -419,12 +424,14 @@ const getPrintData = async (nomor) => {
     SELECT 
       d.mind_bhn_kode AS Kode, 
       b.Bhn_Name AS Nama, 
+      IFNULL(st.bs_nama, '') AS Setting,
       b.Bhn_satuan AS Satuan, 
-      d.mind_jumlah AS Jumlah, 
+      d.mind_jumlah AS Jumlah,
       d.mind_komponen AS Komponen, 
       d.mind_ket AS Keterangan
     FROM tmintabahan_dtl d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
     WHERE d.mind_nomor = ?
     ORDER BY d.mind_bhn_kode
   `;

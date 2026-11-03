@@ -158,7 +158,7 @@ const getBrowse = async ({
        h.pd_prioritas AS Prioritas,
        IFNULL(dz.nama, '') AS Desainer,
        h.pd_referensi AS Referensi,
-       h.pd_so_map_nomor AS SoMapNomor,
+       IFNULL(lk.somap, h.pd_so_map_nomor) AS SoMapNomor,
        h.pd_so_map_tipe AS SoMapTipe,
        h.pd_path_desain AS PathDesain,
        h.pd_user_done AS UserDone,
@@ -180,6 +180,13 @@ const getBrowse = async ({
        LEFT JOIN tuser u ON u.user_kode = x.kode
        GROUP BY x.pd_nomor
      ) dz ON dz.pd_nomor = h.pd_nomor
+     LEFT JOIN (
+       SELECT l.lhk_pd_nomor AS pd_nomor,
+              GROUP_CONCAT(DISTINCT s.lsm_so_map_nomor ORDER BY s.lsm_so_map_nomor SEPARATOR ', ') AS somap
+       FROM tlhk_desain l
+       INNER JOIN tlhk_desain_somap s ON s.lsm_lhk_nomor = l.lhk_nomor
+       GROUP BY l.lhk_pd_nomor
+     ) lk ON lk.pd_nomor = h.pd_nomor
      ${where}
      ORDER BY h.pd_tanggal DESC, h.pd_nomor DESC`,
     params,
@@ -242,7 +249,40 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  return { ...header, detail: items, kerja };
+  const [lhkRows] = await db.query(
+    `SELECT lhk_nomor, lhk_pd_jml, lhk_path_desain,
+            DATE_FORMAT(lhk_tanggal, '%Y-%m-%d') AS lhk_tanggal
+     FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
+    [nomor],
+  );
+  const [linkRows] = await db.query(
+    `SELECT s.lsm_lhk_nomor, s.lsm_so_map_nomor, s.lsm_tipe,
+            COALESCE(s.lsm_jml, l.lhk_pd_jml) AS jml
+     FROM tlhk_desain_somap s
+     INNER JOIN tlhk_desain l ON l.lhk_nomor = s.lsm_lhk_nomor
+     WHERE l.lhk_pd_nomor = ?
+     ORDER BY s.lsm_lhk_nomor, s.lsm_so_map_nomor`,
+    [nomor],
+  );
+  const lhk = lhkRows.map((l) => {
+    const links = linkRows.filter((s) => s.lsm_lhk_nomor === l.lhk_nomor);
+    const acc = links.reduce((sum, s) => sum + Number(s.jml), 0);
+    return {
+      nomor: l.lhk_nomor,
+      jml: Number(l.lhk_pd_jml),
+      tanggal: l.lhk_tanggal,
+      path: l.lhk_path_desain || "",
+      // sisa yang tidak di-ACC (dibatalkan otomatis saat ACC); 0 selama belum di-ACC
+      batal: links.length ? Math.max(Number(l.lhk_pd_jml) - acc, 0) : 0,
+      somap: links.map((s) => ({
+        nomor: s.lsm_so_map_nomor,
+        tipe: s.lsm_tipe,
+        jml: Number(s.jml),
+      })),
+    };
+  });
+
+  return { ...header, detail: items, kerja, lhk };
 };
 
 // ─────────────────────────────────────────────────────────
@@ -578,14 +618,17 @@ const tandaiDesignDone = async (conn, target) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────
+// ACC PD: tiap LHK milik PD wajib diisi path + minimal 1 SO/MAP dengan jumlah ACC.
+// Link ada di level LHK (tlhk_desain_somap); satu SO/MAP boleh dipakai banyak LHK
+// dan sebaliknya. Jumlah ACC per SO/MAP boleh lebih kecil dari jumlah LHK: sisanya
+// otomatis dianggap dibatalkan (tidak disimpan, dihitung dari jumlah LHK dikurangi
+// total jumlah ACC) dan dicatat di keterangan status klien PD.
+// payload: { items: [{ lhkNomor, path, targets: [{ soMapNomor, jml }] }] }
+// ─────────────────────────────────────────────────────────
 const closePD = async (nomor, payload, user) => {
   const kode = String(user?.kode || "").trim();
-  const noInput = String(payload?.soMapNomor ?? "").trim();
-  const path = String(payload?.path ?? "").trim();
-
-  if (!noInput) throw new Error("Nomor SO/MAP wajib diisi.");
-  if (!path) throw new Error("Path desain wajib diisi.");
-  if (path.length > 500) throw new Error("Path desain maksimal 500 karakter.");
+  const items = Array.isArray(payload?.items) ? payload.items : [];
 
   return dalamTransaksi(async (conn) => {
     const pd = await kunciHeader(conn, nomor);
@@ -593,46 +636,160 @@ const closePD = async (nomor, payload, user) => {
       throw new Error("Hanya PD berstatus DONE yang dapat di-ACC.");
     cekBolehSetStatus(pd, user);
 
-    const target = await cariSoMap(conn, noInput);
-    if (!target)
-      throw new Error(`Nomor ${noInput} tidak ditemukan sebagai SO/MAP aktif.`);
-
-    const [[dup]] = await conn.query(
-      `SELECT pd_nomor FROM tpermintaan_desain
-       WHERE pd_so_map_nomor = ? AND pd_nomor <> ?`,
-      [target.nomor, nomor],
+    const [lhkRows] = await conn.query(
+      `SELECT lhk_nomor, lhk_pd_jml FROM tlhk_desain
+       WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor FOR UPDATE`,
+      [nomor],
     );
-    if (dup) throw new Error(`${target.nomor} sudah dipakai ${dup.pd_nomor}.`);
+    if (!lhkRows.length) throw new Error("PD ini belum punya LHK.");
 
-    try {
-      await conn.query(
-        `UPDATE tpermintaan_desain
-         SET pd_status = 'CLOSE', pd_status_klien = 'ACC',
-             pd_status_keterangan = NULL, pd_referensi = NULL,
-             pd_so_map_nomor = ?, pd_so_map_tipe = ?, pd_path_desain = ?,
-             pd_user_close = ?, pd_date_close = NOW()
-         WHERE pd_nomor = ?`,
-        [target.nomor, target.tipe, path, kode, nomor],
-      );
-    } catch (e) {
-      if (e.code === "ER_DUP_ENTRY")
-        throw new Error(`${target.nomor} sudah dipakai PD lain.`);
-      throw e;
+    const perLhk = new Map();
+    for (const it of items) {
+      const lhkNomor = String(it?.lhkNomor ?? "").trim();
+      if (perLhk.has(lhkNomor))
+        throw new Error(`LHK ${lhkNomor} terkirim lebih dari sekali.`);
+      perLhk.set(lhkNomor, it);
+    }
+    for (const key of perLhk.keys()) {
+      if (!lhkRows.some((r) => r.lhk_nomor === key))
+        throw new Error(`LHK ${key} bukan milik PD ini.`);
     }
 
-    await tandaiDesignDone(conn, target);
+    // Validasi semua dulu, baru tulis
+    const rencana = [];
+    for (const { lhk_nomor: lhkNomor, lhk_pd_jml: jmlRaw } of lhkRows) {
+      const jmlLhk = Number(jmlRaw);
+      const it = perLhk.get(lhkNomor);
+      if (!it)
+        throw new Error(
+          `LHK ${lhkNomor} belum diisi SO/MAP dan path desainnya.`,
+        );
+
+      const path = String(it.path ?? "").trim();
+      if (!path) throw new Error(`Path desain LHK ${lhkNomor} wajib diisi.`);
+      if (path.length > 500)
+        throw new Error(`Path desain LHK ${lhkNomor} maksimal 500 karakter.`);
+
+      // Format lama (soMapNomor: string[]) hanya diterima untuk satu nomor,
+      // dianggap seluruh jumlah LHK (tab browser yang belum dimuat ulang).
+      let daftar = Array.isArray(it.targets) ? it.targets : [];
+      if (!daftar.length && Array.isArray(it.soMapNomor)) {
+        if (it.soMapNomor.length > 1)
+          throw new Error("Format ACC sudah berubah, muat ulang halaman.");
+        if (it.soMapNomor.length === 1)
+          daftar = [{ soMapNomor: it.soMapNomor[0], jml: jmlLhk }];
+      }
+      if (!daftar.length)
+        throw new Error(`Nomor SO/MAP LHK ${lhkNomor} wajib diisi.`);
+
+      const targets = new Map();
+      let totalAcc = 0;
+      for (const d of daftar) {
+        const noInput = String(d?.soMapNomor ?? "").trim();
+        const jml = Number(d?.jml);
+        if (!noInput)
+          throw new Error(`Nomor SO/MAP LHK ${lhkNomor} tidak boleh kosong.`);
+        if (!Number.isInteger(jml) || jml <= 0)
+          throw new Error(
+            `Jumlah ACC ${noInput} pada LHK ${lhkNomor} harus bilangan bulat > 0.`,
+          );
+        const target = await cariSoMap(conn, noInput);
+        if (!target)
+          throw new Error(
+            `Nomor ${noInput} tidak ditemukan sebagai SO/MAP aktif.`,
+          );
+        if (targets.has(target.nomor))
+          throw new Error(
+            `Nomor ${target.nomor} terisi lebih dari sekali pada LHK ${lhkNomor}.`,
+          );
+        targets.set(target.nomor, { ...target, jml });
+        totalAcc += jml;
+      }
+      if (totalAcc > jmlLhk)
+        throw new Error(
+          `Total jumlah ACC LHK ${lhkNomor} (${totalAcc}) melebihi jumlah LHK (${jmlLhk}).`,
+        );
+      rencana.push({
+        lhkNomor,
+        path,
+        jmlLhk,
+        totalAcc,
+        targets: [...targets.values()],
+      });
+    }
+
+    for (const r of rencana) {
+      await conn.query(
+        `UPDATE tlhk_desain SET lhk_path_desain = ? WHERE lhk_nomor = ?`,
+        [r.path, r.lhkNomor],
+      );
+      for (const t of r.targets) {
+        await conn.query(
+          `INSERT INTO tlhk_desain_somap
+             (lsm_lhk_nomor, lsm_so_map_nomor, lsm_tipe, lsm_jml, lsm_user_create, lsm_date_create)
+           VALUES (?, ?, ?, ?, ?, NOW())`,
+          [r.lhkNomor, t.nomor, t.tipe, t.jml, kode],
+        );
+        await tandaiDesignDone(conn, t);
+      }
+    }
+
+    const jmlTotal = rencana.reduce((s, r) => s + r.jmlLhk, 0);
+    const jmlAcc = rencana.reduce((s, r) => s + r.totalAcc, 0);
+    const jmlBatal = jmlTotal - jmlAcc;
+    const ketAcc =
+      jmlBatal > 0
+        ? `ACC ${jmlAcc} dari ${jmlTotal} pcs; sisa ${jmlBatal} pcs dibatalkan.`
+        : null;
+
+    await conn.query(
+      `UPDATE tpermintaan_desain
+       SET pd_status = 'CLOSE', pd_status_klien = 'ACC',
+           pd_status_keterangan = ?, pd_referensi = NULL,
+           pd_user_close = ?, pd_date_close = NOW()
+       WHERE pd_nomor = ?`,
+      [ketAcc, kode, nomor],
+    );
 
     return {
       nomor,
       status: "CLOSE",
       statusKlien: "ACC",
-      soMapNomor: target.nomor,
-      tipe: target.tipe,
+      jmlAcc,
+      jmlBatal,
+      lhk: rencana.map((r) => ({
+        lhkNomor: r.lhkNomor,
+        soMap: r.targets.map((t) => t.nomor),
+      })),
     };
   });
 };
 
-// Buka kembali PD CLOSE → DONE (koreksi salah input), khusus EDP/IT
+// Kebalikan tandaiDesignDone: SO/MAP kembali "belum design done" bila tidak
+// ada lagi LHK (baru) maupun PD (format lama) yang ter-link ke nomor itu.
+const hitungUlangDesignDone = async (conn, nomor) => {
+  const [[ada]] = await conn.query(
+    `SELECT
+       (SELECT COUNT(*) FROM tlhk_desain_somap WHERE lsm_so_map_nomor = ?) +
+       (SELECT COUNT(*) FROM tpermintaan_desain WHERE pd_so_map_nomor = ?) AS n`,
+    [nomor, nomor],
+  );
+  if (Number(ada.n) > 0) return;
+  await conn.query(
+    `UPDATE tsalesorder SET so_designdone = 'N' WHERE so_nomor = ?`,
+    [nomor],
+  );
+  await conn.query(`UPDATE tspk SET spk_designdone = 'N' WHERE spk_nomor = ?`, [
+    nomor,
+  ]);
+  await conn.query(
+    `UPDATE tmemospk SET mspk_designdone = 'N' WHERE mspk_nomor = ?`,
+    [nomor],
+  );
+};
+
+// Buka kembali PD CLOSE → DONE (koreksi salah input), khusus EDP/IT.
+// Semua link SO/MAP dan path desain pada LHK PD ini dihapus.
 const bukaKembali = async (nomor, user) => {
   const bagian = String(user?.bagian || "")
     .toUpperCase()
@@ -647,14 +804,41 @@ const bukaKembali = async (nomor, user) => {
     if (pd.pd_status !== "CLOSE")
       throw new Error("PD ini tidak berstatus CLOSE.");
 
+    const [lhkRows] = await conn.query(
+      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    const lhkNomor = lhkRows.map((r) => r.lhk_nomor);
+
+    let terdampak = [];
+    if (lhkNomor.length) {
+      const [links] = await conn.query(
+        `SELECT DISTINCT lsm_so_map_nomor AS nomor
+         FROM tlhk_desain_somap WHERE lsm_lhk_nomor IN (?)`,
+        [lhkNomor],
+      );
+      terdampak = links.map((r) => r.nomor);
+      await conn.query(
+        `DELETE FROM tlhk_desain_somap WHERE lsm_lhk_nomor IN (?)`,
+        [lhkNomor],
+      );
+      await conn.query(
+        `UPDATE tlhk_desain SET lhk_path_desain = NULL WHERE lhk_nomor IN (?)`,
+        [lhkNomor],
+      );
+    }
+    if (pd.pd_so_map_nomor) terdampak.push(pd.pd_so_map_nomor); // format lama
+
     await conn.query(
       `UPDATE tpermintaan_desain
-       SET pd_status = 'DONE', pd_status_klien = NULL,
+       SET pd_status = 'DONE', pd_status_klien = NULL, pd_status_keterangan = NULL,
            pd_so_map_nomor = NULL, pd_so_map_tipe = NULL,
            pd_path_desain = NULL, pd_user_close = NULL, pd_date_close = NULL
        WHERE pd_nomor = ?`,
       [nomor],
     );
+
+    for (const n of new Set(terdampak)) await hitungUlangDesignDone(conn, n);
     return { nomor, status: "DONE" };
   });
 };
@@ -673,11 +857,13 @@ const getAntrean = async (user) => {
             d.pd2_pd_jml - IFNULL(k.total, 0) AS Sisa,
             d.pd2_desainer AS DesainerKode,
             h.pd_nama_project AS NamaProject, IFNULL(c.cus_nama, '') AS Customer,
+            IFNULL(um.user_nama, h.pd_nama_marketing) AS NamaMarketing,
             h.pd_jenis_pekerjaan AS JenisPekerjaan, h.pd_prioritas AS Prioritas,
             DATE_FORMAT(h.pd_dateline, '%Y-%m-%d') AS Dateline, h.pd_status AS StatusPd
      FROM tpermintaan_desain_detail d
      JOIN tpermintaan_desain h ON h.pd_nomor = d.pd2_pd_nomor
      LEFT JOIN tcustomer c ON c.cus_kode = h.pd_customer
+     LEFT JOIN tuser um ON um.user_kode = h.pd_nama_marketing
      LEFT JOIN (
        SELECT kerja_pd2_id, SUM(kerja_jml) AS total
        FROM tpermintaan_desain_kerja GROUP BY kerja_pd2_id
@@ -696,11 +882,13 @@ const getAntrean = async (user) => {
            IFNULL(u.user_nama, k.kerja_desainer) AS Desainer,
            k.kerja_asal_desainer AS AsalDesainer,
            DATE_FORMAT(k.kerja_tgl_mulai, '%Y-%m-%d %H:%i') AS TglMulai,
-           h.pd_nama_project AS NamaProject
+           h.pd_nama_project AS NamaProject,
+           IFNULL(um.user_nama, h.pd_nama_marketing) AS NamaMarketing
     FROM tpermintaan_desain_kerja k
     JOIN tpermintaan_desain_detail d ON d.pd2_id = k.kerja_pd2_id
     JOIN tpermintaan_desain h ON h.pd_nomor = k.kerja_pd_nomor
     LEFT JOIN tuser u ON u.user_kode = k.kerja_desainer
+    LEFT JOIN tuser um ON um.user_kode = h.pd_nama_marketing
     WHERE k.kerja_status = 'PROGRESS' AND h.pd_status IN ('OPEN', 'PROGRESS')`;
 
   const [kerjaSaya] = await db.query(

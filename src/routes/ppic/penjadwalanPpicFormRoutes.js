@@ -59,5 +59,6 @@ router.get(
   controller.checkTargetPeriod,
 );
 router.post("/row/:pjwdId/move", verifyToken, controller.moveDetailRow);
+router.put("/row/:pjwdId/kesepakatan", verifyToken, controller.saveKesepakatan);
 
 module.exports = router;

@@ -338,9 +338,9 @@ const lookupPo = async (query) => {
   const params = [dStart, dEnd];
   let searchSql = "";
   if (query.search) {
-    searchSql = `AND (h.po_nomor LIKE ? OR d.pod_namaext LIKE ? OR b.Bhn_Name LIKE ? OR s.sup_nama LIKE ?)`;
+    searchSql = `AND (h.po_nomor LIKE ? OR d.pod_spk_nomor LIKE ? OR d.pod_namaext LIKE ? OR b.Bhn_Name LIKE ? OR s.sup_nama LIKE ?)`;
     const like = `%${query.search}%`;
-    params.push(like, like, like, like);
+    params.push(like, like, like, like, like);
   }
 
   const [rows] = await db.query(
@@ -351,6 +351,7 @@ const lookupPo = async (query) => {
       DATE_FORMAT(h.po_tanggal, "%Y-%m-%d") AS TanggalPO,
       s.sup_nama AS Supplier,
       d.pod_nourut AS Nourut,
+      d.pod_spk_nomor AS NomorSpk,
       d.pod_bhn_kode AS KodeBahan,
       IFNULL(NULLIF(d.pod_namaext, ''), b.Bhn_Name) AS NamaKain,
       d.pod_gramasia AS Gramasi,

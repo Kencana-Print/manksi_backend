@@ -166,26 +166,28 @@ const getById = async (nomor) => {
 
   data.nopo_acc = await getNoPoStatus(nomor);
 
-  // Link ke Permintaan Desain — diisi tim Desain saat close PDM (read-only di MAP)
-  const [[pdm]] = await db.query(
-    `SELECT pd_nomor, pd_path_desain FROM tpermintaan_desain
-     WHERE pd_so_map_nomor = ? LIMIT 1`,
+  // Link ke Permintaan Desain/LHK — diisi tim Desain saat ACC PDM (read-only di MAP).
+  // Sumber: view vlink_desain (link level LHK + cadangan PD lama tanpa LHK).
+  const [linkRows] = await db.query(
+    `SELECT pd_nomor, lhk_nomor, path_desain FROM vlink_desain
+     WHERE so_map_nomor = ?
+     ORDER BY pd_nomor, lhk_nomor`,
     [nomor],
   );
-  data.PdNomor = pdm?.pd_nomor || "";
-  data.PdPath = pdm?.pd_path_desain || "";
-  let lhkList = [];
-  if (pdm) {
-    const [lhkRows] = await db.query(
-      `SELECT lhk_nomor FROM tlhk_desain WHERE lhk_pd_nomor = ? ORDER BY lhk_nomor`,
-      [pdm.pd_nomor],
-    );
-    lhkList = lhkRows.map((r) => r.lhk_nomor);
-  }
+  const lhkDetail = linkRows
+    .filter((r) => r.lhk_nomor)
+    .map((r) => ({
+      nomor: r.lhk_nomor,
+      pd: r.pd_nomor,
+      path: r.path_desain || "",
+    }));
+  data.PdNomor = linkRows[0]?.pd_nomor || "";
+  data.PdPath = linkRows.find((r) => r.path_desain)?.path_desain || "";
+  data.LhkDetail = lhkDetail;
   // data lama (sebelum alur PDM) tetap tampil sebagai cadangan
   data.LhkList =
-    lhkList.length > 0
-      ? lhkList
+    lhkDetail.length > 0
+      ? lhkDetail.map((r) => r.nomor)
       : data.mspk_lhk_nomor
         ? [data.mspk_lhk_nomor]
         : [];

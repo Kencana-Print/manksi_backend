@@ -954,6 +954,12 @@ const getQcSiap = async (poNomor = "") => {
   return rows;
 };
 
+// Setting di form QC dicatat dalam cm; master setting berupa inci
+const settingInci = (v) => {
+  const n = Number(v) || 0;
+  return n > 100 ? n / 2.54 : n; // >100 dianggap cm
+};
+
 // Ringkas hasil cek lot LANJUT per kode bahan:
 // gramasi dan setting = rata-rata tertimbang qty, warna = warna unik digabung
 const ringkasHasilQc = (lots) => {
@@ -968,7 +974,7 @@ const ringkasHasilQc = (lots) => {
     };
     const bobot = Number(l.qcd_qty_kg) || 0;
     const g = Number(l.qcd_gramasi_cek) || 0;
-    const s = Number(l.qcd_setting_cek) || 0;
+    const s = settingInci(l.qcd_setting_cek);
     if (g > 0) {
       h.g += g * bobot;
       h.gBobot += bobot;
@@ -1096,7 +1102,7 @@ const evaluasiLot = (lot, master) => {
     }
   }
 
-  const s = Number(lot.qcd_setting_cek) || 0;
+  const s = settingInci(lot.qcd_setting_cek);
   const settingPo = master.settingByKode.get(sKode);
   const inciPo = settingPo ? settingPo.inci : null;
   if (

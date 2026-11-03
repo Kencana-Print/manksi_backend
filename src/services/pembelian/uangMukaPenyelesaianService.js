@@ -947,23 +947,24 @@ const saveData = async (payload, user) => {
         }
       }
 
-      if (v && totalTerpakai !== 0 && noBkk) {
+      if (v && totalTerpakai !== 0 && noBkk && d.total > 0) {
         const cUraian =
           `${d.uraian} ${d.spesifikasi || ""} ${d.qty} ${d.satuan || ""}${d.guna ? ` (${d.guna})` : ""}`.trim();
         const noUrut = d.ga !== 0 ? d.no : nourut - 1;
+        const jurRef =
+          d.ga === 1 ? `GA|${d.pmt}` : d.ga === 2 ? "ITEM" : "ITEM2";
 
         await conn.query(
-          `
-          INSERT INTO finance.tjurnalitem
-            (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
+          `INSERT INTO finance.tjurnalitem
+            (jurd_jur_no, jurd_trs, jurd_nourut, jurd_ref, jurd_uraian,
              jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
              jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening, jurd_atasnama)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             noBkk,
             nomerator,
             noUrut,
+            jurRef, // baru
             cUraian,
             d.total,
             d.rekkode || "",
@@ -1001,12 +1002,12 @@ const saveData = async (payload, user) => {
           await conn.query(
             `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
             VALUES (?, ?, ?, ?)`,
-            [noBkm, d.rekkode, d.harga, d.uraian],
+            [noBkm, d.rekkode, d.total, d.uraian],
           );
           await conn.query(
             `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
             VALUES (?, 'BKM', 1, ?, ?, ?)`,
-            [noBkm, keterangan || "", d.harga, rek_kode],
+            [noBkm, keterangan || "", d.total, rek_kode],
           );
         }
 
@@ -1037,12 +1038,12 @@ const saveData = async (payload, user) => {
           await conn.query(
             `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_rek_kode, jurd_debet, jurd_uraian)
             VALUES (?, ?, ?, ?)`,
-            [noBbm, d.rekkode, d.harga, d.uraian],
+            [noBbm, d.rekkode, d.total, d.uraian],
           );
           await conn.query(
             `INSERT INTO finance.tjurnalitem (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian, jurd_kredit, jurd_rek_kode)
             VALUES (?, 'BBM', 1, ?, ?, ?)`,
-            [noBbm, keterangan || "", d.harga, rek_kode],
+            [noBbm, keterangan || "", d.total, rek_kode],
           );
         }
       }

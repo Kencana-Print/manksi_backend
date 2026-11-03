@@ -86,12 +86,20 @@ const getBrowseList = async (filters) => {
   }
 
   const SPECIAL_SUBLIM_USERS = ["EKAMMT", "ESTI", "FADLY"];
+  const SEMUA_DIVISI_USERS = ["ADMIN"];
+
+  const KAOSAN_ONLY_USERS = ["LUTFI", "ESTU"];
+  const isCmoDivisi3 = KAOSAN_ONLY_USERS.includes(userKode) ? 1 : 0;
+  const isCmoDivisi3Extra = isCmo3 === true ? 1 : 0;
+  const isCabangPusat = !userCabang || userCabang === "HO-";
 
   if (userKode && SPECIAL_SUBLIM_USERS.includes(userKode)) {
     // Bisa lihat SO cabangnya sendiri, DITAMBAH SO workshop manapun
     // yang statusnya sublim (spk_sublim = 'Y'), lepas dari cabang.
     whereClause += ` AND (y.spk_cab = ? OR y.spk_sublim = 'Y')`;
     params.push(userCabang || "");
+  } else if (isCmoDivisi3 && isCabangPusat) {
+    whereClause += ` AND LEFT(y.spk_divisi, 1) = '3'`;
   } else if (
     userCabang &&
     userCabang !== "HO-" &&
@@ -100,11 +108,6 @@ const getBrowseList = async (filters) => {
     userKode !== "DINDUN" &&
     userKode !== "ANTA"
   ) {
-    const isCmoDivisi3 =
-      ["LUTFI", "ESTU"].includes(userKode) ||
-      (String(userDivisi) === "3" && (isCmo || isCmo3))
-        ? 1
-        : 0;
     const isGudang = (userBagian || "").toUpperCase() === "GUDANG";
     const isDonaExtraCab = userKode === "DONADONG" ? 1 : 0;
     const isDonaDivisi4 = userKode === "DONADONG" ? 1 : 0;
@@ -118,7 +121,7 @@ const getBrowseList = async (filters) => {
     params.push(
       userCabang,
       userKode || "",
-      isCmoDivisi3,
+      isCmoDivisi3Extra,
       isDonaExtraCab,
       isMdiP01,
       isDonaDivisi4,
@@ -277,14 +280,14 @@ const getBrowseList = async (filters) => {
       ) stbjChk ON stbjChk.stbjd_spk_nomor = IFNULL(ppic.spk_nomor, CONVERT(y.spk_nomor USING latin1))
 
       LEFT JOIN (
-        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
-        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
-      ) pdSo ON pdSo.pd_so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
+        SELECT so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM vlink_desain GROUP BY so_map_nomor
+      ) pdSo ON pdSo.so_map_nomor = CONVERT(y.spk_nomor USING utf8mb4)
       LEFT JOIN (
-        SELECT pd_so_map_nomor, MIN(pd_nomor) AS pd_nomor
-        FROM tpermintaan_desain GROUP BY pd_so_map_nomor
+        SELECT so_map_nomor, MIN(pd_nomor) AS pd_nomor
+        FROM vlink_desain GROUP BY so_map_nomor
       ) pdMap ON y.spk_memo IS NOT NULL AND y.spk_memo <> ''
-        AND pdMap.pd_so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
+        AND pdMap.so_map_nomor = CONVERT(y.spk_memo USING utf8mb4)
       ${whereClause}
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC
@@ -583,11 +586,13 @@ const getPendingDesigns = async (startDate, endDate) => {
       FROM tspk
       WHERE spk_is_so = 1 AND spk_nomor LIKE 'SO-%'
         AND spk_newdesign = 'Y' AND spk_designdone = 'N'
+        AND IFNULL(spk_cmo, '') <> ''
         AND DATE(spk_tanggal) >= ? AND DATE(spk_tanggal) <= ?
       UNION ALL
       SELECT so_nomor AS Nomor, so_nama AS Nama, so_designdone AS DesignDone, so_tanggal AS Tanggal
       FROM tsalesorder
       WHERE so_newdesign = 'Y' AND so_designdone = 'N'
+        AND IFNULL(so_cmo, '') <> ''
         AND DATE(so_tanggal) >= ? AND DATE(so_tanggal) <= ?
     ) x
     ORDER BY x.Tanggal DESC, x.Nomor DESC
@@ -952,15 +957,11 @@ const searchAvailableForSpk = async (
         (s.so_divisi LIKE '3%' OR s.so_divisi LIKE '4%' OR s.so_divisi LIKE '1%')
         OR EXISTS (
           SELECT 1
-          FROM tpermintaan_desain pd
-          WHERE pd.pd_nomor IS NOT NULL
-            AND pd.pd_nomor <> ''
-            AND (
-              pd.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
-              OR (
-                s.so_memo IS NOT NULL AND s.so_memo <> ''
-                AND pd.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4)
-              )
+          FROM vlink_desain vd
+          WHERE vd.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+            OR (
+              s.so_memo IS NOT NULL AND s.so_memo <> ''
+              AND vd.so_map_nomor = CONVERT(s.so_memo USING utf8mb4)
             )
         )
       )
@@ -989,9 +990,10 @@ const searchAvailableForSpk = async (
        ${custNameCol} AS Customer,
        s.so_memo AS MAP,
        IFNULL(
-         (SELECT pd2.pd_nomor FROM tpermintaan_desain pd2
-          WHERE pd2.pd_so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
-             OR (s.so_memo <> '' AND pd2.pd_so_map_nomor = CONVERT(s.so_memo USING utf8mb4))
+         (SELECT vd2.pd_nomor FROM vlink_desain vd2
+          WHERE vd2.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)
+             OR (s.so_memo <> '' AND vd2.so_map_nomor = CONVERT(s.so_memo USING utf8mb4))
+          ORDER BY (vd2.so_map_nomor = CONVERT(s.so_nomor USING utf8mb4)) DESC, vd2.pd_nomor
           LIMIT 1),
          ''
        ) AS PdNomor,

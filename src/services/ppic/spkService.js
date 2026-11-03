@@ -56,9 +56,15 @@ const getBrowseList = async (filters) => {
     if (isGudang) {
       whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ? OR x.Cab IN ('P01','P04')${extraCabClause})`;
     } else {
-      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ?${extraCabClause})`;
+      whereClause += ` AND (x.Cab = ? OR x.Cab = "" OR x.Cab IS NULL OR x.MO = ? OR x.CMO = ? OR x.Pembuat = ?${extraCabClause})`;
     }
-    params.push(userCabang, userKode || "", ...extraCabs);
+    params.push(
+      userCabang,
+      userKode || "",
+      userKode || "",
+      userKode || "",
+      ...extraCabs,
+    );
   }
 
   // ⚠️ Kolom nama customer digated flag lihatCus (user_lihat_cus), dan

@@ -8,7 +8,6 @@ const {
   spkLamaMp13,
   ringkasDaftar,
 } = require("./lhkLini");
-const { T: T_TINTA } = require("./lhkTintaShared");
 
 const TABEL_SPK = "kencanaprint.tspk";
 
@@ -125,13 +124,6 @@ const pastikanRantaiLhk = async (
           `Selesaikan LHK ${nama} terlebih dahulu.`,
       );
     }
-  }
-
-  if (kodeLini === "PROOF") {
-    await pastikanMapPunyaTinta(
-      q,
-      [...perLini.values()].flat().filter((n) => !lama.has(n.toUpperCase())),
-    );
   }
 };
 

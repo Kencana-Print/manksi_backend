@@ -40,6 +40,12 @@ router.get(
   ctrl.getTagihan,
 );
 router.get(
+  "/lookups/voucher",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getVoucherOptions,
+);
+router.get(
   "/:nomor/print",
   verifyToken,
   checkPermission(MENU_ID, "view"),

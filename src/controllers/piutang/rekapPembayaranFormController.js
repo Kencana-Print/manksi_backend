@@ -90,6 +90,18 @@ const getTagihan = async (req, res) => {
   }
 };
 
+const getVoucherOptions = async (req, res) => {
+  try {
+    const data = await svc.getVoucherOptions(
+      req.query.search || "",
+      req.query.excludeNomor || "",
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   searchSupplier,
   getSupplier,
@@ -99,4 +111,5 @@ module.exports = {
   create,
   update,
   getTagihan,
+  getVoucherOptions,
 };

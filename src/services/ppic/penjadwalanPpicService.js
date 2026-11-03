@@ -1,7 +1,32 @@
 const db = require("../../config/database");
 
+// Baris tab MAP/Sampel yang MAP-nya sudah jadi SO (atau yang sudah punya
+// nomor SO) dihapus dari Komitmen Kirim, bukan di-upgrade jadi baris SO.
+// Hanya periode Open: periode Close dibiarkan supaya Pencapaian yang sudah
+// dilaporkan tidak bergeser. Best-effort, tidak boleh menggagalkan pemanggil.
+const purgeMapJadiSo = async (pjwNomor = null) => {
+  try {
+    const params = [];
+    let sql = `DELETE d FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       WHERE d.pjwd_tipe = 'MAP' AND h.pjw_close = 'N'
+         AND (d.pjwd_so_nomor IS NOT NULL
+              OR (d.pjwd_map_nomor IS NOT NULL AND EXISTS (
+                    SELECT 1 FROM tsalesorder s
+                    WHERE s.so_memo = d.pjwd_map_nomor AND s.so_aktif = 'Y')))`;
+    if (pjwNomor) {
+      sql += ` AND d.pjwd_pjw_nomor = ?`;
+      params.push(pjwNomor);
+    }
+    await db.query(sql, params);
+  } catch (e) {
+    console.error("Gagal membersihkan baris MAP yang sudah jadi SO:", e);
+  }
+};
+
 // ── Browse header (list periode) ──
 const getBrowse = async (startDate, endDate, cabang = "") => {
+  await purgeMapJadiSo();
   let query = `SELECT
        h.pjw_nomor AS Nomor,
        DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS TglAwal,
@@ -22,7 +47,7 @@ const getBrowse = async (startDate, endDate, cabang = "") => {
   }
 
   query += ` GROUP BY h.pjw_nomor, h.pjw_tgl1, h.pjw_tgl2, h.pjw_cab, h.pjw_close, h.pjw_keterangan
-     ORDER BY h.pjw_nomor ASC`;
+     ORDER BY h.pjw_tgl1 ASC, h.pjw_cab ASC, h.pjw_nomor ASC`;
 
   const [rows] = await db.query(query, params);
   return rows;
@@ -37,6 +62,8 @@ const getDetail = async (nomor) => {
     [nomor],
   );
   if (!hdr) return [];
+
+  await purgeMapJadiSo(nomor);
 
   const [rows] = await db.query(
     `SELECT
@@ -146,6 +173,9 @@ const getDetail = async (nomor) => {
   );
 
   // ── Realisasi SO/SPK: 2 query agregat, terbatas pada nomor yang tampil ──
+  // Lalu = STBJ sebelum tgl awal periode yang belum terkirim, dihitung
+  //        per tgl awal periode (STBJ sebelum - SJ sebelum).
+  // Ini  = STBJ di dalam periode (tidak dikurangi kirim).
   const refs = [
     ...new Set(
       rows.filter((r) => r.Realisasi === null && r.EffRef).map((r) => r.EffRef),
@@ -156,25 +186,27 @@ const getDetail = async (nomor) => {
   if (refs.length) {
     const [stbjRows] = await db.query(
       `SELECT td.stbjd_spk_nomor AS ref,
-              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, td.stbjd_jumlah, 0)) AS inRange,
-              SUM(IF(th.stbj_tanggal BETWEEN ? AND ?, 0, td.stbjd_jumlah)) AS outRange
+              SUM(IF(th.stbj_tanggal < ?, td.stbjd_jumlah, 0)) AS beforeQty,
+              SUM(IF(th.stbj_tanggal >= ?
+                     AND th.stbj_tanggal < DATE_ADD(?, INTERVAL 1 DAY),
+                     td.stbjd_jumlah, 0)) AS inRange
        FROM tstbj_dtl td
        INNER JOIN tstbj_hdr th ON th.stbj_nomor = td.stbjd_stbj_nomor
        WHERE td.stbjd_spk_nomor IN (?)
        GROUP BY td.stbjd_spk_nomor`,
-      [hdr.t1, hdr.t2, hdr.t1, hdr.t2, refs],
+      [hdr.t1, hdr.t1, hdr.t2, refs],
     );
     stbjRows.forEach((r) => (stbj[r.ref] = r));
 
     const [sjRows] = await db.query(
       `SELECT sd.sjd_spk_nomor AS ref,
               SUM(IF(sh.sj_tanggal BETWEEN ? AND ?, sd.sjd_jumlah, 0)) AS inRange,
-              SUM(sd.sjd_jumlah) AS allQty
+              SUM(IF(sh.sj_tanggal < ?, sd.sjd_jumlah, 0)) AS beforeQty
        FROM tsj_dtl sd
        INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
        WHERE sd.sjd_spk_nomor IN (?) AND sh.sj_approve <> 2
        GROUP BY sd.sjd_spk_nomor`,
-      [hdr.t1, hdr.t2, refs],
+      [hdr.t1, hdr.t2, hdr.t1, refs],
     );
     sjRows.forEach((r) => (sj[r.ref] = r));
   }
@@ -184,13 +216,29 @@ const getDetail = async (nomor) => {
     if (r.Realisasi === null) {
       const s = stbj[r.EffRef];
       const j = sj[r.EffRef];
-      r.Realisasi = isP02
-        ? Number(j?.inRange) || 0
-        : (Number(s?.inRange) || 0) +
-          Math.max((Number(s?.outRange) || 0) - (Number(j?.allQty) || 0), 0);
+      if (isP02) {
+        r.RealisasiLalu = 0;
+        r.RealisasiIni = Number(j?.inRange) || 0;
+      } else {
+        const stbjLalu = Number(s?.beforeQty) || 0;
+        const terkirimSebelum = Number(j?.beforeQty) || 0;
+        r.RealisasiLalu = Math.max(stbjLalu - terkirimSebelum, 0);
+        r.RealisasiIni = Number(s?.inRange) || 0;
+      }
+    } else {
+      // MAP & baris manual: nilai lama masuk kolom minggu ini
+      r.RealisasiLalu = 0;
+      r.RealisasiIni = Number(r.Realisasi) || 0;
     }
+    // Realisasi tetap ada = RealisasiIni supaya frontend lama tidak pecah.
+    r.Realisasi = r.RealisasiIni;
+    r.SpkRef = r.EffRef || null;
     delete r.EffRef;
   }
+
+  const breakdown = await getKesepakatanBreakdown(rows.map((r) => r.PjwdId));
+  for (const r of rows) r.KesepakatanBd = breakdown[r.PjwdId] || [];
+
   return rows;
 };
 
@@ -204,6 +252,10 @@ const toggleClose = async (nomor, isClose) => {
     throw new Error("Periode ini sudah Close.");
   if (!isClose && rows[0].pjw_close === "N")
     throw new Error("Periode ini sudah Open.");
+
+  // Bersihkan dulu selagi periode masih Open, supaya kondisi saat Close
+  // sudah tanpa baris MAP yang jadi SO.
+  if (isClose) await purgeMapJadiSo(nomor);
 
   await db.query(
     `UPDATE tpenjadwalan_ppic_hdr SET pjw_close = ? WHERE pjw_nomor = ?`,
@@ -240,7 +292,7 @@ const getPencapaian = async (nomor) => {
   const sumRencana = (rows) =>
     rows.reduce((s, d) => s + (Number(d.Rencana) || 0), 0);
   const sumRealisasi = (rows) =>
-    rows.reduce((s, d) => s + (Number(d.Realisasi) || 0), 0);
+    rows.reduce((s, d) => s + (Number(d.RealisasiIni) || 0), 0);
 
   const [rows] = await db.query(
     `SELECT pjwp_id AS Id, pjwp_tipe AS Tipe, pjwp_kategori AS Kategori,
@@ -373,6 +425,105 @@ const markMapNotified = async (pjwdIds, userKode) => {
     [values],
   );
 };
+
+// Riwayat kirim aktual (semua SJ) untuk satu SPK
+const getRiwayatKirim = async (spkRef) => {
+  if (!spkRef) return [];
+  const [rows] = await db.query(
+    `SELECT sh.sj_nomor AS Nomor,
+            DATE_FORMAT(sh.sj_tanggal, '%Y-%m-%d') AS Tanggal,
+            sd.sjd_jumlah AS Qty
+     FROM tsj_dtl sd
+     INNER JOIN tsj_hdr sh ON sh.sj_nomor = sd.sjd_sj_nomor
+     WHERE sd.sjd_spk_nomor = ? AND sh.sj_approve <> 2
+     ORDER BY sh.sj_tanggal, sh.sj_nomor`,
+    [spkRef],
+  );
+  return rows.map((r) => ({ ...r, Qty: Number(r.Qty) || 0 }));
+};
+
+// Breakdown jadwal sepakat untuk banyak baris sekaligus: { pjwd_id: [{Tanggal, Qty}] }
+const getKesepakatanBreakdown = async (pjwdIds) => {
+  if (!pjwdIds || !pjwdIds.length) return {};
+  const [rows] = await db.query(
+    `SELECT pjwk_pjwd_id AS Id,
+            DATE_FORMAT(pjwk_tgl, '%Y-%m-%d') AS Tanggal,
+            pjwk_qty AS Qty
+     FROM tpenjadwalan_ppic_kesepakatan
+     WHERE pjwk_pjwd_id IN (?)
+     ORDER BY pjwk_tgl, pjwk_id`,
+    [pjwdIds],
+  );
+  const hasil = {};
+  for (const r of rows) {
+    (hasil[r.Id] = hasil[r.Id] || []).push({
+      Tanggal: r.Tanggal,
+      Qty: Number(r.Qty) || 0,
+    });
+  }
+  return hasil;
+};
+
+// ── Notifikasi SO yang masuk otomatis (berdasarkan dateline) ──
+// Hanya baris yang di-auto-push (log sumber AUTO), di periode Open,
+// 14 hari terakhir, dan belum dibaca user ini.
+const getUnnotifiedSo = async (userKode) => {
+  const [rows] = await db.query(
+    `SELECT d.pjwd_id AS pjwdId, d.pjwd_so_nomor AS soNomor, s.so_nama AS nama,
+            DATE_FORMAT(d.pjwd_tgl_permintaan_kirim, '%Y-%m-%d') AS dateline,
+            d.pjwd_rencana AS rencana,
+            h.pjw_nomor AS pjwNomor, h.pjw_cab AS cab,
+            DATE_FORMAT(h.pjw_tgl1, '%Y-%m-%d') AS tgl1,
+            DATE_FORMAT(h.pjw_tgl2, '%Y-%m-%d') AS tgl2
+     FROM tpenjadwalan_ppic_dtl d
+     INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+     INNER JOIN tpenjadwalan_ppic_so_log l
+       ON l.pso_so_nomor = d.pjwd_so_nomor AND l.pso_sumber = 'AUTO'
+     LEFT JOIN tsalesorder s ON s.so_nomor = d.pjwd_so_nomor
+     WHERE d.pjwd_tipe = 'SO' AND h.pjw_close = 'N'
+       AND l.pso_tgl >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+       AND NOT EXISTS (
+         SELECT 1 FROM tpenjadwalan_ppic_notif_so_read r
+         WHERE r.nsr_pjwd_id = d.pjwd_id AND r.nsr_user = ?
+       )
+     ORDER BY h.pjw_tgl1, h.pjw_cab, h.pjw_nomor, d.pjwd_so_nomor`,
+    [userKode],
+  );
+
+  const perPeriode = new Map();
+  for (const r of rows) {
+    if (!perPeriode.has(r.pjwNomor)) {
+      perPeriode.set(r.pjwNomor, {
+        pjwNomor: r.pjwNomor,
+        cab: r.cab,
+        tgl1: r.tgl1,
+        tgl2: r.tgl2,
+        items: [],
+      });
+    }
+    perPeriode.get(r.pjwNomor).items.push({
+      pjwdId: r.pjwdId,
+      soNomor: r.soNomor,
+      nama: r.nama || "",
+      dateline: r.dateline,
+      rencana: Number(r.rencana) || 0,
+    });
+  }
+  return [...perPeriode.values()];
+};
+
+const markSoNotified = async (pjwdIds, userKode) => {
+  const ids = (Array.isArray(pjwdIds) ? pjwdIds : [])
+    .map(Number)
+    .filter((n) => n > 0);
+  if (!ids.length) return;
+  await db.query(
+    `INSERT IGNORE INTO tpenjadwalan_ppic_notif_so_read (nsr_pjwd_id, nsr_user)
+     VALUES ?`,
+    [ids.map((id) => [id, userKode])],
+  );
+};
+
 module.exports = {
   getBrowse,
   getDetail,
@@ -382,4 +533,7 @@ module.exports = {
   savePencapaian,
   getUnnotifiedMap,
   markMapNotified,
+  getRiwayatKirim,
+  getUnnotifiedSo,
+  markSoNotified,
 };
