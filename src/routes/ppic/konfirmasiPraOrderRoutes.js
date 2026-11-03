@@ -26,21 +26,21 @@ router.patch(
   "/:nomor/konfirmasi",
   verifyToken,
   checkPermission(menuId, "edit"),
-  checkBagian("PPIC", "PRODUKSI"),
+  checkBagian("PPIC", "PRODUKSI", "AUDIT", "EDP", "DIR"),
   controller.confirmKesanggupan,
 );
 router.patch(
   "/bahan/:probId/status",
   verifyToken,
   checkPermission(menuId, "edit"),
-  checkBagian("PPIC"),
+  checkBagian("PPIC", "AUDIT", "EDP", "DIR"),
   controller.confirmStatusBahan,
 );
 router.patch(
   "/:nomor/bahan-spanduk",
   verifyToken,
   checkPermission(menuId, "edit"),
-  checkBagian("PPIC", "PRODUKSI"), // ganti setelah nama bagian tim Spanduk dikonfirmasi
+  checkBagian("PPIC", "PRODUKSI", "AUDIT", "EDP", "DIR"), // ganti setelah nama bagian tim Spanduk dikonfirmasi
   controller.confirmStatusBahanSpanduk,
 );
 
