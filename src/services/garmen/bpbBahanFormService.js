@@ -974,7 +974,7 @@ const ringkasHasilQc = (lots) => {
     };
     const bobot = Number(l.qcd_qty_kg) || 0;
     const g = Number(l.qcd_gramasi_cek) || 0;
-    const s = settingInci(lot.qcd_setting_cek);
+    const s = settingInci(l.qcd_setting_cek);
     if (g > 0) {
       h.g += g * bobot;
       h.gBobot += bobot;
@@ -1102,7 +1102,7 @@ const evaluasiLot = (lot, master) => {
     }
   }
 
-  const s = settingInci(l.qcd_setting_cek);
+  const s = settingInci(lot.qcd_setting_cek);
   const settingPo = master.settingByKode.get(sKode);
   const inciPo = settingPo ? settingPo.inci : null;
   if (
