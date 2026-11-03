@@ -250,6 +250,7 @@ const gaPermintaanDriverRoutes = require("./routes/ga/permintaanDriverRoutes");
 const gaKendaraanRoutes = require("./routes/ga/kendaraanRoutes");
 const gaPenggunaRoutes = require("./routes/ga/penggunaRoutes");
 const gaPerawatanRoutes = require("./routes/ga/perawatanRoutes");
+const gaAmbilVoucherRoutes = require("./routes/ga/ambilVoucherRoutes");
 const gaLaporanPengajuanPerbaikanRoutes = require("./routes/ga/laporanPengajuanPerbaikanRoutes");
 
 //Piutang Routes
@@ -874,6 +875,7 @@ app.use("/api/ga/permintaan-driver", gaPermintaanDriverRoutes);
 app.use("/api/ga/master-kendaraan", gaKendaraanRoutes);
 app.use("/api/ga/master-pengguna", gaPenggunaRoutes);
 app.use("/api/ga/perawatan", gaPerawatanRoutes);
+app.use("/api/ga/ambil-voucher", gaAmbilVoucherRoutes);
 app.use(
   "/api/ga/laporan-pengajuan-perbaikan",
   gaLaporanPengajuanPerbaikanRoutes,
