@@ -9,11 +9,13 @@ const praOrderFormService = require("../penjualan/praOrderFormService");
 // ─────────────────────────────────────────────────────────
 const DIVISI_TANPA_KONFIRMASI = ["MMT"];
 
-// Spanduk (divisi 1) dikonfirmasi tim PRODUKSI; divisi lain oleh PPIC.
-// Dicek di service karena checkBagian di route tidak tahu divisi pra order.
+// Bagian yang boleh konfirmasi semua divisi (Sanggup / Ready), selain ADMIN
+const BAGIAN_BEBAS_KONFIRMASI = ["AUDIT", "EDP", "DIR"];
+
 const assertBagianDivisi = (divisi, bagian, userKode) => {
   if (String(userKode || "").toUpperCase() === "ADMIN") return;
   const b = String(bagian || "").toUpperCase();
+  if (BAGIAN_BEBAS_KONFIRMASI.includes(b)) return;
   if (Number(divisi) === 1) {
     if (b !== "PRODUKSI") {
       throw new Error(
