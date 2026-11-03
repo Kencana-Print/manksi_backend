@@ -102,13 +102,18 @@ const getDetail = async (nomor) => {
        DATE_FORMAT(d.ntmd_deadline, '%Y-%m-%d') AS deadline,
        d.ntmd_status_user AS statusUser,
        d.ntmd_status_sistem AS statusSistem,
+       d.ntmd_catatan AS catatan,
        ${SQL_TERLAMBAT} AS terlambat
      FROM tnotulensi_dtl d
      WHERE d.ntmd_nomor = ?
      ORDER BY d.ntmd_nourut`,
     [nomor],
   );
-  return rows.map((r) => ({ ...r, terlambat: !!Number(r.terlambat) }));
+  return rows.map((r) => ({
+    ...r,
+    catatan: r.catatan || "",
+    terlambat: !!Number(r.terlambat),
+  }));
 };
 
 // ─────────────────────────────────────────────────────────
@@ -135,6 +140,7 @@ const getExportDetail = async (query) => {
        DATE_FORMAT(d.ntmd_deadline, '%Y-%m-%d') AS deadline,
        d.ntmd_status_user AS statusUser,
        d.ntmd_status_sistem AS statusSistem,
+       d.ntmd_catatan AS catatan,
        ${SQL_TERLAMBAT} AS terlambat
      FROM tnotulensi_hdr h
      INNER JOIN tnotulensi_dtl d ON d.ntmd_nomor = h.ntm_nomor
@@ -142,7 +148,11 @@ const getExportDetail = async (query) => {
      ORDER BY h.ntm_tanggal, h.ntm_nomor, d.ntmd_nourut`,
     [startDate, endDate],
   );
-  return rows.map((r) => ({ ...r, terlambat: !!Number(r.terlambat) }));
+  return rows.map((r) => ({
+    ...r,
+    catatan: r.catatan || "",
+    terlambat: !!Number(r.terlambat),
+  }));
 };
 
 // ─────────────────────────────────────────────────────────

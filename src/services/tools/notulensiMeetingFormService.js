@@ -6,6 +6,7 @@ const STATUS_VALID = ["OPEN", "PROGRESS", "DONE", "BATAL"];
 const MAKS_AGENDA = 200;
 const MAKS_LOKASI = 100;
 const MAKS_PIC = 200;
+const MAKS_CATATAN = 500;
 
 const tglValid = (v) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -44,6 +45,7 @@ const siapkanData = (payload) => {
     const hasil = String(r?.hasil || "").trim();
     const pic = String(r?.pic || "").trim();
     const deadline = String(r?.deadline || "").trim();
+    const catatan = String(r?.catatan || "").trim();
     const statusUser = String(r?.statusUser || "OPEN")
       .trim()
       .toUpperCase();
@@ -52,7 +54,7 @@ const siapkanData = (payload) => {
       .toUpperCase();
 
     // baris benar-benar kosong (baris trailing grid) dilewati
-    if (!hasil && !pic && !deadline) return;
+    if (!hasil && !pic && !deadline && !catatan) return;
 
     const baris = i + 1;
     if (!hasil) {
@@ -60,6 +62,12 @@ const siapkanData = (payload) => {
     }
     if (pic.length > MAKS_PIC) {
       throw galat(`PIC baris ${baris} maksimal ${MAKS_PIC} karakter.`, 400);
+    }
+    if (catatan.length > MAKS_CATATAN) {
+      throw galat(
+        `Catatan baris ${baris} maksimal ${MAKS_CATATAN} karakter.`,
+        400,
+      );
     }
     if (deadline && !tglValid(deadline)) {
       throw galat(`Deadline baris ${baris} tidak valid.`, 400);
@@ -80,6 +88,7 @@ const siapkanData = (payload) => {
       hasil,
       pic,
       deadline: deadline || null,
+      catatan: catatan || null,
       statusUser,
       statusSistem,
     });
@@ -112,7 +121,7 @@ const insertDetail = async (conn, nomor, detail) => {
   await conn.query(
     `INSERT INTO tnotulensi_dtl
        (ntmd_nomor, ntmd_nourut, ntmd_hasil, ntmd_pic, ntmd_deadline,
-        ntmd_status_user, ntmd_status_sistem)
+        ntmd_status_user, ntmd_status_sistem, ntmd_catatan)
      VALUES ?`,
     [
       detail.map((d, i) => [
@@ -123,6 +132,7 @@ const insertDetail = async (conn, nomor, detail) => {
         d.deadline,
         d.statusUser,
         d.statusSistem,
+        d.catatan,
       ]),
     ],
   );
@@ -322,6 +332,7 @@ const getById = async (nomor, user) => {
        DATE_FORMAT(d.ntmd_deadline, '%Y-%m-%d') AS deadline,
        d.ntmd_status_user AS statusUser,
        d.ntmd_status_sistem AS statusSistem,
+       d.ntmd_catatan AS catatan,
        ${SQL_TERLAMBAT} AS terlambat
      FROM tnotulensi_dtl d
      WHERE d.ntmd_nomor = ?
@@ -333,7 +344,11 @@ const getById = async (nomor, user) => {
     ...hdr,
     peserta: hdr.peserta || "",
     bisaUbah: bisaUbah(hdr.pembuat, user),
-    detail: rows.map((r) => ({ ...r, terlambat: !!Number(r.terlambat) })),
+    detail: rows.map((r) => ({
+      ...r,
+      catatan: r.catatan || "",
+      terlambat: !!Number(r.terlambat),
+    })),
   };
 };
 
