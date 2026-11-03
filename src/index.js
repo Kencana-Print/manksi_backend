@@ -412,6 +412,105 @@ const notulensiMeetingFormRoutes = require("./routes/tools/notulensiMeetingFormR
 const versionRoutes = require("./routes/system/versionRoutes");
 const settingHargaBahanRoutes = require("./routes/pembelian/settingHargaBahanRoutes");
 
+// ==========================================
+// MMT ROUTES (Struktur 1-to-1 Tab Transaksi)
+// ==========================================
+
+// 1. Daftar
+const mmtMasterBahanRoutes = require("./routes/mmt/daftar/masterBahanRoutes");
+const mmtOperatorRoutes = require("./routes/mmt/daftar/operatorRoutes");
+const mmtMesinRoutes = require("./routes/mmt/daftar/mesinMmtRoutes");
+const mmtLookupGdgMesinRoutes = require("./routes/mmt/daftar/lookupGdgMesinRoutes");
+const mmtLookupPabrikRoutes = require("./routes/mmt/daftar/lookupPabrikRoutes");
+const mmtMasterObatRoutes = require("./routes/mmt/daftar/masterObatRoutes");
+
+// 2. Finance (Khusus PO Bahan MMT, PO External MMT, Retur Beli, Invoice, Voucher)
+const mmtPoBahanRoutes = require("./routes/mmt/finance/poBahanMmtRoutes");
+const mmtPoExtRoutes = require("./routes/mmt/finance/poExtMmtRoutes");
+const mmtReturBeliRoutes = require("./routes/mmt/finance/returBeliRoutes");
+const mmtInvoicePembelianRoutes = require("./routes/mmt/finance/invoicePembelianRoutes");
+const mmtVoucherPelunasanRoutes = require("./routes/mmt/finance/voucherPelunasanRoutes");
+
+// 3. Bahan Baku & Produksi
+const mmtPermintaanPembelianRoutes = require("./routes/mmt/bahan-baku-produksi/permintaanPembelianRoutes");
+const mmtPurchaseRequestRoutes = mmtPermintaanPembelianRoutes;
+const mmtPengajuanPermintaanRoutes = mmtPermintaanPembelianRoutes;
+const mmtMppbRoutes = require("./routes/mmt/mppbRoutes");
+const mmtPermintaanBahanRoutes = require("./routes/mmt/bahan-baku-produksi/permintaanBahanRoutes");
+const mmtPenerimaanBahanRoutes = require("./routes/mmt/bahan-baku-produksi/penerimaanBahanRoutes");
+const mmtMutasiGudangRoutes = require("./routes/mmt/bahan-baku-produksi/mutasiGudangRoutes");
+const mmtKoreksiStokRoutes = require("./routes/mmt/bahan-baku-produksi/koreksiStokMmtRoutes");
+const mmtPengajuanKoreksiStokRoutes = require("./routes/mmt/bahan-baku-produksi/pengajuanKoreksiStokRoutes");
+const mmtStokOpnameRoutes = require("./routes/mmt/bahan-baku-produksi/stokOpnameGudangRoutes");
+const mmtPermintaanProduksiBahanRoutes = require("./routes/mmt/bahan-baku-produksi/permintaanProduksiBahanRoutes");
+const mmtPermintaanProduksiRoutes = require("./routes/mmt/bahan-baku-produksi/permintaanProduksiRoutes");
+const mmtPinjamRoutes = require("./routes/mmt/bahan-baku-produksi/mmtPinjamRoutes");
+const mmtReturProduksiRoutes = require("./routes/mmt/bahan-baku-produksi/returProduksiRoutes");
+const mmtStokGudangRoutes = require("./routes/mmt/bahan-baku-produksi/stokGudangMmtRoutes");
+
+// 3b. Barcode
+const mmtRecreateBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/recreateBarcodeRoutes");
+const mmtSearchBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/searchBarcodeRoutes");
+const mmtLapKartuStokRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/lapKartuStokMmtRoutes");
+
+// 4. LHK
+const mmtLhkMesinCetakRoutes = require("./routes/mmt/lhk/lhkMesinCetakRoutes");
+const mmtLhkCetakMmtRoutes = require("./routes/mmt/lhk/lhkCetakMmtRoutes");
+const mmtLhkTekstilMmtRoutes = require("./routes/mmt/lhk/lhkTekstilMmtRoutes");
+const mmtLhkFinishingRoutes = require("./routes/mmt/lhk/lhkFinishingRoutes");
+const mmtLhkProofRoutes = require("./routes/mmt/lhk/lhkProofRoutes");
+const mmtLhkPaperprintRoutes = require("./routes/mmt/lhk/lhkPaperprintRoutes");
+const mmtLhkSublimRoutes = require("./routes/mmt/lhk/lhkSublimRoutes");
+const mmtLhkLayoutRoutes = require("./routes/mmt/lhk/lhkLayoutRoutes");
+const mmtLhkPolaRoutes = require("./routes/mmt/lhk/lhkPolaRoutes");
+
+// 5. Transaksi Khusus
+// 5a. Maklon
+const mmtMaklonBarangRoutes = require("./routes/mmt/transaksi-khusus/maklon/maklonBarangRoutes");
+const mmtSjHasilMaklonRoutes = require("./routes/mmt/transaksi-khusus/maklon/sjHasilMaklonRoutes");
+
+// 5b. MAP
+const mmtMapRoutes = require("./routes/mmt/transaksi-khusus/map/mapRoutes");
+const mmtBastMapRoutes = require("./routes/mmt/transaksi-khusus/map/bastMapRoutes");
+const mmtRelationshipMapRoutes = require("./routes/mmt/transaksi-khusus/map/relationshipMapMmtRoutes");
+
+// 5c. SPK & Order Terkait
+const mmtSoToSpkRoutes = require("./routes/mmt/transaksi-khusus/spk-order/soToSpkRoutes");
+const mmtSpkRoutes = require("./routes/mmt/transaksi-khusus/spk-order/spkRoutes");
+const mmtPlanningProduksiRoutes = require("./routes/mmt/transaksi-khusus/spk-order/planningProduksiRoutes");
+const mmtKomitmenKirimRoutes = require("./routes/mmt/transaksi-khusus/spk-order/komitmenKirimRoutes");
+const mmtMutasiInternalRoutes = require("./routes/mmt/transaksi-khusus/spk-order/mutasiInternalRoutes");
+const mmtPoPaperprintRoutes = require("./routes/mmt/transaksi-khusus/spk-order/poPaperprintRoutes");
+const mmtPoInternalRoutes = require("./routes/mmt/transaksi-khusus/spk-order/poInternalRoutes");
+const mmtPenerimaanPoExtRoutes = require("./routes/mmt/transaksi-khusus/spk-order/penerimaanPoExtMmtRoutes");
+
+// 5d. Pengiriman
+const mmtStbjRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/stbjRoutes");
+const mmtStbjMmtRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/stbjMmtRoutes");
+const mmtSuratJalanRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/suratJalanRoutes");
+const mmtSuratJalanMapRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/suratJalanMapRoutes");
+const mmtJadwalKirimRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/jadwalKirimRoutes");
+
+// 6. Laporan MMT
+const mmtLapSpkRoutes = require("./routes/mmt/laporan/lapSpkMmtRoutes");
+const mmtLapLmkpRoutes = require("./routes/mmt/laporan/lapLmkpMmtRoutes");
+const mmtLapMonFinishingRoutes = require("./routes/mmt/laporan/lapMonFinishingRoutes");
+const mmtLapMonBsRoutes = require("./routes/mmt/laporan/lapMonBsRoutes");
+const mmtLapMonCetakRoutes = require("./routes/mmt/laporan/lapMonCetakRoutes");
+const mmtLapMonTekstilRoutes = require("./routes/mmt/laporan/lapMonTekstilRoutes");
+const mmtLapMonProofRoutes = require("./routes/mmt/laporan/lapMonProofRoutes");
+const mmtLapMonSublimRoutes = require("./routes/mmt/laporan/lapMonSublimRoutes");
+const mmtLapMonPaperprintRoutes = require("./routes/mmt/laporan/lapMonPaperprintRoutes");
+const mmtLapMonJadwalKirimRoutes = require("./routes/mmt/laporan/lapMonJadwalKirimRoutes");
+const mmtLapLsTintaRoutes = require("./routes/mmt/laporan/lapLsTintaRoutes");
+const mmtLapLsBahanUtamaRoutes = require("./routes/mmt/laporan/lapLsBahanUtamaRoutes");
+const mmtLapLsBahanPenolongRoutes = require("./routes/mmt/laporan/lapLsBahanPenolongRoutes");
+const mmtLapBarangJadiRoutes = require("./routes/mmt/laporan/lapBarangJadiRoutes");
+const mmtLapPlanVsLhkRoutes = require("./routes/mmt/laporan/lapPlanVsLhkRoutes");
+const mmtLapLhkRoutes = require("./routes/mmt/laporan/lapLhkRoutes");
+const mmtLapKirimanRoutes = require("./routes/mmt/laporan/lapKirimanRoutes");
+const mmtLapPemakaianBahanRoutes = require("./routes/mmt/laporan/lapPemakaianBahanRoutes");
+
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
 app.use(
@@ -1050,6 +1149,240 @@ app.use("/api/tools/notulensi-meeting", notulensiMeetingRoutes);
 app.use("/api/tools/notulensi-meeting-form", notulensiMeetingFormRoutes);
 
 app.use("/api/system/version", versionRoutes);
+
+// ── MMT LHK Routes ──
+app.use("/api/mmt/lhk/mesin-cetak", mmtLhkMesinCetakRoutes);
+app.use("/api/mmt/lhk-cetak", mmtLhkMesinCetakRoutes);
+
+app.use("/api/mmt/lhk/cetak-mmt", mmtLhkCetakMmtRoutes);
+app.use("/api/mmt/lhk-cetak-mmt", mmtLhkCetakMmtRoutes);
+
+app.use("/api/mmt/lhk/tekstil", mmtLhkTekstilMmtRoutes);
+app.use("/api/mmt/lhk-tekstil-mmt", mmtLhkTekstilMmtRoutes);
+
+app.use("/api/mmt/lhk/finishing", mmtLhkFinishingRoutes);
+app.use("/api/mmt/lhk-finishing", mmtLhkFinishingRoutes);
+
+app.use("/api/mmt/lhk/proof", mmtLhkProofRoutes);
+app.use("/api/mmt/lhk-proof", mmtLhkProofRoutes);
+
+app.use("/api/mmt/lhk/paperprint", mmtLhkPaperprintRoutes);
+app.use("/api/mmt/lhk-paperprint", mmtLhkPaperprintRoutes);
+
+app.use("/api/mmt/lhk/sublim", mmtLhkSublimRoutes);
+app.use("/api/mmt/lhk-sublim", mmtLhkSublimRoutes);
+
+app.use("/api/mmt/lhk/layout", mmtLhkLayoutRoutes);
+app.use("/api/mmt/lhk-layout", mmtLhkLayoutRoutes);
+
+app.use("/api/mmt/lhk/pola", mmtLhkPolaRoutes);
+app.use("/api/mmt/lhk-pola", mmtLhkPolaRoutes);
+
+// ==========================================
+// MMT ROUTES (Struktur 1-to-1 Tab Transaksi)
+// ==========================================
+
+// 1. Daftar
+app.use("/api/mmt/daftar/bahan", mmtMasterBahanRoutes);
+app.use("/api/mmt/master-bahan", mmtMasterBahanRoutes);
+app.use("/api/mmt/daftar/operator", mmtOperatorRoutes);
+app.use("/api/mmt/operator", mmtOperatorRoutes);
+app.use("/api/mmt/daftar/mesin", mmtMesinRoutes);
+app.use("/api/mmt/mesin", mmtMesinRoutes);
+app.use("/api/mmt/daftar/lookup", mmtLookupGdgMesinRoutes);
+app.use("/api/mmt/lookup", mmtLookupGdgMesinRoutes);
+app.use("/api/mmt/daftar/lookup-pabrik", mmtLookupPabrikRoutes);
+app.use("/api/mmt/lookup-pabrik", mmtLookupPabrikRoutes);
+app.use("/api/mmt/daftar/master-obat", mmtMasterObatRoutes);
+app.use("/api/mmt/master-obatt", mmtMasterObatRoutes);
+
+// 2. Finance
+app.use("/api/mmt/finance/po-bahan-mmt", mmtPoBahanRoutes);
+app.use("/api/mmt/po-bahan-mmt", mmtPoBahanRoutes);
+app.use("/api/mmt/finance/po-external-mmt", mmtPoExtRoutes);
+app.use("/api/mmt/po-external-mmt", mmtPoExtRoutes);
+app.use("/api/mmt/finance/retur-beli", mmtReturBeliRoutes);
+app.use("/api/mmt/retur-beli", mmtReturBeliRoutes);
+app.use("/api/mmt/finance/invoice-pembelian", mmtInvoicePembelianRoutes);
+app.use("/api/mmt/invoice", mmtInvoicePembelianRoutes);
+app.use("/api/mmt/finance/voucher-pelunasan", mmtVoucherPelunasanRoutes);
+app.use("/api/mmt/voucher-pelunasan", mmtVoucherPelunasanRoutes);
+
+// 3. Bahan Baku & Produksi
+app.use("/api/mmt/bahan-baku-produksi/permintaan-pembelian", mmtPermintaanPembelianRoutes);
+app.use("/api/mmt/permintaan-pembelian", mmtPermintaanPembelianRoutes);
+app.use("/api/mmt/bahan-baku-produksi/pengajuan-permintaan", mmtPermintaanPembelianRoutes);
+app.use("/api/mmt/pengajuan-permintaan", mmtPermintaanPembelianRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/purchase-request", mmtPermintaanBahanRoutes);
+app.use("/api/mmt/purchase-request", mmtPermintaanBahanRoutes);
+app.use("/api/mmt/bahan-baku-produksi/permintaan-bahan", mmtPermintaanBahanRoutes);
+app.use("/api/mmt/permintaan-bahan", mmtPermintaanBahanRoutes);
+app.use("/api/mmt/bahan-baku-produksi/permintaan-bahan-gudang-utama", mmtPermintaanBahanRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/penerimaan-bahan", mmtPenerimaanBahanRoutes);
+app.use("/api/mmt/penerimaan-bahan", mmtPenerimaanBahanRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/mutasi-bahan", mmtMutasiGudangRoutes);
+app.use("/api/mmt/mutasi-gudang", mmtMutasiGudangRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/koreksi-stok", mmtKoreksiStokRoutes);
+app.use("/api/mmt/koreksi-stok", mmtKoreksiStokRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/pengajuan-koreksi-stok", mmtPengajuanKoreksiStokRoutes);
+app.use("/api/mmt/pengajuan-koreksi-stok", mmtPengajuanKoreksiStokRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/stok-opname", mmtStokOpnameRoutes);
+app.use("/api/mmt/stok-opname", mmtStokOpnameRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/permintaan-produksi", mmtPermintaanProduksiBahanRoutes);
+app.use("/api/mmt/permintaan-produksi-bahan", mmtPermintaanProduksiBahanRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/realisasi-produksi", mmtPermintaanProduksiRoutes);
+app.use("/api/mmt/permintaan-produksi", mmtPermintaanProduksiRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/pinjam", mmtPinjamRoutes);
+app.use("/api/mmt/request-pinjam", mmtPinjamRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/retur-produksi", mmtReturProduksiRoutes);
+app.use("/api/mmt/retur-produksi", mmtReturProduksiRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/stok-gudang", mmtStokGudangRoutes);
+app.use("/api/mmt/stok-gudang", mmtStokGudangRoutes);
+
+// 3b. Barcode
+app.use("/api/mmt/bahan-baku-produksi/barcode/create", mmtRecreateBarcodeRoutes);
+app.use("/api/mmt/recreate-barcode", mmtRecreateBarcodeRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/barcode/search", mmtSearchBarcodeRoutes);
+app.use("/api/mmt/search-barcode", mmtSearchBarcodeRoutes);
+
+app.use("/api/mmt/bahan-baku-produksi/barcode/kartu-stok", mmtLapKartuStokRoutes);
+app.use("/api/mmt/lap-kartu-stok", mmtLapKartuStokRoutes);
+
+// 4. Transaksi Khusus - Maklon
+app.use("/api/mmt/transaksi-khusus/maklon/barang", mmtMaklonBarangRoutes);
+app.use("/api/mmt/maklon/barang", mmtMaklonBarangRoutes);
+app.use("/api/mmt/maklon-barang", mmtMaklonBarangRoutes);
+
+app.use("/api/mmt/transaksi-khusus/maklon/sj-hasil-maklon", mmtSjHasilMaklonRoutes);
+app.use("/api/mmt/sj-hasil-maklon", mmtSjHasilMaklonRoutes);
+
+// 4b. Transaksi Khusus - MAP
+app.use("/api/mmt/transaksi-khusus/map/memo", mmtMapRoutes);
+app.use("/api/mmt/map", mmtMapRoutes);
+
+app.use("/api/mmt/transaksi-khusus/map/bast", mmtBastMapRoutes);
+app.use("/api/mmt/bast-map", mmtBastMapRoutes);
+
+app.use("/api/mmt/transaksi-khusus/map/relationship", mmtRelationshipMapRoutes);
+app.use("/api/mmt/relationship-map", mmtRelationshipMapRoutes);
+
+// 4c. Transaksi Khusus - SPK & Order Terkait
+app.use("/api/mmt/transaksi-khusus/spk-order/so-to-spk", mmtSoToSpkRoutes);
+app.use("/api/mmt/so-to-spk", mmtSoToSpkRoutes);
+app.use("/api/mmt/so-spk", mmtSoToSpkRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/spk", mmtSpkRoutes);
+app.use("/api/mmt/spk", mmtSpkRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/planning-produksi", mmtPlanningProduksiRoutes);
+app.use("/api/mmt/planning-produksi", mmtPlanningProduksiRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/komitmen-kirim", mmtKomitmenKirimRoutes);
+app.use("/api/mmt/komitmen-kirim", mmtKomitmenKirimRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/mutasi-internal", mmtMutasiInternalRoutes);
+app.use("/api/mmt/mutasi-internal", mmtMutasiInternalRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/po-paperprint", mmtPoPaperprintRoutes);
+app.use("/api/mmt/po-paperprint", mmtPoPaperprintRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/po-internal", mmtPoInternalRoutes);
+app.use("/api/mmt/po-internal", mmtPoInternalRoutes);
+
+app.use("/api/mmt/transaksi-khusus/spk-order/penerimaan-po-external", mmtPenerimaanPoExtRoutes);
+app.use("/api/mmt/penerimaan-po-external", mmtPenerimaanPoExtRoutes);
+
+// 4d. Transaksi Khusus - Pengiriman
+app.use("/api/mmt/transaksi-khusus/pengiriman/stbj", mmtStbjRoutes);
+app.use("/api/mmt/stbj", mmtStbjRoutes);
+
+app.use("/api/mmt/transaksi-khusus/pengiriman/stbj-mmt", mmtStbjMmtRoutes);
+app.use("/api/mmt/daftar/stbj", mmtStbjMmtRoutes);
+app.use("/api/mmt/laporan-stbj", mmtStbjMmtRoutes);
+
+app.use("/api/mmt/transaksi-khusus/pengiriman/surat-jalan", mmtSuratJalanRoutes);
+app.use("/api/mmt/surat-jalan", mmtSuratJalanRoutes);
+
+app.use("/api/mmt/transaksi-khusus/pengiriman/surat-jalan-map", mmtSuratJalanMapRoutes);
+app.use("/api/mmt/surat-jalan-map", mmtSuratJalanMapRoutes);
+
+app.use("/api/mmt/transaksi-khusus/pengiriman/jadwal-kirim", mmtJadwalKirimRoutes);
+app.use("/api/mmt/jadwal-kirim", mmtJadwalKirimRoutes);
+
+// 5. Laporan MMT
+app.use("/api/mmt/laporan/spk-mmt", mmtLapSpkRoutes);
+app.use("/api/mmt/laporan-spk-mmt", mmtLapSpkRoutes);
+
+app.use("/api/mmt/laporan/lmkp-mmt", mmtLapLmkpRoutes);
+app.use("/api/mmt/monitoring/laporan-lmkp", mmtLapLmkpRoutes);
+
+app.use("/api/mmt/laporan/monitoring-finishing", mmtLapMonFinishingRoutes);
+app.use("/api/mmt/monitoring-finishing", mmtLapMonFinishingRoutes);
+
+app.use("/api/mmt/laporan/monitoring-bs", mmtLapMonBsRoutes);
+app.use("/api/mmt/laporan-bs", mmtLapMonBsRoutes);
+
+app.use("/api/mmt/laporan/monitoring-cetak", mmtLapMonCetakRoutes);
+app.use("/api/mmt/monitoring-cetak", mmtLapMonCetakRoutes);
+
+app.use("/api/mmt/laporan/monitoring-tekstil", mmtLapMonTekstilRoutes);
+app.use("/api/mmt/monitoring-tekstil", mmtLapMonTekstilRoutes);
+
+app.use("/api/mmt/laporan/monitoring-proof", mmtLapMonProofRoutes);
+app.use("/api/mmt/monitoring-proof", mmtLapMonProofRoutes);
+
+app.use("/api/mmt/laporan/monitoring-sublim", mmtLapMonSublimRoutes);
+app.use("/api/mmt/monitoring-sublim", mmtLapMonSublimRoutes);
+
+app.use("/api/mmt/laporan/monitoring-paperprint", mmtLapMonPaperprintRoutes);
+app.use("/api/mmt/monitoring-paperprint", mmtLapMonPaperprintRoutes);
+
+app.use("/api/mmt/laporan/monitoring-jadwal-kirim", mmtLapMonJadwalKirimRoutes);
+app.use("/api/mmt/monitoring-jadwal-kirim", mmtLapMonJadwalKirimRoutes);
+
+app.use("/api/mmt/laporan/ls-tinta", mmtLapLsTintaRoutes);
+app.use("/api/mmt/laporan-ls-tinta", mmtLapLsTintaRoutes);
+
+app.use("/api/mmt/laporan/ls-bahan-utama", mmtLapLsBahanUtamaRoutes);
+app.use("/api/mmt/laporan-ls-bahan-utama", mmtLapLsBahanUtamaRoutes);
+
+app.use("/api/mmt/laporan/ls-bahan-penolong", mmtLapLsBahanPenolongRoutes);
+app.use("/api/mmt/laporan-ls-bahan-penolong", mmtLapLsBahanPenolongRoutes);
+
+app.use("/api/mmt/laporan/barang-jadi", mmtLapBarangJadiRoutes);
+app.use("/api/mmt/laporan-barang-jadi", mmtLapBarangJadiRoutes);
+
+app.use("/api/mmt/laporan/plan-vs-lhk", mmtLapPlanVsLhkRoutes);
+app.use("/api/mmt/laporan-plan-vs-lhk", mmtLapPlanVsLhkRoutes);
+
+app.use("/api/mmt/laporan/lhk", mmtLapLhkRoutes);
+app.use("/api/mmt/laporan-lhk", mmtLapLhkRoutes);
+
+app.use("/api/mmt/laporan/kirim", mmtLapKirimanRoutes);
+app.use("/api/mmt/laporan-kirim", mmtLapKirimanRoutes);
+
+app.use("/api/mmt/laporan/pemakaian-bahan", mmtLapPemakaianBahanRoutes);
+app.use("/api/mmt/lap-pemakaian-bahan", mmtLapPemakaianBahanRoutes);
+
+// 6. Shared ERP Aliases for MMT compatibility
+app.use("/api/mmt/customer", customerRoutes);
+app.use("/api/mmt/dashboard", dashboardRoutes);
+app.use("/api/mmt/mppb", mmtMppbRoutes);
+app.use("/api/mmt/bahan-baku-produksi/mppb", mmtMppbRoutes);
+app.use("/api/mmt/sales-order", salesOrderRoutes);
+app.use("/api/mmt/manage-user", userRoutes);
 
 const httpServer = http.createServer(app);
 const io = initSocket(httpServer);

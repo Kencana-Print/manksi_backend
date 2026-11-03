@@ -675,12 +675,12 @@ const searchCustomer = async (
 };
 
 const getCabangPabrik = async (type) => {
-  // FIX: Tambahkan pab_nama AS Nama agar tidak kosong di frontend
-  let query = `SELECT pab_kode AS Kode, pab_nama AS Nama FROM tpabrik`;
+  // Ambil Kode, Nama, dan Alamat dari tpabrik
+  let query = `SELECT pab_kode AS Kode, pab_nama AS Nama, pab_alamat AS Alamat FROM tpabrik`;
 
   // Jika parameter type dikirim sebagai 'po-internal', batasi hasilnya
   if (type === "po-internal") {
-    query += ` AND pab_kode IN ('P01', 'P02', 'P03', 'P04', 'P05', 'HO-')`;
+    query += ` WHERE pab_kode IN ('P01', 'P02', 'P03', 'P04', 'P05', 'HO-')`;
   }
 
   query += ` ORDER BY pab_kode`;
