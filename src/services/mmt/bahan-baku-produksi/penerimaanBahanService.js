@@ -2,6 +2,7 @@
 
 const pool = require("../../../config/database");
 const { format } = require('date-fns');
+const poBahanMmtService = require('../finance/poBahanMmtService');
 
 const throwDbError = (message, error) => {
     console.error(message, error.message);
@@ -326,27 +327,7 @@ exports.loadRecMmtById = async (nomor) => {
 
 exports.getPOLookupData = async (keyword) => {
     try {
-        let sql = `
-            SELECT 
-                po_nomor AS Nomor, 
-                DATE_FORMAT(po_tanggal, '%d/%m/%Y') AS Tanggal, 
-                po_sup_kode AS Supplier
-            FROM tpo_mmt_hdr 
-        `;
-
-        const params = [];
-
-        if (keyword) {
-            // Filter berdasarkan Nomor PO atau Nama Supplier
-            sql += ` AND (po_nomor LIKE ? OR po_sup_kode LIKE ?)`;
-            const searchKeyword = `%${keyword}%`;
-            params.push(searchKeyword, searchKeyword);
-        }
-
-        sql += ` ORDER BY po_nomor DESC LIMIT 100`; // Batasi hasil
-
-        const [rows] = await pool.query(sql, params);
-        return rows;
+        return await poBahanMmtService.getPOLookupData(keyword);
     } catch (error) {
         throwDbError('Gagal mengambil data PO untuk lookup', error);
     }
@@ -357,41 +338,7 @@ exports.getPOLookupData = async (keyword) => {
 // ==============================================
 exports.getPODetail = async (poNomor) => {
     try {
-        // 1. Ambil Data Header
-        const [headerRows] = await pool.query(
-            `SELECT 
-                po_nomor AS Nomor, 
-                DATE_FORMAT(po_tanggal, '%Y-%m-%d') AS Tanggal, 
-                po_sup_kode AS Kode_Supplier
-            FROM tpo_mmt_hdr WHERE po_nomor = ?`,
-            [poNomor]
-        );
-
-        if (headerRows.length === 0) {
-            throw new Error(`Nomor PO ${poNomor} tidak ditemukan.`);
-        }
-
-        const header = headerRows[0];
-
-        // 2. Ambil Data Detail Item (Gabung dengan Master Bahan untuk Panjang/Lebar)
-        const [detailRows] = await pool.query(
-            `SELECT
-                D.pod_brg_kode AS SKU,
-                B.brg_nama AS Nama_Bahan,
-                D.pod_qty AS QTY_PO,
-                B.brg_satuan AS Satuan,
-                B.brg_panjang AS Panjang,
-                B.brg_lebar AS Lebar
-            FROM tpo_mmt_dtl D
-            INNER JOIN tbarang_mmt B ON D.pod_brg_kode = B.brg_kode
-            WHERE D.pod_po_nomor = ?`,
-            [poNomor]
-        );
-        return {
-            header,
-            details: detailRows
-        };
-
+        return await poBahanMmtService.getPODetail(poNomor);
     } catch (error) {
         throwDbError(`Gagal memuat detail PO ${poNomor}`, error);
     }
