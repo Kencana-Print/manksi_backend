@@ -35,10 +35,17 @@ const getProgress = async (conn, nomor) => {
     `SELECT COUNT(*) AS jmlLhk FROM tlhkpola_marker_dtl WHERE ldm_pm_nomor = ?`,
     [nomor],
   );
+  const [[tt]] = await conn.query(
+    `SELECT COUNT(*) AS jmlTt, COUNT(tt_date_terima) AS jmlTtTerima
+       FROM tpermintaan_marker_tt WHERE tt_pm_nomor = ?`,
+    [nomor],
+  );
   return {
     jmlSpk: Number(r.jmlSpk),
     jmlSpkSelesai: Number(r.jmlSpkSelesai),
     jmlLhk: Number(lhk.jmlLhk),
+    jmlTt: Number(tt.jmlTt),
+    jmlTtTerima: Number(tt.jmlTtTerima),
   };
 };
 
@@ -100,6 +107,8 @@ const statusSaatIni = async (
       dateClose: hdr.pm_date_close,
       jmlSpk: p.jmlSpk,
       jmlSpkSelesai: p.jmlSpkSelesai,
+      jmlTt: p.jmlTt,
+      jmlTtTerima: p.jmlTtTerima,
     }),
   };
 };
@@ -145,7 +154,15 @@ const normalisasiDetail = async (conn, detail) => {
     const no = i + 1;
     const spk = String(d.spkNomor || "").trim();
     const kode = String(d.kode || "").trim();
-    const setting = String(d.setting || "").trim();
+    const setting = String(d.setting || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (setting.length > 50) {
+      throw Object.assign(
+        new Error(`Setting baris ${i + 1} maksimal 50 karakter`),
+        { statusCode: 400 },
+      );
+    }
     const alasan = String(d.alasan || "").trim();
     const jml = Number(d.jml);
 
@@ -187,14 +204,6 @@ const normalisasiDetail = async (conn, detail) => {
       [kode],
     );
     if (!bhnRows.length) throw bad(`Baris ${no}: bahan ${kode} tidak ada.`);
-
-    const [setRows] = await conn.query(
-      `SELECT 1 FROM tbahan_setting WHERE bs_nama = ?`,
-      [setting],
-    );
-    if (!setRows.length) {
-      throw bad(`Baris ${no}: setting "${setting}" tidak ada di master.`);
-    }
 
     // Alasan wajib hanya bila SPK punya MKB tetapi bahan ini tidak ada di dalamnya.
     // SPK tanpa MKB: bahan bebas dipilih manual, tanpa alasan.
@@ -425,7 +434,8 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  const { jmlSpk, jmlSpkSelesai, jmlLhk } = await getProgress(db, nomor);
+  const { jmlSpk, jmlSpkSelesai, jmlLhk, jmlTt, jmlTtTerima } =
+    await getProgress(db, nomor);
   const penggantiNomor = await cariPengganti(db, nomor);
 
   return {
@@ -433,7 +443,7 @@ const getDetail = async (nomor) => {
     penggantiNomor,
     jmlSpk,
     jmlSpkSelesai,
-    status: hitungStatus({ ...h, jmlSpk, jmlSpkSelesai }),
+    status: hitungStatus({ ...h, jmlSpk, jmlSpkSelesai, jmlTt, jmlTtTerima }),
     bisaUbah: jmlLhk === 0 && h.statusManual !== "CANCEL",
     detail,
     lhk,
@@ -504,6 +514,7 @@ const ambil = async (nomor, user) =>
     await conn.query(
       `UPDATE tpermintaan_marker
           SET pm_pic = ?, pm_pic_asal = NULL, pm_tgl_ambil = NOW(),
+              pm_tgl_kerja = NOW(),
               pm_user_modified = ?, pm_date_modified = NOW()
         WHERE pm_nomor = ?`,
       [kode, kode, nomor],
@@ -551,6 +562,7 @@ const lepas = async (nomor, user) =>
     await conn.query(
       `UPDATE tpermintaan_marker
           SET pm_pic = NULL, pm_pic_asal = NULL, pm_tgl_ambil = NULL,
+              pm_tgl_kerja = NULL,
               pm_user_modified = ?, pm_date_modified = NOW()
         WHERE pm_nomor = ?`,
       [kode, nomor],
