@@ -597,6 +597,9 @@ app.use("/api/lookups", lookupRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/ai-chat", aiChatRoutes);
 
+app.use("/api/master/bahan/mmt", mmtMasterBahanRoutes);
+app.use("/api/master/bahan/obat", mmtMasterObatRoutes);
+
 app.use("/api/master/bahan", bahanRoutes);
 app.use("/api/master/jenis-bahan", jenisBahanRoutes);
 app.use("/api/master/warna-bahan", warnaBahanRoutes);
