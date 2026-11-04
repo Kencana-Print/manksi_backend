@@ -218,9 +218,11 @@ exports.getPermintaanProduksiDataByNomor = async (nomor) => {
       `SELECT h.mnt_nomor AS Nomor, h.mnt_gdg_kode AS GudangKode, g.gdg_nama AS NamaGudang,
               DATE_FORMAT(h.mnt_tanggal, '%Y-%m-%d') AS Tanggal,
               h.mnt_keterangan AS Keterangan, h.mnt_permintaan AS Permintaan,
-              h.mnt_lokasiproduksi AS LokasiProduksi
+              h.mnt_lokasiproduksi AS LokasiProduksi,
+              gl.gdg_nama AS NamaLokasiProduksi
        FROM tminta_mmt_hdr h
        LEFT JOIN tgudang g ON g.gdg_kode = h.mnt_gdg_kode
+       LEFT JOIN tgudang gl ON gl.gdg_kode = h.mnt_lokasiproduksi
        WHERE h.mnt_nomor = ? LIMIT 1`,
       [nomor]
     );
@@ -230,10 +232,12 @@ exports.getPermintaanProduksiDataByNomor = async (nomor) => {
       `SELECT d.mntd_brg_kode AS sku, d.mntd_barcode AS barcode,
               TRIM(b.brg_nama) AS nama, d.mntd_qty AS qty, d.mntd_brg_satuan AS satuan,
               d.mntd_spk_nomor AS spk, d.mntd_keterangan AS keterangan,
-              IFNULL(b.brg_panjang, 0) AS panjang, IFNULL(b.brg_lebar, 0) AS lebar
+              COALESCE(NULLIF(d.mntd_panjang, 0), b.brg_panjang, 0) AS panjang,
+              COALESCE(NULLIF(d.mntd_lebar, 0), b.brg_lebar, 0) AS lebar
        FROM tminta_mmt_dtl d
        LEFT JOIN tbarang_mmt b ON d.mntd_brg_kode = b.brg_kode
-       WHERE d.mntd_mnt_nomor = ?`,
+       WHERE d.mntd_mnt_nomor = ?
+       ORDER BY d.mntd_nourut ASC`,
       [nomor]
     );
 

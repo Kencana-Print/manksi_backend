@@ -147,32 +147,56 @@ exports.saveBatchBarcode = async (items, user) => {
 
 // services/recreateBarcode.service.js
 
-exports.getHistory = async () => {
+exports.getHistory = async (filters = {}) => {
+    const { startDate, endDate } = filters;
+    let whereClauses = ["a.mst_gdg_kode = 'WH-16'"];
+    let params = [];
+
+    if (startDate && endDate) {
+        whereClauses.push("DATE(a.mst_tanggal) BETWEEN ? AND ?");
+        params.push(startDate, endDate);
+    }
+
+    const whereStr = "WHERE " + whereClauses.join(" AND ");
+
     // Ambil Header (Dikelompokkan per No Referensi)
-   const [headers] = await pool.query(
+    const [headers] = await pool.query(
         `SELECT 
             a.mst_noreferensi, 
             a.mst_tanggal, 
             COUNT(a.mst_barcode) as total_qty,
             a.mst_gdg_kode
          FROM tmasterstok_mmt a
-         WHERE a.mst_gdg_kode = 'WH-16'
+         ${whereStr}
          GROUP BY a.mst_noreferensi, a.mst_tanggal, a.mst_gdg_kode
-         ORDER BY a.mst_tanggal DESC LIMIT 50`
+         ORDER BY a.mst_tanggal DESC, a.mst_noreferensi DESC LIMIT 200`,
+        params
     );
 
-    const [details] = await pool.query(
-        `SELECT 
-            a.mst_noreferensi, 
-            a.mst_barcode, 
-            a.mst_brg_kode, 
-            b.brg_nama as nama_asli, -- Mengambil nama asli dari tabel barang
-            a.mst_panjang, 
-            a.mst_lebar 
-         FROM tmasterstok_mmt a
-         LEFT JOIN tbarang_mmt b ON a.mst_brg_kode = b.brg_kode
-         WHERE a.mst_gdg_kode = 'WH-16'`
-    );
+    if (headers.length === 0) {
+        return [];
+    }
+
+    const noRefs = headers.map(h => h.mst_noreferensi).filter(Boolean);
+    let details = [];
+    if (noRefs.length > 0) {
+        const placeholders = noRefs.map(() => '?').join(',');
+        const [rows] = await pool.query(
+            `SELECT 
+                a.mst_noreferensi, 
+                a.mst_barcode, 
+                a.mst_brg_kode, 
+                b.brg_nama as nama_asli,
+                a.mst_panjang, 
+                a.mst_lebar 
+             FROM tmasterstok_mmt a
+             LEFT JOIN tbarang_mmt b ON a.mst_brg_kode = b.brg_kode
+             WHERE a.mst_gdg_kode = 'WH-16' AND a.mst_noreferensi IN (${placeholders})
+             ORDER BY a.mst_barcode ASC`,
+            noRefs
+        );
+        details = rows;
+    }
 
     return headers.map(h => ({
         ...h,
