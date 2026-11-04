@@ -15,6 +15,24 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getDetail,
 );
+router.get(
+  "/menunggu-validasi",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getMenungguValidasi,
+);
+router.get(
+  "/:nomor/tanda-terima",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.listTandaTerima,
+);
+router.post(
+  "/tanda-terima/:ttNomor/validasi",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.validasiTandaTerima,
+);
 router.delete(
   "/:nomor",
   verifyToken,

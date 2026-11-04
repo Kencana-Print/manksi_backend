@@ -47,6 +47,18 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getSpkByNomor,
 );
+router.get(
+  "/:nomor/tanda-terima",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getTandaTerima,
+);
+router.post(
+  "/:nomor/tanda-terima/cetak",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.cetakTandaTerima,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.get(

@@ -127,6 +127,35 @@ const lepasPermintaan = aksiPermintaan((nomor, user) =>
   permintaanSvc.lepas(nomor, user),
 );
 
+const getTandaTerima = async (req, res) => {
+  try {
+    const data = await svc.getTandaTerima(req.params.nomor);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res
+      .status(error.statusCode || 400)
+      .json({ success: false, message: error.message });
+  }
+};
+
+const cetakTandaTerima = async (req, res) => {
+  try {
+    if (!req.user?.kode) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User tidak dikenali." });
+    }
+    const data = await svc.cetakTandaTerima(req.params.nomor, {
+      kode: req.user.kode,
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res
+      .status(error.statusCode || 400)
+      .json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getDetail,
   save,
@@ -138,4 +167,6 @@ module.exports = {
   ambilPermintaan,
   ambilAlihPermintaan,
   lepasPermintaan,
+  getTandaTerima,
+  cetakTandaTerima,
 };

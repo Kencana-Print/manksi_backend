@@ -1,12 +1,17 @@
 const db = require("../../config/database");
 
-// Urutan status: PENDING/CANCEL manual > CLOSE (Tim Cutting sudah ambil hasil)
-// > DONE (semua SPK punya baris LHK Marker) > PROSES (sudah diambil PIC atau
-// sebagian SPK sudah ber-LHK) > OPEN.
+// Urutan status: PENDING/CANCEL manual > CLOSE (alur lama: pm_date_close; alur
+// baru: semua SPK ber-LHK dan semua tanda terima sudah divalidasi pembuat
+// permintaan) > DONE (semua SPK punya baris LHK Marker) > PROSES (sudah diambil
+// PIC atau sebagian SPK sudah ber-LHK) > OPEN.
 const hitungStatus = (row) => {
   if (row.statusManual) return row.statusManual;
   if (row.dateClose) return "CLOSE";
-  if (row.jmlSpk > 0 && row.jmlSpkSelesai >= row.jmlSpk) return "DONE";
+  const semuaSpkSelesai = row.jmlSpk > 0 && row.jmlSpkSelesai >= row.jmlSpk;
+  if (semuaSpkSelesai && row.jmlTt > 0 && row.jmlTtTerima >= row.jmlTt) {
+    return "CLOSE";
+  }
+  if (semuaSpkSelesai) return "DONE";
   if (row.pic || row.jmlSpkSelesai > 0) return "PROSES";
   return "OPEN";
 };
@@ -26,6 +31,12 @@ const SELECT_HEADER = `
     h.pm_pic_asal AS picAsal,
     IFNULL(ua.user_nama, h.pm_pic_asal) AS picAsalNama,
     DATE_FORMAT(h.pm_tgl_ambil, '%Y-%m-%d %H:%i') AS tglAmbil,
+    DATE_FORMAT(h.pm_tgl_kerja, '%Y-%m-%d %H:%i') AS tglDikerjakan,
+    DATE_FORMAT(lk.tglLhk, '%Y-%m-%d %H:%i') AS tglLhk,
+    DATE_FORMAT(tt.tglMutasi, '%Y-%m-%d %H:%i') AS tglMutasi,
+    DATE_FORMAT(tt.tglTerima, '%Y-%m-%d %H:%i') AS tglTerima,
+    IFNULL(tt.jmlTt, 0) AS jmlTt,
+    IFNULL(tt.jmlTtTerima, 0) AS jmlTtTerima,
     h.pm_user_close AS userClose,
     DATE_FORMAT(h.pm_date_close, '%Y-%m-%d %H:%i') AS dateClose,
     h.pm_user_create AS userCreate,
@@ -53,7 +64,23 @@ const SELECT_HEADER = `
            GROUP_CONCAT(DISTINCT pm2_spk_nomor ORDER BY pm2_spk_nomor SEPARATOR ', ') AS spkNomor
       FROM tpermintaan_marker_detail
      GROUP BY pm2_pm_nomor
-  ) x ON x.pm2_pm_nomor = h.pm_nomor`;
+  ) x ON x.pm2_pm_nomor = h.pm_nomor
+  LEFT JOIN (
+    SELECT tt_pm_nomor,
+           COUNT(*) AS jmlTt,
+           COUNT(tt_date_terima) AS jmlTtTerima,
+           MAX(tt_date_mutasi) AS tglMutasi,
+           MAX(tt_date_terima) AS tglTerima
+      FROM tpermintaan_marker_tt
+     GROUP BY tt_pm_nomor
+  ) tt ON tt.tt_pm_nomor = h.pm_nomor
+  LEFT JOIN (
+    SELECT l.ldm_pm_nomor AS pm, MAX(hh.date_create) AS tglLhk
+      FROM tlhkpola_marker_dtl l
+      INNER JOIN tlhkpola_hdr hh ON hh.lhkp_nomor = l.ldm_nomor
+     WHERE l.ldm_pm_nomor IS NOT NULL
+     GROUP BY l.ldm_pm_nomor
+  ) lk ON lk.pm = h.pm_nomor`;
 
 const ambilHeader = async (where, params, orderBy) => {
   const [rows] = await db.query(
@@ -76,7 +103,16 @@ const getBrowse = async ({ startDate, endDate, status }) => {
 const getAntrean = async (user) => {
   const kode = String(user?.kode || "").trim();
   const rows = await ambilHeader(
-    `WHERE h.pm_status_manual = '' AND h.pm_date_close IS NULL`,
+    `WHERE h.pm_status_manual = '' AND h.pm_date_close IS NULL
+       AND EXISTS (
+         SELECT 1 FROM tpermintaan_marker_detail d
+          WHERE d.pm2_pm_nomor = h.pm_nomor
+            AND NOT EXISTS (
+              SELECT 1 FROM tlhkpola_marker_dtl l
+               WHERE l.ldm_pm_nomor = h.pm_nomor
+                 AND l.ldm_spk_nomor = d.pm2_spk_nomor
+            )
+       )`,
     [],
     `h.pm_deadline, h.pm_nomor`,
   );
@@ -179,10 +215,28 @@ const deleteData = async (nomor) => {
   }
 };
 
+// Permintaan buatan user yang tanda terimanya sudah diserahkan (Mutasi terisi)
+// tetapi belum divalidasi; tanpa batas tanggal.
+const getMenungguValidasi = async (user) => {
+  const kode = String(user?.kode || "").trim();
+  return ambilHeader(
+    `WHERE h.pm_user_create = ?
+       AND EXISTS (
+         SELECT 1 FROM tpermintaan_marker_tt t
+          WHERE t.tt_pm_nomor = h.pm_nomor
+            AND t.tt_date_mutasi IS NOT NULL
+            AND t.tt_date_terima IS NULL
+       )`,
+    [kode],
+    `h.pm_deadline, h.pm_nomor`,
+  );
+};
+
 module.exports = {
   hitungStatus,
   getBrowse,
   getAntrean,
   getDetail,
   deleteData,
+  getMenungguValidasi,
 };
