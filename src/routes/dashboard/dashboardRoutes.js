@@ -228,6 +228,11 @@ router.post(
   verifyToken,
   controller.setCatatanOutstandingBeli,
 );
+router.get(
+  "/ppic-outstanding-spk",
+  verifyToken,
+  controller.getPpicOutstandingSpk,
+);
 router.get("/barang-jadi-metric", verifyToken, controller.getBarangJadiMetric);
 router.get(
   "/stok-barang-jadi-list",
