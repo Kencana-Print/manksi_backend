@@ -206,7 +206,10 @@ const isGudangBahanViewer = (user) => {
 // Dashboard Pembelian (Outstanding Beli): tim Pembelian/Gudang/PPIC + bagian FINANCE.
 // Sengaja terpisah dari isGudangBahanViewer supaya widget gudang bahan tidak ikut terbuka untuk FINANCE.
 const isPembelianViewer = (user) =>
-  isGudangBahanViewer(user) || (user.bagian || "").toUpperCase() === "FINANCE";
+  isGudangBahanViewer(user) ||
+  ["FINANCE", "EDP", "IT", "DIREKSI", "AUDIT"].includes(
+    (user.bagian || "").toUpperCase().trim(),
+  );
 
 // ──────────────────────────────────────────────
 // 1. SPK Urgent (sudah ada di login, tapi bisa di-refresh)
@@ -6633,8 +6636,9 @@ const PPIC_SMV_MENIT_KE_JAM = 1 / 60;
 const isPpicDashboardViewer = (user) => {
   const bagian = (user.bagian || "").toUpperCase().trim();
   return (
-    ["ADMIN", "PPIC", "PRODUKSI", "EDP", "IT", "DIREKSI", "AUDIT"].includes(bagian) ||
-    isSuperViewer(user)
+    ["ADMIN", "PPIC", "PRODUKSI", "EDP", "IT", "DIREKSI", "AUDIT"].includes(
+      bagian,
+    ) || isSuperViewer(user)
   );
 };
 
