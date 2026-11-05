@@ -94,7 +94,7 @@ const getSmvBySpk = async (spkList) => {
   const map = {};
   for (const [spk, keys] of Object.entries(keysBySpk)) {
     const hit = keys.find((k) => smvByKey[k] > 0);
-    map[spk] = hit
+    map[String(spk).toUpperCase()] = hit
       ? { smv: smvByKey[hit], sumber: "PROOF" }
       : { smv: 0, sumber: "MANUAL" };
   }
@@ -123,7 +123,7 @@ const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
   const total = {};
   const harian = {};
   for (const r of rows) {
-    const key = `${r.spk}|${r.line}`;
+    const key = `${String(r.spk).toUpperCase()}|${r.line}`;
     const qty = Number(r.qty) || 0;
     total[key] = (total[key] || 0) + qty;
     (harian[key] ||= []).push({ tgl: r.tgl, nomor: r.nomor, qty });
@@ -195,7 +195,7 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
         : ref.mpByLine[r.plan_line_kelompok] || 0;
 
     // SMV: pakai yang tersimpan; kalau belum ada, ambil dari proof (live)
-    const live = ref.smvBySpk[r.NomorSPK] || { smv: 0, sumber: "MANUAL" };
+    const live = ref.smvBySpk[spkKey] || { smv: 0, sumber: "MANUAL" };
     const snapSmv = Number(r.plan_smv) || 0;
     let smv;
     let smvSumber;
@@ -217,8 +217,10 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       jam: r.plan_jam,
       mp,
     });
+    const spkKey = String(r.NomorSPK || "").toUpperCase();
+
     const actualOutput =
-      ref.actualOutputBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] || 0;
+      ref.actualOutputBySpkLine[`${spkKey}|${r.plan_line_kelompok}`] || 0;
     // Resume = sisa waktu produksi line setelah dikurangi Output (mnt),
     // kumulatif ke bawah per line (urutan = urutan rows). SMV kosong = 0.
     let resume = null;
@@ -240,8 +242,7 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       resume,
       actual_output: actualOutput,
       actual_harian:
-        ref.actualHarianBySpkLine[`${r.NomorSPK}|${r.plan_line_kelompok}`] ||
-        [],
+        ref.actualHarianBySpkLine[`${spkKey}|${r.plan_line_kelompok}`] || [],
     };
   });
 };
