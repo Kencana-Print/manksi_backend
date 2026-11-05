@@ -41,7 +41,7 @@ const getBrowse = async ({ tglAwal, tglAkhir }) => {
       DATE_FORMAT(a.tanggal, '%Y-%m-%d') AS Tanggal,
       IFNULL(b.namaspbu, '') AS NamaSpbu,
       IFNULL(a.nopol, '') AS Nopol,
-      IFNULL(c.nama, '') AS Nama_Pengguna,
+      IFNULL(NULLIF(a.pengguna, ''), IFNULL(c.nama, '')) AS Nama_Pengguna,
       IFNULL(a.odometer, 0) AS Odometer,
       IFNULL(d.namabbm, '') AS NamaBBM,
       IFNULL(a.jumlah, 0) AS Jumlah
@@ -65,6 +65,7 @@ const getById = async (kode, id) => {
       a.id AS id,
       DATE_FORMAT(a.tanggal, '%Y-%m-%d') AS tanggal,
       IFNULL(a.kode_pengguna, '') AS kode_pengguna,
+      IFNULL(a.pengguna, '') AS pengguna,
       a.id_spbu,
       IFNULL(a.nopol, '') AS nopol,
       IFNULL(a.odometer, 0) AS odometer,
@@ -96,7 +97,10 @@ const getLookups = async () => {
     `SELECT kode, nama FROM ga2.pengguna ORDER BY nama ASC`
   );
   const [kendaraan] = await pool.query(
-    `SELECT nopol, IFNULL(Keterangan, '') AS keterangan, IFNULL(stat, '') AS stat FROM ga2.kendaraan ORDER BY nopol ASC`
+    `SELECT nopol, IFNULL(Keterangan, '') AS keterangan, IFNULL(stat, '') AS stat 
+     FROM ga2.kendaraan 
+     WHERE IFNULL(aktif, 'Y') != 'N' 
+     ORDER BY nopol ASC`
   );
   const [bbm] = await pool.query(
     `SELECT id_bbm AS id, namabbm AS nama FROM ga2.jenisbbm ORDER BY id_bbm ASC`
@@ -123,6 +127,7 @@ const create = async (payload) => {
     const {
       tanggal,
       kode_pengguna,
+      pengguna,
       id_spbu,
       nopol,
       odometer = 0,
@@ -130,20 +135,46 @@ const create = async (payload) => {
       jumlah = 0,
     } = payload;
 
+    let penggunaVal = (pengguna || "").trim().toUpperCase();
+    let kodePenggunaVal = (kode_pengguna || "").trim();
+
+    // Jika pengguna kosong tapi kode_pengguna terisi, cari nama dari ga2.pengguna
+    if (!penggunaVal && kodePenggunaVal) {
+      const [pRows] = await conn.query(
+        `SELECT nama FROM ga2.pengguna WHERE kode = ?`,
+        [kodePenggunaVal],
+      );
+      if (pRows.length > 0) {
+        penggunaVal = (pRows[0].nama || "").trim().toUpperCase();
+      }
+    } else if (penggunaVal && !kodePenggunaVal) {
+      // Jika kode_pengguna kosong tapi nama pengguna terisi, cari kodenya jika cocok
+      const [pRows] = await conn.query(
+        `SELECT kode FROM ga2.pengguna WHERE UPPER(TRIM(nama)) = ?`,
+        [penggunaVal],
+      );
+      if (pRows.length > 0) {
+        kodePenggunaVal = pRows[0].kode;
+      }
+    }
+
+    penggunaVal = penggunaVal.slice(0, 30);
+
     await conn.query(
-      `INSERT INTO ga2.tvoucher (no_voucher, id, tanggal, kode_pengguna, id_spbu, nopol, odometer, id_bbm, jumlah)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ga2.tvoucher (no_voucher, id, tanggal, kode_pengguna, pengguna, id_spbu, nopol, odometer, id_bbm, jumlah)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         noVoucher,
         id,
         tanggal,
-        kode_pengguna || null,
+        kodePenggunaVal || "",
+        penggunaVal || "",
         id_spbu || null,
         nopol || null,
         Number(odometer) || 0,
         id_bbm || null,
         Number(jumlah) || 0,
-      ]
+      ],
     );
 
     await conn.commit();
@@ -161,6 +192,7 @@ const update = async (kode, id, payload) => {
   const {
     tanggal,
     kode_pengguna,
+    pengguna,
     id_spbu,
     nopol,
     odometer = 0,
@@ -168,10 +200,34 @@ const update = async (kode, id, payload) => {
     jumlah = 0,
   } = payload;
 
+  let penggunaVal = (pengguna || "").trim().toUpperCase();
+  let kodePenggunaVal = (kode_pengguna || "").trim();
+
+  if (!penggunaVal && kodePenggunaVal) {
+    const [pRows] = await pool.query(
+      `SELECT nama FROM ga2.pengguna WHERE kode = ?`,
+      [kodePenggunaVal],
+    );
+    if (pRows.length > 0) {
+      penggunaVal = (pRows[0].nama || "").trim().toUpperCase();
+    }
+  } else if (penggunaVal && !kodePenggunaVal) {
+    const [pRows] = await pool.query(
+      `SELECT kode FROM ga2.pengguna WHERE UPPER(TRIM(nama)) = ?`,
+      [penggunaVal],
+    );
+    if (pRows.length > 0) {
+      kodePenggunaVal = pRows[0].kode;
+    }
+  }
+
+  penggunaVal = penggunaVal.slice(0, 30);
+
   const [result] = await pool.query(
     `UPDATE ga2.tvoucher SET
       tanggal = ?,
       kode_pengguna = ?,
+      pengguna = ?,
       id_spbu = ?,
       nopol = ?,
       odometer = ?,
@@ -180,7 +236,8 @@ const update = async (kode, id, payload) => {
      WHERE no_voucher = ? AND id = ?`,
     [
       tanggal,
-      kode_pengguna || null,
+      kodePenggunaVal || "",
+      penggunaVal || "",
       id_spbu || null,
       nopol || null,
       Number(odometer) || 0,
@@ -188,7 +245,7 @@ const update = async (kode, id, payload) => {
       Number(jumlah) || 0,
       kode,
       id,
-    ]
+    ],
   );
 
   if (result.affectedRows === 0) {

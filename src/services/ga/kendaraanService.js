@@ -13,17 +13,24 @@ const getAll = async (search = "") => {
       nopol AS Nopol,
       IFNULL(stat, 'INVENTARIS') AS Stat,
       IFNULL(Keterangan, '') AS Keterangan,
+      IFNULL(tahun, '') AS Tahun,
+      IFNULL(kondisi, '') AS Kondisi,
+      IFNULL(kepemilikan, '') AS Kepemilikan,
+      IFNULL(posisi, '') AS Posisi,
+      IFNULL(usr, '') AS Usr,
       IFNULL(jadwal, 0) AS Jadwal_Servis,
       IFNULL(kmterakhir, 0) AS KmTerakhir,
-      DATE_FORMAT(pajak, '%Y-%m-%d') AS Pajak
+      DATE_FORMAT(pajak, '%Y-%m-%d') AS Pajak,
+      DATE_FORMAT(kir, '%Y-%m-%d') AS Kir,
+      IFNULL(aktif, 'Y') AS Aktif
     FROM ga2.kendaraan
   `;
   const params = [];
 
   if (search && search.trim()) {
-    query += ` WHERE nopol LIKE ? OR Keterangan LIKE ? OR stat LIKE ?`;
+    query += ` WHERE nopol LIKE ? OR Keterangan LIKE ? OR stat LIKE ? OR tahun LIKE ? OR kondisi LIKE ? OR kepemilikan LIKE ? OR posisi LIKE ? OR usr LIKE ? OR aktif LIKE ?`;
     const term = `%${search.trim()}%`;
-    params.push(term, term, term);
+    params.push(term, term, term, term, term, term, term, term, term);
   }
 
   query += ` ORDER BY nopol ASC`;
@@ -38,9 +45,16 @@ const getById = async (nopol) => {
       nopol AS Nopol,
       IFNULL(stat, 'INVENTARIS') AS Stat,
       IFNULL(Keterangan, '') AS Keterangan,
+      IFNULL(tahun, '') AS Tahun,
+      IFNULL(kondisi, '') AS Kondisi,
+      IFNULL(kepemilikan, '') AS Kepemilikan,
+      IFNULL(posisi, '') AS Posisi,
+      IFNULL(usr, '') AS Usr,
       IFNULL(jadwal, 0) AS Jadwal_Servis,
       IFNULL(kmterakhir, 0) AS KmTerakhir,
-      DATE_FORMAT(pajak, '%Y-%m-%d') AS Pajak
+      DATE_FORMAT(pajak, '%Y-%m-%d') AS Pajak,
+      DATE_FORMAT(kir, '%Y-%m-%d') AS Kir,
+      IFNULL(aktif, 'Y') AS Aktif
     FROM ga2.kendaraan
     WHERE nopol = ?
   `;
@@ -56,9 +70,16 @@ const create = async (payload) => {
     nopol,
     stat = "INVENTARIS",
     keterangan = "",
+    tahun = "",
+    kondisi = "",
+    kepemilikan = "",
+    posisi = "",
+    usr = "",
     jadwal = 0,
     kmterakhir = 0,
     pajak = null,
+    kir = null,
+    aktif = "Y",
   } = payload;
 
   const nopolTrimmed = (nopol || "").trim().toUpperCase();
@@ -76,38 +97,66 @@ const create = async (payload) => {
   }
 
   const tglPajak = pajak ? pajak : null;
+  const tglKir = kir ? kir : null;
+  const tahunClean = String(tahun || "").replace(/[^\d]/g, "").slice(0, 4);
+  const kondisiUpper = (kondisi || "").trim().toUpperCase().slice(0, 20);
+  const kepemilikanUpper = (kepemilikan || "").trim().toUpperCase().slice(0, 50);
+  const posisiUpper = (posisi || "").trim().toUpperCase().slice(0, 20);
+  const usrUpper = (usr || "").trim().toUpperCase().slice(0, 30);
+  const aktifVal = String(aktif || "Y").trim().toUpperCase() === "N" ? "N" : "Y";
 
   await pool.query(
-    `INSERT INTO ga2.kendaraan (nopol, stat, Keterangan, jadwal, kmterakhir, pajak)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO ga2.kendaraan (nopol, stat, Keterangan, tahun, kondisi, kepemilikan, posisi, usr, jadwal, kmterakhir, pajak, kir, aktif)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       nopolTrimmed,
       stat,
       keterangan.trim().toUpperCase(),
+      tahunClean,
+      kondisiUpper,
+      kepemilikanUpper,
+      posisiUpper,
+      usrUpper,
       Number(jadwal) || 0,
       Number(kmterakhir) || 0,
       tglPajak,
+      tglKir,
+      aktifVal,
     ],
   );
 
   // Sync ke bsmcabang.kendaraan jika tabel tersedia
   try {
     await pool.query(
-      `INSERT INTO bsmcabang.kendaraan (nopol, stat, Keterangan, jadwal, kmterakhir, pajak)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO bsmcabang.kendaraan (nopol, stat, Keterangan, tahun, kondisi, kepemilikan, posisi, usr, jadwal, kmterakhir, pajak, kir, aktif)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE 
          stat = VALUES(stat),
          Keterangan = VALUES(Keterangan),
+         tahun = VALUES(tahun),
+         kondisi = VALUES(kondisi),
+         kepemilikan = VALUES(kepemilikan),
+         posisi = VALUES(posisi),
+         usr = VALUES(usr),
          jadwal = VALUES(jadwal),
          kmterakhir = VALUES(kmterakhir),
-         pajak = VALUES(pajak)`,
+         pajak = VALUES(pajak),
+         kir = VALUES(kir),
+         aktif = VALUES(aktif)`,
       [
         nopolTrimmed,
         stat,
         keterangan.trim().toUpperCase(),
+        tahunClean,
+        kondisiUpper,
+        kepemilikanUpper,
+        posisiUpper,
+        usrUpper,
         Number(jadwal) || 0,
         Number(kmterakhir) || 0,
         tglPajak,
+        tglKir,
+        aktifVal,
       ],
     );
   } catch (err) {
@@ -122,9 +171,16 @@ const update = async (nopol, payload) => {
   const {
     stat = "INVENTARIS",
     keterangan = "",
+    tahun = "",
+    kondisi = "",
+    kepemilikan = "",
+    posisi = "",
+    usr = "",
     jadwal = 0,
     kmterakhir = 0,
     pajak = null,
+    kir = null,
+    aktif = "Y",
   } = payload;
 
   const nopolTrimmed = (nopol || "").trim().toUpperCase();
@@ -133,21 +189,42 @@ const update = async (nopol, payload) => {
   }
 
   const tglPajak = pajak ? pajak : null;
+  const tglKir = kir ? kir : null;
+  const tahunClean = String(tahun || "").replace(/[^\d]/g, "").slice(0, 4);
+  const kondisiUpper = (kondisi || "").trim().toUpperCase().slice(0, 20);
+  const kepemilikanUpper = (kepemilikan || "").trim().toUpperCase().slice(0, 50);
+  const posisiUpper = (posisi || "").trim().toUpperCase().slice(0, 20);
+  const usrUpper = (usr || "").trim().toUpperCase().slice(0, 30);
+  const aktifVal = String(aktif || "Y").trim().toUpperCase() === "N" ? "N" : "Y";
 
   const [res] = await pool.query(
     `UPDATE ga2.kendaraan SET 
        stat = ?,
        Keterangan = ?,
+       tahun = ?,
+       kondisi = ?,
+       kepemilikan = ?,
+       posisi = ?,
+       usr = ?,
        jadwal = ?,
        kmterakhir = ?,
-       pajak = ?
+       pajak = ?,
+       kir = ?,
+       aktif = ?
      WHERE nopol = ?`,
     [
       stat,
       keterangan.trim().toUpperCase(),
+      tahunClean,
+      kondisiUpper,
+      kepemilikanUpper,
+      posisiUpper,
+      usrUpper,
       Number(jadwal) || 0,
       Number(kmterakhir) || 0,
       tglPajak,
+      tglKir,
+      aktifVal,
       nopolTrimmed,
     ],
   );
@@ -162,16 +239,30 @@ const update = async (nopol, payload) => {
       `UPDATE bsmcabang.kendaraan SET 
          stat = ?,
          Keterangan = ?,
+         tahun = ?,
+         kondisi = ?,
+         kepemilikan = ?,
+         posisi = ?,
+         usr = ?,
          jadwal = ?,
          kmterakhir = ?,
-         pajak = ?
+         pajak = ?,
+         kir = ?,
+         aktif = ?
        WHERE nopol = ?`,
       [
         stat,
         keterangan.trim().toUpperCase(),
+        tahunClean,
+        kondisiUpper,
+        kepemilikanUpper,
+        posisiUpper,
+        usrUpper,
         Number(jadwal) || 0,
         Number(kmterakhir) || 0,
         tglPajak,
+        tglKir,
+        aktifVal,
         nopolTrimmed,
       ],
     );

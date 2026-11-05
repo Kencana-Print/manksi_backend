@@ -114,10 +114,11 @@ const searchKendaraan = async (search = "") => {
       IFNULL(Keterangan, '') AS Keterangan,
       IFNULL(kmterakhir, 0) AS KmTerakhir
     FROM ga2.kendaraan
+    WHERE IFNULL(aktif, 'Y') != 'N'
   `;
   const params = [];
   if (search && search.trim()) {
-    query += ` WHERE nopol LIKE ? OR Keterangan LIKE ?`;
+    query += ` AND (nopol LIKE ? OR Keterangan LIKE ?)`;
     const term = `%${search.trim()}%`;
     params.push(term, term);
   }
@@ -147,7 +148,21 @@ const create = async (payload) => {
     const ketVal = (keterangan || "").trim().toUpperCase();
     const kmVal = Number(km) || 0;
 
+    if (!bengkelVal) throw new Error("Nama Bengkel harus di isi.");
     if (!nopolVal) throw new Error("No. Polisi harus diisi.");
+
+    // Cek status aktif kendaraan (kendaraan pasif tidak bisa disimpan)
+    const [kRows] = await conn.query(
+      `SELECT nopol, IFNULL(aktif, 'Y') AS aktif FROM ga2.kendaraan WHERE nopol = ?`,
+      [nopolVal],
+    );
+    if (!kRows.length) {
+      throw new Error(`Data kendaraan ${nopolVal} tidak ditemukan.`);
+    }
+    if (kRows[0].aktif === "N") {
+      throw new Error(`Kendaraan ${nopolVal} berstatus Pasif / Tidak Aktif, tidak bisa disimpan.`);
+    }
+
     if (kmVal <= 0) throw new Error("KM harus diisi dan lebih dari 0.");
 
     // Validasi detail minimal 1 item terisi
@@ -221,7 +236,21 @@ const update = async (nomor, payload) => {
     const ketVal = (keterangan || "").trim().toUpperCase();
     const kmVal = Number(km) || 0;
 
+    if (!bengkelVal) throw new Error("Nama Bengkel harus di isi.");
     if (!nopolVal) throw new Error("No. Polisi harus diisi.");
+
+    // Cek status aktif kendaraan (kendaraan pasif tidak bisa disimpan)
+    const [kRows] = await conn.query(
+      `SELECT nopol, IFNULL(aktif, 'Y') AS aktif FROM ga2.kendaraan WHERE nopol = ?`,
+      [nopolVal],
+    );
+    if (!kRows.length) {
+      throw new Error(`Data kendaraan ${nopolVal} tidak ditemukan.`);
+    }
+    if (kRows[0].aktif === "N") {
+      throw new Error(`Kendaraan ${nopolVal} berstatus Pasif / Tidak Aktif, tidak bisa disimpan.`);
+    }
+
     if (kmVal <= 0) throw new Error("KM harus diisi dan lebih dari 0.");
 
     const validItems = items.filter((i) => (i.nama || "").trim() !== "");
