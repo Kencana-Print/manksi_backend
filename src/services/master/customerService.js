@@ -53,7 +53,7 @@ const normalisasiNama = (s) =>
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
 
-const cariNamaKembar = async (nama, excludeKode = "", conn = db) => {
+const cariNamaKembar = async (nama, excludeKode = "", conn = db, kota = "") => {
   const norm = normalisasiNama(nama);
   if (!norm) return [];
   const [rows] = await conn.query(
@@ -62,8 +62,9 @@ const cariNamaKembar = async (nama, excludeKode = "", conn = db) => {
      FROM tcustomer
      WHERE cus_iscabang = 0 AND cus_kode <> ?
        AND REGEXP_REPLACE(UPPER(cus_nama), '[^A-Z0-9]', '') = ?
+       AND REGEXP_REPLACE(UPPER(IFNULL(cus_kota,'')), '[^A-Z0-9]', '') = ?
      LIMIT 5`,
-    [excludeKode, norm],
+    [excludeKode, norm, normalisasiNama(kota)],
   );
   return rows;
 };
@@ -261,7 +262,7 @@ const create = async (data, user) => {
       throw new Error("Sistem sedang memproses customer lain, coba lagi.");
     }
 
-    const kembar = await cariNamaKembar(data.Nama, "", conn);
+    const kembar = await cariNamaKembar(data.Nama, "", conn, data.Kota);
     if (kembar.length) throw errNamaKembar(kembar[0]);
 
     return await insertCustomer(data, user, conn);
@@ -282,7 +283,7 @@ const update = async (kode, data, user) => {
   );
 
   if (normalisasiNama(existing?.cus_nama) !== normalisasiNama(data.Nama)) {
-    const kembar = await cariNamaKembar(data.Nama, kode);
+    const kembar = await cariNamaKembar(data.Nama, kode, db, data.Kota);
     if (kembar.length) throw errNamaKembar(kembar[0]);
   }
 
