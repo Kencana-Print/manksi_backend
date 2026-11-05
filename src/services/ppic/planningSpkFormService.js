@@ -189,6 +189,7 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
   const sisaLine = {}; // sisa waktu produksi berjalan per line
 
   return rows.map((r) => {
+    const spkKey = String(r.NomorSPK || "").toUpperCase();
     const mp =
       Number(r.plan_mp) > 0
         ? Number(r.plan_mp)
@@ -217,7 +218,6 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       jam: r.plan_jam,
       mp,
     });
-    const spkKey = String(r.NomorSPK || "").toUpperCase();
 
     const actualOutput =
       ref.actualOutputBySpkLine[`${spkKey}|${r.plan_line_kelompok}`] || 0;
@@ -467,7 +467,7 @@ const saveData = async (payload, userKode, userCabang) => {
     }
     const key = `${row.NomorSPK}|${row.plan_line_kelompok}`;
     const old = oldSnap[key];
-    const proof = sewingRef.smvBySpk[row.NomorSPK] || {
+    const proof = sewingRef.smvBySpk[String(row.NomorSPK).toUpperCase()] || {
       smv: 0,
       sumber: "MANUAL",
     };
