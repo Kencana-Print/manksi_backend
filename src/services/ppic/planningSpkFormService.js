@@ -219,18 +219,6 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
       mp,
     });
 
-    if (String(r.NomorSPK).toUpperCase() === "SM-KO-005909") {
-      console.log(
-        "DEBUG",
-        spkKey,
-        r.plan_line_kelompok,
-        ref.actualOutputBySpkLine[`${spkKey}|${r.plan_line_kelompok}`],
-        JSON.stringify(
-          ref.actualHarianBySpkLine[`${spkKey}|${r.plan_line_kelompok}`],
-        ),
-      );
-    }
-
     const actualOutput =
       ref.actualOutputBySpkLine[`${spkKey}|${r.plan_line_kelompok}`] || 0;
     // Resume = sisa waktu produksi line setelah dikurangi Output (mnt),
