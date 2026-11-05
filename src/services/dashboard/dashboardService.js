@@ -185,13 +185,7 @@ const RANGE_DAYS = 90;
 const isSuperViewer = (user) => {
   const kode = (user.kode || "").toUpperCase();
   const bagian = (user.bagian || "").toUpperCase();
-  return (
-    kode === "ADMIN" ||
-    bagian === "ADMIN" ||
-    bagian === "DIR" ||
-    bagian === "DIREKSI" ||
-    bagian === "AUDIT"
-  );
+  return bagian === "DIREKSI" || bagian === "AUDIT";
 };
 
 // Akses dashboard Gudang Bahan: default PEMBELIAN/GUDANG/PPIC + super
@@ -212,7 +206,10 @@ const isGudangBahanViewer = (user) => {
 // Dashboard Pembelian (Outstanding Beli): tim Pembelian/Gudang/PPIC + bagian FINANCE.
 // Sengaja terpisah dari isGudangBahanViewer supaya widget gudang bahan tidak ikut terbuka untuk FINANCE.
 const isPembelianViewer = (user) =>
-  isGudangBahanViewer(user) || (user.bagian || "").toUpperCase() === "FINANCE";
+  isGudangBahanViewer(user) ||
+  ["FINANCE", "EDP", "IT", "DIREKSI", "AUDIT"].includes(
+    (user.bagian || "").toUpperCase().trim(),
+  );
 
 // ──────────────────────────────────────────────
 // 1. SPK Urgent (sudah ada di login, tapi bisa di-refresh)
@@ -351,7 +348,7 @@ const getSaldoKas = async (user) => {
   const induk = semua.find((r) => r.Kode === KODE_INDUK_KAS);
   const anak = semua.filter((r) => r.Kode !== KODE_INDUK_KAS);
 
-  // Opsi A: Finance dan super user (ADMIN/DIR/AUDIT/EDP) melihat semua.
+  // Opsi A: Finance dan super user (DIREKSI/AUDIT/EDP) melihat semua.
   // Pembelian hanya lacinya sendiri, mulai tanggal cut-off. Sebelum cut-off
   // belum ada pemisahan, jadi mereka melihat total seperti sebelumnya.
   const lihatSemua =
@@ -6531,7 +6528,7 @@ const loadOutstandingBeliAll = (cabang) => {
 const sumberCatatanBeli = (tab) => (tab === "PENGAJUAN_DANA" ? "PD" : "PP");
 
 const canEditCatatanBeli = (user) =>
-  ["PEMBELIAN", "FINANCE", "EDP", "AUDIT", "DIR"].includes(
+  ["PEMBELIAN", "FINANCE", "EDP", "AUDIT", "DIREKSI"].includes(
     (user?.bagian || "").toUpperCase(),
   );
 
@@ -6625,6 +6622,127 @@ const getOutstandingBeliList = async (
     Catatan: catatan.get(`${r.Nomor}|${r.Nourut}`) || "",
   }));
   return { tab: key, total: rows.length, items };
+};
+
+// ── Dashboard PPIC: SPK tahun berjalan yang masih outstanding sewing ──
+// Divisi: CORPORATE = 4, KAOSAN = 3. Konstanta kapasitas baku dari Excel PPIC.
+const PPIC_JENIS = {
+  CORPORATE: { divisi: 4, line: 6, hariKerja: 1, jam: 6.5, mpPerLine: 15 },
+  KAOSAN: { divisi: 3, line: 5, hariKerja: 1, jam: 6.5, mpPerLine: 15 },
+};
+// ASUMSI: tplan_ppic_dtl2.plan_smv dalam MENIT; Excel memakai JAM (10/60).
+const PPIC_SMV_MENIT_KE_JAM = 1 / 60;
+
+// Dashboard PPIC hanya untuk SPK workshop P04 (spk_cab); P01 tidak ditampilkan.
+const PPIC_CABANG = "P04";
+
+const isPpicDashboardViewer = (user) => {
+  const bagian = (user.bagian || "").toUpperCase().trim();
+  return (
+    ["ADMIN", "PPIC", "PRODUKSI", "EDP", "IT", "DIREKSI", "AUDIT"].includes(
+      bagian,
+    ) || isSuperViewer(user)
+  );
+};
+
+const getPpicOutstandingSpk = async (user, jenis = "CORPORATE") => {
+  if (!isPpicDashboardViewer(user)) return null;
+  const key = String(jenis || "").toUpperCase();
+  const cfg = PPIC_JENIS[key];
+  if (!cfg) throw new Error("Jenis dashboard PPIC tidak valid.");
+
+  const [rows] = await db.query(
+    `SELECT
+       s.spk_nomor                        AS nomor,
+       s.spk_nama                         AS nama,
+       IFNULL(s.spk_jumlah, 0)            AS jumlahOrder,
+       IFNULL(sw.qty, 0)                  AS lhkSewing,
+       sm.smv                             AS smvRaw
+     FROM tspk s
+     LEFT JOIN (
+       SELECT h.mph_spk_nomor AS spk, SUM(d.mpd_jumlah) AS qty
+       FROM tmutasiproduksi_hdr h
+       JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
+       WHERE (h.mph_gdgasal = 'GP003' AND h.mph_gdgtujuan = 'GP004')
+          OR (h.mph_gdgasal = 'GP018' AND h.mph_gdgtujuan = 'GP019')
+       GROUP BY h.mph_spk_nomor
+     ) sw ON sw.spk = s.spk_nomor
+     LEFT JOIN (
+       -- SMV dari plan PPIC sewing terbaru (nomor plan terbesar) per SPK
+       SELECT CONVERT(plan_spk USING latin1) AS spk,
+              SUBSTRING_INDEX(
+                GROUP_CONCAT(plan_smv ORDER BY plan_pl_nomor DESC SEPARATOR ','),
+                ',', 1
+              ) AS smv
+       FROM tplan_ppic_dtl2
+       WHERE plan_divisi = 'SEWING' AND plan_smv > 0
+       GROUP BY CONVERT(plan_spk USING latin1)
+     ) sm ON sm.spk = s.spk_nomor
+     WHERE s.spk_divisi = ?
+       AND s.spk_cab = ?
+       AND s.spk_aktif = 'Y'
+       AND s.spk_close = 0
+       AND YEAR(s.spk_tanggal) = YEAR(CURDATE())
+       AND IFNULL(s.spk_jumlah, 0) - IFNULL(sw.qty, 0) > 0
+     ORDER BY s.spk_tanggal ASC, s.spk_nomor ASC`,
+    [cfg.divisi, PPIC_CABANG],
+  );
+
+  const r2 = (n) => Math.round(n * 100) / 100;
+  let totOrder = 0,
+    totSewing = 0,
+    totOutstanding = 0,
+    totWaktu = 0,
+    tanpaSmv = 0;
+
+  const data = rows.map((r) => {
+    const order = Number(r.jumlahOrder) || 0;
+    const sewing = Number(r.lhkSewing) || 0;
+    const outstanding = order - sewing;
+    const smvMenit = r.smvRaw == null ? null : Number(r.smvRaw);
+    const smvJam = smvMenit ? smvMenit * PPIC_SMV_MENIT_KE_JAM : null;
+    const waktu = smvJam ? outstanding * smvJam : 0;
+    if (!smvJam) tanpaSmv += 1;
+
+    totOrder += order;
+    totSewing += sewing;
+    totOutstanding += outstanding;
+    totWaktu += waktu;
+
+    return {
+      nomor: r.nomor,
+      nama: r.nama,
+      jumlahOrder: order,
+      lhkSewing: sewing,
+      outstanding,
+      smvJam: smvJam == null ? null : Math.round(smvJam * 10000) / 10000,
+      waktuDibutuhkan: r2(waktu),
+    };
+  });
+
+  const waktuProsesPerHari = cfg.line * cfg.hariKerja * cfg.jam * cfg.mpPerLine;
+  return {
+    jenis: key,
+    rows: data,
+    total: {
+      jumlahOrder: totOrder,
+      lhkSewing: totSewing,
+      outstanding: totOutstanding,
+      waktuDibutuhkan: r2(totWaktu),
+      waktuProsesPerHari: r2(waktuProsesPerHari),
+      outstandingHari: waktuProsesPerHari
+        ? r2(totWaktu / waktuProsesPerHari)
+        : 0,
+      jumlahSpk: data.length,
+      spkTanpaSmv: tanpaSmv,
+    },
+    konstanta: {
+      line: cfg.line,
+      hariKerja: cfg.hariKerja,
+      jam: cfg.jam,
+      mpPerLine: cfg.mpPerLine,
+    },
+  };
 };
 
 module.exports = {
@@ -6734,6 +6852,7 @@ module.exports = {
   getOutstandingBeliSummary,
   getOutstandingBeliList,
   setCatatanOutstandingBeli,
+  getPpicOutstandingSpk,
 };
 
 // ══════════════════════════════════════════════
@@ -6838,6 +6957,9 @@ const CACHED = {
   // ── Pembelian ──
   getOutstandingBeliSummary: CACHE_TTL,
   getOutstandingBeliList: CACHE_TTL,
+
+  // ── PPIC ──
+  getPpicOutstandingSpk: CACHE_TTL,
 };
 
 for (const [name, ttl] of Object.entries(CACHED)) {

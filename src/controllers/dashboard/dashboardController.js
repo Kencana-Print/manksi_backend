@@ -1273,6 +1273,16 @@ const setCatatanOutstandingBeli = async (req, res) => {
   }
 };
 
+const getPpicOutstandingSpk = async (req, res) => {
+  try {
+    const { jenis = "CORPORATE" } = req.query;
+    const data = await service.getPpicOutstandingSpk(req.user, jenis);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getSpkUrgent,
   getSaldoKas,
@@ -1371,4 +1381,5 @@ module.exports = {
   getOutstandingBeliSummary,
   getOutstandingBeliList,
   setCatatanOutstandingBeli,
+  getPpicOutstandingSpk,
 };
