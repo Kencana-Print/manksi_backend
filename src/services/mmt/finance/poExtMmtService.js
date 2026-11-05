@@ -409,11 +409,12 @@ const savePoExternal = async (payload, currentUser) => {
           item.tanggal,
           Number(item.nominal) || 0,
           item.akun || "",
+          item.link || "",
         ]);
 
         await connection.query(
           `INSERT INTO tpoexternal_dtl2 
-           (poed2_nomor, poed2_tanggal, poed2_nominal, poed2_akun) 
+           (poed2_nomor, poed2_tanggal, poed2_nominal, poed2_akun, poed2_link) 
            VALUES ?`,
           [valuesDp],
         );
