@@ -1,5 +1,5 @@
 // backend/controllers/lapKartuStok.controller.js
-const lapKartuStokService = require('../../../../services/mmt/bahan-baku-produksi/barcode/lapKartuStokMmtService');
+const lapKartuStokService = require('../../../../services/mmt/bahan-baku-produksi/barcode/kartuBarcodeService');
 
 /**
  * Controller Rekapitulasi Kartu Stok (Master)

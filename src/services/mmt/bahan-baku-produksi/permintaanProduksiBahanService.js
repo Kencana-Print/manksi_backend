@@ -490,10 +490,9 @@ exports.lookupPermintaanProduksi = async (search = '', userDivisi = null) => {
         const searchPattern = `%${cleanSearch}%`;
         const confMmt = TABLE_CONFIG.MMT;
 
-        // Ambil data 30 hari terakhir jika search dikosongkan agar database tidak lag
-        let dateMmtClause = cleanSearch === '' ? `AND ${confMmt.fields.h[1]} BETWEEN DATE_SUB(NOW(), INTERVAL 30 DAY) AND NOW()` : "";
+        let dateMmtClause = cleanSearch === '' ? `AND ${confMmt.fields.h[1]} BETWEEN DATE_SUB(NOW(), INTERVAL 60 DAY) AND NOW()` : "";
+        let dateSublimClause = cleanSearch === '' ? `AND min_tanggal BETWEEN DATE_SUB(NOW(), INTERVAL 60 DAY) AND NOW()` : "";
 
-        // Query fokus penuh memetakan properti array MMT Anda
         const sql = `
             SELECT 
                 ${confMmt.fields.h[0]} AS Nomor, 
@@ -504,11 +503,21 @@ exports.lookupPermintaanProduksi = async (search = '', userDivisi = null) => {
                 'MMT' AS Tipe
             FROM ${confMmt.hdr} 
             WHERE (${confMmt.fields.h[0]} LIKE ? OR ${confMmt.fields.h[3]} LIKE ?) ${dateMmtClause}
-            ORDER BY ${confMmt.fields.h[1]} DESC 
+            UNION ALL
+            SELECT
+                min_nomor AS Nomor,
+                DATE_FORMAT(min_tanggal, '%Y-%m-%d') AS Tanggal,
+                min_cab AS Lokasi,
+                min_ket AS Keterangan,
+                'OPEN' AS Status,
+                'SUBLIM' AS Tipe
+            FROM tmintabahan_hdr
+            WHERE (min_nomor LIKE ? OR min_ket LIKE ?) ${dateSublimClause}
+            ORDER BY Tanggal DESC 
             LIMIT 150;
         `;
 
-        const [rows] = await pool.query(sql, [searchPattern, searchPattern]);
+        const [rows] = await pool.query(sql, [searchPattern, searchPattern, searchPattern, searchPattern]);
         return rows || [];
     } catch (error) {
         console.error("SQL Error inside lookupPermintaanProduksi MMT:", error);

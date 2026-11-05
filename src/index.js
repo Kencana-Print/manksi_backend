@@ -456,9 +456,9 @@ const mmtReturProduksiRoutes = require("./routes/mmt/bahan-baku-produksi/returPr
 const mmtStokGudangRoutes = require("./routes/mmt/bahan-baku-produksi/stokGudangMmtRoutes");
 
 // 3b. Barcode
-const mmtRecreateBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/recreateBarcodeRoutes");
+const mmtCreateBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/createBarcodeRoutes");
 const mmtSearchBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/searchBarcodeRoutes");
-const mmtLapKartuStokRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/lapKartuStokMmtRoutes");
+const mmtKartuBarcodeRoutes = require("./routes/mmt/bahan-baku-produksi/barcode/kartuBarcodeRoutes");
 
 // 4. LHK
 const mmtLhkMesinCetakRoutes = require("./routes/mmt/lhk/lhkMesinCetakRoutes");
@@ -1274,14 +1274,16 @@ app.use("/api/mmt/bahan-baku-produksi/stok-gudang", mmtStokGudangRoutes);
 app.use("/api/mmt/stok-gudang", mmtStokGudangRoutes);
 
 // 3b. Barcode
-app.use("/api/mmt/bahan-baku-produksi/barcode/create", mmtRecreateBarcodeRoutes);
-app.use("/api/mmt/recreate-barcode", mmtRecreateBarcodeRoutes);
+app.use("/api/mmt/bahan-baku-produksi/barcode/create", mmtCreateBarcodeRoutes);
+app.use("/api/mmt/create-barcode", mmtCreateBarcodeRoutes);
+app.use("/api/mmt/recreate-barcode", mmtCreateBarcodeRoutes);
 
 app.use("/api/mmt/bahan-baku-produksi/barcode/search", mmtSearchBarcodeRoutes);
 app.use("/api/mmt/search-barcode", mmtSearchBarcodeRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/barcode/kartu-stok", mmtLapKartuStokRoutes);
-app.use("/api/mmt/lap-kartu-stok", mmtLapKartuStokRoutes);
+app.use("/api/mmt/bahan-baku-produksi/barcode/kartu-stok", mmtKartuBarcodeRoutes);
+app.use("/api/mmt/kartu-barcode", mmtKartuBarcodeRoutes);
+app.use("/api/mmt/lap-kartu-stok", mmtKartuBarcodeRoutes);
 
 // 4. Transaksi Khusus - Maklon
 app.use("/api/mmt/transaksi-khusus/maklon/barang", mmtMaklonBarangRoutes);

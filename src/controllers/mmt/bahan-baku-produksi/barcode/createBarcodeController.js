@@ -1,4 +1,4 @@
-const service = require('../../../../services/mmt/bahan-baku-produksi/barcode/recreateBarcodeService');
+const service = require('../../../../services/mmt/bahan-baku-produksi/barcode/createBarcodeService');
 
 exports.getNextNumber = async (req, res) => {
     try {
@@ -30,7 +30,8 @@ exports.generate = async (req, res) => {
 
 exports.getHistory = async (req, res) => {
     try {
-        const result = await service.getHistory();
+        const { startDate, endDate } = req.query;
+        const result = await service.getHistory({ startDate, endDate });
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

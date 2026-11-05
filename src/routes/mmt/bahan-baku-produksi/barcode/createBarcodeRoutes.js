@@ -2,7 +2,7 @@ const { verifyToken } = require("../../../../middleware/authMiddleware");
 const express = require('express');
 const router = express.Router();
 router.use(verifyToken);
-const controller = require('../../../../controllers/mmt/bahan-baku-produksi/barcode/recreateBarcodeController');
+const controller = require('../../../../controllers/mmt/bahan-baku-produksi/barcode/createBarcodeController');
 
 router.get('/next-number', controller.getNextNumber);
 
