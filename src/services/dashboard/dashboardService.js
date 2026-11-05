@@ -6633,6 +6633,9 @@ const PPIC_JENIS = {
 // ASUMSI: tplan_ppic_dtl2.plan_smv dalam MENIT; Excel memakai JAM (10/60).
 const PPIC_SMV_MENIT_KE_JAM = 1 / 60;
 
+// Dashboard PPIC hanya untuk SPK workshop P04 (spk_cab); P01 tidak ditampilkan.
+const PPIC_CABANG = "P04";
+
 const isPpicDashboardViewer = (user) => {
   const bagian = (user.bagian || "").toUpperCase().trim();
   return (
@@ -6676,12 +6679,13 @@ const getPpicOutstandingSpk = async (user, jenis = "CORPORATE") => {
        GROUP BY CONVERT(plan_spk USING latin1)
      ) sm ON sm.spk = s.spk_nomor
      WHERE s.spk_divisi = ?
+       AND s.spk_cab = ?
        AND s.spk_aktif = 'Y'
        AND s.spk_close = 0
        AND YEAR(s.spk_tanggal) = YEAR(CURDATE())
        AND IFNULL(s.spk_jumlah, 0) - IFNULL(sw.qty, 0) > 0
      ORDER BY s.spk_tanggal ASC, s.spk_nomor ASC`,
-    [cfg.divisi],
+    [cfg.divisi, PPIC_CABANG],
   );
 
   const r2 = (n) => Math.round(n * 100) / 100;
