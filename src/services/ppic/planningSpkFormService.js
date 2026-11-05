@@ -224,7 +224,10 @@ const enrichSewing = async (rows, tgl1, tgl2) => {
         "DEBUG",
         spkKey,
         r.plan_line_kelompok,
-        Object.keys(ref.actualOutputBySpkLine),
+        ref.actualOutputBySpkLine[`${spkKey}|${r.plan_line_kelompok}`],
+        JSON.stringify(
+          ref.actualHarianBySpkLine[`${spkKey}|${r.plan_line_kelompok}`],
+        ),
       );
     }
 
