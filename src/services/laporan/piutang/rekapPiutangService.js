@@ -129,19 +129,26 @@ const getDetailPiutang = async (query) => {
         LEFT JOIN tsalesorder so2 ON so2.so_nomormemo = s.spk_memo AND s.spk_memo <> ''
         WHERE d.invd_inv_nomor = p.nota
       ), '') AS NoPO,
-      IFNULL((
-        SELECT GROUP_CONCAT(DISTINCT sl.sal_nama ORDER BY sl.sal_nama SEPARATOR ', ')
-        FROM tinv_dtl d
-        INNER JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
-        LEFT JOIN tsalesorder so1 ON so1.so_nomor = s.spk_so_ref
-        LEFT JOIN tcustomer cu ON cu.cus_kode = s.spk_cus_kode
-        INNER JOIN tsales sl ON sl.sal_kode = COALESCE(
-          NULLIF(s.spk_sal_kode, ''),
-          NULLIF(so1.so_sal_kode, ''),
-          NULLIF(cu.cus_sales, '')
-        )
-        WHERE d.invd_inv_nomor = p.nota
-      ), '') AS Sales,
+      IFNULL(
+        NULLIF((
+          SELECT GROUP_CONCAT(DISTINCT sl.sal_nama ORDER BY sl.sal_nama SEPARATOR ', ')
+          FROM tinv_dtl d
+          LEFT JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+          LEFT JOIN tsalesorder so0 ON so0.so_nomor = d.invd_spk_nomor
+          LEFT JOIN tsalesorder so1 ON so1.so_nomor = s.spk_so_ref
+          INNER JOIN tsales sl ON sl.sal_kode = COALESCE(
+            NULLIF(s.spk_sal_kode, ''),
+            NULLIF(so0.so_sal_kode, ''),
+            NULLIF(so1.so_sal_kode, '')
+          )
+          WHERE d.invd_inv_nomor = p.nota
+        ), ''),
+        (SELECT sl2.sal_nama
+        FROM tcustomer c2
+        INNER JOIN tsales sl2 ON sl2.sal_kode = NULLIF(c2.cus_sales, '')
+        WHERE c2.cus_kode = p.customer
+        LIMIT 1)
+      ) AS Sales,
       IFNULL((
         SELECT pd2.debet
         FROM piutang_debet pd2
