@@ -115,13 +115,28 @@ const create = async (payload) => {
   try {
     await conn.beginTransaction();
 
-    let noVoucher = payload.no_voucher;
-    let id = payload.id;
+    let noVoucher = payload.no_voucher
+      ? String(payload.no_voucher).trim().toUpperCase()
+      : "";
+    let id = payload.id ? Number(payload.id) : null;
 
-    if (!noVoucher || !id) {
-      const nextInfo = await getMaxKode(conn);
-      noVoucher = nextInfo.no_voucher;
-      id = nextInfo.id;
+    if (!noVoucher) {
+      throw new Error("Nomor Bon harus diisi.");
+    }
+
+    if (!id) {
+      const [idRows] = await conn.query(
+        `SELECT IFNULL(MAX(id), 1) AS max_id FROM ga2.tvoucher`,
+      );
+      id = idRows[0]?.max_id ? Number(idRows[0].max_id) : 1;
+    }
+
+    const [exist] = await conn.query(
+      `SELECT no_voucher FROM ga2.tvoucher WHERE no_voucher = ? AND id = ?`,
+      [noVoucher, id],
+    );
+    if (exist.length > 0) {
+      throw new Error(`Nomor Bon [${noVoucher}] sudah digunakan.`);
     }
 
     const {
