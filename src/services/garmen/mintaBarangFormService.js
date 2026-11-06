@@ -1,5 +1,9 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../../services/tutupBukuService");
+const { kondisiSpanduk } = require("../master/garmenBrgService");
+
+// Cabang tanpa Gudang Produksi, SPK, dan MKA (P02: satu permintaan untuk banyak SPK)
+const CABANG_TANPA_SPK = ["P02", "P03", "P05"];
 
 /**
  * Generate Nomor Permintaan sesuai logic Delphi
@@ -103,7 +107,7 @@ const validateSpkAndMka = async (spkNomor, userCabang, userId) => {
   let isBaruDobel = false;
   let referensiBaru = "";
 
-  if (userCabang !== "P03" && userCabang !== "P05") {
+  if (!CABANG_TANPA_SPK.includes(userCabang)) {
     const qCekBaru = `
       SELECT min_nomor FROM tgarmenminta_hdr 
       WHERE min_cab=? AND user_create=? AND min_spk_nomor=? AND min_ket LIKE "%BARU%"
@@ -186,7 +190,7 @@ const getDetailForm = async (nomor, userCabang, { forPrint = false } = {}) => {
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
     LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
     LEFT JOIN tdivisi w ON w.kode = m.mspk_divisi
-    LEFT JOIN tmka_hdr k ON k.mkb_spk_nomor = h.min_spk_nomor
+    LEFT JOIN tmka_hdr k ON k.mkb_spk_nomor = h.min_spk_nomor AND h.min_spk_nomor <> ""
     WHERE h.min_nomor = ?
   `;
   const [hdrRows] = await db.query(qHdr, [nomor]);
@@ -209,14 +213,14 @@ const getDetailForm = async (nomor, userCabang, { forPrint = false } = {}) => {
 
   const qDtl = `
     SELECT 
-      d.mind_brg_kode AS kode, b.brg_nama AS nama, b.brg_satuan AS satuan, 
+      d.mind_brg_kode AS kode, IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS nama, b.brg_satuan AS satuan, 
       d.mind_jumlah AS jumlah, d.mind_pcs AS pcs, d.mind_pemakaian AS pemakaian, 
       d.mind_ket AS ket,
       IFNULL((
         SELECT SUM(i.mkbd_jumlah) 
         FROM tmka_hdr j 
         INNER JOIN tmka_dtl i ON i.mkbd_nomor=j.MKB_NOMOR 
-        WHERE j.MKB_SPK_NOMOR=? AND i.mkbd_brg_kode=d.mind_brg_kode 
+        WHERE j.MKB_SPK_NOMOR=? AND j.MKB_SPK_NOMOR <> "" AND i.mkbd_brg_kode=d.mind_brg_kode
         GROUP BY i.mkbd_brg_kode
       ), 0) AS butuh
     FROM tgarmenminta_dtl d
@@ -315,8 +319,7 @@ const saveData = async (payload, user) => {
     if (
       !isEdit &&
       jenis === "ACCESORIES" &&
-      cabang !== "P03" &&
-      cabang !== "P05" &&
+      !CABANG_TANPA_SPK.includes(cabang) &&
       keterangan.toUpperCase().includes("BARU")
     ) {
       const qCekBaru = `
@@ -332,8 +335,10 @@ const saveData = async (payload, user) => {
     }
 
     // --- 5. Simpan Header ---
-    const finalGudang = jenis === "ACCESORIES" ? gudangPeminta || "" : "";
-    const finalSPK = jenis === "ACCESORIES" ? spk || "" : "";
+    const pakaiSpk =
+      jenis === "ACCESORIES" && !CABANG_TANPA_SPK.includes(cabang);
+    const finalGudang = pakaiSpk ? gudangPeminta || "" : "";
+    const finalSPK = pakaiSpk ? spk || "" : "";
 
     if (isEdit) {
       await conn.query(
@@ -466,6 +471,8 @@ const getGudangByKode = async (kode, cabang) => {
 const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ? AND b.brg_kode = ?`;
   let params = [jenis, kode];
+
+  whereClause += kondisiSpanduk(cabang);
 
   // Replikasi filter sparepart dari searchBarangGarmen
   // if (jenis === "SPAREPART") {

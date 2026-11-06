@@ -32,9 +32,9 @@ const getMonitoringKoli = async (tglAwal, tglAkhir, perusahaan) => {
       IFNULL(s.spk_panjang, 0) * IFNULL(s.spk_jumlah, 0)               AS J_Meter,
       s.spk_kain                                                       AS Kain,
       IFNULL(d.lkd_j_koli, 0)                                          AS J_Koli
-    FROM kencanaprint.tlhk_koli_hdr h
-    INNER JOIN kencanaprint.tlhk_koli_dtl d ON d.lkd_lkh_nomor = h.lkh_nomor
-    INNER JOIN kencanaprint.tspk s          ON s.spk_nomor = d.lkd_spk_nomor
+    FROM tlhk_koli_hdr h
+    INNER JOIN tlhk_koli_dtl d ON d.lkd_lkh_nomor = h.lkh_nomor
+    INNER JOIN tspk s          ON s.spk_nomor = d.lkd_spk_nomor
     WHERE h.lkh_tanggal >= ?
       AND h.lkh_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
       ${sqlPerusahaan}

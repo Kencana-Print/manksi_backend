@@ -9,7 +9,7 @@ const {
   ringkasDaftar,
 } = require("./lhkLini");
 
-const TABEL_SPK = "kencanaprint.tspk";
+const TABEL_SPK = "tspk";
 
 // LHK Proof wajib didahului LHK Tinta/Cat: MAP harus ada di salah satu LHK
 // Cetak yang dirujuk LHK Tinta berisi minimal satu bahan.

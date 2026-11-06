@@ -2,6 +2,7 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const fs = require("fs");
 const path = require("path");
+const { kondisiSpanduk } = require("../master/garmenBrgService");
 
 const generateNomor = async (jenis, tanggal) => {
   let prefix = "MBK";
@@ -100,6 +101,21 @@ const saveData = async (data, userKode, bagian, cabang) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    const itemTerisi = data.items.filter(
+      (item) => item.kode && Number(item.jumlah) > 0,
+    );
+    const kodeUnik = [...new Set(itemTerisi.map((item) => item.kode))];
+    if (kodeUnik.length > 0) {
+      const [kodeOk] = await conn.query(
+        `SELECT b.brg_kode FROM tgarmen_brg b
+         WHERE b.brg_jenis = ? AND b.brg_kode IN (?) ${kondisiSpanduk(cabang, "b")}`,
+        [data.header.mb_jenis, kodeUnik],
+      );
+      if (kodeOk.length !== kodeUnik.length) {
+        throw new Error("Ada barang yang tidak boleh diminta dari cabang ini.");
+      }
+    }
 
     let nomor = data.header.mb_nomor;
     const isEdit = !!data.isEdit;
@@ -257,9 +273,9 @@ const saveRealisasi = async (nomor, kode, items) => {
     for (const item of items) {
       if (item.tanggal && Number(item.jumlah) > 0) {
         await conn.query(
-          `INSERT INTO tgarmenmintabeli_dtl2 (mbd2_nomor, mbd2_tanggal, mbd2_brg_kode, mbd2_jumlah, mbd2_ket) 
+          `INSERT INTO tgarmenmintabeli_dtl2 (mbd2_nomor, mbd2_tanggal, mbd2_brg_kode, mbd2_jumlah, mbd2_ket)
            VALUES (?, ?, ?, ?, ?)`,
-          [nomor, kode, item.tanggal, item.jumlah, item.ket || ""],
+          [nomor, item.tanggal, kode, item.jumlah, item.ket || ""],
         );
       }
     }
@@ -286,6 +302,8 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
     }
   }
 
+  whereClause += kondisiSpanduk(cabang);
+
   const [rows] = await db.query(
     `SELECT 
        b.brg_kode AS Kode,
@@ -307,18 +325,26 @@ const IMAGE_DIR = path.join(
 );
 const MAX_SIZE = 1000000; // 1 MB, sama seperti validasi Delphi
 
-const buildFileName = (nomor, kode) => `${nomor}${kode}.jpg`;
+const buildFileName = (nomor, kode) => {
+  const name = `${nomor}${kode}.jpg`;
+  if (name !== path.basename(name) || /[\\/]/.test(name)) {
+    throw new Error("Nomor atau kode tidak valid.");
+  }
+  return name;
+};
 
 const saveGambarItem = async (nomor, kode, tempFilePath, fileSize) => {
-  if (fileSize > MAX_SIZE) {
-    fs.unlinkSync(tempFilePath);
-    throw new Error("Ukuran gambar tidak boleh > 1 Mb.");
+  try {
+    if (fileSize > MAX_SIZE) {
+      throw new Error("Ukuran gambar tidak boleh > 1 Mb.");
+    }
+    const fileName = buildFileName(nomor, kode);
+    if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
+    fs.copyFileSync(tempFilePath, path.join(IMAGE_DIR, fileName));
+    return `/images/permintaan-pembelian/${fileName}`;
+  } finally {
+    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
   }
-  if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
-  const destPath = path.join(IMAGE_DIR, buildFileName(nomor, kode));
-  fs.copyFileSync(tempFilePath, destPath);
-  fs.unlinkSync(tempFilePath);
-  return `/images/permintaan-pembelian/${buildFileName(nomor, kode)}`;
 };
 
 const deleteGambarItem = async (nomor, kode) => {

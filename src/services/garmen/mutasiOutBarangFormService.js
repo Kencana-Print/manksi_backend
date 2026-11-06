@@ -418,9 +418,9 @@ const getDetailPermintaanFinance = async (
       k.bond2_spesifikasi AS Spesifikasi,
       k.bond2_qty_realisasi AS QtyRealisasi,
       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM finance.tmasterstok_finance m WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=k.bond2_brg_kode), 0) AS Stok,
-      IFNULL((SELECT SUM(d.msod_jumlah) FROM kencanaprint.tgarmenmso_hdr h INNER JOIN kencanaprint.tgarmenmso_dtl d ON d.msod_nomor=h.mso_nomor WHERE h.mso_msi_nomor="" AND h.mso_nomor <> ? AND d.msod_brg_kode=k.bond2_brg_kode), 0) AS Belum
+      IFNULL((SELECT SUM(d.msod_jumlah) FROM tgarmenmso_hdr h INNER JOIN tgarmenmso_dtl d ON d.msod_nomor=h.mso_nomor WHERE h.mso_msi_nomor="" AND h.mso_nomor <> ? AND d.msod_brg_kode=k.bond2_brg_kode), 0) AS Belum
     FROM finance.tkasbonitem2 k
-    LEFT JOIN kencanaprint.tgarmen_brg b ON b.brg_kode = k.bond2_brg_kode
+    LEFT JOIN tgarmen_brg b ON b.brg_kode = k.bond2_brg_kode
     WHERE k.bond2_link = ?
   `;
 

@@ -19,9 +19,9 @@ const getPemakaianBahan = async (tglAwal, tglAkhir) => {
       b.brg_nama                                      AS Nama_Bahan,
       b.brg_lebar                                     AS Lebar,
       k.lck_qty_meter                                 AS Qty_Meter
-    FROM kencanaprint.tlhk_cetak_hdr h
-    INNER JOIN kencanaprint.tlhk_cetak_kain k ON k.lck_lch_nomor = h.lch_nomor
-    LEFT JOIN kencanaprint.tbarang_new b ON b.brg_kode = k.lck_brg_kode
+    FROM tlhk_cetak_hdr h
+    INNER JOIN tlhk_cetak_kain k ON k.lck_lch_nomor = h.lch_nomor
+    LEFT JOIN tbarang_new b ON b.brg_kode = k.lck_brg_kode
     WHERE h.lch_tanggal >= ? AND h.lch_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
     ORDER BY h.lch_tanggal, h.lch_nomor, b.brg_nama, k.lck_brg_kode
     `,

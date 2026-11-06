@@ -1,15 +1,15 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_afdruk_hdr",
-  dtl: "kencanaprint.tlhk_afdruk_dtl",
-  dtl2: "kencanaprint.tlhk_afdruk_dtl_2", // Detail Plangkan: qty per ukuran per SPK
-  ukuran: "kencanaprint.tms_plangkan_2", // master 15 ukuran plangkan
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
-  bahan: "kencanaprint.tlhk_afdruk_bahan",
-  barang: "kencanaprint.tbarang_new",
+  hdr: "tlhk_afdruk_hdr",
+  dtl: "tlhk_afdruk_dtl",
+  dtl2: "tlhk_afdruk_dtl_2", // Detail Plangkan: qty per ukuran per SPK
+  ukuran: "tms_plangkan_2", // master 15 ukuran plangkan
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
+  bahan: "tlhk_afdruk_bahan",
+  barang: "tbarang_new",
   stok: "tmasterstok_penolong",
 };
 

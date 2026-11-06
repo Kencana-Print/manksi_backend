@@ -27,7 +27,7 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
       h.pro_nama_pekerjaan AS NamaPekerjaan,
       IF(
         h.pro_divisi = 1,
-        bsp.brg_nama,
+        bsp.Bhn_Name,
         (
           SELECT GROUP_CONCAT(tj.bj_nama SEPARATOR ', ')
           FROM tpraorder_bahan pb
@@ -35,11 +35,11 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
           WHERE pb.prob_pro_nomor = h.pro_nomor
         )
       ) AS Bahan,
-      h.pro_sumber_bahan AS SumberBahan,
       h.pro_qty_rencana AS QtyRencana,
       h.pro_jml_desain AS JmlDesain,
       h.pro_panjang AS Panjang,
       h.pro_lebar AS Lebar,
+      ROUND(IFNULL(h.pro_panjang, 0) * IFNULL(h.pro_qty_rencana, 0), 3) AS KebutuhanBahan,
       REPLACE(REPLACE(IFNULL(h.pro_ukuran_bebas, ''), CHAR(13), ' '), CHAR(10), ' ') AS KetUkuran,
       h.pro_finishing AS Finishing,
       h.pro_kirim AS Kirim,
@@ -81,7 +81,7 @@ const getBrowseData = async (startDate, endDate, divisiKode, userInfo) => {
     FROM tpraorder_hdr h
     LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
     LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
-    LEFT JOIN tbarang_new bsp ON bsp.brg_kode = h.pro_brg_kode
+    LEFT JOIN tbahan bsp ON bsp.Bhn_kode = h.pro_brg_kode
     WHERE h.pro_tanggal >= ? AND h.pro_tanggal <= ?
   `;
   const params = [startDate, endDate];

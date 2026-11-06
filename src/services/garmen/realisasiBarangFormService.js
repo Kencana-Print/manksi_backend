@@ -54,9 +54,9 @@ const getPermintaanDetail = async (
            k.mkb_nomor, k.mkb_tanggal
     FROM tgarmenminta_hdr h
     LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.min_gp
-    LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
-    LEFT JOIN tmka_hdr k ON k.mkb_spk_nomor = h.min_spk_nomor
+    LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor AND h.min_spk_nomor <> ''
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor AND h.min_spk_nomor <> ''
+    LEFT JOIN tmka_hdr k ON k.mkb_spk_nomor = h.min_spk_nomor AND h.min_spk_nomor <> ''
     WHERE h.min_nomor = ?
   `;
 
@@ -78,7 +78,9 @@ const getPermintaanDetail = async (
   // Penambahan mst_noreferensi <> ? agar tidak memotong stok dari dokumennya sendiri
   const qDtl = `
     SELECT 
-      d.mind_brg_kode AS kode, b.brg_nama AS nama, b.brg_satuan AS satuan,
+      d.mind_brg_kode AS kode,
+      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS nama,
+      b.brg_satuan AS satuan,
       d.mind_jumlah AS minta,
       IFNULL((SELECT SUM(mst_stok_in - mst_stok_out) FROM ${tblStok} 
               WHERE mst_aktif="Y" AND mst_cab=? AND mst_brg_kode=d.mind_brg_kode 
@@ -129,9 +131,9 @@ const getDetailForm = async (nomor, userCabang) => {
            k.mkb_tanggal
     FROM tgarmenrealisasi_hdr h
     LEFT JOIN tgarmenminta_hdr t ON t.min_nomor = h.re_minta
-    LEFT JOIN tspk s ON s.spk_nomor = h.re_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = h.re_spk_nomor
-    LEFT JOIN tmka_hdr k ON k.mkb_nomor = h.re_mka
+    LEFT JOIN tspk s ON s.spk_nomor = h.re_spk_nomor AND h.re_spk_nomor <> ''
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.re_spk_nomor AND h.re_spk_nomor <> ''
+    LEFT JOIN tmka_hdr k ON k.mkb_nomor = h.re_mka AND h.re_mka <> ''
     WHERE h.re_nomor = ?
   `;
   const [hdrRows] = await db.query(qHdr, [nomor]);
@@ -153,7 +155,8 @@ const getDetailForm = async (nomor, userCabang) => {
   // Tarik detail barang dari tabel realisasi
   const qRed = `
     SELECT d.red_brg_kode, d.red_jumlah, d.red_keterangan,
-           b.brg_nama, b.brg_satuan
+           IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS brg_nama,
+           b.brg_satuan
     FROM tgarmenrealisasi_dtl d
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.red_brg_kode
     WHERE d.red_nomor = ?
@@ -414,8 +417,8 @@ const getPrintData = async (nomor) => {
     FROM tgarmenrealisasi_hdr a
     LEFT JOIN tgarmenminta_hdr h ON h.min_nomor = a.re_minta
     LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.min_gp
-    LEFT JOIN tspk s ON s.spk_nomor = a.re_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = a.re_spk_nomor
+    LEFT JOIN tspk s ON s.spk_nomor = a.re_spk_nomor AND a.re_spk_nomor <> ''
+    LEFT JOIN tmemospk m ON m.mspk_nomor = a.re_spk_nomor AND a.re_spk_nomor <> ''
     WHERE a.re_nomor = ?
   `;
   const [hdr] = await db.query(qHdr, [nomor]);

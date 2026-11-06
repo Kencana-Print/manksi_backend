@@ -32,8 +32,8 @@ const LINI_HAPUS_PLANKAN_LAMA = {
   nama: "Hapus Plankan",
   S: {
     T: {
-      hdr: "kencanaprint.tlhk_hapusplangkan_hdr",
-      dtl: "kencanaprint.tlhk_hapusplangkan_dtl",
+      hdr: "tlhk_hapusplangkan_hdr",
+      dtl: "tlhk_hapusplangkan_dtl",
     },
   },
   kolom: {
@@ -61,7 +61,7 @@ const DAFTAR_LINI = [
     // Lini ini punya status pengerjaan: lini berikutnya baru boleh dibuat
     // setelah status terakhir = nilai
     statusSelesai: {
-      tabel: "kencanaprint.tlhkdesign_status",
+      tabel: "tlhkdesign_status",
       kolomSpk: "lds_spk",
       kolomStatus: "lds_status",
       kolomTgl: "lds_tgl",
@@ -157,8 +157,8 @@ const LINI_PLOTER_LAMA = {
   nama: "Plotter",
   S: {
     T: {
-      hdr: "kencanaprint.tlhk_plotter_hdr",
-      dtl: "kencanaprint.tlhk_plotter_dtl",
+      hdr: "tlhk_plotter_hdr",
+      dtl: "tlhk_plotter_dtl",
     },
   },
   kolom: {

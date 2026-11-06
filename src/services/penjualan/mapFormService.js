@@ -254,11 +254,19 @@ const save = async (data, userKode, isNewMode) => {
     const hargaRiil = safeNum(data.HargaRiil);
     const rencanaOrder = safeNum(data.RencanaOrder);
     const jumlah = safeNum(data.Jumlah);
-    const panjang = safeNum(data.Panjang);
-    const lebar = safeNum(data.Lebar);
+    const isSpanduk = String(data.Divisi).charAt(0) === "1";
 
-    // 5. Validasi Panjang Lebar (Divisi 1 & 5)
-    if (data.Divisi === "1" || data.Divisi === "5") {
+    // Spanduk: Ukuran, Gramasi, Sablon/Bordir/Sublim tidak dipakai → dinormalisasi
+    const panjang = isSpanduk ? 0 : safeNum(data.Panjang);
+    const lebar = isSpanduk ? 0 : safeNum(data.Lebar);
+    const ketUkuran = isSpanduk ? "" : data.KetUkuran || "";
+    const gramasi = isSpanduk ? "" : data.Gramasi;
+    const sablon = isSpanduk ? "N" : data.Sablon;
+    const bordir = isSpanduk ? "N" : data.Bordir;
+    const sublim = isSpanduk ? "N" : data.Sublim;
+
+    // 5. Validasi Panjang Lebar (Divisi 5 saja; Spanduk tidak memakai ukuran)
+    if (data.Divisi === "5") {
       if (panjang === 0) throw new Error("Ukuran panjang harus di isi.");
       if (lebar === 0) throw new Error("Ukuran lebar harus di isi.");
     }
@@ -382,15 +390,15 @@ const save = async (data, userKode, isNewMode) => {
         data.CustKode,
         data.SalesKode,
         data.StatusKerja,
-        data.KetUkuran || "",
-        data.Gramasi,
+        ketUkuran, // sebelumnya: data.KetUkuran || ""
+        gramasi, // sebelumnya: data.Gramasi
         panjang,
         lebar,
         data.Kain,
         data.Finishing,
-        data.Sablon,
-        data.Bordir,
-        data.Sublim,
+        sablon, // sebelumnya: data.Sablon
+        bordir, // sebelumnya: data.Bordir
+        sublim, // sebelumnya: data.Sublim
         jumlah,
         hargaJual,
         hargaRiil,
@@ -419,26 +427,11 @@ const save = async (data, userKode, isNewMode) => {
         data.Cmo || "",
         data.Cmo && String(data.Cmo).trim() ? new Date() : null,
         data.DesignBaru || "N",
-        data.RencanaSize || "",
+        isSpanduk ? "" : data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,
       ];
-
-      // ── DEBUG WRAP: insertQ ──
-      try {
-        await conn.query(insertQ, insertParams);
-      } catch (e) {
-        console.error("❌ GAGAL DI insertQ:", e.message);
-        console.error(
-          "❌ Jumlah placeholder insertQ:",
-          (insertQ.match(/\?/g) || []).length,
-        );
-        console.error("❌ Jumlah insertParams:", insertParams.length);
-        console.error("❌ RAW MYSQL ERROR:", e);
-        console.error("❌ SQL final (mysql2):", e.sql);
-        throw e;
-      }
 
       if (data.IsRevisi === "Y" && data.Referensi) {
         await conn.query(
@@ -495,15 +488,15 @@ const save = async (data, userKode, isNewMode) => {
         data.SalesKode,
         data.JoKode,
         data.StatusKerja,
-        data.KetUkuran || "",
-        data.Gramasi,
+        ketUkuran, // sebelumnya: data.KetUkuran || ""
+        gramasi, // sebelumnya: data.Gramasi
         panjang,
         lebar,
         data.Kain,
         data.Finishing,
-        data.Sablon,
-        data.Bordir,
-        data.Sublim,
+        sablon, // sebelumnya: data.Sablon
+        bordir, // sebelumnya: data.Bordir
+        sublim, // sebelumnya: data.Sublim
         jumlah,
         hargaJual,
         hargaRiil,
@@ -526,7 +519,7 @@ const save = async (data, userKode, isNewMode) => {
         data.Cmo || "",
         tglCmoValue,
         data.DesignBaru || "N",
-        data.RencanaSize || "",
+        isSpanduk ? "" : data.RencanaSize || "",
         data.AccCustomer || "N",
         data.AccTanggal || null,
         mspkAktif,

@@ -1,9 +1,12 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { kondisiSpanduk } = require("../master/garmenBrgService");
 
 const MODUL_TUTUP_BUKU = "RETUR GARMEN";
 // Jenis yang lewat tabel LOG (butuh approval gudang)
 const JENIS_LOG = ["ACCESORIES", "OBAT"];
+// Cabang yang tidak memakai Gudang Produksi pada retur ACC/OBAT
+const CABANG_TANPA_GP = ["P02", "P03"];
 
 // ── Helper: resolusi tabel & prefix nomor sesuai jenis ──
 const getTableConfig = (jenis) => {
@@ -227,13 +230,25 @@ const saveData = async (payload, user, existingNomor = null) => {
   }
 
   const filledDetails = validateDetails(details);
-
-  // Gudang Produksi wajib untuk ACCESORIES/OBAT & cabang <> P03
   const cabUser = user.cabang;
-  const needsGp = JENIS_LOG.includes(jenis) && cabUser !== "P03";
+
+  const kodeUnik = [...new Set(filledDetails.map((d) => d.kode))];
+  const [kodeOk] = await db.query(
+    `SELECT b.brg_kode FROM tgarmen_brg b
+     WHERE b.brg_kode IN (?) ${kondisiSpanduk(cabUser, "b")}`,
+    [kodeUnik],
+  );
+  if (kodeOk.length !== kodeUnik.length) {
+    throw new Error("Ada barang yang tidak boleh diretur dari cabang ini.");
+  }
+
+  // Gudang Produksi wajib untuk ACCESORIES/OBAT kecuali cabang tanpa GP
+  const needsGp =
+    JENIS_LOG.includes(jenis) && !CABANG_TANPA_GP.includes(cabUser);
   if (needsGp && (!gudangProduksi?.nama || gudangProduksi.nama.trim() === "")) {
     throw new Error("Gudang Produksi tidak boleh kosong");
   }
+  const gpKode = needsGp ? gudangProduksi?.kode || "" : "";
 
   const { hdrTable, dtlTable } = getTableConfig(jenis);
   const isEdit = !!existingNomor;
@@ -259,16 +274,10 @@ const saveData = async (payload, user, existingNomor = null) => {
     if (isEdit) {
       await conn.query(
         `UPDATE ${hdrTable} SET
-           ret_tanggal = ?, ret_gp = ?, ret_keterangan = ?,
+           ret_tanggal = ?, ret_gp = IF(?, ?, ret_gp), ret_keterangan = ?,
            date_modified = NOW(), user_modified = ?
          WHERE ret_nomor = ?`,
-        [
-          tanggal,
-          gudangProduksi?.kode || "",
-          keterangan || "",
-          user.kode,
-          nomor,
-        ],
+        [tanggal, needsGp ? 1 : 0, gpKode, keterangan || "", user.kode, nomor],
       );
     } else {
       const tahun = new Date(tanggal).getFullYear().toString();
@@ -279,15 +288,7 @@ const saveData = async (payload, user, existingNomor = null) => {
           `INSERT INTO ${hdrTable}
              (ret_jenis, ret_nomor, ret_tanggal, ret_cab, ret_gp, ret_keterangan, date_create, user_create)
            VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
-          [
-            jenis,
-            nomor,
-            tanggal,
-            cabUser,
-            gudangProduksi?.kode || "",
-            keterangan || "",
-            user.kode,
-          ],
+          [jenis, nomor, tanggal, cabUser, gpKode, keterangan || "", user.kode],
         );
       } else {
         await conn.query(
@@ -300,7 +301,7 @@ const saveData = async (payload, user, existingNomor = null) => {
             tanggal,
             cabUser,
             user.bagian,
-            gudangProduksi?.kode || "",
+            gpKode,
             keterangan || "",
             user.kode,
           ],
@@ -351,8 +352,19 @@ const saveData = async (payload, user, existingNomor = null) => {
 // ══════════════ SEARCH HELPERS ══════════════
 
 // Tier 1: cari header Realisasi (dengan pagination, sesuai konvensi /lookups)
-const searchRealisasiHeader = async (jenis, keyword, page = 1, limit = 50) => {
-  const where = ["h.re_jenis = ?"];
+const searchRealisasiHeader = async (
+  jenis,
+  keyword,
+  page = 1,
+  limit = 50,
+  cabang = "",
+) => {
+  const where = [
+    "h.re_jenis = ?",
+    `EXISTS (SELECT 1 FROM tgarmenrealisasi_dtl x
+               INNER JOIN tgarmen_brg b ON b.brg_kode = x.red_brg_kode
+               WHERE x.red_nomor = h.re_nomor ${kondisiSpanduk(cabang, "b")})`,
+  ];
   const params = [jenis];
   if (keyword) {
     where.push("(h.re_nomor LIKE ? OR h.re_spk_nomor LIKE ?)");
@@ -381,7 +393,12 @@ const searchRealisasiHeader = async (jenis, keyword, page = 1, limit = 50) => {
 
 // Tier 2: detail item dari Realisasi yang dipilih (dengan Minta/Sudah/SpkNama)
 // SpkNama dipakai utk auto-fill Keterangan saat item dipilih (sesuai loadbrg() Delphi)
-const searchRealisasiDetail = async (jenis, nomorRealisasi, currentNomor) => {
+const searchRealisasiDetail = async (
+  jenis,
+  nomorRealisasi,
+  currentNomor,
+  cabang = "",
+) => {
   const q = `
     SELECT h.re_nomor AS NoRealisasi, h.re_tanggal AS Tanggal, h.re_spk_nomor AS SPK,
       d.red_brg_kode AS Kode,
@@ -391,9 +408,9 @@ const searchRealisasiDetail = async (jenis, nomorRealisasi, currentNomor) => {
     FROM tgarmenrealisasi_hdr h
     INNER JOIN tgarmenrealisasi_dtl d ON d.red_nomor = h.re_nomor
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.red_brg_kode
-    LEFT JOIN tspk s ON s.spk_nomor = h.re_spk_nomor
-    LEFT JOIN tmemospk m ON m.mspk_nomor = h.re_spk_nomor
-    WHERE h.re_jenis = ? AND h.re_nomor = ?
+    LEFT JOIN tspk s ON s.spk_nomor = h.re_spk_nomor AND h.re_spk_nomor <> ''
+    LEFT JOIN tmemospk m ON m.mspk_nomor = h.re_spk_nomor AND h.re_spk_nomor <> ''
+    WHERE h.re_jenis = ? AND h.re_nomor = ? ${kondisiSpanduk(cabang, "b")}
   `;
   const [rows] = await db.query(q, [jenis, nomorRealisasi]);
 
@@ -431,7 +448,7 @@ const searchBarang = async (
     where.push("(b.brg_kode LIKE ? OR b.brg_nama LIKE ?)");
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
-  const whereSql = where.join(" AND ");
+  const whereSql = where.join(" AND ") + kondisiSpanduk(cabang, "b");
 
   const [countRows] = await db.query(
     `SELECT COUNT(*) AS total FROM tgarmen_brg b WHERE ${whereSql}`,

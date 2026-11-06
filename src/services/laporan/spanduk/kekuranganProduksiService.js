@@ -29,7 +29,7 @@ const getKekuranganProduksi = async ({ tglAwal, tglAkhir, perusahaan }) => {
             s.spk_panjang AS Panjang,
             s.spk_lebar AS Lebar,
             s.spk_jumlah AS Jml_Order
-     FROM kencanaprint.tspk s
+     FROM tspk s
      WHERE s.spk_divisi = ?
        AND s.spk_aktif = 'Y'
        AND s.spk_tanggal >= ?
@@ -46,19 +46,19 @@ const getKekuranganProduksi = async ({ tglAwal, tglAkhir, perusahaan }) => {
   const [cetak, jahit, lipat] = await Promise.all([
     db.query(
       `SELECT lcd_spk_nomor AS spk, SUM(IFNULL(lcd_qty_cetak, 0)) AS v
-       FROM kencanaprint.tlhk_cetak_dtl WHERE lcd_spk_nomor IN (?)
+       FROM tlhk_cetak_dtl WHERE lcd_spk_nomor IN (?)
        GROUP BY lcd_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT ljd_spk_nomor AS spk, SUM(IFNULL(ljd_qty_jahit, 0)) AS v
-       FROM kencanaprint.tlhk_jahit_dtl WHERE ljd_spk_nomor IN (?)
+       FROM tlhk_jahit_dtl WHERE ljd_spk_nomor IN (?)
        GROUP BY ljd_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT lld_spk_nomor AS spk, SUM(IFNULL(lld_qty_lipat, 0)) AS v
-       FROM kencanaprint.tlhk_lipat_dtl WHERE lld_spk_nomor IN (?)
+       FROM tlhk_lipat_dtl WHERE lld_spk_nomor IN (?)
        GROUP BY lld_spk_nomor`,
       [daftar],
     ),

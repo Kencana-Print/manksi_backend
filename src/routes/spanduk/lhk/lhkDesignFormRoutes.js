@@ -6,55 +6,28 @@ const {
   checkPermission,
 } = require("../../../middleware/authMiddleware");
 
-// Rute statis dulu, sebelum rute dinamis /:nomor
-router.get(
-  "/lookup/spk",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.lookupSpk,
-);
-router.get(
-  "/lookup/designer",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.lookupDesigner,
-);
-router.get(
-  "/lookup/mesin",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.lookupMesin,
-);
-router.get(
-  "/lookup/bahan",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.lookupBahan,
-);
+const lihat = [verifyToken, checkPermission(4, "view")];
+const ubah = [verifyToken, checkPermission(4, "edit")];
 
-router.get(
-  "/:nomor",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.getById,
-);
-router.put(
-  "/:nomor",
-  verifyToken,
-  checkPermission(4, "edit"),
-  controller.simpan,
-);
-router.post(
-  "/:nomor/mulai",
-  verifyToken,
-  checkPermission(4, "edit"),
-  controller.mulai,
-);
-router.post(
-  "/:nomor/selesai",
-  verifyToken,
-  checkPermission(4, "edit"),
-  controller.selesai,
-);
+// Rute statis dulu, sebelum rute dinamis /:nomor
+router.get("/lookup/spk", ...lihat, controller.lookupSpk);
+router.get("/lookup/designer", ...lihat, controller.lookupDesigner);
+router.get("/lookup/mesin", ...lihat, controller.lookupMesin);
+router.get("/lookup/bahan", ...lihat, controller.lookupBahan);
+
+// Sesi timer
+router.get("/sesi/aktif", ...lihat, controller.sesiAktif);
+router.post("/sesi/mulai", ...ubah, controller.mulaiSesi);
+router.get("/sesi/:id", ...lihat, controller.getSesi);
+router.post("/sesi/:id/pause", ...ubah, controller.pauseSesi);
+router.post("/sesi/:id/resume", ...ubah, controller.resumeSesi);
+router.post("/sesi/:id/selesai", ...ubah, controller.selesaiSesi);
+router.post("/sesi/:id/batal", ...ubah, controller.batalSesi);
+
+// Simpan beberapa tab sekaligus (statis, sebelum PUT /:nomor)
+router.put("/simpan", ...ubah, controller.simpanBatch);
+
+router.get("/:nomor", ...lihat, controller.getById);
+router.put("/:nomor", ...ubah, controller.simpan);
 
 module.exports = router;

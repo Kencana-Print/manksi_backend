@@ -1,6 +1,11 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// Cabang tujuan PO (tempat barang diterima / stok masuk).
+// P02 (spanduk): gudang tunggal di P04; selain itu mengikuti cabang peminta.
+const KECAB_PO_DEFAULT = { P02: "P04" };
+const resolveKecab = (cabMinta) => KECAB_PO_DEFAULT[cabMinta] || cabMinta || "";
+
 // --- HELPER UNTUK MENGHITUNG QTY BPB & QTY SUDAH PO (1:1 Logic Delphi) ---
 const getQtyBpb = async (poNomor, brgKode, conn) => {
   const [rows] = await conn.query(
@@ -87,8 +92,8 @@ const getDetailForm = async (nomor, user) => {
         m.mbd_brg_kode AS Kode,
         IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
         b.brg_satuan AS Satuan,
-        m.mbd_ket AS ket,
-        m.mbd_kegunaan AS kegunaan,
+        IF(d.pod_nomor IS NULL, m.mbd_ket, d.pod_ket) AS ket,
+        IF(d.pod_nomor IS NULL, m.mbd_kegunaan, d.pod_kegunaan) AS kegunaan,
         m.mbd_jumlah AS minta,
         IFNULL(d.pod_jumlah, 0) AS jumlah,
         IFNULL(d.pod_harga, 0) AS harga,
@@ -146,6 +151,7 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
     r.ppn = 0;
     r.total = 0;
     r.bpb = 0;
+    r.kecab = resolveKecab(r.cab);
   }
   return rows;
 };
@@ -215,6 +221,29 @@ const saveData = async (payload, user) => {
       }
     }
 
+    if (isEdit) {
+      const [[cur]] = await conn.query(
+        `SELECT po_status, po_mb_nomor, po_jenis, po_tanggal
+         FROM tgarmenpo_hdr WHERE po_nomor = ? FOR UPDATE`,
+        [po_nomor],
+      );
+      if (!cur) throw new Error("Nomor tersebut belum ada.");
+      if (String(cur.po_status || "").trim() !== "") {
+        throw new Error(`Sudah ${cur.po_status}, tidak dapat diubah.`);
+      }
+      if (
+        zdtClose &&
+        new Date(cur.po_tanggal) < zdtClose &&
+        pinStatus !== "ACC"
+      ) {
+        throw new Error(
+          "Transaksi tsb sudah diclose. Silahkan minta approve untuk bisa menyimpan perubahan data.",
+        );
+      }
+      po_mb_nomor = cur.po_mb_nomor;
+      po_jenis = cur.po_jenis;
+    }
+
     // 2. Tarik / Ganti Nomor Baru Jika Mode Create
     if (!isEdit) {
       const year = tglPO.getFullYear().toString();
@@ -249,6 +278,34 @@ const saveData = async (payload, user) => {
     }
     if (totalQty === 0)
       throw new Error("Jumlah kosong semua, belum bisa disimpan.");
+
+    // 3b. Barang harus berasal dari permintaan tsb dan sejenis dengan PO
+    if (!po_mb_nomor) throw new Error("No. Permintaan harus di isi.");
+    const kodeList = [
+      ...new Set(
+        detail.filter((d) => Number(d.jumlah || 0) !== 0).map((d) => d.Kode),
+      ),
+    ];
+    const [src] = await conn.query(
+      `SELECT DISTINCT d.mbd_brg_kode
+       FROM tgarmenmintabeli_dtl d
+       INNER JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+       WHERE d.mbd_nomor = ? AND d.mbd_brg_kode IN (?) AND b.brg_jenis = ?`,
+      [po_mb_nomor, kodeList, po_jenis],
+    );
+    if (src.length !== kodeList.length) {
+      throw new Error(
+        "Ada barang yang bukan dari permintaan tsb atau beda jenis dengan PO.",
+      );
+    }
+
+    // Cabang tujuan ditentukan server dari cabang peminta, bukan dari payload
+    const [[mb]] = await conn.query(
+      `SELECT mb_cab FROM tgarmenmintabeli_hdr WHERE mb_nomor = ?`,
+      [po_mb_nomor],
+    );
+    if (!mb) throw new Error("No. Permintaan tsb tidak ada.");
+    po_kecab = resolveKecab(mb.mb_cab);
 
     // 4. Eksekusi Header Upsert
     if (isEdit) {

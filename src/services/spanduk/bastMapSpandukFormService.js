@@ -9,13 +9,13 @@ const {
 const { pastikanMapPunyaLhk } = require("./lhk/lhkGerbangRantai");
 
 const T = {
-  memo: "kencanaprint.tmemospk",
-  bast: "kencanaprint.tkesesuaianmap",
-  master: "kencanaprint.tkesesuaian",
-  bahan: "kencanaprint.tkesesuaianmap_komponen",
-  lock: "kencanaprint.tkesesuaianmap_lock",
-  barang: "kencanaprint.tbarang_new",
-  putus: "kencanaprint.tkesesuaianmap_keputusan",
+  memo: "tmemospk",
+  bast: "tkesesuaianmap",
+  master: "tkesesuaian",
+  bahan: "tkesesuaianmap_komponen",
+  lock: "tkesesuaianmap_lock",
+  barang: "tbarang_new",
+  putus: "tkesesuaianmap_keputusan",
 };
 
 const DIVISI_SPANDUK = 1;
@@ -66,12 +66,12 @@ const ambilMap = async (conn, nomor, user, kunci = false) => {
               "DATE(m.date_create)",
               `IFNULL((SELECT DATE(MIN(s.date_create)) FROM ${T.bast} s WHERE s.mspk_nomor = m.mspk_nomor), CURDATE())`,
             )} AS hari_pembuatan,
-            (SELECT j.jo_nama FROM kencanaprint.tjenisorder j
+            (SELECT j.jo_nama FROM tjenisorder j
               WHERE j.jo_kode = m.MSpk_jo_kode AND j.jo_divisi = m.mspk_divisi
               LIMIT 1) AS jenis_order,
             (SELECT GROUP_CONCAT(DISTINCT d.lprd_lpr_nomor
                       ORDER BY d.lprd_lpr_nomor SEPARATOR ', ')
-               FROM kencanaprint.tlhk_proof_dtl d
+               FROM tlhk_proof_dtl d
               WHERE d.lprd_spk_nomor = m.mspk_nomor) AS nomor_lhk_proof
        FROM ${T.memo} m WHERE m.mspk_nomor = ? ${kunci ? "FOR UPDATE" : ""}`,
     [nomor],
@@ -295,7 +295,7 @@ const simpan = async (mode, nomorUrl, payload, user) => {
     const map = await ambilMap(conn, nomor, user, true);
     if (mode === "update") {
       const [serah] = await conn.query(
-        `SELECT mmkd_nomor FROM kencanaprint.tmutasi_marketing_spanduk_dtl
+        `SELECT mmkd_nomor FROM tmutasi_marketing_spanduk_dtl
          WHERE mmkd_mspk_nomor = ? LIMIT 1`,
         [nomor],
       );
@@ -465,7 +465,7 @@ const setKeputusan = async (nomorUrl, payload, user) => {
       throw galat("Keputusan hanya untuk BAST yang seluruh kesesuaiannya N");
     }
     const [serah] = await conn.query(
-      `SELECT mmkd_nomor FROM kencanaprint.tmutasi_marketing_spanduk_dtl
+      `SELECT mmkd_nomor FROM tmutasi_marketing_spanduk_dtl
        WHERE mmkd_mspk_nomor = ? LIMIT 1`,
       [nomor],
     );

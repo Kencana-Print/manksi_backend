@@ -30,14 +30,14 @@ const getMonitoringProof = async (tglAwal, tglAkhir) => {
             DATE_FORMAT(p.tph_tanggal_proof, '${FMT_TGL}') AS Tgl_Proof,
             p.tph_gdg_kode AS Gudang,
             IF(p.tph_status IS NOT NULL, p.tph_status,
-               IF(EXISTS(SELECT 1 FROM kencanaprint.tspk s
+               IF(EXISTS(SELECT 1 FROM tspk s
                          WHERE s.spk_memo = m.mspk_nomor), 'OK', '')) AS Status,
             DATE_FORMAT(p.tph_tanggal_status, '${FMT_TGL}') AS Tg_Status,
             p.tph_arsip AS No_Arsip,
             m.mspk_kain AS Kain
-     FROM kencanaprint.tmemospk m
-     LEFT JOIN kencanaprint.tproof_hdr p ON p.tph_mspk_nomor = m.mspk_nomor
-     LEFT JOIN kencanaprint.tjenisorder jo
+     FROM tmemospk m
+     LEFT JOIN tproof_hdr p ON p.tph_mspk_nomor = m.mspk_nomor
+     LEFT JOIN tjenisorder jo
        ON jo.jo_kode = m.mspk_jo_kode AND jo.jo_divisi = m.mspk_divisi
      WHERE m.mspk_divisi = ?
        AND m.mspk_tanggal >= ?

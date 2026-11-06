@@ -48,6 +48,7 @@ const searchRealisasiHeader = async (req, res) => {
       keyword,
       Number(page) || 1,
       Number(limit) || 50,
+      req.user.cabang,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -68,6 +69,7 @@ const searchRealisasiDetail = async (req, res) => {
       jenis,
       nomorRealisasi,
       currentNomor,
+      req.user.cabang,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

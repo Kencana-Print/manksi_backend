@@ -5,7 +5,7 @@ const db = require("../../../config/database");
 // karena MySQL non-strict mode ambil baris arbitrary dari grup.
 // Direplikasi eksplisit pakai MAX() (bukan ANY_VALUE — server ini
 // pakai versi MariaDB yang belum support ANY_VALUE, dikonfirmasi
-// dari error "FUNCTION kencanaprint.ANY_VALUE does not exist").
+// dari error "FUNCTION ANY_VALUE does not exist").
 // Match behavior asli: SPK dengan multi-komponen cuma nampilin 1
 // jenis/warna kain representatif, bukan salah query kita.
 const getBrowse = async (startDate, endDate, cab = "P04") => {

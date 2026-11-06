@@ -86,7 +86,9 @@ const getById = async (nomor) => {
   );
 
   if (!headerRows.length) {
-    throw new Error(`Data Permintaan Driver dengan nomor ${nomor} tidak ditemukan.`);
+    throw new Error(
+      `Data Permintaan Driver dengan nomor ${nomor} tidak ditemukan.`,
+    );
   }
 
   const header = headerRows[0];
@@ -129,15 +131,15 @@ const searchSpk = async (keyword = "") => {
   const query = `
     SELECT * FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, 'SPK' AS Tipe 
-      FROM kencanaprint.tspk 
+      FROM tspk 
       WHERE (spk_nomor LIKE ? OR spk_nama LIKE ?)
       UNION ALL
       SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, 'MEMO' AS Tipe 
-      FROM kencanaprint.tmemospk 
+      FROM tmemospk 
       WHERE (mspk_nomor LIKE ? OR mspk_nama LIKE ?)
       UNION ALL
       SELECT so_nomor AS Nomor, so_nama AS Nama, 'SO' AS Tipe
-      FROM kencanaprint.tsalesorder
+      FROM tsalesorder
       WHERE (so_nomor LIKE ? OR so_nama LIKE ?)
     ) x
     ORDER BY (Nomor = ?) DESC, (Nomor LIKE ?) DESC, Nomor DESC
@@ -194,9 +196,7 @@ const create = async (payload, userKode) => {
     const nomor = await generateNomor(tanggal, conn);
 
     // Hitung jam minta aktual jika belum disediakan
-    const nowTime =
-      jamMinta ||
-      new Date().toTimeString().split(" ")[0]; // HH:mm:ss
+    const nowTime = jamMinta || new Date().toTimeString().split(" ")[0]; // HH:mm:ss
 
     // Simpan Header ke bsmcabang.tpermintaandriver
     await conn.query(
@@ -269,15 +269,25 @@ const update = async (nomor, payload, userKode, isAdmin = false) => {
 
     const row = existing[0];
     if (row.pd_isclosed === 1) {
-      throw new Error("Permintaan driver ini sudah selesai (closed), tidak dapat diubah.");
+      throw new Error(
+        "Permintaan driver ini sudah selesai (closed), tidak dapat diubah.",
+      );
     }
     if (row.pd_isclosed === 4 || row.pd_iscancel === 1) {
-      throw new Error("Permintaan driver ini sudah dibatalkan, tidak dapat diubah.");
+      throw new Error(
+        "Permintaan driver ini sudah dibatalkan, tidak dapat diubah.",
+      );
     }
 
     // Validasi kepemilikan jika bukan admin
-    if (!isAdmin && row.pd_userpeminta && row.pd_userpeminta.toUpperCase() !== (userKode || "").toUpperCase()) {
-      throw new Error("Anda hanya bisa mengubah permintaan driver milik Anda sendiri.");
+    if (
+      !isAdmin &&
+      row.pd_userpeminta &&
+      row.pd_userpeminta.toUpperCase() !== (userKode || "").toUpperCase()
+    ) {
+      throw new Error(
+        "Anda hanya bisa mengubah permintaan driver milik Anda sendiri.",
+      );
     }
 
     const {
@@ -380,12 +390,18 @@ const deleteData = async (nomor, userKode, isAdmin = false) => {
 
   const row = existing[0];
 
-  if (!isAdmin && row.pd_userpeminta && row.pd_userpeminta.toUpperCase() !== (userKode || "").toUpperCase()) {
+  if (
+    !isAdmin &&
+    row.pd_userpeminta &&
+    row.pd_userpeminta.toUpperCase() !== (userKode || "").toUpperCase()
+  ) {
     throw new Error("Anda hanya bisa menghapus permintaan Anda sendiri.");
   }
 
   if (row.pd_isclosed === 1) {
-    throw new Error("Permintaan driver ini sudah selesai, tidak bisa dihapus/dibatalkan.");
+    throw new Error(
+      "Permintaan driver ini sudah selesai, tidak bisa dihapus/dibatalkan.",
+    );
   }
 
   await pool.query(

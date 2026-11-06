@@ -9,13 +9,16 @@ const db = require("../../config/database");
 // Kita tidak replikasi kolom yang tidak ada (akan error di MySQL).
 const VALID_JENIS = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
 
+// ret_gp final dikosongkan untuk cabang ini (P03 sengaja tidak diubah)
+const CABANG_GP_KOSONG = ["P02"];
+
 // ── Master browse: draft (log) LEFT JOIN status approval-nya ──
 const getBrowseData = async (startDate, endDate, jenis) => {
   if (!VALID_JENIS.includes(jenis)) throw new Error("Jenis tidak valid.");
 
   const dariExpr =
     jenis === "ACCESORIES" || jenis === "OBAT"
-      ? `IF(h.ret_cab <> 'P03', SUBSTRING(p.gdgp_nama, 4), q.pab_nama)`
+      ? `IF(h.ret_cab NOT IN ('P02','P03'), SUBSTRING(p.gdgp_nama, 4), q.pab_nama)`
       : `q.pab_nama`;
 
   const qMaster = `
@@ -136,8 +139,8 @@ const getApprovalDetail = async (logNomor, noApprov) => {
   // loaddataall: masih draft, belum pernah di-approve (create mode)
   const q = `
     SELECT h.ret_nomor, h.ret_jenis, h.ret_tanggal, h.ret_cab, h.ret_keterangan,
-      IF(h.ret_jenis IN ("ACCESORIES","OBAT") AND h.ret_cab <> "P03", h.ret_gp, h.user_create) AS gp,
-      IF(h.ret_jenis IN ("ACCESORIES","OBAT") AND h.ret_cab <> "P03", p.gdgp_nama, q.pab_nama) AS gpnm,
+      IF(h.ret_jenis IN ("ACCESORIES","OBAT") AND h.ret_cab NOT IN ("P02","P03"), h.ret_gp, h.user_create) AS gp,
+      IF(h.ret_jenis IN ("ACCESORIES","OBAT") AND h.ret_cab NOT IN ("P02","P03"), p.gdgp_nama, q.pab_nama) AS gpnm,
       d.retd_nominta, d.retd_brg_kode,
       IF(b.brg_note = "", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
       b.brg_satuan, d.retd_Jumlah, d.retd_keterangan, d.retd_spk
@@ -254,8 +257,34 @@ const saveApproval = async (payload, user) => {
   try {
     await conn.beginTransaction();
 
+    // Kunci draft; ini juga serialisasi untuk dua approver yang bersamaan
+    const [logRows] = await conn.query(
+      `SELECT ret_cab, ret_jenis FROM tgarmenreturlog_hdr WHERE ret_nomor = ? FOR UPDATE`,
+      [logNomor],
+    );
+    if (logRows.length === 0) throw new Error("Draft retur tidak ditemukan.");
+    const logHdr = logRows[0];
+    if (logHdr.ret_jenis !== jenis) {
+      throw new Error("Jenis tidak sesuai dengan draft retur.");
+    }
+
     let nomor = noApprov;
     const isEdit = !!noApprov;
+
+    if (!isEdit) {
+      const [sudahAda] = await conn.query(
+        `SELECT ret_nomor FROM tgarmenretur_hdr WHERE ret_log = ? LIMIT 1`,
+        [logNomor],
+      );
+      if (sudahAda.length > 0) {
+        throw new Error(
+          `Draft ini sudah di-approve (${sudahAda[0].ret_nomor}). Muat ulang data.`,
+        );
+      }
+    }
+    const gpFinal = CABANG_GP_KOSONG.includes(logHdr.ret_cab)
+      ? ""
+      : gudangProduksi?.kode || "";
 
     if (isEdit) {
       await conn.query(
@@ -280,7 +309,7 @@ const saveApproval = async (payload, user) => {
           tanggalApprove,
           user.cabang,
           user.bagian,
-          gudangProduksi?.kode || "",
+          gpFinal,
           keterangan || "",
           user.kode,
         ],

@@ -40,12 +40,12 @@ const getMonitoringLipat = async (tglAwal, tglAkhir, perusahaan) => {
       SUM(CASE WHEN h.llh_pab_kode = 'P01' THEN IFNULL(d.lld_qty_lipat, 0) * IFNULL(s.spk_panjang, 0) ELSE 0 END) AS Meter_P01,
       SUM(CASE WHEN h.llh_pab_kode = 'P02' THEN IFNULL(d.lld_qty_lipat, 0) * IFNULL(s.spk_panjang, 0) ELSE 0 END) AS Meter_P02,
       SUM(CASE WHEN h.llh_pab_kode IN ('P01','P02') THEN IFNULL(d.lld_qty_lipat, 0) * IFNULL(s.spk_panjang, 0) ELSE 0 END) AS Meter_Lipat
-    FROM kencanaprint.tlhk_lipat_hdr h
-    INNER JOIN kencanaprint.tlhk_lipat_dtl d ON d.lld_llh_nomor = h.llh_nomor
-    INNER JOIN kencanaprint.tspk s           ON s.spk_nomor = d.lld_spk_nomor
+    FROM tlhk_lipat_hdr h
+    INNER JOIN tlhk_lipat_dtl d ON d.lld_llh_nomor = h.llh_nomor
+    INNER JOIN tspk s           ON s.spk_nomor = d.lld_spk_nomor
     LEFT JOIN (
       SELECT jo_kode, MIN(jo_nama) AS jo_nama
-      FROM kencanaprint.tjenisorder
+      FROM tjenisorder
       GROUP BY jo_kode
     ) jo ON jo.jo_kode = s.spk_jo_kode
     WHERE h.llh_tanggal >= ?

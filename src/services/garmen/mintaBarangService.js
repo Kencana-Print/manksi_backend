@@ -5,10 +5,13 @@ const tutupBukuService = require("../../services/tutupBukuService");
  * Mengambil Data Browse (Master, Detail Barang, Detail Realisasi)
  */
 const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
-  // 1. PERBAIKAN: Hilangkan alias 'h.' agar aman disuntikkan ke dalam subquery
+  // Filter lewat placeholder; urutan di semua query: tanggal, tanggal, jenis, cabang, bagian
+  const filterParams = [];
+
   let filterCabang = "";
   if (cabang && cabang !== "ALL") {
-    filterCabang = `AND min_cab = '${cabang}'`;
+    filterCabang = `AND min_cab = ?`;
+    filterParams.push(cabang);
   }
 
   let filterBagian = "";
@@ -16,7 +19,8 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     jenis === "SPAREPART" &&
     (user.bagian === "TEKNISI" || user.bagian === "IT")
   ) {
-    filterBagian = `AND min_bagian = '${user.bagian}'`;
+    filterBagian = `AND min_bagian = ?`;
+    filterParams.push(user.bagian);
   }
 
   // 1. Query Master
@@ -103,7 +107,7 @@ const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
     ORDER BY d.red_nomor
   `;
 
-  const params = [startDate, endDate, jenis];
+  const params = [startDate, endDate, jenis, ...filterParams];
   const [masterRows] = await db.query(qMaster, params);
   const [detailRows] = await db.query(qDetail, params);
   const [realisasiRows] = await db.query(qRealisasi, params);
@@ -363,7 +367,6 @@ module.exports = {
   deleteData,
   closeData,
   ajukanPerubahan,
-  checkUnapprovedRealisasi,
   checkUnapprovedRealisasi,
   approveRealisasi,
 };

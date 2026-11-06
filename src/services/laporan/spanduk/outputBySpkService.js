@@ -35,17 +35,17 @@ const getOutputBySpk = async (tglAwal, tglAkhir) => {
             s.spk_jumlah_kirim AS Jml_Kirim
      FROM (
        SELECT d.lcd_spk_nomor AS nomor
-       FROM kencanaprint.tlhk_cetak_dtl d
-       JOIN kencanaprint.tlhk_cetak_hdr h ON h.lch_nomor = d.lcd_lch_nomor
+       FROM tlhk_cetak_dtl d
+       JOIN tlhk_cetak_hdr h ON h.lch_nomor = d.lcd_lch_nomor
        WHERE h.lch_tanggal BETWEEN ? AND ?
        GROUP BY d.lcd_spk_nomor
      ) x
-     JOIN kencanaprint.tspk s
+     JOIN tspk s
        ON s.spk_nomor = x.nomor AND s.spk_aktif = 'Y' AND s.spk_divisi = ?
-     LEFT JOIN kencanaprint.tsales sl ON sl.sal_kode = s.spk_sal_kode
-     LEFT JOIN kencanaprint.tjenisorder jo
+     LEFT JOIN tsales sl ON sl.sal_kode = s.spk_sal_kode
+     LEFT JOIN tjenisorder jo
        ON jo.jo_kode = s.spk_jo_kode AND jo.jo_divisi = s.spk_divisi
-     LEFT JOIN kencanaprint.tdivisi dv ON dv.kode = s.spk_divisi
+     LEFT JOIN tdivisi dv ON dv.kode = s.spk_divisi
      ORDER BY s.spk_nomor`,
     params,
   );
@@ -58,31 +58,31 @@ const getOutputBySpk = async (tglAwal, tglAkhir) => {
   const [cetak, jahit, lipat, koliLama, koliBaru, mmt] = await Promise.all([
     db.query(
       `SELECT lcd_spk_nomor AS spk, SUM(IFNULL(lcd_qty_cetak, 0)) AS v
-       FROM kencanaprint.tlhk_cetak_dtl WHERE lcd_spk_nomor IN (?)
+       FROM tlhk_cetak_dtl WHERE lcd_spk_nomor IN (?)
        GROUP BY lcd_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT ljd_spk_nomor AS spk, SUM(IFNULL(ljd_qty_jahit, 0)) AS v
-       FROM kencanaprint.tlhk_jahit_dtl WHERE ljd_spk_nomor IN (?)
+       FROM tlhk_jahit_dtl WHERE ljd_spk_nomor IN (?)
        GROUP BY ljd_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT lld_spk_nomor AS spk, SUM(IFNULL(lld_qty_lipat, 0)) AS v
-       FROM kencanaprint.tlhk_lipat_dtl WHERE lld_spk_nomor IN (?)
+       FROM tlhk_lipat_dtl WHERE lld_spk_nomor IN (?)
        GROUP BY lld_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT lqd_spk_nomor AS spk, SUM(IFNULL(lqd_j_koli, 0)) AS v
-       FROM kencanaprint.tlhk_quiring_dtl WHERE lqd_spk_nomor IN (?)
+       FROM tlhk_quiring_dtl WHERE lqd_spk_nomor IN (?)
        GROUP BY lqd_spk_nomor`,
       [daftar],
     ),
     db.query(
       `SELECT lkd_spk_nomor AS spk, SUM(IFNULL(lkd_j_koli, 0)) AS v
-       FROM kencanaprint.tlhk_koli_dtl WHERE lkd_spk_nomor IN (?)
+       FROM tlhk_koli_dtl WHERE lkd_spk_nomor IN (?)
        GROUP BY lkd_spk_nomor`,
       [daftar],
     ),
@@ -94,7 +94,7 @@ const getOutputBySpk = async (tglAwal, tglAkhir) => {
               SUM(IF(lcd_jns_mesin = 'MT04', lcd_qty_cetak, 0)) AS mt04,
               SUM(IF(lcd_jns_mesin = 'MT05', lcd_qty_cetak, 0)) AS mt05,
               SUM(IF(lcd_jns_mesin = 'MI', lcd_qty_cetak, 0)) AS mi
-       FROM kencanaprint.tlhk_cetakmmt_dtl WHERE lcd_spk_nomor IN (?)
+       FROM tlhk_cetakmmt_dtl WHERE lcd_spk_nomor IN (?)
        GROUP BY lcd_spk_nomor`,
       [daftar],
     ),

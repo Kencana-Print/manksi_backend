@@ -1,6 +1,18 @@
 const db = require("../../config/database");
 
 const CABANG_BROWSE = ["HO-", "P01", "P02", "P04", "P05"];
+const CABANG_SPANDUK = ["P02", "P05"];
+const KTG_SPANDUK = "SPANDUK";
+
+// Aturan #128: P02/P05 hanya SPANDUK, HO- melihat semua, cabang lain tidak melihat SPANDUK.
+// Dipakai browse master, lookup, dan form transaksi. Alias hanya dari pemanggil (konstan).
+const kondisiSpanduk = (cabang, alias = "b") => {
+  if (CABANG_SPANDUK.includes(cabang))
+    return ` AND ${alias}.brg_ktg = '${KTG_SPANDUK}'`;
+  if (cabang !== "HO-")
+    return ` AND IFNULL(${alias}.brg_ktg, '') <> '${KTG_SPANDUK}'`;
+  return "";
+};
 
 const getBrowse = async (jenis, cabang, bagian) => {
   const validJenis = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
@@ -12,6 +24,8 @@ const getBrowse = async (jenis, cabang, bagian) => {
   let selectNote = "";
   let stokQuery = "";
   let whereClause = `WHERE b.brg_jenis = '${selectedJenis}'`;
+
+  whereClause += kondisiSpanduk(cabang);
 
   if (selectedJenis === "ACCESORIES") {
     selectNote = "x.Note,";
@@ -60,11 +74,11 @@ const getById = async (kode) => {
       IFNULL(k.ak_nama, "") as nmKet, 
       IFNULL(p.project, "REGULER") as project
     FROM tgarmen_brg b
-    LEFT JOIN taccesories_barang j ON j.ab_kode = LEFT(b.brg_kode, 2)
-    LEFT JOIN taccesories_warna w ON w.aw_kode = MID(b.brg_kode, 3, 3)
-    LEFT JOIN taccesories_ukuran u ON u.au_kode = MID(b.brg_kode, 6, 3)
-    LEFT JOIN taccesories_ket k ON k.ak_kode = MID(b.brg_kode, 9, 2)
-    LEFT JOIN tbahan_project p ON CHAR_LENGTH(b.brg_kode) > 10 AND p.kode = RIGHT(b.brg_kode, 1)
+    LEFT JOIN taccesories_barang j ON j.ab_kode = LEFT(b.brg_kode, 2) AND IFNULL(b.brg_ktg, '') <> 'SPANDUK'
+    LEFT JOIN taccesories_warna w ON w.aw_kode = MID(b.brg_kode, 3, 3) AND IFNULL(b.brg_ktg, '') <> 'SPANDUK'
+    LEFT JOIN taccesories_ukuran u ON u.au_kode = MID(b.brg_kode, 6, 3) AND IFNULL(b.brg_ktg, '') <> 'SPANDUK'
+    LEFT JOIN taccesories_ket k ON k.ak_kode = MID(b.brg_kode, 9, 2) AND IFNULL(b.brg_ktg, '') <> 'SPANDUK'
+    LEFT JOIN tbahan_project p ON CHAR_LENGTH(b.brg_kode) > 10 AND IFNULL(b.brg_ktg, '') <> 'SPANDUK' AND p.kode = RIGHT(b.brg_kode, 1)
     WHERE b.brg_kode = ?
   `;
   const [rows] = await db.query(query, [kode]);
@@ -73,13 +87,30 @@ const getById = async (kode) => {
 
 // --- LOGIKA PEMBENTUKAN KODE OTOMATIS (Migrasi Delphi getmaxnomor) ---
 const generateKode = async (jenis, kategori, accKodeAssembled) => {
+  if (jenis === "ACCESORIES" && kategori === KTG_SPANDUK) {
+    const [[row]] = await db.query(
+      `SELECT IFNULL(MAX(CAST(RIGHT(brg_kode, 8) AS UNSIGNED)), 0) AS max_val
+       FROM tgarmen_brg
+       WHERE brg_jenis = 'ACCESORIES' AND brg_ktg = ?
+         AND LEFT(brg_kode, 2) = 'SA' AND CHAR_LENGTH(brg_kode) = 10`,
+      [KTG_SPANDUK],
+    );
+    return "SA" + String(Number(row.max_val) + 1).padStart(8, "0");
+  }
   if (jenis === "ACCESORIES") return accKodeAssembled; // Hasil jahitan 5 kode dari frontend
 
   const date = new Date();
   const yy = date.getFullYear().toString().slice(-2);
 
   if (jenis === "OBAT") {
-    let prefix = kategori === "GARMEN" ? "G" : kategori === "MMT" ? "M" : "D";
+    let prefix =
+      kategori === "GARMEN"
+        ? "G"
+        : kategori === "MMT"
+          ? "M"
+          : kategori === KTG_SPANDUK
+            ? "S"
+            : "D";
     const [[row]] = await db.query(
       `SELECT IFNULL(MAX(RIGHT(brg_kode, 3)), 0) AS max_val FROM tgarmen_brg WHERE brg_jenis="OBAT" AND LEFT(brg_kode, 1) = ?`,
       [prefix],
@@ -89,16 +120,14 @@ const generateKode = async (jenis, kategori, accKodeAssembled) => {
   }
 
   if (jenis === "SPAREPART") {
-    let prefix =
-      kategori === "MESIN"
-        ? "MS"
-        : kategori === "NONMESIN"
-          ? "NM"
-          : kategori === "LISTRIK"
-            ? "LT"
-            : kategori === "OIL"
-              ? "OL"
-              : "IT";
+    const PREFIX_SPAREPART = {
+      MESIN: "MS",
+      NONMESIN: "NM",
+      LISTRIK: "LT",
+      OIL: "OL",
+      [KTG_SPANDUK]: "SP",
+    };
+    const prefix = PREFIX_SPAREPART[kategori] || "IT";
     const searchPrefix = prefix + yy;
     const [[row]] = await db.query(
       `SELECT IFNULL(MAX(RIGHT(brg_kode, 4)), 0) AS max_val FROM tgarmen_brg WHERE brg_jenis="SPAREPART" AND LEFT(brg_kode, 4) = ?`,
@@ -127,6 +156,9 @@ const create = async (data, user) => {
     data.brg_ktg,
     data.accKodeAssembled,
   );
+
+  if (!generatedKode)
+    throw new Error("Kode barang tidak terbentuk. Lengkapi komponen kode.");
 
   if (data.brg_jenis === "ACCESORIES") {
     const [exist] = await db.query(
@@ -462,6 +494,7 @@ const changeKode = async (kodeLama, kodeBaruInput, user) => {
 };
 
 module.exports = {
+  kondisiSpanduk,
   getBrowse,
   getById,
   create,

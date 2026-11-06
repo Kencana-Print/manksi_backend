@@ -1,14 +1,14 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_cetak_hdr",
-  dtl: "kencanaprint.tlhk_cetak_dtl",
-  dtl2: "kencanaprint.tlhk_cetak_dtl_2",
-  kain: "kencanaprint.tlhk_cetak_kain",
-  barang: "kencanaprint.tbarang_new",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
+  hdr: "tlhk_cetak_hdr",
+  dtl: "tlhk_cetak_dtl",
+  dtl2: "tlhk_cetak_dtl_2",
+  kain: "tlhk_cetak_kain",
+  barang: "tbarang_new",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
   karyawan: "hrd2.tkaryawan",
 };
 
@@ -18,7 +18,7 @@ const KAIN = { divisi: 1, kategori: "1", jenis: "BB" };
 // LHK Cetak tidak boleh diubah/dihapus selama masih dirujuk LHK Tinta/Cat
 const TABEL_PEMAKAI_LHK = [
   {
-    tabel: "kencanaprint.tlhk_tinta_hdr",
+    tabel: "tlhk_tinta_hdr",
     kolom: "lnt_lch_nomor",
     label: "LHK Tinta/Cat",
   },

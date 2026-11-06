@@ -2,14 +2,14 @@ const db = require("../../../config/database");
 
 // Semua master Spanduk ada di skema kencanaprint (huruf kecil sesuai information_schema)
 const T = {
-  barang: "kencanaprint.tbarang_penolong",
-  barangUtama: "kencanaprint.tbarang_new",
-  stokPenolong: "kencanaprint.tmasterstok_penolong",
-  kategori: "kencanaprint.tkategori",
-  jenis: "kencanaprint.tjenisbarang",
-  supplier: "kencanaprint.tsupplier",
-  gudang: "kencanaprint.tgudang",
-  divisi: "kencanaprint.tdivisi",
+  barang: "tbarang_penolong",
+  barangUtama: "tbarang_new",
+  stokPenolong: "tmasterstok_penolong",
+  kategori: "tkategori",
+  jenis: "tjenisbarang",
+  supplier: "tsupplier",
+  gudang: "tgudang",
+  divisi: "tdivisi",
 };
 
 const DIVISI_BOLEH = [1, 5]; // 1 = Spanduk, 5 = MMT
@@ -293,7 +293,7 @@ const deleteBahanPenolong = async (kode) => {
 
   const sql = TABEL_PEMAKAI_BARANG.map(
     ([tabel, kolom]) =>
-      `(SELECT '${tabel}' AS tabel FROM kencanaprint.${tabel} WHERE ${kolom} = ? LIMIT 1)`,
+      `(SELECT '${tabel}' AS tabel FROM ${tabel} WHERE ${kolom} = ? LIMIT 1)`,
   ).join(" UNION ALL ");
   const [dipakai] = await db.query(
     sql,

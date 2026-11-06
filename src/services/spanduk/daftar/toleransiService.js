@@ -1,8 +1,8 @@
 const db = require("../../../config/database");
 
 const T = {
-  toleransi: "kencanaprint.toleransi",
-  jenisOrder: "kencanaprint.tjenisorder",
+  toleransi: "toleransi",
+  jenisOrder: "tjenisorder",
 };
 
 // Delphi: pilihan jenis = tjenisorder WHERE jo_divisi IN (1,5)

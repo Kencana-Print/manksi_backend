@@ -8,13 +8,13 @@ const {
 const { KESESUAIAN_SPANDUK } = require("./bastMapSpandukFormService");
 
 const T = {
-  hdr: "kencanaprint.tmutasi_marketing_spanduk",
-  dtl: "kencanaprint.tmutasi_marketing_spanduk_dtl",
-  memo: "kencanaprint.tmemospk",
-  user: "kencanaprint.tuser",
-  bast: "kencanaprint.tkesesuaianmap",
-  lock: "kencanaprint.tkesesuaianmap_lock",
-  putus: "kencanaprint.tkesesuaianmap_keputusan",
+  hdr: "tmutasi_marketing_spanduk",
+  dtl: "tmutasi_marketing_spanduk_dtl",
+  memo: "tmemospk",
+  user: "tuser",
+  bast: "tkesesuaianmap",
+  lock: "tkesesuaianmap_lock",
+  putus: "tkesesuaianmap_keputusan",
 };
 
 const DIVISI_SPANDUK = 1;

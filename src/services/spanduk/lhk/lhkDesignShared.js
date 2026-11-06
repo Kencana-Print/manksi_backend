@@ -9,14 +9,14 @@ const {
 } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhkdesign",
+  hdr: "tlhkdesign",
   // Nomor LHK = nomor SPK/MAP (ld_spk). Header dipakai juga sebagai "dtl" untuk
   // scoping cabang, supaya LHK tanpa baris komponen tetap terlihat oleh cabangnya.
-  dtl: "kencanaprint.tlhkdesign",
-  komponen: "kencanaprint.tlhkdesign_komponen",
-  status: "kencanaprint.tlhkdesign_status",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
+  dtl: "tlhkdesign",
+  komponen: "tlhkdesign_komponen",
+  status: "tlhkdesign_status",
+  spk: "tspk",
+  memoSpk: "tmemospk",
 };
 
 // Tabel dipakai bersama LHK Design lain; 'P' = Proof (Spanduk)

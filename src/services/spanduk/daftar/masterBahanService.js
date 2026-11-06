@@ -1,16 +1,16 @@
 const db = require("../../../config/database");
 
-// Tabel master Spanduk ada di skema kencanaprint. Nama huruf kecil sesuai
+// Tabel master Spanduk ada di skema  Nama huruf kecil sesuai
 // information_schema (Delphi: tbarang_NEW — tabel yang sama).
 const T = {
-  barang: "kencanaprint.tbarang_new",
-  stokNew: "kencanaprint.tmasterstok_new",
-  stokPenolong: "kencanaprint.tmasterstok_penolong",
-  kategori: "kencanaprint.tkategori",
-  jenis: "kencanaprint.tjenisbarang",
-  supplier: "kencanaprint.tsupplier",
-  gudang: "kencanaprint.tgudang",
-  divisi: "kencanaprint.tdivisi",
+  barang: "tbarang_new",
+  stokNew: "tmasterstok_new",
+  stokPenolong: "tmasterstok_penolong",
+  kategori: "tkategori",
+  jenis: "tjenisbarang",
+  supplier: "tsupplier",
+  gudang: "tgudang",
+  divisi: "tdivisi",
 };
 
 const DIVISI_SPANDUK = 1;
@@ -317,7 +317,7 @@ const deleteMasterBahan = async (kode) => {
 
   const sql = TABEL_PEMAKAI_BARANG.map(
     ([tabel, kolom]) =>
-      `(SELECT '${tabel}' AS tabel FROM kencanaprint.${tabel} WHERE ${kolom} = ? LIMIT 1)`,
+      `(SELECT '${tabel}' AS tabel FROM ${tabel} WHERE ${kolom} = ? LIMIT 1)`,
   ).join(" UNION ALL ");
   const [dipakai] = await db.query(
     sql,

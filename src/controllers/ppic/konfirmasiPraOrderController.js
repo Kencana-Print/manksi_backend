@@ -3,12 +3,10 @@ const konfirmasiPraOrderService = require("../../services/ppic/konfirmasiPraOrde
 const getBrowse = async (req, res) => {
   try {
     const { startDate, endDate, divisi, status } = req.query;
-    const data = await konfirmasiPraOrderService.getBrowse({
-      startDate,
-      endDate,
-      divisi,
-      status,
-    });
+    const data = await konfirmasiPraOrderService.getBrowse(
+      { startDate, endDate, divisi, status },
+      req.user,
+    );
     res.json({ success: true, data });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
@@ -17,7 +15,10 @@ const getBrowse = async (req, res) => {
 
 const getDetail = async (req, res) => {
   try {
-    const data = await konfirmasiPraOrderService.getDetail(req.params.nomor);
+    const data = await konfirmasiPraOrderService.getDetail(
+      req.params.nomor,
+      req.user,
+    );
     res.json({ success: true, data });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });
@@ -47,6 +48,7 @@ const confirmKesanggupan = async (req, res) => {
         kirim,
         kirimKet,
         bagian: req.user.bagian,
+        cabang: req.user.cabang,
       },
     );
     res.json({
@@ -64,6 +66,7 @@ const confirmStatusBahan = async (req, res) => {
     await konfirmasiPraOrderService.confirmStatusBahan(
       req.params.probId,
       status,
+      req.user,
     );
     res.json({ success: true, message: "Status bahan berhasil diperbarui." });
   } catch (e) {
@@ -78,6 +81,8 @@ const confirmStatusBahanSpanduk = async (req, res) => {
       req.body.status,
       req.user.kode,
       req.user.bagian,
+      req.body.estDatang,
+      req.user.cabang,
     );
     res.json({ success: true, message: "Status bahan berhasil diperbarui." });
   } catch (e) {
@@ -87,7 +92,7 @@ const confirmStatusBahanSpanduk = async (req, res) => {
 
 const getDivisi = async (req, res) => {
   try {
-    const data = await konfirmasiPraOrderService.getDivisi();
+    const data = await konfirmasiPraOrderService.getDivisi(req.user);
     res.json({ success: true, data });
   } catch (e) {
     res.status(500).json({ success: false, message: e.message });

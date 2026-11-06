@@ -1,6 +1,7 @@
 const db = require("../config/database");
 const { sqlTanpaInduk } = require("./postingGuardService");
 const { filterTipe } = require("./master/bahanService");
+const { kondisiSpanduk } = require("./master/garmenBrgService");
 
 const searchSpk = async (
   keyword,
@@ -1569,6 +1570,7 @@ const searchBarangGarmen = async (
   // 2. Siapkan kondisi dasar
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
   let whereParams = [jenis];
+  whereClause += kondisiSpanduk(cabang);
 
   // 3. Filter khusus Sparepart berdasarkan Bagian User
   // if (jenis === "SPAREPART") {

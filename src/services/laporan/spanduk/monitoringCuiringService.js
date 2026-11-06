@@ -37,9 +37,9 @@ const getMonitoringCuiring = async (tglAwal, tglAkhir, perusahaan) => {
       SUM(IFNULL(d.lqd_j_jemuran, 0))                                  AS Jemuran,
       SUM(IFNULL(d.lqd_j_potong, 0))                                   AS Potong,
       SUM(IFNULL(d.lqd_j_oven, 0)) * IFNULL(s.spk_panjang, 0)          AS Meter_Oven
-    FROM kencanaprint.tlhk_quiring_hdr h
-    INNER JOIN kencanaprint.tlhk_quiring_dtl d ON d.lqd_lqh_nomor = h.lqh_nomor
-    INNER JOIN kencanaprint.tspk s             ON s.spk_nomor = d.lqd_spk_nomor
+    FROM tlhk_quiring_hdr h
+    INNER JOIN tlhk_quiring_dtl d ON d.lqd_lqh_nomor = h.lqh_nomor
+    INNER JOIN tspk s             ON s.spk_nomor = d.lqd_spk_nomor
     WHERE h.lqh_tanggal >= ?
       AND h.lqh_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
       ${sqlPerusahaan}

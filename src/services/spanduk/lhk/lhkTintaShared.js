@@ -8,14 +8,14 @@ const {
 } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_tinta_hdr",
-  bahan: "kencanaprint.tlhk_tinta_bahan",
-  cetakHdr: "kencanaprint.tlhk_cetak_hdr",
-  cetakDtl: "kencanaprint.tlhk_cetak_dtl",
-  barang: "kencanaprint.tbarang_new",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
+  hdr: "tlhk_tinta_hdr",
+  bahan: "tlhk_tinta_bahan",
+  cetakHdr: "tlhk_cetak_hdr",
+  cetakDtl: "tlhk_cetak_dtl",
+  barang: "tbarang_new",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
 };
 
 // Tinta merujuk nomor LHK Cetak (bukan per SPK/MAP), jadi cabangnya dibaca

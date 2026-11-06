@@ -49,9 +49,9 @@ const getMonitoringCetak = async (tglAwal, tglAkhir, perusahaan, user) => {
                IFNULL(d.lcd_qty_cetak, 0) * IFNULL(s.spk_panjang, 0), 0)) AS Meter_P02,
         SUM(IF(h.lch_pab_kode IN ('P01','P02'),
                IFNULL(d.lcd_qty_cetak, 0) * IFNULL(s.spk_panjang, 0), 0)) AS Meter_Cetak
-     FROM kencanaprint.tlhk_cetak_hdr h
-     JOIN kencanaprint.tlhk_cetak_dtl d ON d.lcd_lch_nomor = h.lch_nomor
-     JOIN kencanaprint.tspk s ON s.spk_nomor = d.lcd_spk_nomor
+     FROM tlhk_cetak_hdr h
+     JOIN tlhk_cetak_dtl d ON d.lcd_lch_nomor = h.lch_nomor
+     JOIN tspk s ON s.spk_nomor = d.lcd_spk_nomor
      WHERE h.lch_tanggal >= ?
        AND h.lch_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
        AND s.spk_divisi = ?

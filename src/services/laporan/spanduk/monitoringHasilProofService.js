@@ -62,25 +62,25 @@ const getMonitoringHasilProof = async (tglAwal, tglAkhir) => {
       x.spk_kain                                                       AS Kain,
       IFNULL(x.spk_panjang, 0) * IFNULL(d.lprd_j_proof, 0)             AS Meter_Bahan,
       IFNULL(u.Jumlah_Meter, 0)                                        AS Jumlah_Meter
-    FROM kencanaprint.tlhk_proof_hdr h
-    INNER JOIN kencanaprint.tlhk_proof_dtl d ON d.lprd_lpr_nomor = h.lpr_nomor
+    FROM tlhk_proof_hdr h
+    INNER JOIN tlhk_proof_dtl d ON d.lprd_lpr_nomor = h.lpr_nomor
     LEFT JOIN (
       SELECT spk_nomor, spk_nama, spk_kain,
              IFNULL(spk_panjang, 0) AS spk_panjang,
              IFNULL(spk_lebar, 0)   AS spk_lebar
-      FROM kencanaprint.tspk
+      FROM tspk
       UNION ALL
       SELECT mspk_nomor, mspk_nama, mspk_kain,
              IFNULL(mspk_panjang, 0),
              IFNULL(mspk_lebar, 0)
-      FROM kencanaprint.tmemospk
+      FROM tmemospk
     ) x ON x.spk_nomor = d.lprd_spk_nomor
     LEFT JOIN (
       SELECT lprd2_lpr_nomor, lprd2_spk_nomor,
         ${SQL_PIVOT_UKURAN},
         SUM(lprd2_qty) AS Jumlah_Plangkan,
         SUM(lprd2_up_kode * lprd2_qty) AS Jumlah_Meter
-      FROM kencanaprint.tlhk_proof_dtl_2
+      FROM tlhk_proof_dtl_2
       GROUP BY lprd2_lpr_nomor, lprd2_spk_nomor
     ) u ON u.lprd2_lpr_nomor = d.lprd_lpr_nomor AND u.lprd2_spk_nomor = d.lprd_spk_nomor
     WHERE h.lpr_tanggal >= ?

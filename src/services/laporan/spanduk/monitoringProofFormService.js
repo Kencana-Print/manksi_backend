@@ -59,10 +59,10 @@ const getForm = async (nomor, user) => {
             IFNULL(p.tph_status, '') AS Status,
             DATE_FORMAT(p.tph_tanggal_status, '${FMT_TGL}') AS Tg_Status,
             IFNULL(p.tph_arsip, '') AS Arsip
-     FROM kencanaprint.tmemospk m
-     LEFT JOIN kencanaprint.tperusahaan pr ON pr.perush_kode = m.mspk_perush_kode
-     LEFT JOIN kencanaprint.tproof_hdr p ON p.tph_mspk_nomor = m.mspk_nomor
-     LEFT JOIN kencanaprint.tgudang g ON g.gdg_kode = p.tph_gdg_kode
+     FROM tmemospk m
+     LEFT JOIN tperusahaan pr ON pr.perush_kode = m.mspk_perush_kode
+     LEFT JOIN tproof_hdr p ON p.tph_mspk_nomor = m.mspk_nomor
+     LEFT JOIN tgudang g ON g.gdg_kode = p.tph_gdg_kode
      WHERE m.mspk_nomor = ?
      LIMIT 1`,
     [kode],
@@ -114,27 +114,27 @@ const simpan = async (nomor, payload, user) => {
     const [[m]] = await conn.query(
       `SELECT mspk_nomor, mspk_divisi, mspk_cab,
               DATE_FORMAT(mspk_tanggal, '${FMT_TGL}') AS mspk_tanggal
-         FROM kencanaprint.tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
+         FROM tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
       [kode],
     );
     periksaAkses(m, kode, user);
 
     const [[g]] = await conn.query(
-      `SELECT gdg_kode FROM kencanaprint.tgudang
+      `SELECT gdg_kode FROM tgudang
         WHERE gdg_kode = ? AND gdg_kode LIKE '%WH-%'`,
       [gudang],
     );
     if (!g) throw galat(`Lokasi Proof ${gudang} tidak valid`);
 
     const [[ada]] = await conn.query(
-      `SELECT tph_nomor FROM kencanaprint.tproof_hdr
+      `SELECT tph_nomor FROM tproof_hdr
         WHERE tph_mspk_nomor = ? LIMIT 1`,
       [kode],
     );
 
     if (ada) {
       await conn.query(
-        `UPDATE kencanaprint.tproof_hdr
+        `UPDATE tproof_hdr
             SET tph_tanggal = ?, tph_gdg_kode = ?, tph_tanggal_proof = ?,
                 tph_qty = ?, tph_status = ?, tph_tanggal_status = ?,
                 tph_arsip = ?, date_modified = CURDATE(), user_modified = ?
@@ -154,7 +154,7 @@ const simpan = async (nomor, payload, user) => {
     } else {
       try {
         await conn.query(
-          `INSERT INTO kencanaprint.tproof_hdr
+          `INSERT INTO tproof_hdr
              (tph_nomor, tph_tanggal, tph_gdg_kode, tph_mspk_nomor,
               tph_tanggal_proof, tph_qty, tph_status, tph_tanggal_status,
               tph_arsip, date_create, user_create)
@@ -196,7 +196,7 @@ const simpan = async (nomor, payload, user) => {
 const getGudangProof = async () => {
   const [rows] = await db.query(
     `SELECT gdg_kode AS Kode, gdg_nama AS Nama
-       FROM kencanaprint.tgudang
+       FROM tgudang
       WHERE gdg_kode LIKE '%WH-%'
       ORDER BY gdg_kode`,
   );
@@ -217,7 +217,7 @@ const getDaftarMap = async (cari, user) => {
             DATE_FORMAT(m.mspk_tanggal, '${FMT_TGL}') AS Tanggal,
             m.mspk_jo_kode AS Jenis,
             m.mspk_nama AS Nama
-       FROM kencanaprint.tmemospk m
+       FROM tmemospk m
       WHERE m.mspk_divisi = ?
         AND (m.mspk_nomor LIKE ? OR m.mspk_nama LIKE ?)
         ${sqlCab}

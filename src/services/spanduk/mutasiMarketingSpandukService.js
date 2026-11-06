@@ -8,10 +8,10 @@ const {
 } = require("./lhk/lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tmutasi_marketing_spanduk",
-  dtl: "kencanaprint.tmutasi_marketing_spanduk_dtl",
-  memo: "kencanaprint.tmemospk",
-  user: "kencanaprint.tuser",
+  hdr: "tmutasi_marketing_spanduk",
+  dtl: "tmutasi_marketing_spanduk_dtl",
+  memo: "tmemospk",
+  user: "tuser",
 };
 
 // Browse: satu baris per dokumen. MO diambil dari tmemospk.user_create

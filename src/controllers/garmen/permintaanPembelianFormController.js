@@ -27,7 +27,18 @@ const saveData = async (req, res) => {
 
 const saveRealisasi = async (req, res) => {
   try {
+    if (req.user?.bagian !== "FINANCE") {
+      return res.status(403).json({
+        success: false,
+        message: "Hanya bagian FINANCE yang boleh mengisi realisasi.",
+      });
+    }
     const { nomor, kode, items } = req.body;
+    if (!nomor || !kode || !Array.isArray(items)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Data realisasi tidak lengkap." });
+    }
     await service.saveRealisasi(nomor, kode, items);
     res
       .status(200)
@@ -40,12 +51,13 @@ const saveRealisasi = async (req, res) => {
 const getBarangByKode = async (req, res) => {
   try {
     const { kode } = req.params;
-    const { jenis, cabang, bagian } = req.query;
+    const { jenis } = req.query;
+    // Cabang dan bagian dari sesi, bukan dari query (query bisa dipalsukan)
     const data = await service.getBarangByKode(
       kode,
       jenis || "ACCESORIES",
-      cabang || "HO-",
-      bagian || "",
+      req.user?.cabang || "",
+      req.user?.bagian || "",
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

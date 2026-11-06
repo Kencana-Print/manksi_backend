@@ -76,30 +76,30 @@ const getMonitoringAfdruk = async (tglAwal, tglAkhir) => {
       IFNULL(u.Jumlah_Meter, 0)                                        AS Jumlah_Meter,
       ${SQL_KOLOM_BAHAN},
       d.lad_keterangan                                                 AS Keterangan
-    FROM kencanaprint.tlhk_afdruk_hdr h
-    INNER JOIN kencanaprint.tlhk_afdruk_dtl d ON d.lad_lah_nomor = h.lah_nomor
+    FROM tlhk_afdruk_hdr h
+    INNER JOIN tlhk_afdruk_dtl d ON d.lad_lah_nomor = h.lah_nomor
     LEFT JOIN (
       SELECT spk_nomor, spk_nama,
              IFNULL(spk_panjang, 0) AS spk_panjang,
              IFNULL(spk_lebar, 0)   AS spk_lebar
-      FROM kencanaprint.tspk
+      FROM tspk
       UNION ALL
       SELECT mspk_nomor, mspk_nama,
              IFNULL(mspk_panjang, 0),
              IFNULL(mspk_lebar, 0)
-      FROM kencanaprint.tmemospk
+      FROM tmemospk
     ) x ON x.spk_nomor = d.lad_spk_nomor
     LEFT JOIN (
       SELECT lad2_lah_nomor, lad2_spk_nomor,
         ${SQL_PIVOT_UKURAN},
         SUM(lad2_up_kode * lad2_qty) AS Jumlah_Meter
-      FROM kencanaprint.tlhk_afdruk_dtl_2
+      FROM tlhk_afdruk_dtl_2
       GROUP BY lad2_lah_nomor, lad2_spk_nomor
     ) u ON u.lad2_lah_nomor = d.lad_lah_nomor AND u.lad2_spk_nomor = d.lad_spk_nomor
     LEFT JOIN (
       SELECT lab_lah_nomor,
         ${SQL_PIVOT_BAHAN}
-      FROM kencanaprint.tlhk_afdruk_bahan
+      FROM tlhk_afdruk_bahan
       GROUP BY lab_lah_nomor
     ) bhn ON bhn.lab_lah_nomor = h.lah_nomor
     WHERE h.lah_tanggal >= ?

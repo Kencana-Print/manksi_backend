@@ -6,12 +6,12 @@ const {
 } = require("./lhk/lhkCommon");
 
 const T = {
-  mps: "kencanaprint.tmutasi_produksi_spanduk",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
-  jenisOrder: "kencanaprint.tjenisorder",
-  divisi: "kencanaprint.tdivisi",
+  mps: "tmutasi_produksi_spanduk",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
+  jenisOrder: "tjenisorder",
+  divisi: "tdivisi",
 };
 
 const NOMOR_LOCK = "mutasi_produksi_spanduk_nomor";

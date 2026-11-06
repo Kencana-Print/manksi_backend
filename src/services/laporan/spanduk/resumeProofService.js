@@ -24,8 +24,8 @@ const getResumeProof = async (tglAwal, tglAkhir) => {
   const params = [DIVISI_SPANDUK, tglAwal, tglAkhir];
 
   const dariDanSyarat = `
-    FROM kencanaprint.tproof_hdr p
-    JOIN kencanaprint.tmemospk m
+    FROM tproof_hdr p
+    JOIN tmemospk m
       ON m.mspk_nomor = p.tph_mspk_nomor AND m.mspk_divisi = ?
     WHERE p.tph_tanggal >= ?
       AND p.tph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)`;

@@ -1,11 +1,11 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_quiring_hdr",
-  dtl: "kencanaprint.tlhk_quiring_dtl",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
+  hdr: "tlhk_quiring_hdr",
+  dtl: "tlhk_quiring_dtl",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
 };
 
 // Cabang efektif sumber. Memo: ganti ke "mspk_cab2" kalau itu cabang pengerjaan

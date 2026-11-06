@@ -1,12 +1,12 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_koli_hdr",
-  dtl: "kencanaprint.tlhk_koli_dtl",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
-  unit: "kencanaprint.tlhk_koli_unit",
+  hdr: "tlhk_koli_hdr",
+  dtl: "tlhk_koli_dtl",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
+  unit: "tlhk_koli_unit",
 };
 
 // Belum ada pemakai LHK (kunci rantai lewat registry lhkLini)

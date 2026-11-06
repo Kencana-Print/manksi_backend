@@ -48,9 +48,9 @@ const getMonitoringJahit = async (tglAwal, tglAkhir, perusahaan) => {
             SUM(IF(h.ljh_pab_kode IN ('P01', 'P02'),
                    IFNULL(d.ljd_qty_jahit, 0), 0))
               * IFNULL(s.spk_panjang, 0) AS Meter_Jahit
-     FROM kencanaprint.tlhk_jahit_hdr h
-     JOIN kencanaprint.tlhk_jahit_dtl d ON d.ljd_ljh_nomor = h.ljh_nomor
-     JOIN kencanaprint.tspk s ON s.spk_nomor = d.ljd_spk_nomor
+     FROM tlhk_jahit_hdr h
+     JOIN tlhk_jahit_dtl d ON d.ljd_ljh_nomor = h.ljh_nomor
+     JOIN tspk s ON s.spk_nomor = d.ljd_spk_nomor
      WHERE h.ljh_tanggal >= ?
        AND h.ljh_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
        AND s.spk_divisi = ?

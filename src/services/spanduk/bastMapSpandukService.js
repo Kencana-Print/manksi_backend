@@ -28,7 +28,7 @@ const susunFilter = (filters, user) => {
   }
 
   if (onProgressOnly === "true" || onProgressOnly === true) {
-    where += ` AND m.mspk_nomor IN (SELECT map FROM kencanaprint.tkesesuaianmap_lock WHERE apv = "N"`;
+    where += ` AND m.mspk_nomor IN (SELECT map FROM tkesesuaianmap_lock WHERE apv = "N"`;
     if (cab) {
       where += ` AND cab = ?`;
       params.push(cab);
@@ -50,7 +50,7 @@ const getBrowseList = async (filters, user) => {
       m.mspk_nomor AS Nomor,
       m.mspk_tipe AS Tipe,
       m.mspk_tanggal AS Tanggal,
-      IF(EXISTS (SELECT 1 FROM kencanaprint.tkesesuaianmap s
+      IF(EXISTS (SELECT 1 FROM tkesesuaianmap s
                  WHERE s.mspk_nomor = m.mspk_nomor), "SUDAH", "") AS CetakBAST,
       m.mspk_nama AS NamaPekerjaan,
       m.mspk_nama2 AS NamaExt,
@@ -58,26 +58,26 @@ const getBrowseList = async (filters, user) => {
       m.mspk_keterangan AS Keterangan,
       m.mspk_kendala AS kendalaProduksi,
       m.mspk_jumlah_jadi AS Jumlah,
-      (SELECT IFNULL(l.apv, "") FROM kencanaprint.tkesesuaianmap_lock l
+      (SELECT IFNULL(l.apv, "") FROM tkesesuaianmap_lock l
         WHERE l.map = m.mspk_nomor LIMIT 1) AS OnProgres,
       (SELECT IF(COUNT(*) > 0 AND SUM(s.status <> 'N') = 0, 1, 0)
-         FROM kencanaprint.tkesesuaianmap s
+         FROM tkesesuaianmap s
         WHERE s.mspk_nomor = m.mspk_nomor
           AND s.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")})) AS SemuaN,
-      (SELECT p.keputusan FROM kencanaprint.tkesesuaianmap_keputusan p
+      (SELECT p.keputusan FROM tkesesuaianmap_keputusan p
         WHERE p.map = m.mspk_nomor) AS Keputusan,
-      (SELECT p.alasan FROM kencanaprint.tkesesuaianmap_keputusan p
+      (SELECT p.alasan FROM tkesesuaianmap_keputusan p
         WHERE p.map = m.mspk_nomor) AS AlasanKeputusan,
       (SELECT GROUP_CONCAT(DISTINCT d.lprd_lpr_nomor
               ORDER BY d.lprd_lpr_nomor SEPARATOR ', ')
-        FROM kencanaprint.tlhk_proof_dtl d
+        FROM tlhk_proof_dtl d
       WHERE d.lprd_spk_nomor = m.mspk_nomor) AS NomorProof
       ,
       ${hariKerjaSql(
         "DATE(m.date_create)",
-        `IFNULL((SELECT DATE(MIN(s.date_create)) FROM kencanaprint.tkesesuaianmap s WHERE s.mspk_nomor = m.mspk_nomor), CURDATE())`,
+        `IFNULL((SELECT DATE(MIN(s.date_create)) FROM tkesesuaianmap s WHERE s.mspk_nomor = m.mspk_nomor), CURDATE())`,
       )} AS HariBAST
-    FROM kencanaprint.tmemospk m
+    FROM tmemospk m
     ${where}
     ORDER BY m.mspk_tanggal DESC, m.mspk_nomor DESC
     `,
@@ -94,7 +94,7 @@ const deleteBast = async (nomor, user) => {
     const [[map]] = await conn.query(
       `SELECT mspk_nomor, mspk_divisi, mspk_cab,
               DATE_FORMAT(mspk_tanggal, '%Y-%m-%d') AS tgl
-         FROM kencanaprint.tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
+         FROM tmemospk WHERE mspk_nomor = ? FOR UPDATE`,
       [nomor],
     );
     if (!map) {
@@ -107,7 +107,7 @@ const deleteBast = async (nomor, user) => {
       throw galat(`MAP ${nomor} milik cabang lain`, "forbidden");
     }
     const [serah] = await conn.query(
-      `SELECT mmkd_nomor FROM kencanaprint.tmutasi_marketing_spanduk_dtl
+      `SELECT mmkd_nomor FROM tmutasi_marketing_spanduk_dtl
        WHERE mmkd_mspk_nomor = ? LIMIT 1`,
       [nomor],
     );
@@ -119,39 +119,32 @@ const deleteBast = async (nomor, user) => {
     await cekTutupBuku(map.tgl);
 
     const [[ada]] = await conn.query(
-      `SELECT COUNT(*) AS n FROM kencanaprint.tkesesuaianmap WHERE mspk_nomor = ?`,
+      `SELECT COUNT(*) AS n FROM tkesesuaianmap WHERE mspk_nomor = ?`,
       [nomor],
     );
     if (!Number(ada.n)) {
       throw galat(`MAP ${nomor} belum memiliki BAST`);
     }
 
+    await conn.query(`DELETE FROM tkesesuaianmap WHERE mspk_nomor = ?`, [
+      nomor,
+    ]);
     await conn.query(
-      `DELETE FROM kencanaprint.tkesesuaianmap WHERE mspk_nomor = ?`,
-      [nomor],
-    );
-    await conn.query(
-      `UPDATE kencanaprint.tmemospk
+      `UPDATE tmemospk
           SET mspk_jumlah_jadi = 0, mspk_kendala = ""
         WHERE mspk_nomor = ?`,
       [nomor],
     );
-    await conn.query(
-      `DELETE FROM kencanaprint.tkesesuaianmap_komponen WHERE nomor = ?`,
-      [nomor],
-    );
-    await conn.query(
-      `DELETE FROM kencanaprint.tkesesuaianmap_obat WHERE ko_nomor = ?`,
-      [nomor],
-    );
-    await conn.query(
-      `DELETE FROM kencanaprint.tkesesuaianmap_lock WHERE map = ?`,
-      [nomor],
-    );
-    await conn.query(
-      `DELETE FROM kencanaprint.tkesesuaianmap_keputusan WHERE map = ?`,
-      [nomor],
-    );
+    await conn.query(`DELETE FROM tkesesuaianmap_komponen WHERE nomor = ?`, [
+      nomor,
+    ]);
+    await conn.query(`DELETE FROM tkesesuaianmap_obat WHERE ko_nomor = ?`, [
+      nomor,
+    ]);
+    await conn.query(`DELETE FROM tkesesuaianmap_lock WHERE map = ?`, [nomor]);
+    await conn.query(`DELETE FROM tkesesuaianmap_keputusan WHERE map = ?`, [
+      nomor,
+    ]);
 
     await conn.commit();
     return true;

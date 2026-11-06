@@ -282,6 +282,74 @@ const saveData = async (payload, user) => {
     if (totalQty === 0)
       throw new Error("Jumlah kosong semua, belum bisa disimpan.");
 
+    // 3b. Sumber dokumen divalidasi & diambil dari DB, bukan dari payload
+    if (isEdit) {
+      const [[cur]] = await conn.query(
+        `SELECT bpb_jenis, bpb_mb_nomor, bpb_po_nomor, bpb_sup_kode, bpb_tanggal
+         FROM tgarmenbpb_hdr WHERE bpb_nomor = ? FOR UPDATE`,
+        [bpb_nomor],
+      );
+      if (!cur) throw new Error("Nomor BPB tersebut tidak ada.");
+      if (
+        zdtClose &&
+        new Date(cur.bpb_tanggal) < zdtClose &&
+        pinStatus !== "ACC"
+      ) {
+        throw new Error(
+          "Transaksi tsb sudah diclose. Silahkan minta approve untuk bisa menyimpan perubahan data.",
+        );
+      }
+      bpb_jenis = cur.bpb_jenis;
+      bpb_mb_nomor = cur.bpb_mb_nomor;
+      bpb_po_nomor = cur.bpb_po_nomor;
+      bpb_sup_kode = cur.bpb_sup_kode;
+    } else if (bpb_po_nomor) {
+      const [[po]] = await conn.query(
+        `SELECT po_mb_nomor, po_sup_kode, po_jenis FROM tgarmenpo_hdr WHERE po_nomor = ?`,
+        [bpb_po_nomor],
+      );
+      if (!po) throw new Error("NO PO tsb tidak ada.");
+      if (po.po_jenis !== bpb_jenis) {
+        throw new Error("Jenis PO tidak sama dengan jenis BPB.");
+      }
+      bpb_mb_nomor = po.po_mb_nomor;
+      bpb_sup_kode = po.po_sup_kode;
+    } else if (bpb_mb_nomor) {
+      bpb_sup_kode = "";
+    }
+    if (!bpb_po_nomor && !bpb_mb_nomor) {
+      throw new Error("No. Permintaan atau No. PO harus di isi.");
+    }
+
+    const kodeList = [
+      ...new Set(
+        detail.filter((d) => Number(d.jumlah || 0) !== 0).map((d) => d.Kode),
+      ),
+    ];
+    const [src] = bpb_po_nomor
+      ? await conn.query(
+          `SELECT d.pod_brg_kode AS kode, MAX(d.pod_harga) AS harga
+           FROM tgarmenpo_dtl d
+           INNER JOIN tgarmen_brg b ON b.brg_kode = d.pod_brg_kode
+           WHERE d.pod_nomor = ? AND d.pod_brg_kode IN (?) AND b.brg_jenis = ?
+           GROUP BY d.pod_brg_kode`,
+          [bpb_po_nomor, kodeList, bpb_jenis],
+        )
+      : await conn.query(
+          `SELECT d.mbd_brg_kode AS kode, 0 AS harga
+           FROM tgarmenmintabeli_dtl d
+           INNER JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+           WHERE d.mbd_nomor = ? AND d.mbd_brg_kode IN (?) AND b.brg_jenis = ?
+           GROUP BY d.mbd_brg_kode`,
+          [bpb_mb_nomor, kodeList, bpb_jenis],
+        );
+    if (src.length !== kodeList.length) {
+      throw new Error(
+        "Ada barang yang bukan dari PO/permintaan tsb atau beda jenis dengan BPB.",
+      );
+    }
+    const hargaPo = new Map(src.map((r) => [r.kode, Number(r.harga || 0)]));
+
     // 4. Tarik / Ganti Nomor Baru Jika Mode Create
     if (!isEdit) {
       const year = tglBPB.getFullYear().toString();
@@ -331,15 +399,8 @@ const saveData = async (payload, user) => {
       bpb_nomor,
     ]);
     let nourut = 0;
-    let totalMinta = 0;
-    let totalBpb = 0; // Kalkulasi untuk update status PO / Minta
 
     for (const d of detail) {
-      totalMinta += Number(d.minta || 0);
-      let qtyBpbCalc = Number(d.sudah || 0) + Number(d.jumlah || 0);
-      totalBpb +=
-        qtyBpbCalc >= Number(d.minta || 0) ? Number(d.minta || 0) : qtyBpbCalc;
-
       if (d.Nama && Number(d.jumlah || 0) !== 0) {
         nourut++;
         await conn.query(
@@ -348,7 +409,7 @@ const saveData = async (payload, user) => {
             bpb_nomor,
             d.Kode,
             Number(d.jumlah),
-            Number(d.harga || 0),
+            hargaPo.get(d.Kode) ?? 0,
             d.spk || "",
             d.ket || "",
             d.kegunaan || "",
@@ -360,9 +421,28 @@ const saveData = async (payload, user) => {
 
     // 7. Update Status Permintaan & PO (1:1 Delphi)
     if (bpb_po_nomor && bpb_po_nomor !== "") {
+      const [[stPo]] = await conn.query(
+        `SELECT IFNULL(SUM(x.minta), 0) AS minta,
+                IFNULL(SUM(LEAST(x.minta, x.bpb)), 0) AS terima
+         FROM (
+           SELECT d.pod_jumlah AS minta,
+                  IFNULL((
+                    SELECT SUM(i.bpbd_jumlah)
+                    FROM tgarmenbpb_dtl i
+                    INNER JOIN tgarmenbpb_hdr j ON j.bpb_nomor = i.bpbd_nomor
+                    WHERE j.bpb_po_nomor = d.pod_nomor
+                      AND i.bpbd_brg_kode = d.pod_brg_kode
+                  ), 0) AS bpb
+           FROM tgarmenpo_dtl d
+           WHERE d.pod_nomor = ?
+         ) x`,
+        [bpb_po_nomor],
+      );
+      const minta = Number(stPo.minta || 0);
+      const terima = Number(stPo.terima || 0);
       let statPO = "PROSES";
-      if (totalBpb >= totalMinta) statPO = "CLOSE";
-      else if (totalBpb === 0) statPO = "";
+      if (terima >= minta) statPO = "CLOSE";
+      else if (terima === 0) statPO = "";
       await conn.query(
         `UPDATE tgarmenpo_hdr SET po_status=? WHERE po_nomor=?`,
         [statPO, bpb_po_nomor],

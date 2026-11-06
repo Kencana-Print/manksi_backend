@@ -27,8 +27,27 @@ const assertBagianDivisi = (divisi, bagian, userKode) => {
   }
 };
 
+// Cabang -> divisi yang boleh dilihat/dikonfirmasi. Cabang di luar peta ini
+// (HO-, kosong, dst) tidak dibatasi; ADMIN dan BAGIAN_BEBAS_KONFIRMASI juga bebas.
+const DIVISI_PER_CABANG = { P02: [1], P01: [4], P04: [4], P05: [5] };
+
+const divisiBolehUser = (user) => {
+  if (!user) return null;
+  if (String(user.kode || "").toUpperCase() === "ADMIN") return null;
+  if (BAGIAN_BEBAS_KONFIRMASI.includes(String(user.bagian || "").toUpperCase()))
+    return null;
+  return DIVISI_PER_CABANG[String(user.cabang || "").toUpperCase()] ?? null;
+};
+
+const assertDivisiCabang = (divisi, user) => {
+  const boleh = divisiBolehUser(user);
+  if (boleh && !boleh.includes(Number(divisi))) {
+    throw new Error("Pra Order ini bukan untuk divisi cabang Anda.");
+  }
+};
+
 // --- BROWSE: daftar Pra Order yang butuh/sudah dikonfirmasi PPIC ---
-const getBrowse = async ({ startDate, endDate, divisi, status }) => {
+const getBrowse = async ({ startDate, endDate, divisi, status }, user) => {
   const params = [];
   const phDivisi = DIVISI_TANPA_KONFIRMASI.map(() => "?").join(", ");
   let where = `WHERE UPPER(IFNULL(v.Divisi, '')) NOT IN (${phDivisi})`;
@@ -51,6 +70,12 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
     params.push(status);
   }
 
+  const boleh = divisiBolehUser(user);
+  if (boleh) {
+    where += ` AND h.pro_divisi IN (${boleh.map(() => "?").join(", ")})`;
+    params.push(...boleh);
+  }
+
   const [rows] = await db.query(
     `SELECT
        h.pro_nomor AS Nomor,
@@ -62,13 +87,12 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
        h.pro_nama_pekerjaan AS NamaPekerjaan,
        IF(
          h.pro_divisi = 1,
-         bsp.brg_nama,
+         bsp.Bhn_Name,
          (SELECT GROUP_CONCAT(m.bj_nama SEPARATOR ' / ')
           FROM tpraorder_bahan b
           LEFT JOIN tbahan_jenis m ON m.bj_kode = b.prob_bahan_kode
           WHERE b.prob_pro_nomor = h.pro_nomor)
        ) AS Bahan,
-       h.pro_sumber_bahan AS SumberBahan,
        IF(h.pro_divisi = 1, h.pro_bahan_status, h.pro_status_bahan) AS StatusBahan,
        h.pro_qty_rencana AS QtyRencana,
        h.pro_jml_desain AS JmlDesain,
@@ -89,7 +113,7 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
      FROM tpraorder_hdr h
      LEFT JOIN tdivisi v ON v.kode = h.pro_divisi
      LEFT JOIN tsales s ON s.sal_kode = h.pro_sal_kode
-     LEFT JOIN tbarang_new bsp ON bsp.brg_kode = h.pro_brg_kode
+     LEFT JOIN tbahan bsp ON bsp.Bhn_kode = h.pro_brg_kode
      ${where}
      ORDER BY h.pro_tanggal DESC, h.pro_nomor DESC`,
     params,
@@ -101,8 +125,20 @@ const getBrowse = async ({ startDate, endDate, divisi, status }) => {
 // Reuse getById dari praOrderFormService — sama persis struktur data
 // (header + bahan + ukuran + gambar) yang dipakai form Pra Order,
 // supaya preview di sisi PPIC 1:1 dengan apa yang MO input.
-const getDetail = async (nomor) => {
-  return praOrderFormService.getById(nomor);
+const getDetail = async (nomor, user) => {
+  const data = await praOrderFormService.getById(nomor);
+  assertDivisiCabang(data.pro_divisi, user);
+  data.BahanSpandukStok = null;
+  if (Number(data.pro_divisi) === 1 && data.pro_brg_kode) {
+    const [[st]] = await db.query(
+      `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS stok
+       FROM tmasterstok_bahan
+       WHERE mst_aktif = 'Y' AND mst_brg_kode = ?`,
+      [data.pro_brg_kode],
+    );
+    data.BahanSpandukStok = Number(st.stok) || 0;
+  }
+  return data;
 };
 
 // --- KONFIRMASI KESANGGUPAN ---
@@ -111,7 +147,15 @@ const confirmKesanggupan = async (
   status,
   catatan,
   userKode,
-  { tglSoEstimasi, tglMap, bagian, syaratKetentuan, kirim, kirimKet } = {},
+  {
+    tglSoEstimasi,
+    tglMap,
+    bagian,
+    cabang,
+    syaratKetentuan,
+    kirim,
+    kirimKet,
+  } = {},
 ) => {
   if (!["SANGGUP", "TIDAK SANGGUP"].includes(status)) {
     throw new Error("Status konfirmasi tidak valid.");
@@ -130,6 +174,16 @@ const confirmKesanggupan = async (
   );
   if (!hdr) throw new Error("Pra Order tidak ditemukan.");
   assertBagianDivisi(hdr.pro_divisi, bagian, userKode);
+  assertDivisiCabang(hdr.pro_divisi, { kode: userKode, bagian, cabang });
+  if (
+    status === "SANGGUP" &&
+    Number(hdr.pro_divisi) === 1 &&
+    String(tglSoEstimasi) < String(tglMap)
+  ) {
+    throw new Error(
+      "Estimasi Tanggal SO tidak boleh lebih awal dari Estimasi Tanggal MAP.",
+    );
+  }
   if (
     status === "SANGGUP" &&
     Number(hdr.pro_divisi) === 1 &&
@@ -172,15 +226,40 @@ const confirmKesanggupan = async (
 };
 
 // --- KONFIRMASI STATUS PER BAHAN (opsional, dipanggil dari panel detail) ---
-const confirmStatusBahan = async (probId, status) => {
+const confirmStatusBahan = async (probId, status, user) => {
+  const [[row]] = await db.query(
+    `SELECT h.pro_divisi
+     FROM tpraorder_bahan b
+     JOIN tpraorder_hdr h ON h.pro_nomor = b.prob_pro_nomor
+     WHERE b.prob_id = ?`,
+    [probId],
+  );
+  if (!row) throw new Error("Bahan Pra Order tidak ditemukan.");
+  assertDivisiCabang(row.pro_divisi, user);
   await praOrderFormService.setStatusBahan(probId, status);
   return true;
 };
 
 // --- KONFIRMASI STATUS BAHAN SPANDUK (level header, 1 bahan per pra order) ---
-const confirmStatusBahanSpanduk = async (nomor, status, userKode, bagian) => {
+const confirmStatusBahanSpanduk = async (
+  nomor,
+  status,
+  userKode,
+  bagian,
+  estDatang,
+  cabang,
+) => {
   if (!["READY", "TIDAK READY"].includes(status)) {
     throw new Error("Status bahan tidak valid.");
+  }
+  let est = null;
+  if (status === "TIDAK READY") {
+    est = String(estDatang ?? "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(est) || Number.isNaN(Date.parse(est))) {
+      throw new Error(
+        "Estimasi kedatangan bahan wajib diisi untuk status Tidak Ready.",
+      );
+    }
   }
   const [[hdr]] = await db.query(
     `SELECT pro_divisi, pro_brg_kode, pro_mh_nomor
@@ -192,6 +271,7 @@ const confirmStatusBahanSpanduk = async (nomor, status, userKode, bagian) => {
     throw new Error("Konfirmasi bahan ini hanya untuk divisi Spanduk.");
   }
   assertBagianDivisi(hdr.pro_divisi, bagian, userKode);
+  assertDivisiCabang(hdr.pro_divisi, { kode: userKode, bagian, cabang });
   if (!hdr.pro_brg_kode) {
     throw new Error("Pra Order ini belum memiliki bahan.");
   }
@@ -200,19 +280,26 @@ const confirmStatusBahanSpanduk = async (nomor, status, userKode, bagian) => {
   }
   await db.query(
     `UPDATE tpraorder_hdr
-     SET pro_bahan_status = ?, pro_bahan_user = ?, pro_bahan_tgl = NOW()
+     SET pro_bahan_status = ?, pro_bahan_est_datang = ?,
+         pro_bahan_user = ?, pro_bahan_tgl = NOW()
      WHERE pro_nomor = ?`,
-    [status, userKode, nomor],
+    [status, est, userKode, nomor],
   );
   return true;
 };
 
 // --- LOOKUP DIVISI (untuk dropdown filter) ---
 // Sama pola dengan comment di PraOrderView.vue — buang kode "6" (FIT U).
-const getDivisi = async () => {
-  const [rows] = await db.query(
-    `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi WHERE kode <> 6 ORDER BY kode`,
-  );
+const getDivisi = async (user) => {
+  const boleh = divisiBolehUser(user);
+  const params = [];
+  let sql = `SELECT kode AS Kode, Divisi AS Nama FROM tdivisi WHERE kode <> 6`;
+  if (boleh) {
+    sql += ` AND kode IN (${boleh.map(() => "?").join(", ")})`;
+    params.push(...boleh);
+  }
+  sql += ` ORDER BY kode`;
+  const [rows] = await db.query(sql, params);
   return rows;
 };
 

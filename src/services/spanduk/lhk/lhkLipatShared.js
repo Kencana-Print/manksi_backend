@@ -1,12 +1,12 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_lipat_hdr",
-  dtl: "kencanaprint.tlhk_lipat_dtl",
-  dtl2: "kencanaprint.tlhk_lipat_dtl_2",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
+  hdr: "tlhk_lipat_hdr",
+  dtl: "tlhk_lipat_dtl",
+  dtl2: "tlhk_lipat_dtl_2",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
   karyawan: "hrd2.tkaryawan",
 };
 

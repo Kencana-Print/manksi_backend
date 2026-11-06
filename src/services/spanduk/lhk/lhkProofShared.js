@@ -1,16 +1,16 @@
 const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 
 const T = {
-  hdr: "kencanaprint.tlhk_proof_hdr",
-  dtl: "kencanaprint.tlhk_proof_dtl",
-  dtl2: "kencanaprint.tlhk_proof_dtl_2",
-  ukuran: "kencanaprint.tms_plangkan_2",
-  pabrik: "kencanaprint.tpabrik",
-  spk: "kencanaprint.tspk",
-  memoSpk: "kencanaprint.tmemospk",
-  afdrukDtl2: "kencanaprint.tlhk_afdruk_dtl_2",
-  barang: "kencanaprint.tbarang_new",
-  resep: "kencanaprint.tlhk_proof_resep",
+  hdr: "tlhk_proof_hdr",
+  dtl: "tlhk_proof_dtl",
+  dtl2: "tlhk_proof_dtl_2",
+  ukuran: "tms_plangkan_2",
+  pabrik: "tpabrik",
+  spk: "tspk",
+  memoSpk: "tmemospk",
+  afdrukDtl2: "tlhk_afdruk_dtl_2",
+  barang: "tbarang_new",
+  resep: "tlhk_proof_resep",
 };
 
 // Proof tidak masuk rantai mutasi produksi (keputusan 16 Okt 2026)

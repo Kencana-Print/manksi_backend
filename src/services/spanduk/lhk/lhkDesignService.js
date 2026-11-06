@@ -1,12 +1,15 @@
 const db = require("../../../config/database");
-const { validasiPeriode } = require("./lhkCommon");
+const {
+  validasiPeriode,
+  adalahSuperadmin,
+  cabangUser,
+} = require("./lhkCommon");
 const {
   T,
   TIPE,
   galat,
   teks,
   norm,
-  filterCabang,
   pastikanLhkDiCabang,
   pastikanBelumDipakai,
   cekTutupBuku,
@@ -16,13 +19,35 @@ const {
 const WHERE_PERIODE = `h.ld_tipe = '${TIPE}'
     AND h.ld_tanggal BETWEEN ? AND ?`;
 
-// Browse master (setara SQLMaster Delphi): satu baris per SPK/MAP
+// Header LHK Design memegang nomor SPK/MAP langsung (ld_spk), jadi cabang
+// dicek ke SPK/MAP itu, bukan lewat baris komponen: header yang baru dibuat
+// (belum ada komponen) tetap tampil. Aturan cabang sama dengan periksaSumber.
+const filterCabangHdr = (user, alias = "h") => {
+  if (adalahSuperadmin(user)) {
+    return { sql: "", params: [] };
+  }
+  const cab = cabangUser(user);
+  return {
+    sql: `AND (
+      EXISTS (SELECT 1 FROM ${T.spk} sc
+              WHERE sc.spk_nomor = ${alias}.ld_spk
+                AND UPPER(TRIM(sc.spk_cab)) = ?)
+      OR EXISTS (SELECT 1 FROM ${T.memoSpk} sm
+                 WHERE sm.mspk_nomor = ${alias}.ld_spk
+                   AND UPPER(TRIM(sm.mspk_cab)) = ?)
+    )`,
+    params: [cab, cab],
+  };
+};
+
+// Browse master: satu baris per SPK/MAP (= satu LHK Design)
 const getBrowseLhkDesign = async (tglAwal, tglAkhir, user) => {
   validasiPeriode(tglAwal, tglAkhir);
-  const cab = filterCabang(user, "h");
+  const cab = filterCabangHdr(user, "h");
 
   const [rows] = await db.query(
     `SELECT h.ld_spk AS Nomor,
+            h.ld_nomor AS Nomor_LHK,
             IFNULL(s.spk_nama, m.mspk_nama) AS Nama_SPK,
             DATE_FORMAT(IFNULL(s.spk_tanggal, m.mspk_tanggal), '%Y-%m-%d') AS Tanggal_SPK,
             DATE_FORMAT(IFNULL(s.spk_dateline, m.mspk_dateline), '%Y-%m-%d') AS Dateline,
@@ -37,16 +62,16 @@ const getBrowseLhkDesign = async (tglAwal, tglAkhir, user) => {
      LEFT JOIN ${T.memoSpk} m ON m.mspk_nomor = h.ld_spk
      WHERE ${WHERE_PERIODE}
      ${cab.sql}
-     ORDER BY h.ld_tanggal, h.ld_spk`,
+     ORDER BY h.ld_tanggal, h.ld_nomor, h.ld_spk`,
     [tglAwal, tglAkhir, ...cab.params],
   );
   return rows;
 };
 
-// Detail komponen seluruh LHK pada periode (kolom sama dengan SQLDetail Delphi)
+// Detail komponen seluruh LHK pada periode
 const getDetailLhkDesign = async (tglAwal, tglAkhir, user) => {
   validasiPeriode(tglAwal, tglAkhir);
-  const cab = filterCabang(user, "h");
+  const cab = filterCabangHdr(user, "h");
 
   const [rows] = await db.query(
     `SELECT d.ldk_spk AS Nomor,
@@ -73,7 +98,7 @@ const getDetailLhkDesign = async (tglAwal, tglAkhir, user) => {
 // Riwayat status seluruh LHK pada periode, urut per SPK lalu waktu
 const getStatusLhkDesign = async (tglAwal, tglAkhir, user) => {
   validasiPeriode(tglAwal, tglAkhir);
-  const cab = filterCabang(user, "h");
+  const cab = filterCabangHdr(user, "h");
 
   const [rows] = await db.query(
     `SELECT d.lds_spk AS Nomor,

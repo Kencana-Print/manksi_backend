@@ -62,8 +62,8 @@ const sqlSumber = (jenis) => {
                       WHEN 'JEMURAN' THEN d.lqd_j_jemuran
                       ELSE d.lqd_j_potong
                     END, 0) AS qty
-      FROM kencanaprint.tlhk_quiring_hdr h
-      INNER JOIN kencanaprint.tlhk_quiring_dtl d ON d.lqd_lqh_nomor = h.lqh_nomor
+      FROM tlhk_quiring_hdr h
+      INNER JOIN tlhk_quiring_dtl d ON d.lqd_lqh_nomor = h.lqh_nomor
       CROSS JOIN (
         SELECT 'KOLI' AS kelompok UNION ALL SELECT 'OVEN'
         UNION ALL SELECT 'JEMURAN' UNION ALL SELECT 'POTONG'
@@ -76,8 +76,8 @@ const sqlSumber = (jenis) => {
       SELECT d.${s.spk} AS spk_nomor,
              h.${s.pab} AS kelompok,
              IFNULL(d.${s.qty}, 0) AS qty
-      FROM kencanaprint.${s.hdr} h
-      INNER JOIN kencanaprint.${s.dtl} d ON d.${s.dtlNomor} = h.${s.hdrNomor}
+      FROM ${s.hdr} h
+      INNER JOIN ${s.dtl} d ON d.${s.dtlNomor} = h.${s.hdrNomor}
       WHERE ${periode(`h.${s.tgl}`)}`;
 };
 
@@ -118,10 +118,10 @@ const getRekapMonitoringByGudang = async (tglAwal, tglAkhir, jenis) => {
     ) a
     LEFT JOIN (
       SELECT spk_nomor, IFNULL(spk_panjang, 0) AS spk_panjang
-      FROM kencanaprint.tspk
+      FROM tspk
       UNION ALL
       SELECT mspk_nomor, IFNULL(mspk_panjang, 0)
-      FROM kencanaprint.tmemospk
+      FROM tmemospk
     ) s ON s.spk_nomor = a.spk_nomor
     GROUP BY a.kelompok
     ORDER BY a.kelompok

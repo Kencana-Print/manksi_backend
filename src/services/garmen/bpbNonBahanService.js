@@ -115,8 +115,12 @@ const deleteData = async (nomor) => {
       throw new Error("Transaksi tsb sudah close. Tidak bisa dihapus.");
     }
 
-    // 2. Cek Voucher Pembelian (Logic Delphi: Kunci Hapus jika sudah dibuat kasbon/faktur)
-    if (data.VoucherPembelian !== "") {
+    // 2. Cek Voucher Pembelian (kunci hapus jika sudah dibuat voucher)
+    const [cekIv] = await conn.query(
+      `SELECT iv_nomor FROM tgarmeniv_hdr WHERE iv_bpb_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+    if (cekIv.length > 0) {
       throw new Error(
         "Sudah di dibuatkan Voucher Pembelian. Tidak bisa dihapus.",
       );

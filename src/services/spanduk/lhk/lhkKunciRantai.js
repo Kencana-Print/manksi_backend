@@ -7,13 +7,13 @@ const {
   ringkasDaftar,
 } = require("./lhkLini");
 
-const TABEL_SPK = "kencanaprint.tspk";
+const TABEL_SPK = "tspk";
 
 // Pemakai di luar rantai LHK: lini -> tabel lain yang merujuk SPK/MAP-nya.
 // LHK lini itu terkunci bila salah satu SPK/MAP di dalamnya ada di tabel tersebut.
 const PEMAKAI_NON_LHK = {
   PROOF: {
-    tabel: "kencanaprint.tkesesuaianmap",
+    tabel: "tkesesuaianmap",
     kolom: "mspk_nomor",
     nama: "BAST MAP",
   },
