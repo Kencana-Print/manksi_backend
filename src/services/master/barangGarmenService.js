@@ -3,7 +3,7 @@ const db = require("../../config/database");
 const getBrowse = async (divisiId) => {
   // Filter berdasarkan hak akses Divisi User
   let filterDivisi = "";
-  if (divisiId === 1) {
+  if (divisiId === 1 || divisiId === 5) {
     filterDivisi = " WHERE (brg_divisi = 1 OR brg_divisi = 5) ";
   } else if (divisiId === 4) {
     filterDivisi = " WHERE (brg_divisi = 3 OR brg_divisi = 4) ";

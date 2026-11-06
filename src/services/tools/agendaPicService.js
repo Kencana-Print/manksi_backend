@@ -31,13 +31,15 @@ const getCandidateUsers = async (bagian, cabang) => {
   const [rows] = await db.query(
     `SELECT u.user_kode AS Kode, u.user_nama AS Nama
      FROM tuser u
-     WHERE u.user_bagian = ? AND u.user_cab = ? AND u.user_aktif = 0
+     JOIN trbac_user_cabang uc
+       ON uc.uc_user_kode = u.user_kode AND uc.uc_cabang = ?
+     WHERE u.user_bagian = ? AND u.user_aktif = 0
        AND u.user_kode NOT IN (
          SELECT pic_user_kode FROM tagenda_pic
          WHERE pic_bagian = ? AND pic_cabang = ?
        )
      ORDER BY u.user_nama ASC`,
-    [bagian, cabToUse, bagian, cabToUse],
+    [cabToUse, bagian, bagian, cabToUse],
   );
   return rows;
 };
@@ -47,9 +49,12 @@ const addPic = async (bagian, cabang, targetUserKode, userKode) => {
   const cabToUse = ho ? "HO-" : cabang;
 
   const [[target]] = await db.query(
-    `SELECT user_kode FROM tuser
-     WHERE user_kode = ? AND user_bagian = ? AND user_cab = ? AND user_aktif = 0`,
-    [targetUserKode, bagian, cabToUse],
+    `SELECT u.user_kode
+     FROM tuser u
+     JOIN trbac_user_cabang uc
+       ON uc.uc_user_kode = u.user_kode AND uc.uc_cabang = ?
+     WHERE u.user_kode = ? AND u.user_bagian = ? AND u.user_aktif = 0`,
+    [cabToUse, targetUserKode, bagian],
   );
   if (!target) {
     throw new Error(

@@ -42,5 +42,18 @@ const changePassword = async (req, res) => {
   }
 };
 
-// Tambahkan ke dalam module.exports:
-module.exports = { login, changePassword };
+const gantiCabang = async (req, res) => {
+  try {
+    const { cabang } = req.body;
+    if (!cabang) {
+      return res.status(400).json({ message: "Cabang harus diisi." });
+    }
+    // Kode user dari token yang sudah diverifikasi, bukan dari body
+    const result = await authService.gantiCabang(req.user.kode, cabang);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+module.exports = { login, changePassword, gantiCabang };

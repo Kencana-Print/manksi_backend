@@ -1,6 +1,10 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../../services/tutupBukuService");
 
+// Retur bahan spanduk (kode SB): gudang tujuan tetap WH006, tanpa gudang produksi
+const GUDANG_BAHAN_SPANDUK = "WH006";
+const adalahKodeSpanduk = (kode) => String(kode || "").startsWith("SB");
+
 /**
  * Generate Nomor Otomatis (RETP / RETL)
  */
@@ -102,7 +106,14 @@ const getEditDetail = async (nomor) => {
   `;
   const [dtlRows] = await db.query(qDtl, [nomor]);
 
-  return { header: hdrRows[0], details: dtlRows };
+  return {
+    header: {
+      ...hdrRows[0],
+      spanduk:
+        dtlRows.length > 0 && dtlRows.every((d) => adalahKodeSpanduk(d.kode)),
+    },
+    details: dtlRows,
+  };
 };
 
 /**
@@ -151,6 +162,21 @@ const saveData = async (payload, user) => {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
       );
+    }
+
+    // Mode spanduk ditentukan dari kode bahan (SB), bukan dari klien
+    const kodeTerisi = (payload.details || [])
+      .filter((d) => d.nama && d.kode)
+      .map((d) => d.kode);
+    const jumlahSB = kodeTerisi.filter(adalahKodeSpanduk).length;
+    if (jumlahSB > 0 && jumlahSB < kodeTerisi.length) {
+      throw new Error(
+        "Retur tidak boleh mencampur bahan spanduk (SB) dengan bahan garmen.",
+      );
+    }
+    if (jumlahSB > 0) {
+      payload.gudangAsal = GUDANG_BAHAN_SPANDUK;
+      payload.gudangProduksi = "";
     }
 
     // 2. SIMPAN HEADER

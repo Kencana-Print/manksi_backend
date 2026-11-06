@@ -1,4 +1,4 @@
-const SUPERADMIN_BAGIAN = ["EDP", "DIR", "AUDIT"];
+const SUPERADMIN_BAGIAN = ["EDP", "DIREKSI", "AUDIT"];
 
 const bagianUser = (user) => (user?.bagian || "").toUpperCase();
 

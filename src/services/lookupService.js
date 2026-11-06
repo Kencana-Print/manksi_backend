@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const { sqlTanpaInduk } = require("./postingGuardService");
+const { filterTipe } = require("./master/bahanService");
 
 const searchSpk = async (
   keyword,
@@ -369,14 +370,26 @@ const searchSpkProduksi = async (keyword, page = 1, limit = 50) => {
   return { items: rows, total, page: pageNum, limit: limitNum };
 };
 
-const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
+const searchBahan = async (
+  keyword,
+  isBordir,
+  mode,
+  page = 1,
+  limit = 50,
+  cabang,
+  tipe,
+) => {
   const limitNum = Number(limit);
   const pageNum = Number(page);
   const offset = (pageNum - 1) * limitNum;
   const isBordirFlag =
     isBordir === true || isBordir === "true" || isBordir === "1";
 
-  let whereClause = `WHERE b.bhn_aktif = 0`;
+  // Penyempit dari form PO Spanduk: hanya mempersempit hasil filter cabang
+  const batasSpanduk =
+    tipe === "SPANDUK" ? " AND LEFT(b.bhn_kode, 2) = 'SB'" : "";
+
+  let whereClause = `WHERE b.bhn_aktif = 0${filterTipe(cabang, "b.bhn_kode")}${batasSpanduk}`;
   const params = [];
 
   if (mode === "komponen") {
@@ -397,16 +410,13 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
     dataParams.push(limitNum, offset);
   }
 
-  // [OPTIMASI] Gunakan CTE / Subquery untuk memfilter 50 data terlebih dahulu,
-  // sehingga MySQL hanya menghitung stok (yang pakai fungsi LIKE lambat)
-  // sebanyak 50 kali saja, bukan ribuan kali.
-  let dataQuery = `
+  // Halaman dipotong dulu (CTE), join label hanya untuk baris halaman.
+  // Stok dihitung terpisah di bawah, sekali untuk semua baris halaman.
+  const dataQuery = `
     WITH paged_bahan AS (
       SELECT 
-        b.bhn_kode, 
-        b.bhn_name, 
-        b.bhn_satuan, 
-        b.bhn_hargabeli
+        b.bhn_kode, b.bhn_name, b.bhn_satuan, b.bhn_hargabeli,
+        b.bhn_konstruksi, b.bhn_panjang, b.bhn_lebar
       FROM tbahan b
       ${whereClause}
       ORDER BY b.bhn_name ASC
@@ -419,29 +429,45 @@ const searchBahan = async (keyword, isBordir, mode, page = 1, limit = 50) => {
       IFNULL(g.bg_nama, "") AS Gramasi,
       IFNULL(s.bs_nama, "") AS Setting,
       IFNULL(j.bj_nama, "") AS Jenis,
-      pb.bhn_hargabeli AS Harga,
-      IFNULL((
-        SELECT SUM(c.mst_stok_in - c.mst_stok_out) 
-        FROM tmasterstok_barcode c
-        WHERE c.mst_aktif = 'Y' 
-          AND c.mst_brg_kode LIKE CONCAT(pb.bhn_kode, '_______')
-      ), 0) AS Stok
+      IFNULL(pb.bhn_konstruksi, "") AS Konstruksi,
+      pb.bhn_panjang AS Panjang,
+      pb.bhn_lebar AS Lebar,
+      pb.bhn_hargabeli AS Harga
     FROM paged_bahan pb
-    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(pb.bhn_kode, 6, 2)
-    LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(pb.bhn_kode, 2)
+    LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(pb.bhn_kode, 6, 2) AND LEFT(pb.bhn_kode, 2) <> 'SB'
+    LEFT JOIN tbahan_setting s ON s.bs_kode = SUBSTRING(pb.bhn_kode, 8, 2) AND LEFT(pb.bhn_kode, 2) <> 'SB'
     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(pb.bhn_kode, 2)
     ORDER BY pb.bhn_name ASC
   `;
 
-  // Hilangkan logika push LIMIT dan OFFSET yang lama,
-  // karena sudah kita masukkan ke dalam dataParams saat membuat limitOffsetClause di atas.
-  // Pastikan menghapus baris "if (limitNum > 0) { ... }" yang lama.
-
-  // Jalankan count & data secara paralel
   const [[countResult], [rows]] = await Promise.all([
     db.query(`SELECT COUNT(*) AS total FROM tbahan b ${whereClause}`, params),
     db.query(dataQuery, dataParams),
   ]);
+
+  // --- STOK: satu query untuk semua baris halaman ---
+  // Pola 'KODE_______' konstan per baris, jadi bisa jadi range index
+  // (bukan LIKE dari kolom baris luar yang memaksa scan penuh 50x).
+  if (rows.length > 0) {
+    const semua = rows.length > 200; // limit <= 0: jangan buat ribuan OR
+    const kondisi = semua
+      ? ""
+      : ` AND (${rows.map(() => "c.mst_brg_kode LIKE ?").join(" OR ")})`;
+    const [stokRows] = await db.query(
+      `SELECT LEFT(c.mst_brg_kode, CHAR_LENGTH(c.mst_brg_kode) - 7) AS kode,
+              SUM(c.mst_stok_in - c.mst_stok_out) AS stok
+       FROM tmasterstok_barcode c
+       WHERE c.mst_aktif = 'Y'${kondisi}
+       GROUP BY kode`,
+      semua ? [] : rows.map((r) => `${r.Kode}_______`),
+    );
+    const peta = new Map(
+      stokRows.map((r) => [String(r.kode).toUpperCase(), r.stok]),
+    );
+    rows.forEach((r) => {
+      r.Stok = peta.get(String(r.Kode).toUpperCase()) ?? 0;
+    });
+  }
 
   return {
     items: rows,
@@ -2947,7 +2973,7 @@ const searchRealisasiMintaBySpk = async (
 // --- GET GUDANG BARANG JADI (untuk STBJ) ---
 const getGudangJadi = async (q = "", divisi = 0) => {
   let where = "gdg_jadi <> 0";
-  if (divisi === 1) where = "gdg_jadi = 1";
+  if (divisi === 1 || divisi === 5) where = "gdg_jadi = 1";
   if (divisi === 4) where = "gdg_jadi = 4";
 
   const params = [];
@@ -2967,7 +2993,7 @@ const getGudangJadi = async (q = "", divisi = 0) => {
 // --- GET GUDANG PRODUKSI KOLI (untuk STBJ, filter KOLI) ---
 const getGudangProduksiKoli = async (q = "", cab = "", divisi = 0) => {
   let where = `gdgp_aktif = 0 AND gdgp_nama LIKE '%KOLI%'`;
-  if (divisi === 1) where += ` AND gdgp_kode = 'GP-001'`;
+  if (divisi === 1 || divisi === 5) where += ` AND gdgp_kode = 'GP-001'`;
   else if (cab === "P01") where += ` AND gdgp_cab = 'P01'`;
   else if (cab === "P04") where += ` AND gdgp_cab = 'P04'`;
 

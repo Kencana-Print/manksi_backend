@@ -1,6 +1,12 @@
 const service = require("../../services/garmen/mintaBahanFormService");
 const tutupBukuService = require("../../services/tutupBukuService");
 
+// Cabang transaksi mengikuti login; hanya HO-/ALL yang boleh memilih cabang lain.
+const cabangBoleh = (user, cabang) => {
+  const cab = String(user.cabang || "");
+  return cabang === cab || cab === "ALL" || cab.startsWith("HO-");
+};
+
 const getKomponen = async (req, res) => {
   try {
     const data = await service.getKomponenOptions();
@@ -13,7 +19,15 @@ const getKomponen = async (req, res) => {
 const getSpkInfo = async (req, res) => {
   try {
     const { spk } = req.params;
-    const { cabang, keterangan, isEdit } = req.query; // Tambah isEdit
+    const { keterangan, isEdit } = req.query;
+    const cabang = req.query.cabang || req.user.cabang;
+
+    if (!cabangBoleh(req.user, cabang)) {
+      return res.status(403).json({
+        success: false,
+        message: "Cabang tsb bukan cabang anda.",
+      });
+    }
 
     const data = await service.getSpkDetailsAndMkb(
       spk,
@@ -43,29 +57,25 @@ const saveData = async (req, res) => {
     const payload = req.body;
     if (isEdit) payload.nomor = req.params.nomor;
 
+    // Cabang default = cabang login
+    payload.cabang = payload.cabang || req.user.cabang;
+
     // Cek Akses Cabang
-    if (
-      payload.cabang !== req.user.cabang &&
-      req.user.cabang !== "ALL" &&
-      !req.user.cabang.startsWith("HO-")
-    ) {
+    if (!cabangBoleh(req.user, payload.cabang)) {
       return res.status(403).json({
         success: false,
         message: "Nomor permintaan tsb bukan cabang anda.",
       });
     }
 
-    // Eksekusi Service (Validasi Tutup Buku & PIN 5 sudah ada di dalam sini)
+    // Eksekusi Service (Validasi Tutup Buku, PIN 5, dan aturan Spanduk ada di dalam sini)
     const result = await service.saveMintaBahan(payload, req.user, isEdit);
 
     res
       .status(200)
       .json({ success: true, message: "Berhasil disimpan", data: result });
   } catch (error) {
-    // Tangkap error dari throw new Error() di Service
-    res
-      .status(400) // Gunakan 400 (Bad Request) agar pesan error validasi muncul di toast frontend, bukan 500
-      .json({ success: false, message: error.message });
+    res.status(400).json({ success: false, message: error.message });
   }
 };
 

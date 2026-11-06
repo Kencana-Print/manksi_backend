@@ -154,7 +154,7 @@ const searchBarcodeBahan = async (kdKain, q = "") => {
          SELECT w.bw_kode, w.bw_kodek, IFNULL(r.warna,'') AS werno
          FROM tbahan_warna w
          LEFT JOIN retail.twarna r ON r.kode = w.bw_kodek
-       ) z ON z.bw_kode = MID(b.Bhn_kode,3,3)
+       ) z ON z.bw_kode = MID(b.Bhn_kode,3,3) AND LEFT(b.Bhn_kode,2) <> 'SB'
        WHERE LEFT(a.bard_kode,2) = ?
      ) x
      WHERE x.Stok <> 0

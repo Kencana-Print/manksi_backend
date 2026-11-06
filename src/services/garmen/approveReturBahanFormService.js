@@ -130,7 +130,11 @@ const getDetailApprove = async (nomor) => {
     }));
   }
 
-  return { header, details: dtlRows, barcodes };
+  const spanduk =
+    dtlRows.length > 0 &&
+    dtlRows.every((d) => String(d.kode || "").startsWith("SB"));
+
+  return { header: { ...header, spanduk }, details: dtlRows, barcodes };
 };
 
 /**
@@ -168,6 +172,62 @@ const saveData = async (payload, user) => {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
       );
+    }
+
+    // 1b. Sumber kebenaran = dokumen Retur (RETL), bukan payload klien
+    if (!noReturLog) throw new Error("Nomor Retur asal tidak boleh kosong.");
+
+    const [[retl]] = await conn.query(
+      `SELECT proret_gdg_tujuan, proret_gdg_produksi
+       FROM tproduksireturlog_hdr WHERE proret_nomor = ?`,
+      [noReturLog],
+    );
+    if (!retl) throw new Error(`Retur ${noReturLog} tidak ditemukan.`);
+    payload.gudangAsal = retl.proret_gdg_tujuan;
+    payload.gudangProduksi = retl.proret_gdg_produksi || "";
+
+    // Satu Retur hanya boleh di-approve sekali
+    if (!isEdit) {
+      const [sudahApprove] = await conn.query(
+        `SELECT proret_nomor FROM tproduksiretur_hdr WHERE proret_log = ? LIMIT 1`,
+        [noReturLog],
+      );
+      if (sudahApprove.length > 0) {
+        throw new Error(
+          `Retur ${noReturLog} sudah diapprove (${sudahApprove[0].proret_nomor}).`,
+        );
+      }
+    }
+
+    // Jumlah per bahan mengikuti dokumen Retur; barcode wajib pas dengan jumlah
+    const [retlDtl] = await conn.query(
+      `SELECT proretd_bhn_kode, proretd_nominta, SUM(proretd_jumlah) AS jumlah
+       FROM tproduksireturlog_dtl
+       WHERE proretd_proret_nomor = ?
+       GROUP BY proretd_bhn_kode, proretd_nominta`,
+      [noReturLog],
+    );
+    const jumlahAsal = new Map(
+      retlDtl.map((r) => [
+        `${r.proretd_bhn_kode}|${r.proretd_nominta || ""}`,
+        parseFloat(r.jumlah),
+      ]),
+    );
+    for (const d of payload.details || []) {
+      if (!d.nama) continue;
+      const asal = jumlahAsal.get(`${d.kode}|${d.nominta || ""}`);
+      if (asal === undefined) {
+        throw new Error(`Bahan ${d.kode} tidak ada di Retur ${noReturLog}.`);
+      }
+      d.jumlah = asal;
+      const sumBc = (payload.barcodes || [])
+        .filter((b) => b.id === d.no)
+        .reduce((acc, b) => acc + Number(b.jumlah || 0), 0);
+      if (Math.abs(sumBc - asal) > 0.01) {
+        throw new Error(
+          `Total barcode ${d.nama} (${sumBc}) tidak sama dengan jumlah retur (${asal}).`,
+        );
+      }
     }
 
     // 2. Simpan Header

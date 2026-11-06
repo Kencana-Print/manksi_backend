@@ -10,7 +10,7 @@ const praOrderFormService = require("../penjualan/praOrderFormService");
 const DIVISI_TANPA_KONFIRMASI = ["MMT"];
 
 // Bagian yang boleh konfirmasi semua divisi (Sanggup / Ready), selain ADMIN
-const BAGIAN_BEBAS_KONFIRMASI = ["AUDIT", "EDP", "DIR"];
+const BAGIAN_BEBAS_KONFIRMASI = ["AUDIT", "EDP", "DIREKSI"];
 
 const assertBagianDivisi = (divisi, bagian, userKode) => {
   if (String(userKode || "").toUpperCase() === "ADMIN") return;

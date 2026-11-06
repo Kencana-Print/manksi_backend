@@ -1,6 +1,16 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../../services/tutupBukuService");
 
+// Permintaan cabang spanduk: gudang bahan tetap WH006, tanpa gudang produksi
+const CABANG_SPANDUK = ["P02"];
+const GUDANG_BAHAN_SPANDUK = "WH006";
+const adalahSpanduk = (cab) =>
+  CABANG_SPANDUK.includes(
+    String(cab || "")
+      .trim()
+      .toUpperCase(),
+  );
+
 /**
  * Generate Nomor Otomatis (Format: PROG/00001/YYYY)
  */
@@ -42,8 +52,18 @@ const getSudah = async (nomorMinta, kodeBahan, currentNomorRealisasi = "") => {
  * Load Data Permintaan saat User memilih No. Permintaan (Minta)
  */
 const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
-  // Ambil kode gudang bahan dari session user (login)
-  const kodeGudangBahanUser = user.gudang.bahan.kode; // Contoh: 'GB001'
+  // Mode ditentukan cabang Permintaan (dari database), bukan cabang user
+  const [[cabRow]] = await db.query(
+    `SELECT min_cab FROM tmintabahan_hdr WHERE min_nomor = ?`,
+    [nomorMinta],
+  );
+  if (!cabRow) throw new Error("No. Permintaan tidak ditemukan.");
+  const spanduk = adalahSpanduk(cabRow.min_cab);
+
+  // Gudang bahan: spanduk selalu WH006, selain itu dari session user (login)
+  const kodeGudangBahanUser = spanduk
+    ? GUDANG_BAHAN_SPANDUK
+    : user.gudang.bahan.kode; // Contoh: 'GB001'
 
   const query = `
     SELECT 
@@ -66,7 +86,7 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
     INNER JOIN tmintabahan_dtl d ON d.mind_nomor = h.min_nomor
     LEFT JOIN tgudangproduksi gp ON gp.gdgp_kode = IF(h.min_cab = 'P01', 'GP015', 'GP001')
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2) AND LEFT(d.mind_bhn_kode, 2) <> 'SB'
     LEFT JOIN tspk s ON s.spk_nomor = h.min_spk_nomor
     LEFT JOIN tmemospk m ON m.mspk_nomor = h.min_spk_nomor
     WHERE h.min_nomor = ?
@@ -138,8 +158,9 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
       // Mapping Field yang sudah disesuaikan
       gudangBahanKode: header.kode_gdg_bahan,
       gudangBahanNama: header.nama_gdg_bahan,
-      gudangProduksiKode: header.kode_gdg_prod,
-      gudangProduksiNama: header.nama_gdg_prod,
+      gudangProduksiKode: spanduk ? "" : header.kode_gdg_prod,
+      gudangProduksiNama: spanduk ? "" : header.nama_gdg_prod,
+      spanduk,
     },
     details: resultDetails,
   };
@@ -159,7 +180,7 @@ const getBarcodeInfo = async (barcode) => {
       IFNULL(sup.sup_nama, "") AS nama_supplier
     FROM tbahan_barcode_dtl a
     INNER JOIN tbahan b ON b.Bhn_kode = a.bard_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(a.bard_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(a.bard_kode, 8, 2) AND LEFT(a.bard_kode, 2) <> 'SB'
     LEFT JOIN tbahan_barcode_hdr h ON h.bar_nomor = a.bard_nomor
     LEFT JOIN tbpb_hdr bpb ON bpb.bpb_Nomor = h.bar_bpb
     LEFT JOIN tsupplier sup ON sup.sup_kode = bpb.bpb_sup_kode
@@ -211,7 +232,7 @@ const getDetailRealisasi = async (nomor) => {
     FROM tproduksiminta_dtl d
     INNER JOIN tproduksiminta_hdr h ON h.promin_nomor = d.promind_promin_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2) AND LEFT(d.promind_bhn_kode, 2) <> 'SB'
     LEFT JOIN tbahan c ON c.Bhn_kode = d.promind_kodem
     LEFT JOIN tsupplier p ON p.sup_kode = d.promind_sup_kode
     WHERE d.promind_promin_nomor = ?
@@ -224,13 +245,26 @@ const getDetailRealisasi = async (nomor) => {
       IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_barcode m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=d.promind2_barcode AND m.mst_noreferensi <> d.promind2_promin_nomor), 0) AS stok
     FROM tproduksiminta_dtl2 d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind2_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind2_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind2_bhn_kode, 8, 2) AND LEFT(d.promind2_bhn_kode, 2) <> 'SB'
     WHERE d.promind2_promin_nomor = ?
   `;
   const [barcodeRows] = await db.query(qDtlBarcode, [nomor]);
 
+  const [[mintaHdr]] = await db.query(
+    `SELECT min_cab FROM tmintabahan_hdr WHERE min_nomor = ?`,
+    [hdrRows[0].promin_minta],
+  );
+  const [[gdgAsal]] = await db.query(
+    `SELECT gdg_nama FROM tgudang WHERE gdg_kode = ?`,
+    [hdrRows[0].promin_gdg_asal],
+  );
+
   return {
-    header: hdrRows[0],
+    header: {
+      ...hdrRows[0],
+      gdg_asal_nama: gdgAsal?.gdg_nama || "",
+      spanduk: adalahSpanduk(mintaHdr?.min_cab),
+    },
     details: dtlRows,
     barcodes: barcodeRows,
   };
@@ -374,16 +408,33 @@ const saveData = async (payload, user, isEdit = false) => {
       );
     }
 
-    if (!isEdit) {
-      const [[mintaRow]] = await conn.query(
-        `SELECT min_close FROM tmintabahan_hdr WHERE min_nomor = ?`,
-        [payload.noMinta],
+    // Cabang Permintaan menentukan mode spanduk atau garmen (dari database)
+    const [[mintaRow]] = await conn.query(
+      `SELECT min_cab, min_close FROM tmintabahan_hdr WHERE min_nomor = ?`,
+      [payload.noMinta],
+    );
+    if (!mintaRow) throw new Error("No. Permintaan tidak ditemukan.");
+    if (!isEdit && Number(mintaRow.min_close) === 1) {
+      throw new Error(
+        "No. Permintaan tsb sudah CLOSE (realisasi sudah penuh). Tidak bisa direalisasikan lagi.",
       );
-      if (mintaRow && Number(mintaRow.min_close) === 1) {
-        throw new Error(
-          "No. Permintaan tsb sudah CLOSE (realisasi sudah penuh). Tidak bisa direalisasikan lagi.",
-        );
-      }
+    }
+
+    const spanduk = adalahSpanduk(mintaRow.min_cab);
+    if (spanduk) {
+      payload.gudangAsal = GUDANG_BAHAN_SPANDUK;
+      payload.gudangProduksi = "";
+    }
+    const kodeDipakai = [
+      ...(payload.details || []).map((d) => d.kode),
+      ...(payload.barcodes || []).map((b) => b.kode),
+    ].filter(Boolean);
+    if (kodeDipakai.some((k) => String(k).startsWith("SB") !== spanduk)) {
+      throw new Error(
+        spanduk
+          ? "Permintaan Spanduk hanya boleh merealisasikan bahan spanduk (kode SB)."
+          : "Permintaan Garmen tidak boleh merealisasikan bahan spanduk (kode SB).",
+      );
     }
 
     // ── DETEKSI BEDA BAHAN ── (kode = discan, kodem = yang diminta
@@ -691,7 +742,8 @@ const getPrintData = async (nomor) => {
       h.promin_minta, DATE_FORMAT(t.min_tanggal, '%d-%m-%Y') AS tgl_minta,
       h.promin_spk_nomor, IFNULL(s.spk_nama, m.mspk_nama) AS spk_nama,
       h.promin_keterangan,
-      g.gdgp_nama AS tujuan
+      g.gdgp_nama AS tujuan,
+      t.min_cab
     FROM tproduksiminta_hdr h
     LEFT JOIN tmintabahan_hdr t ON t.min_nomor = h.promin_minta
     LEFT JOIN tgudangproduksi g ON g.gdgp_kode = h.promin_gdgp_kode
@@ -711,7 +763,7 @@ const getPrintData = async (nomor) => {
       d.promind_jumlah AS jumlah
     FROM tproduksiminta_dtl d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.promind_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.promind_bhn_kode, 8, 2) AND LEFT(d.promind_bhn_kode, 2) <> 'SB'
     WHERE d.promind_promin_nomor = ?
     ORDER BY b.Bhn_Name ASC
   `;
@@ -729,7 +781,7 @@ const getPrintData = async (nomor) => {
   );
 
   return {
-    header: hdr[0],
+    header: { ...hdr[0], spanduk: adalahSpanduk(hdr[0].min_cab) },
     details,
     barcodes,
     totalBarcode,

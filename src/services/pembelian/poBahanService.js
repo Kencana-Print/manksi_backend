@@ -4,6 +4,8 @@ const tutupBukuService = require("../tutupBukuService");
 // PPN (%) efektif per baris: PO Lain-lain dari detail, jenis lain dari header
 const PPN_EXPR = `IF(h.po_jenis = 4, d.pod_ppn, IF(h.po_status_ppn = 1, h.po_ppn, 0))`;
 
+const JENIS_PO_EXPR = `IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", IF(h.po_jenis = 5, "SPANDUK", "BAHAN"))))`;
+
 // --- 1. GET BROWSE HEADER ---
 const getBrowse = async (query, canLihatSup = false) => {
   const { startDate, endDate, search } = query;
@@ -30,7 +32,7 @@ const getBrowse = async (query, canLihatSup = false) => {
   let sql = `
     SELECT DISTINCT 
       h.po_nomor AS Nomor,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
+      ${JENIS_PO_EXPR} AS JenisPO,
       h.po_greige AS PoGreige,
       IFNULL((SELECT CAST(GROUP_CONCAT(hh.po_nomor SEPARATOR ", ") AS CHAR) FROM tpo_hdr hh WHERE hh.po_greige = h.po_nomor), "") AS PoCelup,
       h.po_tanggal AS Tanggal,
@@ -143,6 +145,7 @@ const getBrowseDetail = async (
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
       d.pod_spk_nomor AS SPK,
+      d.pod_keterangan AS KetItem,
       IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, s.spk_nama, m.Mspk_nama), "") AS Nama_SPK
 
     FROM tpo_dtl d
@@ -358,7 +361,7 @@ const getAllDetail = async (
       h.po_nomor AS Nomor,
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
+      ${JENIS_PO_EXPR} AS JenisPO,
       h.po_keterangan AS Keterangan,
       ${supCols}
       d.pod_bhn_kode AS Kode,
@@ -374,6 +377,7 @@ const getAllDetail = async (
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
       d.pod_spk_nomor AS SPK,
+      d.pod_keterangan AS KetItem,
       IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, spk.spk_nama, m.Mspk_nama), "") AS Nama_SPK
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor

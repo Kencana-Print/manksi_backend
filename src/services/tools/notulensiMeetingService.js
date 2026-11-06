@@ -1,6 +1,6 @@
 const db = require("../../config/database");
 
-const BAGIAN_SUPERADMIN = ["EDP", "DIR", "AUDIT"];
+const BAGIAN_SUPERADMIN = ["EDP", "DIREKSI", "AUDIT"];
 
 const galat = (pesan, status) => {
   const e = new Error(pesan);

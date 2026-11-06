@@ -1,6 +1,6 @@
 const { getTanggalTutupBuku } = require("../../tutupBukuService");
 
-const BAGIAN_SUPERADMIN = ["EDP", "DIR", "AUDIT"];
+const BAGIAN_SUPERADMIN = ["EDP", "DIREKSI", "AUDIT"];
 const DIVISI_BOLEH = [1, 5];
 // MP-13: batas "SPK/MAP lama" yang dikecualikan dari gate rantai LHK
 const TANGGAL_MULAI_MUTASI = "2026-10-13";

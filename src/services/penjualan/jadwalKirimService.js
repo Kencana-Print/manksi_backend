@@ -227,7 +227,7 @@ const getListGudang = async (divisi = null) => {
   let query = `SELECT gdg_kode AS Kode, gdg_nama AS Nama FROM tgudang WHERE gdg_jadi <> 0`;
   const params = [];
 
-  if (divisi === 1) {
+  if (divisi === 1 || divisi === 5) {
     query += ` AND gdg_jadi = 1`;
   } else if (divisi === 4) {
     query += ` AND gdg_jadi = 4`;

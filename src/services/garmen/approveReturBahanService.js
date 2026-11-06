@@ -106,11 +106,31 @@ const batalApprove = async (noApprov) => {
       );
     }
 
+    // 2b. Roll hasil retur yang sudah terpakai tidak boleh ditarik lagi
+    const [terpakai] = await conn.query(
+      `SELECT d.bard_barcode
+       FROM tbahan_barcode_dtl d
+       JOIN tmasterstok_barcode m
+         ON m.mst_brg_kode = d.bard_barcode
+        AND m.mst_aktif = 'Y' AND m.mst_stok_out > 0
+       WHERE d.bard_nomor = ?
+       LIMIT 1`,
+      [noApprov],
+    );
+    if (terpakai.length > 0) {
+      throw new Error(
+        `Barcode ${terpakai[0].bard_barcode} sudah dipakai, Batal Approve tidak diizinkan.`,
+      );
+    }
+
     // 3. Eksekusi Hapus Header dan Detail RETP
     await conn.query(
       `DELETE FROM tproduksiretur_dtl WHERE proretd_proret_nomor = ?`,
       [noApprov],
     );
+    await conn.query(`DELETE FROM tbahan_barcode_dtl WHERE bard_nomor = ?`, [
+      noApprov,
+    ]);
     await conn.query(`DELETE FROM tproduksiretur_hdr WHERE proret_nomor = ?`, [
       noApprov,
     ]);

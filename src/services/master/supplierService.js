@@ -2,7 +2,13 @@ const db = require("../../config/database");
 
 // Bagian yang boleh melihat rekening bank supplier. Dibandingkan UPPERCASE
 // dengan req.user.bagian. ADMIN sengaja TIDAK dibypass.
-const BAGIAN_LIHAT_REKENING = ["PEMBELIAN", "FINANCE", "EDP", "DIR", "AUDIT"];
+const BAGIAN_LIHAT_REKENING = [
+  "PEMBELIAN",
+  "FINANCE",
+  "EDP",
+  "DIREKSI",
+  "AUDIT",
+];
 
 const bolehLihatRekening = (user) =>
   BAGIAN_LIHAT_REKENING.includes(String(user?.bagian || "").toUpperCase());

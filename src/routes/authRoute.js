@@ -7,4 +7,6 @@ router.post("/login", authController.login);
 
 router.post("/change-password", verifyToken, authController.changePassword);
 
+router.post("/cabang", verifyToken, authController.gantiCabang);
+
 module.exports = router;

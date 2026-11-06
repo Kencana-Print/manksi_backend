@@ -356,6 +356,7 @@ const laporanSpandukMonitoringAfdrukRoutes = require("./routes/laporan/spanduk/m
 const laporanSpandukMonitoringKoliRoutes = require("./routes/laporan/spanduk/monitoringKoliRoutes");
 const laporanSpandukMonitoringHasilProofRoutes = require("./routes/laporan/spanduk/monitoringHasilProofRoutes");
 const laporanSpandukRekapMonitoringBySpkRoutes = require("./routes/laporan/spanduk/rekapMonitoringBySpkRoutes");
+const laporanSpandukRekapMonitoringByGudangRoutes = require("./routes/laporan/spanduk/rekapMonitoringByGudangRoutes");
 const laporanSpandukPemakaianBahanRoutes = require("./routes/laporan/spanduk/pemakaianBahanRoutes");
 const laporanSpandukKetercapaianKomitmenKirimRoutes = require("./routes/laporan/spanduk/ketercapaianKomitmenKirimRoutes");
 
@@ -1090,6 +1091,10 @@ app.use(
   laporanSpandukRekapMonitoringBySpkRoutes,
 );
 app.use(
+  "/api/laporan/spanduk/rekap-monitoring-by-gudang",
+  laporanSpandukRekapMonitoringByGudangRoutes,
+);
+app.use(
   "/api/laporan/spanduk/pemakaian-bahan",
   laporanSpandukPemakaianBahanRoutes,
 );
@@ -1232,18 +1237,36 @@ app.use("/api/mmt/finance/voucher-pelunasan", mmtVoucherPelunasanRoutes);
 app.use("/api/mmt/voucher-pelunasan", mmtVoucherPelunasanRoutes);
 
 // 3. Bahan Baku & Produksi
-app.use("/api/mmt/bahan-baku-produksi/permintaan-pembelian", mmtPermintaanPembelianRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/permintaan-pembelian",
+  mmtPermintaanPembelianRoutes,
+);
 app.use("/api/mmt/permintaan-pembelian", mmtPermintaanPembelianRoutes);
-app.use("/api/mmt/bahan-baku-produksi/pengajuan-permintaan", mmtPermintaanPembelianRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/pengajuan-permintaan",
+  mmtPermintaanPembelianRoutes,
+);
 app.use("/api/mmt/pengajuan-permintaan", mmtPermintaanPembelianRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/purchase-request", mmtPermintaanBahanRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/purchase-request",
+  mmtPermintaanBahanRoutes,
+);
 app.use("/api/mmt/purchase-request", mmtPermintaanBahanRoutes);
-app.use("/api/mmt/bahan-baku-produksi/permintaan-bahan", mmtPermintaanBahanRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/permintaan-bahan",
+  mmtPermintaanBahanRoutes,
+);
 app.use("/api/mmt/permintaan-bahan", mmtPermintaanBahanRoutes);
-app.use("/api/mmt/bahan-baku-produksi/permintaan-bahan-gudang-utama", mmtPermintaanBahanRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/permintaan-bahan-gudang-utama",
+  mmtPermintaanBahanRoutes,
+);
 
-app.use("/api/mmt/bahan-baku-produksi/penerimaan-bahan", mmtPenerimaanBahanRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/penerimaan-bahan",
+  mmtPenerimaanBahanRoutes,
+);
 app.use("/api/mmt/penerimaan-bahan", mmtPenerimaanBahanRoutes);
 
 app.use("/api/mmt/bahan-baku-produksi/mutasi-bahan", mmtMutasiGudangRoutes);
@@ -1252,16 +1275,25 @@ app.use("/api/mmt/mutasi-gudang", mmtMutasiGudangRoutes);
 app.use("/api/mmt/bahan-baku-produksi/koreksi-stok", mmtKoreksiStokRoutes);
 app.use("/api/mmt/koreksi-stok", mmtKoreksiStokRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/pengajuan-koreksi-stok", mmtPengajuanKoreksiStokRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/pengajuan-koreksi-stok",
+  mmtPengajuanKoreksiStokRoutes,
+);
 app.use("/api/mmt/pengajuan-koreksi-stok", mmtPengajuanKoreksiStokRoutes);
 
 app.use("/api/mmt/bahan-baku-produksi/stok-opname", mmtStokOpnameRoutes);
 app.use("/api/mmt/stok-opname", mmtStokOpnameRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/permintaan-produksi", mmtPermintaanProduksiBahanRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/permintaan-produksi",
+  mmtPermintaanProduksiBahanRoutes,
+);
 app.use("/api/mmt/permintaan-produksi-bahan", mmtPermintaanProduksiBahanRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/realisasi-produksi", mmtPermintaanProduksiRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/realisasi-produksi",
+  mmtPermintaanProduksiRoutes,
+);
 app.use("/api/mmt/permintaan-produksi", mmtPermintaanProduksiRoutes);
 
 app.use("/api/mmt/bahan-baku-produksi/pinjam", mmtPinjamRoutes);
@@ -1281,7 +1313,10 @@ app.use("/api/mmt/recreate-barcode", mmtCreateBarcodeRoutes);
 app.use("/api/mmt/bahan-baku-produksi/barcode/search", mmtSearchBarcodeRoutes);
 app.use("/api/mmt/search-barcode", mmtSearchBarcodeRoutes);
 
-app.use("/api/mmt/bahan-baku-produksi/barcode/kartu-stok", mmtKartuBarcodeRoutes);
+app.use(
+  "/api/mmt/bahan-baku-produksi/barcode/kartu-stok",
+  mmtKartuBarcodeRoutes,
+);
 app.use("/api/mmt/kartu-barcode", mmtKartuBarcodeRoutes);
 app.use("/api/mmt/lap-kartu-stok", mmtKartuBarcodeRoutes);
 
@@ -1290,7 +1325,10 @@ app.use("/api/mmt/transaksi-khusus/maklon/barang", mmtMaklonBarangRoutes);
 app.use("/api/mmt/maklon/barang", mmtMaklonBarangRoutes);
 app.use("/api/mmt/maklon-barang", mmtMaklonBarangRoutes);
 
-app.use("/api/mmt/transaksi-khusus/maklon/sj-hasil-maklon", mmtSjHasilMaklonRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/maklon/sj-hasil-maklon",
+  mmtSjHasilMaklonRoutes,
+);
 app.use("/api/mmt/sj-hasil-maklon", mmtSjHasilMaklonRoutes);
 
 // 4b. Transaksi Khusus - MAP
@@ -1311,22 +1349,37 @@ app.use("/api/mmt/so-spk", mmtSoToSpkRoutes);
 app.use("/api/mmt/transaksi-khusus/spk-order/spk", mmtSpkRoutes);
 app.use("/api/mmt/spk", mmtSpkRoutes);
 
-app.use("/api/mmt/transaksi-khusus/spk-order/planning-produksi", mmtPlanningProduksiRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/spk-order/planning-produksi",
+  mmtPlanningProduksiRoutes,
+);
 app.use("/api/mmt/planning-produksi", mmtPlanningProduksiRoutes);
 
-app.use("/api/mmt/transaksi-khusus/spk-order/komitmen-kirim", mmtKomitmenKirimRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/spk-order/komitmen-kirim",
+  mmtKomitmenKirimRoutes,
+);
 app.use("/api/mmt/komitmen-kirim", mmtKomitmenKirimRoutes);
 
-app.use("/api/mmt/transaksi-khusus/spk-order/mutasi-internal", mmtMutasiInternalRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/spk-order/mutasi-internal",
+  mmtMutasiInternalRoutes,
+);
 app.use("/api/mmt/mutasi-internal", mmtMutasiInternalRoutes);
 
-app.use("/api/mmt/transaksi-khusus/spk-order/po-paperprint", mmtPoPaperprintRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/spk-order/po-paperprint",
+  mmtPoPaperprintRoutes,
+);
 app.use("/api/mmt/po-paperprint", mmtPoPaperprintRoutes);
 
 app.use("/api/mmt/transaksi-khusus/spk-order/po-internal", mmtPoInternalRoutes);
 app.use("/api/mmt/po-internal", mmtPoInternalRoutes);
 
-app.use("/api/mmt/transaksi-khusus/spk-order/penerimaan-po-external", mmtPenerimaanPoExtRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/spk-order/penerimaan-po-external",
+  mmtPenerimaanPoExtRoutes,
+);
 app.use("/api/mmt/penerimaan-po-external", mmtPenerimaanPoExtRoutes);
 
 // 4d. Transaksi Khusus - Pengiriman
@@ -1337,13 +1390,22 @@ app.use("/api/mmt/transaksi-khusus/pengiriman/stbj-mmt", mmtStbjMmtRoutes);
 app.use("/api/mmt/daftar/stbj", mmtStbjMmtRoutes);
 app.use("/api/mmt/laporan-stbj", mmtStbjMmtRoutes);
 
-app.use("/api/mmt/transaksi-khusus/pengiriman/surat-jalan", mmtSuratJalanRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/pengiriman/surat-jalan",
+  mmtSuratJalanRoutes,
+);
 app.use("/api/mmt/surat-jalan", mmtSuratJalanRoutes);
 
-app.use("/api/mmt/transaksi-khusus/pengiriman/surat-jalan-map", mmtSuratJalanMapRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/pengiriman/surat-jalan-map",
+  mmtSuratJalanMapRoutes,
+);
 app.use("/api/mmt/surat-jalan-map", mmtSuratJalanMapRoutes);
 
-app.use("/api/mmt/transaksi-khusus/pengiriman/jadwal-kirim", mmtJadwalKirimRoutes);
+app.use(
+  "/api/mmt/transaksi-khusus/pengiriman/jadwal-kirim",
+  mmtJadwalKirimRoutes,
+);
 app.use("/api/mmt/jadwal-kirim", mmtJadwalKirimRoutes);
 
 // 5. Laporan MMT

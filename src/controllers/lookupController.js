@@ -38,16 +38,20 @@ const searchBahan = async (req, res) => {
   try {
     const keyword = req.query.q || "";
     const isBordir = req.query.isBordir; // Bernilai "true" atau undefined
-    const mode = req.query.mode; // <-- TAMBAHKAN TANGKAPAN MODE
+    const mode = req.query.mode;
     const page = req.query.page || 1;
     const limit = req.query.limit || 50;
+    // Penyempit dari form (mis. PO Spanduk); hanya nilai yang dikenal
+    const tipe = req.query.tipe === "SPANDUK" ? "SPANDUK" : undefined;
 
     const data = await lookupService.searchBahan(
       keyword,
       isBordir,
-      mode, // <-- SISIPKAN DI SINI SESUAI URUTAN SERVICE
+      mode,
       page,
       limit,
+      req.user.cabang, // pembatasan bahan per cabang
+      tipe,
     );
 
     res.status(200).json({ success: true, data });

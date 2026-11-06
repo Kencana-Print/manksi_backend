@@ -1,6 +1,7 @@
 // socket/index.js
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
+const { akunAktif } = require("../middleware/authMiddleware");
 
 // ── State presence in-memory ──────────────────────────────────────
 // Struktur: { [pjw_nomor]: { [socket.id]: { kode, nama, bagian } } }
@@ -28,11 +29,18 @@ const initSocket = (httpServer) => {
     if (!token) {
       return next(new Error("Akses ditolak. Token tidak ada."));
     }
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
       if (err) {
         return next(new Error("Sesi telah berakhir atau token tidak valid."));
       }
-      socket.user = decoded; // { kode, nama, bagian, ... } — sesuai payload authService.js
+      try {
+        if (!(await akunAktif(decoded.kode))) {
+          return next(new Error("Sesi telah berakhir atau token tidak valid."));
+        }
+      } catch {
+        return next(new Error("Server sibuk. Coba lagi."));
+      }
+      socket.user = decoded;
       next();
     });
   });

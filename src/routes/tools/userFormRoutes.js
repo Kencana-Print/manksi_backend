@@ -19,6 +19,22 @@ router.get(
   ctrl.getPermissionsForCopy,
 );
 
+router.get("/nik", verifyToken, requireAdmin, ctrl.searchHrd);
+router.get("/role", verifyToken, requireAdmin, ctrl.getRoleList);
+router.get("/role/:kode", verifyToken, requireAdmin, ctrl.getRole);
+router.get(
+  "/role/:kode/anggota",
+  verifyToken,
+  requireAdmin,
+  ctrl.getRoleAnggota,
+);
+router.post(
+  "/role/:kode/pratinjau",
+  verifyToken,
+  requireAdmin,
+  ctrl.pratinjauRole,
+);
+router.put("/role/:kode", verifyToken, requireAdmin, ctrl.saveRole);
 router.post("/", verifyToken, requireAdmin, ctrl.createUser);
 
 // Dipecah jadi 2 route eksplisit — path-to-regexp v7+ (dipakai Express 5)

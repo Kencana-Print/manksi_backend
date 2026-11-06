@@ -4,7 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 // Bagian yang boleh mengunggah dan menghapus memo. Semua user boleh melihat.
-const BAGIAN_UPLOAD = ["AUDIT", "DIR", "EDP"];
+const BAGIAN_UPLOAD = ["AUDIT", "DIREKSI", "EDP"];
 
 // Folder privat: sengaja di luar folder yang disajikan statis
 const FOLDER = path.join(process.cwd(), "storage", "memo-internal");

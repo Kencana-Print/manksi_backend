@@ -1,6 +1,9 @@
 const db = require("../../config/database");
-const tutupBukuService = require("../tutupBukuService"); // Asumsi file ini ada di root services
-const { syncStatusClosePo } = require("./bpbBahanFormService");
+const tutupBukuService = require("../tutupBukuService");
+const {
+  syncStatusClosePo,
+  pastikanBarcodeBelumDipakai,
+} = require("./bpbBahanFormService");
 
 const getBrowse = async (
   startDate,
@@ -46,6 +49,7 @@ const getBrowse = async (
         )
       ) AS Ket_PO,
       h.bpb_gdg_kode AS Gudang,
+      IFNULL(p.po_jenis, 0) AS PoJenis,
       h.user_create AS Usr,
       IFNULL((
         SELECT 
@@ -131,6 +135,10 @@ const deleteBpb = async (nomor) => {
         "BPB ini sudah dibuat Voucher Pembayaran. Tidak bisa dihapus.",
       );
     }
+
+    // 3c. Barcode sudah dipakai (Realisasi / stok keluar) → tolak
+    await pastikanBarcodeBelumDipakai(conn, nomor);
+
     const [dariQc] = await conn.query(
       `SELECT 1 FROM tbpb_qc_lot WHERE bql_bpb_nomor = ? LIMIT 1`,
       [nomor],

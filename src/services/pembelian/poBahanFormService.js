@@ -1,6 +1,14 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// Jenis PO Spanduk (jenis 5, prefix PS): bahan dibatasi kode SB
+const JENIS_SPANDUK = 5;
+const adalahKodeSpanduk = (kode) =>
+  String(kode || "")
+    .trim()
+    .toUpperCase()
+    .startsWith("SB");
+
 // --- HELPER: GENERATE NOMOR PO ---
 const generateNomorPO = async (jenisPO, tanggal) => {
   const dateObj = new Date(tanggal);
@@ -11,7 +19,9 @@ const generateNomorPO = async (jenisPO, tanggal) => {
     prefix = "PG"; // Greige
   else if (jenisPO === 2)
     prefix = "PC"; // Celup
-  else if (jenisPO === 4) prefix = "PL"; // Lain-lain
+  else if (jenisPO === 4)
+    prefix = "PL"; // Lain-lain
+  else if (jenisPO === JENIS_SPANDUK) prefix = "PS"; // Spanduk
 
   const [rows] = await db.query(
     `SELECT IFNULL(MAX(CAST(SUBSTR(po_nomor, 4, 5) AS UNSIGNED)), 0) AS max_val 
@@ -171,6 +181,7 @@ const getDetail = async (nomor) => {
       SELECT d.*, b.bhn_name, 
             IFNULL(sp.sup_nama, '') as pod_sup_nama,
             IFNULL(j.bj_nama,"") as jenis, 
+            IFNULL(b.bhn_konstruksi, '') AS konstruksi, b.bhn_panjang AS panjang, b.bhn_lebar AS lebar,
             IF(IFNULL(d.pod_gramasia, '') <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
             IF(IFNULL(d.pod_gramasia_awal, '') <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")) as gramasiAwal,
             IF(IFNULL(d.pod_setting, '') <> '', d.pod_setting, IFNULL(s.bs_nama,"")) as setting
@@ -179,8 +190,8 @@ const getDetail = async (nomor) => {
       LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
       LEFT JOIN tsupplier sp ON sp.sup_kode = d.pod_sup_kode
       LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
-      LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
-      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
+      LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
+      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ORDER BY d.pod_nourut
     `,
     [nomor],
@@ -261,10 +272,12 @@ const saveData = async (payload, userKode) => {
       payload;
 
     let nomorPO = header.po_nomor;
-    const jpo = Number(header.po_jenis); // 0: PO Bahan lama, 1: Greige, 2: Celup, 3: Bahan, 4: Lain-lain
-    if (![0, 1, 2, 3, 4].includes(jpo))
+    const jpo = Number(header.po_jenis); // 0: PO Bahan lama, 1: Greige, 2: Celup, 3: Bahan, 4: Lain-lain, 5: Spanduk
+    if (![0, 1, 2, 3, 4, JENIS_SPANDUK].includes(jpo))
       throw new Error("Jenis PO tidak valid.");
     const isLainLain = jpo === 4;
+    const isSpanduk = jpo === JENIS_SPANDUK;
+    const bhnMap = new Map(); // master bahan hasil validasi (PO Spanduk)
     // PO Lain-lain: supplier ada di detail, header dibiarkan NULL
     const supHeader = isLainLain ? null : header.po_sup_kode;
     // PO Lain-lain: PPN ada di detail (beda supplier beda ketentuan), header selalu 0
@@ -358,6 +371,82 @@ const saveData = async (payload, userKode) => {
       }
     }
 
+    // A3. PO Spanduk (jenis 5): bahan wajib SB, satuan dari master. Jenis 0-3 menolak SB.
+    const itemsTerisi = (items || []).filter(
+      (i) => i.kode && String(i.kode).trim() !== "",
+    );
+
+    if (
+      !isSpanduk &&
+      [0, 1, 2, 3].includes(jpo) &&
+      itemsTerisi.some((i) => adalahKodeSpanduk(i.kode))
+    ) {
+      throw new Error(
+        "Bahan spanduk (SB) hanya boleh dipesan lewat PO Spanduk.",
+      );
+    }
+
+    if (isSpanduk) {
+      if (!String(header.po_sup_kode || "").trim())
+        throw new Error("Supplier wajib diisi.");
+      const [supRow] = await conn.query(
+        `SELECT sup_kode FROM tsupplier WHERE sup_kode = ?`,
+        [header.po_sup_kode],
+      );
+      if (supRow.length === 0)
+        throw new Error(`Supplier ${header.po_sup_kode} tidak ditemukan.`);
+      if (itemsTerisi.length === 0)
+        throw new Error("Minimal satu bahan harus diisi.");
+
+      const kodeList = [
+        ...new Set(itemsTerisi.map((i) => String(i.kode).trim().toUpperCase())),
+      ];
+      const [bhnRows] = await conn.query(
+        `SELECT bhn_kode, bhn_name, bhn_satuan, bhn_aktif FROM tbahan WHERE bhn_kode IN (?)`,
+        [kodeList],
+      );
+      bhnRows.forEach((r) => bhnMap.set(String(r.bhn_kode).toUpperCase(), r));
+
+      const spkSet = new Set();
+      for (const [idx, it] of itemsTerisi.entries()) {
+        const baris = `Baris ${idx + 1}`;
+        const kode = String(it.kode).trim().toUpperCase();
+        const bhn = bhnMap.get(kode);
+
+        if (!adalahKodeSpanduk(kode))
+          throw new Error(`${baris}: Bahan ${it.kode} bukan bahan spanduk.`);
+        if (!bhn)
+          throw new Error(`${baris}: Bahan ${it.kode} tidak ditemukan.`);
+        if (Number(bhn.bhn_aktif) !== 0)
+          throw new Error(`${baris}: Bahan ${it.kode} tidak aktif.`);
+        if (!String(bhn.bhn_satuan || "").trim())
+          throw new Error(
+            `${baris}: Bahan ${it.kode} belum punya satuan di master bahan.`,
+          );
+        if (!(Number(it.jumlah) > 0))
+          throw new Error(`${baris}: Qty PO harus lebih dari 0.`);
+        if (!(Number(it.harga) >= 0))
+          throw new Error(`${baris}: Harga tidak valid.`);
+        const disc = Number(it.diskon) || 0;
+        if (disc < 0 || disc > 100)
+          throw new Error(`${baris}: Disc harus antara 0 dan 100.`);
+        if (String(it.keterangan || "").trim().length > 150)
+          throw new Error(`${baris}: Keterangan maksimal 150 karakter.`);
+
+        const spk = String(it.spk || "").trim();
+        if (spk) spkSet.add(spk);
+      }
+
+      if (spkSet.size > 0) {
+        const ada = await cekNomorSpk(conn, [...spkSet]);
+        const tidakAda = [...spkSet].filter((s) => !ada.has(s.toUpperCase()));
+        if (tidakAda.length)
+          throw new Error(
+            `Nomor SPK/MAP tidak ditemukan: ${tidakAda.join(", ")}`,
+          );
+      }
+    }
+
     // B. Header Eksekusi
     if (!isEdit) {
       nomorPO = await generateNomorPO(jpo, header.po_tanggal);
@@ -419,7 +508,10 @@ const saveData = async (payload, userKode) => {
       // berbeda). 0 <-> 3 dibolehkan, tapi nilai yang tersimpan dipertahankan
       // supaya PO lama (0) tidak berubah jadi 3 diam-diam.
       const jenisDb = Number(cekStatus[0].po_jenis);
-      if (jenisDb !== jpo && [jenisDb, jpo].some((j) => [1, 2, 4].includes(j)))
+      if (
+        jenisDb !== jpo &&
+        [jenisDb, jpo].some((j) => [1, 2, 4, JENIS_SPANDUK].includes(j))
+      )
         throw new Error("Jenis PO tidak boleh diubah saat edit.");
       if ([0, 3].includes(jenisDb) && [0, 3].includes(jpo))
         jenisTersimpan = jenisDb;
@@ -446,8 +538,10 @@ const saveData = async (payload, userKode) => {
       // PO yang sudah divoucher tidak boleh diedit
       // (POB: Bahan/Greige/Celup, POL: Lain-lain)
       const [cekVoucher] = await conn.query(
-        `SELECT voud_vou_nomor FROM tvoucher_dtl
-         WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
+        jenisDb === JENIS_SPANDUK
+          ? `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`
+          : `SELECT voud_vou_nomor FROM tvoucher_dtl
+             WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
         [nomorPO],
       );
       if (cekVoucher.length > 0) {
@@ -531,6 +625,34 @@ const saveData = async (payload, userKode) => {
     if (validItemsToInsert.length > 0) {
       let nourut = 1;
       for (const item of validItemsToInsert) {
+        if (isSpanduk) {
+          const bhn = bhnMap.get(String(item.kode).trim().toUpperCase());
+          await conn.query(
+            `
+              INSERT INTO tpo_dtl (
+                pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan,
+                pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah,
+                pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode,
+                pod_ppn, pod_keterangan
+              ) VALUES (?, ?, ?, ?, ?, '', '', '', 0, ?, ?, ?, ?, '', NULL, 0, ?)
+            `,
+            [
+              nomorPO,
+              nourut,
+              bhn.bhn_kode,
+              String(item.namaext || "").trim() || bhn.bhn_name,
+              bhn.bhn_satuan,
+              Number(item.jumlah),
+              Number(item.diskon) || 0,
+              Number(item.harga) || 0,
+              String(item.spk || "").trim(),
+              String(item.keterangan || "").trim(),
+            ],
+          );
+          nourut++;
+          continue;
+        }
+
         const namaExt = item.namaext ? item.namaext : item.nama;
 
         // Gramasi Akhir — tetap seperti sebelumnya
@@ -710,8 +832,8 @@ const getDetailMkbForPo = async (mkbNomor) => {
      INNER JOIN tmkb_hdr h ON h.mkb_nomor = d.mkbd_mkb_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.mkbd_bhn_kode
      LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.mkbd_bhn_kode, 2)
-     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.mkbd_bhn_kode, 6, 2)
-     LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mkbd_bhn_kode, 2)
+     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.mkbd_bhn_kode, 6, 2) AND LEFT(d.mkbd_bhn_kode, 2) <> 'SB'
+     LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mkbd_bhn_kode, 2) AND LEFT(d.mkbd_bhn_kode, 2) <> 'SB'
      WHERE mkb_nomor = ?
      GROUP BY d.mkbd_bhn_kode`,
     [mkbNomor],

@@ -14,7 +14,7 @@ const getBrowse = async (
   canLihatCus = false,
 ) => {
   let divisiFilter = "";
-  if (divisi === 1) divisiFilter = " AND gdg_jadi = 1";
+  if (divisi === 1 || divisi === 5) divisiFilter = " AND gdg_jadi = 1";
   if (divisi === 4) divisiFilter = " AND gdg_jadi = 4";
 
   const custCols = canLihatCus
@@ -259,7 +259,7 @@ const getExportDetail = async (
   canLihatCus = false,
 ) => {
   let divisiFilter = "";
-  if (divisi === 1) divisiFilter = " AND gdg_jadi = 1";
+  if (divisi === 1 || divisi === 5) divisiFilter = " AND gdg_jadi = 1";
   if (divisi === 4) divisiFilter = " AND gdg_jadi = 4";
 
   const custCols = canLihatCus

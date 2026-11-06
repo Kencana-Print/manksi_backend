@@ -27,8 +27,8 @@ const getBrowse = async (query) => {
         SUM(c.mst_stok_in - c.mst_stok_out) AS Stok
       FROM tmasterstok_barcode c
       LEFT JOIN tbahan b ON b.Bhn_kode = LEFT(c.mst_brg_kode, LENGTH(c.mst_brg_kode)-7)
-      LEFT JOIN tbahan_warna w ON w.bw_kode = MID(b.Bhn_kode, 3, 3)
-      LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2)
+      LEFT JOIN tbahan_warna w ON w.bw_kode = MID(b.Bhn_kode, 3, 3) AND LEFT(b.Bhn_kode, 2) <> 'SB'
+      LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(b.Bhn_kode, 6, 2) AND LEFT(b.Bhn_kode, 2) <> 'SB'
       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(b.Bhn_kode, 2)
       WHERE c.mst_aktif = 'Y' 
         AND c.mst_tanggal <= ?

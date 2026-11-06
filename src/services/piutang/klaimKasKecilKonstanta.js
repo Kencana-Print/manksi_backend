@@ -44,7 +44,7 @@ const cabangKlaimUser = (user) => {
 
 // Bagian (token `bagian`) dengan akses penuh: lihat semua cabang,
 // buat, ubah, dan batalkan klaim cabang terdaftar mana pun.
-const BAGIAN_AKSES_PENUH = ["EDP", "AUDIT", "DIR"];
+const BAGIAN_AKSES_PENUH = ["EDP", "AUDIT", "DIREKSI"];
 
 const aksesPenuh = (user) =>
   BAGIAN_AKSES_PENUH.includes(

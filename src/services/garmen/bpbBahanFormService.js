@@ -1,6 +1,8 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+const JENIS_PO_SPANDUK = 5;
+
 // --- HELPER: GENERATE NOMOR BPB ---
 // Format Delphi: PBG/00001/YYYY
 const generateNomorBPB = async (tanggal) => {
@@ -112,8 +114,8 @@ const validateField = async (type, value, opts = {}) => {
        FROM tpo_dtl d
        LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
        LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
-       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
-       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
+       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
+       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
        LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor AND so.so_aktif = 'Y'
        WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ${supFilter}
@@ -165,6 +167,7 @@ const validateField = async (type, value, opts = {}) => {
       header: {
         po_nomor: hdr[0].po_nomor,
         po_tanggal: hdr[0].po_tanggal,
+        po_jenis: Number(hdr[0].po_jenis),
         sup_kode: hdr[0].po_sup_kode,
         sup_nama: hdr[0].sup_nama,
         sup_alamat: hdr[0].sup_alamat,
@@ -304,8 +307,8 @@ const getDetail = async (nomor) => {
        FROM tpo_dtl d
        LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
        LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
-       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
-       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
+       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
+       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
        LEFT JOIN tspk k ON k.spk_nomor = d.pod_spk_nomor
        LEFT JOIN tsalesorder so ON so.so_nomor = d.pod_spk_nomor AND so.so_aktif = 'Y'
        WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ${filterSup}
@@ -415,6 +418,16 @@ const saveData = async (payload, userKode) => {
     const { items, poItems, barcodes, statusNgedit } = payload;
     let nomorBPB = header.bpb_nomor;
     const isPO = !!(header.bpb_po_nomor && header.bpb_po_nomor.trim() !== "");
+    // Jenis PO dibaca dari database, bukan dari payload
+    let adalahSpanduk = false;
+    if (isPO) {
+      const [pj] = await conn.query(
+        `SELECT po_jenis FROM tpo_hdr WHERE po_nomor = ?`,
+        [header.bpb_po_nomor],
+      );
+      if (pj.length === 0) throw new Error("Nomor PO tidak ditemukan.");
+      adalahSpanduk = Number(pj[0].po_jenis) === JENIS_PO_SPANDUK;
+    }
 
     // A. Validasi Invoice & Tutup Buku
     let dariQc = daftarQc.length > 0;
@@ -479,6 +492,11 @@ const saveData = async (payload, userKode) => {
       statusNgedit !== "ACC"
     ) {
       throw new Error("Transaksi sudah close. Silakan minta PIN pengajuan.");
+    }
+
+    // A2. Barcode yang sudah dipakai tidak boleh diubah
+    if (isEdit) {
+      await pastikanBarcodeBelumDipakai(conn, nomorBPB, barcodes || []);
     }
 
     // B. Cek status baris barcode
@@ -550,6 +568,22 @@ const saveData = async (payload, userKode) => {
     const validItemsToInsert = items.filter(
       (item) => item.kode && String(item.kode).trim() !== "",
     );
+
+    // Spanduk: kode yang diterima harus ada di baris PO
+    if (adalahSpanduk) {
+      const [kodePo] = await conn.query(
+        `SELECT DISTINCT pod_bhn_kode AS kode FROM tpo_dtl WHERE pod_po_nomor = ?`,
+        [header.bpb_po_nomor],
+      );
+      const kodeSah = new Set(kodePo.map((r) => r.kode));
+      for (const item of validItemsToInsert) {
+        if (!kodeSah.has(item.kode)) {
+          throw new Error(
+            `Kode ${item.kode} tidak ada di PO ${header.bpb_po_nomor}.`,
+          );
+        }
+      }
+    }
 
     const usulanByKode = new Map(
       (usulan ? usulan.kodeBaru : []).map((k) => [k.kode, k]),
@@ -667,9 +701,9 @@ const saveData = async (payload, userKode) => {
           item.roll || 0,
           baru ? baru.harga : item.harga || 0,
           item.satuan || "",
-          baru ? baru.gramasi : item.gramasi || "",
-          baru ? baru.warna : item.warna || "",
-          baru ? baru.setting : item.setting || "",
+          adalahSpanduk ? "" : baru ? baru.gramasi : item.gramasi || "",
+          adalahSpanduk ? "" : baru ? baru.warna : item.warna || "",
+          adalahSpanduk ? "" : baru ? baru.setting : item.setting || "",
           item.mkb || "",
           item.spk || "",
           nourut1,
@@ -1378,6 +1412,61 @@ const tarikDariQc = async (value) => {
   };
 };
 
+// Barcode BPB yang sudah dipakai (stok keluar / Realisasi) mengunci hapus dan ubah.
+// barcodesBaru = null  -> mode hapus (satu barcode terpakai saja sudah menolak)
+// barcodesBaru = array -> mode ubah (barcode terpakai tidak boleh berubah jumlah/kodenya
+//                         atau hilang dari daftar)
+const pastikanBarcodeBelumDipakai = async (
+  conn,
+  nomorBpb,
+  barcodesBaru = null,
+) => {
+  const [dipakai] = await conn.query(
+    `SELECT d.bard_barcode, d.bard_kode, d.bard_jumlah
+     FROM tbahan_barcode_hdr h
+     INNER JOIN tbahan_barcode_dtl d ON d.bard_nomor = h.bar_nomor
+     WHERE h.bar_bpb = ?
+       AND (
+         EXISTS (
+           SELECT 1 FROM tmasterstok_barcode m
+           WHERE m.mst_brg_kode = d.bard_barcode
+             AND m.mst_aktif = 'Y' AND m.mst_stok_out > 0
+         )
+         OR EXISTS (
+           SELECT 1 FROM tproduksiminta_dtl2 r
+           WHERE r.promind2_barcode = d.bard_barcode
+         )
+       )`,
+    [nomorBpb],
+  );
+  if (dipakai.length === 0) return;
+
+  const daftar = dipakai
+    .slice(0, 3)
+    .map((r) => r.bard_barcode)
+    .join(", ");
+
+  if (barcodesBaru === null) {
+    throw new Error(
+      `BPB tidak bisa dihapus: barcode sudah dipakai (${daftar}${dipakai.length > 3 ? ", ..." : ""}).`,
+    );
+  }
+
+  const baru = new Map(barcodesBaru.map((b) => [String(b.barcode), b]));
+  for (const r of dipakai) {
+    const b = baru.get(String(r.bard_barcode));
+    const berubah =
+      !b ||
+      String(b.kode) !== String(r.bard_kode) ||
+      Math.abs(Number(b.jumlah || 0) - Number(r.bard_jumlah || 0)) > 0.0001;
+    if (berubah) {
+      throw new Error(
+        `Barcode ${r.bard_barcode} sudah dipakai, jumlah/kodenya tidak boleh diubah atau dihapus.`,
+      );
+    }
+  }
+};
+
 module.exports = {
   validateField,
   getDetail,
@@ -1385,4 +1474,5 @@ module.exports = {
   getMaxBarcode,
   getQcSiap,
   syncStatusClosePo,
+  pastikanBarcodeBelumDipakai,
 };

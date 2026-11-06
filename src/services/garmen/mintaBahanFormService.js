@@ -1,6 +1,19 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+// Cabang yang memakai tata cara Spanduk (divisi 1) di Permintaan Bahan:
+// SPK/MAP divisi 1, tanpa cek planning, tanpa setting/komponen
+// (diganti konstruksi + panjang + lebar dari master bahan).
+const CABANG_SPANDUK = ["P02"];
+// Pilihan "Divisi" (lokasi produksi) khusus Spanduk; disimpan huruf kapital.
+const DIVISI_SPANDUK = ["PROOF", "PRODUKSI P02", "PRODUKSI MITRA", "BATIK"];
+const adalahSpanduk = (cabang) =>
+  CABANG_SPANDUK.includes(
+    String(cabang || "")
+      .trim()
+      .toUpperCase(),
+  );
+
 // --- HELPER: CEK STATUS PIN 5 ---
 const checkPinStatus = async (nomor, conn) => {
   const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
@@ -83,23 +96,30 @@ const getSpkDetailsAndMkb = async (
   keterangan,
   isEdit = false,
 ) => {
-  // 1. Query SPK dengan UNION (Identik dengan Delphi)
+  const spanduk = adalahSpanduk(cabang);
+
+  // 1. Query SPK dengan UNION (Identik dengan Delphi) + divisi
   const querySpk = `
     SELECT * FROM (
       SELECT spk_nomor AS Nomor, spk_nama AS Nama, spk_jumlah AS Jumlah, 
              spk_pending, spk_accpending, spk_ppotong, spk_cmo AS cmo,
-             spk_so_ref AS SoRef
+             spk_so_ref AS SoRef, spk_divisi AS Divisi
       FROM tspk WHERE spk_aktif="Y"
       UNION ALL
       SELECT mspk_nomor AS Nomor, mspk_nama AS Nama, mspk_jumlah AS Jumlah, 
              "" AS spk_pending, "" AS spk_accpending, "" AS spk_ppotong, mspk_cmo AS cmo,
-             "" AS SoRef
+             "" AS SoRef, mspk_divisi AS Divisi
       FROM tmemospk
     ) final WHERE Nomor = ?
   `;
   const [spkRows] = await db.query(querySpk, [spkNomor]);
   if (spkRows.length === 0) throw new Error("No.Spk belum terdaftar.");
   const spk = spkRows[0];
+
+  // Spanduk: hanya SPK/MAP divisi 1
+  if (spanduk && Number(spk.Divisi) !== 1) {
+    throw new Error("SPK/MAP tsb bukan divisi Spanduk.");
+  }
 
   // 2. Validasi PENDING
   if (spk.spk_pending === "PENDING PENUH" && spk.spk_accpending === "N") {
@@ -122,9 +142,9 @@ const getSpkDetailsAndMkb = async (
     throw new Error("SPK tsb belum di approve oleh Chief Marketing.");
   }
 
-  // 4. Validasi PLANNING (Hanya untuk Non-MAP)
-  if (!spkNomor.toUpperCase().startsWith("MAP")) {
-    // ← BARU: cek planning di SPK PPIC-nya SENDIRI *dan* SO asalnya
+  // 4. Validasi PLANNING (hanya Non-MAP dan bukan Spanduk)
+  if (!spanduk && !spkNomor.toUpperCase().startsWith("MAP")) {
+    // cek planning di SPK PPIC-nya SENDIRI *dan* SO asalnya
     // (spk_so_ref) — MKB/planning kadang tersimpan pakai nomor SO
     // kalau diinput sebelum SPK PPIC-nya jadi.
     const lookupNomors = spk.SoRef ? [spkNomor, spk.SoRef] : [spkNomor];
@@ -162,17 +182,19 @@ const getSpkDetailsAndMkb = async (
     }
   }
 
-  // 5. Load MKB
+  // 5. Load MKB (setting hanya bermakna untuk kode garmen)
   const queryMkb = `
     SELECT j.mkb_nomor, DATE_FORMAT(j.mkb_tanggal, '%Y-%m-%d') as mkb_tanggal, 
            i.mkbd_bhn_kode, SUM(i.mkbd_babaran) AS babaran, SUM(i.mkbd_jumlah) AS butuh, 
            IFNULL(b.Bhn_Name,"") AS nama, IFNULL(b.Bhn_satuan,"") AS sat,
            IFNULL(MAX(st.bs_nama),"") AS setting,
+           IFNULL(MAX(b.bhn_konstruksi),"") AS konstruksi,
+           MAX(b.bhn_panjang) AS panjang, MAX(b.bhn_lebar) AS lebar,
            CAST(GROUP_CONCAT(i.mkbd_komponen SEPARATOR ", ") AS CHAR) AS komponen
     FROM tmkb_hdr j
     INNER JOIN tmkb_dtl i ON i.mkbd_mkb_nomor = j.MKB_NOMOR
     LEFT JOIN tbahan b ON b.Bhn_kode = i.mkbd_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(i.mkbd_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(i.mkbd_bhn_kode, 8, 2) AND LEFT(i.mkbd_bhn_kode, 2) <> 'SB'
     WHERE j.MKB_SPK_NOMOR IN (?)
     GROUP BY i.mkbd_bhn_kode
   `;
@@ -193,7 +215,8 @@ const getSpkDetailsAndMkb = async (
     }
   }
 
-  // --- RETURN DATA DENGAN LOGIKA MAPPING YANG BARU ---
+  const ukuran = (v) => (v === null || v === undefined ? null : Number(v));
+
   return {
     spkInfo: { Nama: spk.Nama, Jumlah: spk.Jumlah },
     mkbHeader:
@@ -216,12 +239,15 @@ const getSpkDetailsAndMkb = async (
         kode: r.mkbd_bhn_kode,
         nama: r.nama,
         satuan: r.sat,
-        setting: r.setting,
+        setting: spanduk ? "" : r.setting,
+        konstruksi: r.konstruksi,
+        panjang: ukuran(r.panjang),
+        lebar: ukuran(r.lebar),
         babaran: r.babaran,
         pcs: pcs,
         butuh: r.butuh,
         jumlah: Number(jumlahMinta.toFixed(2)),
-        komponen: r.komponen,
+        komponen: spanduk ? "" : r.komponen,
         ket: "",
       };
     }),
@@ -263,6 +289,7 @@ const getMintaBahan = async (nomor) => {
     SELECT 
       d.mind_bhn_kode AS kode, b.Bhn_Name AS nama, b.Bhn_satuan AS satuan,
       IFNULL(st.bs_nama, '') AS setting,
+      IFNULL(b.bhn_konstruksi, '') AS konstruksi, b.bhn_panjang AS panjang, b.bhn_lebar AS lebar,
       d.mind_babaran AS babaran, d.mind_pcs AS pcs, d.mind_jumlah AS jumlah,
       d.mind_komponen AS komponen, d.mind_ket AS ket,
       IFNULL((
@@ -274,7 +301,7 @@ const getMintaBahan = async (nomor) => {
     FROM tmintabahan_dtl d
     INNER JOIN tmintabahan_hdr h ON d.mind_nomor = h.min_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2) AND LEFT(d.mind_bhn_kode, 2) <> 'SB'
     WHERE d.mind_nomor = ?
   `;
   const [dtl] = await db.query(queryDtl, [nomor]);
@@ -312,6 +339,35 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yang sudah diclose.\nSilahkan ajukan perubahan data (PIN5) terlebih dahulu.",
       );
+    }
+
+    // --- VALIDASI KHUSUS SPANDUK (dikunci di server, bukan hanya di UI) ---
+    if (adalahSpanduk(payload.cabang)) {
+      const divisi = String(payload.divisi || "")
+        .trim()
+        .toUpperCase();
+      if (!DIVISI_SPANDUK.includes(divisi)) {
+        throw new Error("Divisi permintaan tidak valid untuk Spanduk.");
+      }
+      payload.divisi = divisi;
+
+      const [spkRows] = await conn.query(
+        `SELECT Divisi FROM (
+           SELECT spk_nomor AS Nomor, spk_divisi AS Divisi FROM tspk WHERE spk_aktif="Y"
+           UNION ALL
+           SELECT mspk_nomor AS Nomor, mspk_divisi AS Divisi FROM tmemospk
+         ) x WHERE Nomor = ? LIMIT 1`,
+        [payload.spk],
+      );
+      if (spkRows.length === 0 || Number(spkRows[0].Divisi) !== 1) {
+        throw new Error("SPK/MAP tsb bukan divisi Spanduk.");
+      }
+      const bukanSpanduk = (payload.details || []).find(
+        (d) => d.kode && !String(d.kode).toUpperCase().startsWith("SB"),
+      );
+      if (bukanSpanduk) {
+        throw new Error(`Bahan ${bukanSpanduk.kode} bukan bahan spanduk.`);
+      }
     }
 
     if (isEdit) {
@@ -425,13 +481,14 @@ const getPrintData = async (nomor) => {
       d.mind_bhn_kode AS Kode, 
       b.Bhn_Name AS Nama, 
       IFNULL(st.bs_nama, '') AS Setting,
-      b.Bhn_satuan AS Satuan, 
+      IFNULL(b.bhn_konstruksi, '') AS Konstruksi, b.bhn_panjang AS Panjang, b.bhn_lebar AS Lebar,
+      b.Bhn_satuan AS Satuan,
       d.mind_jumlah AS Jumlah,
       d.mind_komponen AS Komponen, 
       d.mind_ket AS Keterangan
     FROM tmintabahan_dtl d
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mind_bhn_kode
-    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2)
+    LEFT JOIN tbahan_setting st ON st.bs_kode = SUBSTRING(d.mind_bhn_kode, 8, 2) AND LEFT(d.mind_bhn_kode, 2) <> 'SB'
     WHERE d.mind_nomor = ?
     ORDER BY d.mind_bhn_kode
   `;

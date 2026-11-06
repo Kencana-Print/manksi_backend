@@ -1,5 +1,25 @@
 const jwt = require("jsonwebtoken");
 const pool = require("../config/database");
+const { getIzinRole } = require("../services/rbacService");
+
+// Akun yang dinonaktifkan tidak boleh tetap masuk sampai token (12 jam) habis.
+const CACHE_AKUN_MS = 60 * 1000;
+const cacheAkun = new Map(); // kode -> { exp, aktif }
+
+const akunAktif = async (kode) => {
+  const hit = cacheAkun.get(kode);
+  if (hit && hit.exp > Date.now()) return hit.aktif;
+  const [rows] = await pool.query(
+    "SELECT user_aktif FROM tuser WHERE user_kode = ?",
+    [kode],
+  );
+  // user_aktif: 0 = aktif, 1 = pasif (dibalik)
+  const aktif = rows.length > 0 && Number(rows[0].user_aktif) === 0;
+  cacheAkun.set(kode, { exp: Date.now() + CACHE_AKUN_MS, aktif });
+  return aktif;
+};
+
+const buangCacheAkun = (kode) => cacheAkun.delete(kode);
 
 /**
  * Memverifikasi validitas Token JWT
@@ -14,12 +34,27 @@ const verifyToken = (req, res, next) => {
       .json({ message: "Akses ditolak. Silakan login kembali." });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
     if (err) {
       return res
         .status(403)
         .json({ message: "Sesi telah berakhir atau token tidak valid." });
     }
+
+    try {
+      if (!(await akunAktif(decoded.kode))) {
+        // Respons sama dengan token kedaluwarsa agar frontend memperlakukannya identik
+        return res
+          .status(403)
+          .json({ message: "Sesi telah berakhir atau token tidak valid." });
+      }
+    } catch (error) {
+      return res.status(503).json({
+        message: "Gagal memeriksa status akun.",
+        error: error.message,
+      });
+    }
+
     // Pastikan payload JWT berisi 'kode' (User ID)
     req.user = decoded;
     next();
@@ -52,8 +87,20 @@ const checkPermission = (menuId, action) => {
         WHERE hak_user_kode = ? AND hak_men_id = ?`;
 
       const [rows] = await pool.query(query, [userKode, menuId]);
+      let diizinkan = rows.length > 0 && rows[0].permission === "Y";
 
-      if (rows.length > 0 && rows[0].permission === "Y") {
+      // Hak tambahan dari role (HRD). Hanya dicek bila thakuser menolak;
+      // galat di sini tidak boleh memblokir apa pun selain penambahan hak.
+      if (!diizinkan) {
+        try {
+          const izinRole = await getIzinRole(userKode, req.user.cabang);
+          diizinkan = izinRole.has(`${menuId}.${action}`);
+        } catch (err) {
+          console.error("[rbac] izin role gagal dibaca:", err.message);
+        }
+      }
+
+      if (diizinkan) {
         next();
       } else {
         res.status(403).json({
@@ -122,4 +169,5 @@ module.exports = {
   checkPermission,
   requireAdmin,
   checkBagian,
+  buangCacheAkun,
 };
