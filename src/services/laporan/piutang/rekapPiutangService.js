@@ -130,6 +130,19 @@ const getDetailPiutang = async (query) => {
         WHERE d.invd_inv_nomor = p.nota
       ), '') AS NoPO,
       IFNULL((
+        SELECT GROUP_CONCAT(DISTINCT sl.sal_nama ORDER BY sl.sal_nama SEPARATOR ', ')
+        FROM tinv_dtl d
+        INNER JOIN tspk s ON s.spk_nomor = d.invd_spk_nomor
+        LEFT JOIN tsalesorder so1 ON so1.so_nomor = s.spk_so_ref
+        LEFT JOIN tcustomer cu ON cu.cus_kode = s.spk_cus_kode
+        INNER JOIN tsales sl ON sl.sal_kode = COALESCE(
+          NULLIF(s.spk_sal_kode, ''),
+          NULLIF(so1.so_sal_kode, ''),
+          NULLIF(cu.cus_sales, '')
+        )
+        WHERE d.invd_inv_nomor = p.nota
+      ), '') AS Sales,
+      IFNULL((
         SELECT pd2.debet
         FROM piutang_debet pd2
         WHERE pd2.nota = (SELECT tf.invf_taknormal FROM tinv_flag tf WHERE tf.invf_normal = p.nota LIMIT 1)

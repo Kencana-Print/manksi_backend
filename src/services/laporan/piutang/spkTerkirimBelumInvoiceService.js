@@ -34,6 +34,10 @@ const getSpkTerkirimBelumInvoice = async (query) => {
       c.cus_nama                                      AS Customer,
       ${KODE_PERUSH_ORDER("k.Nomor")}                 AS Perusahaan,
       DATE_FORMAT(COALESCE(so.so_tanggal, s.spk_tanggal), '%Y-%m-%d') AS TglOrder,
+      IF(so.so_nomor IS NOT NULL,
+        (SELECT IFNULL(SUM(x.spk_jumlah), 0) FROM tspk x
+        WHERE x.spk_so_ref = so.so_nomor AND x.spk_aktif = 'Y'),
+      s.spk_jumlah)                                  AS QtyOrder,
       k.QtyKirim                                      AS QtyKirim,
       IFNULL(i.QtyInvoice, 0)                         AS QtyInvoice,
       k.QtyKirim - IFNULL(i.QtyInvoice, 0)            AS QtyBelumDitagih,
@@ -81,13 +85,16 @@ const getSpkTerkirimBelumInvoice = async (query) => {
     LEFT JOIN tspk s ON s.spk_nomor = CONVERT(k.Nomor USING latin1) AND s.spk_aktif = 'Y'
     LEFT JOIN tcustomer c ON c.cus_kode = COALESCE(so.so_cus_kode, s.spk_cus_kode)
     WHERE k.QtyKirim > IFNULL(i.QtyInvoice, 0)
-      AND (so.so_nomor IS NOT NULL OR s.spk_nomor IS NOT NULL)
+      AND IF(so.so_nomor IS NOT NULL,
+       IFNULL(so.so_harga, 0) > 0,
+       IFNULL(s.spk_harga, 0) > 0)
     ORDER BY k.TglKirimTerakhir DESC, k.Nomor DESC
   `;
 
   const [rows] = await db.query(sql, params);
   return rows.map((r) => ({
     ...r,
+    QtyOrder: Number(r.QtyOrder) || 0,
     QtyKirim: Number(r.QtyKirim) || 0,
     QtyInvoice: Number(r.QtyInvoice) || 0,
     QtyBelumDitagih: Number(r.QtyBelumDitagih) || 0,
