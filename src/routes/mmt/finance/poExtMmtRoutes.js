@@ -11,6 +11,8 @@ router.get("/", poCtrl.browse);
 router.post("/save", poCtrl.save);
 router.post("/submit-pin", poCtrl.submitPin);
 router.get("/lookup-bpb", poCtrl.getLookupBpb);
+router.get("/date-close", poCtrl.getDateClose);
+router.get("/date-close/:modul", poCtrl.getDateClose);
 
 // Endpoint Print yang baru ditambahkan (HARUS DI ATAS /:nomor)
 router.get("/print/:nomor", poCtrl.printData);
