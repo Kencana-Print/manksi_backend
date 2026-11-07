@@ -10,27 +10,30 @@ const {
 } = require("./lhkAfdrukShared");
 
 // Slot bahan tetap (sama dengan form). alias = nama kolom di hasil browse.
-// kode null = belum ada di master: kolom tetap ada, selalu kosong.
+// kode = tgarmen_brg.brg_kode (prod). null = belum ada di master: kolom tetap
+// ada, selalu kosong.
 const SLOT_BAHAN = [
-  { alias: "Rinso", kode: 10401 },
-  { alias: "Porstek", kode: 10400 },
-  { alias: "M46", kode: 10622 },
-  { alias: "Kaporit", kode: 10438 },
-  { alias: "Caustik", kode: 10439 },
-  { alias: "Ulano", kode: 10435 },
-  { alias: "Screen", kode: 10436 },
-  { alias: "Lem", kode: 10441 },
-  { alias: "Katalis", kode: 10437 },
+  { alias: "Rinso", kode: "AK260272" },
+  { alias: "Porstek", kode: "S0007" },
+  { alias: "M46", kode: "S0045" },
+  { alias: "Kaporit", kode: "S0003" },
+  { alias: "Caustik", kode: "S0001" },
+  { alias: "Ulano", kode: "S0009" },
+  { alias: "Screen", kode: "AK260278" },
+  { alias: "Lem", kode: "S0006" },
+  { alias: "Katalis", kode: "S0004" },
 ];
 
-// Qty per bahan jadi satu kolom per LHK (kode angka dari konstanta di atas,
-// bukan input user). "* 1e0" supaya SUM(DECIMAL) kembali sebagai angka.
-const SQL_PIVOT_BAHAN = SLOT_BAHAN.filter((s) => s.kode !== null)
-  .map(
-    (s) =>
-      `SUM(CASE WHEN lab_brg_kode = ${s.kode} THEN lab_qty END) * 1e0 AS ${s.alias}`,
-  )
-  .join(",\n           ");
+const SLOT_TERISI = SLOT_BAHAN.filter((s) => s.kode !== null);
+
+// Qty per bahan jadi satu kolom per LHK. Kode dikirim sebagai parameter (urutan
+// params = urutan ? di SQL: subquery pivot dulu, lalu WHERE).
+// "* 1e0" supaya SUM(DECIMAL) kembali sebagai angka.
+const SQL_PIVOT_BAHAN = SLOT_TERISI.map(
+  (s) => `SUM(CASE WHEN lab_brg_kode = ? THEN lab_qty END) * 1e0 AS ${s.alias}`,
+).join(",\n           ");
+
+const PARAM_PIVOT_BAHAN = SLOT_TERISI.map((s) => s.kode);
 
 const SQL_KOLOM_BAHAN = SLOT_BAHAN.map((s) =>
   s.kode === null ? `NULL AS ${s.alias}` : `bhn.${s.alias} AS ${s.alias}`,
@@ -46,8 +49,6 @@ const getBrowseLhkAfdruk = async (tglAwal, tglAkhir, user) => {
            DATE_FORMAT(h.lah_tanggal, '%Y-%m-%d') AS Tanggal,
            h.lah_pab_kode AS Kode_Pabrik,
            p.pab_nama AS Nama_Pabrik,
-           h.lah_jkar_borongan AS Kar_Borongan,
-           h.lah_jkar_harian AS Kar_Harian,
            ${SQL_KOLOM_BAHAN}
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.lah_pab_kode
@@ -61,7 +62,12 @@ const getBrowseLhkAfdruk = async (tglAwal, tglAkhir, user) => {
     ${cab.sql}
     ORDER BY h.lah_tanggal DESC, h.lah_nomor DESC
   `;
-  const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
+  const [rows] = await db.query(query, [
+    ...PARAM_PIVOT_BAHAN,
+    tglAwal,
+    tglAkhir,
+    ...cab.params,
+  ]);
   return rows;
 };
 

@@ -1,5 +1,6 @@
 const { galat } = require("./lhkCommon");
 const design = require("./lhkDesignShared");
+const hapusPlankan = require("./lhkHapusPlankanShared");
 const afdruk = require("./lhkAfdrukShared");
 const cetak = require("./lhkCetakShared");
 const quiring = require("./lhkQuiringShared");
@@ -12,7 +13,7 @@ const proof = require("./lhkProofShared");
 // Lini pertama tiap rantai tanpa syarat. Lini baru (mis. Koli) cukup
 // ditambahkan di sini dan di DAFTAR_LINI.
 const RANTAI = {
-  MAP: ["DESIGN", "AFDRUK", "CETAK"],
+  MAP: ["DESIGN", "HAPUS_PLANKAN", "AFDRUK", "CETAK"],
   SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT", "KOLI"],
 };
 
@@ -21,27 +22,6 @@ const RANTAI = {
 const CABANG = {
   MAP: { PROOF: "AFDRUK" },
   SPK: {},
-};
-
-// Modul LHK Hapus Plankan sudah dicabut (digabung ke Afdruk). Tabelnya tetap
-// dibaca sebagai "setara Afdruk": MAP/SPK yang sudah punya Hapus Plankan
-// dianggap memenuhi syarat lini Afdruk (gate lini berikutnya & kunci mundur),
-// dan dikecualikan MP-13 bila bertanggal sebelum cutover.
-const LINI_HAPUS_PLANKAN_LAMA = {
-  kode: "HAPUS_PLANKAN",
-  nama: "Hapus Plankan",
-  S: {
-    T: {
-      hdr: "tlhk_hapusplangkan_hdr",
-      dtl: "tlhk_hapusplangkan_dtl",
-    },
-  },
-  kolom: {
-    nomorHdr: "lhp_nomor",
-    tanggalHdr: "lhp_tanggal",
-    nomorDtl: "lhpd_lhp_nomor",
-    spkDtl: "lhpd_spk_nomor",
-  },
 };
 
 // filterHdr / filterDtl: tambahan WHERE (alias h = header, d = detail)
@@ -71,6 +51,17 @@ const DAFTAR_LINI = [
     },
   },
   {
+    kode: "HAPUS_PLANKAN",
+    nama: "Hapus Plankan",
+    S: hapusPlankan,
+    kolom: {
+      nomorHdr: "lhp_nomor",
+      tanggalHdr: "lhp_tanggal",
+      nomorDtl: "lhpd_lhp_nomor",
+      spkDtl: "lhpd_spk_nomor",
+    },
+  },
+  {
     kode: "AFDRUK",
     nama: "Afdruk",
     S: afdruk,
@@ -80,7 +71,6 @@ const DAFTAR_LINI = [
       nomorDtl: "lad_lah_nomor",
       spkDtl: "lad_spk_nomor",
     },
-    setara: [LINI_HAPUS_PLANKAN_LAMA],
   },
   {
     kode: "CETAK",
@@ -169,7 +159,7 @@ const LINI_PLOTER_LAMA = {
   },
 };
 
-const LINI_MP13 = [...DAFTAR_LINI, LINI_HAPUS_PLANKAN_LAMA, LINI_PLOTER_LAMA];
+const LINI_MP13 = [...DAFTAR_LINI, LINI_PLOTER_LAMA];
 
 const getLini = (kode) => {
   const lini = DAFTAR_LINI.find((l) => l.kode === kode);

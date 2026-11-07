@@ -70,6 +70,8 @@ const spandukBahanPenolongRoutes = require("./routes/spanduk/daftar/bahanPenolon
 const spandukToleransiRoutes = require("./routes/spanduk/daftar/toleransiRoutes");
 const spandukLhkDesignRoutes = require("./routes/spanduk/lhk/lhkDesignRoutes");
 const spandukLhkDesignFormRoutes = require("./routes/spanduk/lhk/lhkDesignFormRoutes");
+const spandukLhkHapusPlankanRoutes = require("./routes/spanduk/lhk/lhkHapusPlankanRoutes");
+const spandukLhkHapusPlankanFormRoutes = require("./routes/spanduk/lhk/lhkHapusPlankanFormRoutes");
 const spandukLhkAfdrukRoutes = require("./routes/spanduk/lhk/lhkAfdrukRoutes");
 const spandukLhkAfdrukFormRoutes = require("./routes/spanduk/lhk/lhkAfdrukFormRoutes");
 const spandukLhkTintaRoutes = require("./routes/spanduk/lhk/lhkTintaRoutes");
@@ -668,6 +670,11 @@ app.use("/api/spanduk/daftar/bahan-penolong", spandukBahanPenolongRoutes);
 app.use("/api/spanduk/daftar/toleransi", spandukToleransiRoutes);
 app.use("/api/spanduk/lhk/lhk-design", spandukLhkDesignRoutes);
 app.use("/api/spanduk/lhk/lhk-design-form", spandukLhkDesignFormRoutes);
+app.use("/api/spanduk/lhk/lhk-hapus-plankan", spandukLhkHapusPlankanRoutes);
+app.use(
+  "/api/spanduk/lhk/lhk-hapus-plankan-form",
+  spandukLhkHapusPlankanFormRoutes,
+);
 app.use("/api/spanduk/lhk/lhk-afdruk", spandukLhkAfdrukRoutes);
 app.use("/api/spanduk/lhk/lhk-afdruk-form", spandukLhkAfdrukFormRoutes);
 app.use("/api/spanduk/lhk/lhk-tinta", spandukLhkTintaRoutes);

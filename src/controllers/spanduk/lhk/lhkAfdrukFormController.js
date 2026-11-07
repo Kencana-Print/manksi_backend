@@ -50,7 +50,12 @@ const getLookupUkuran = async (req, res) => {
 
 const getLookupBahan = async (req, res) => {
   try {
-    const data = await service.getLookupBahan(req.query.search);
+    const data = await service.getLookupBahan(
+      req.query.search,
+      req.user,
+      req.query.pabrik,
+      req.query.nomor,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     kirimError(res, error, 400);

@@ -7,6 +7,7 @@ const {
   parseTanggal,
   adalahSuperadmin,
   cabangUser,
+  MAKS_ANGKA,
 } = require("./lhkCommon");
 const {
   T,
@@ -71,6 +72,12 @@ const siapkanData = (body = {}) => {
   }
 
   const bahan = siapkanBahan(body.Bahan);
+
+  if (bahan.length > 0 && pabrik.length > MAKS_KODE_LOKASI_STOK) {
+    throw galat(
+      `Kode lokasi maksimal ${MAKS_KODE_LOKASI_STOK} karakter bila ada pemakaian bahan`,
+    );
+  }
 
   const detail = Array.isArray(body.Detail) ? body.Detail : [];
   if (detail.length === 0) {
@@ -157,16 +164,74 @@ const validasiSumberBaris = async (q, baris, user) => {
   return peta;
 };
 
-// Bahan pemakaian Afdruk = master bahan kategori 2 divisi Spanduk (konfirmasi
-// user 22 Okt: bebas pilih, tapi satu kategori agar daftar tidak membengkak)
-const KATEGORI_BAHAN = "2";
-// Slot bahan Afdruk yang barangnya ada di luar kategori 2 (M-46 = kategori 3)
-const BAHAN_LUAR_KATEGORI = [10622];
-const DIVISI_BAHAN = 1;
+// Qty plangkan per ukuran dari semua LHK Hapus Plankan yang memuat MAP tsb
+// (dijumlahkan). Mengembalikan Map norm(spk) -> Map kunciUkuran -> qty
+const ambilPlangkanHp = async (q, daftarSpk) => {
+  const hasil = new Map();
+  if (daftarSpk.length === 0) {
+    return hasil;
+  }
+  const [rows] = await q.query(
+    `SELECT lhpd2_spk_nomor AS spk, lhpd2_up_kode AS ukuran,
+            SUM(lhpd2_qty) AS qty
+     FROM ${T.hpDtl2}
+     WHERE lhpd2_spk_nomor IN (?)
+     GROUP BY lhpd2_spk_nomor, lhpd2_up_kode`,
+    [daftarSpk],
+  );
+  for (const r of rows) {
+    const qty = Number(r.qty) || 0;
+    if (qty <= 0) {
+      continue;
+    }
+    const spk = norm(r.spk);
+    if (!hasil.has(spk)) {
+      hasil.set(spk, new Map());
+    }
+    hasil.get(spk).set(kunciUkuran(r.ukuran), qty);
+  }
+  return hasil;
+};
+
+// Baris yang HP-nya punya data per ukuran: plangkan ditimpa dari HP (terkunci).
+// Tanpa data HP (MAP tanpa HP, HP lama, SPK biasa) isian client dipakai apa adanya.
+// daftarKecuali: baris yang sudah ada di LHK ini (mode ubah), dibiarkan.
+const terapkanKunciHp = async (q, baris, daftarKecuali = new Set()) => {
+  const target = baris.filter((b) => !daftarKecuali.has(norm(b.spk)));
+  const peta = await ambilPlangkanHp(
+    q,
+    target.map((b) => b.spk),
+  );
+  for (const b of target) {
+    const dariHp = peta.get(norm(b.spk));
+    if (!dariHp) {
+      continue;
+    }
+    b.plangkan = [...dariHp.entries()].map(([key, qty]) => ({
+      key,
+      ukuran: String(key / 100),
+      qty,
+    }));
+    b.jPlangkan = [...dariHp.values()].reduce((a, v) => a + v, 0);
+  }
+};
+
+// Bahan pemakaian Afdruk = master tgarmen_brg kategori SPANDUK. Stok = buku
+// besar per jenis barang (tmasterstok_obat/acc/sparepart/atk), dipotong oleh
+// trigger tlhk_afdruk_bahan_* hanya untuk baris ber-flag lab_potong_stok = 1.
+const KTG_BAHAN = "SPANDUK";
 const MAKS_QTY_BAHAN = 9999999999.99; // decimal(12,2)
-// Gudang yang stoknya ditampilkan di form (GUDANG PENOLONG P2); hanya info,
-// tidak memblokir dan tidak memotong stok
-const GUDANG_BAHAN = "WH009";
+const MAKS_KODE_BAHAN = 20; // lab_brg_kode varchar(20)
+const MAKS_KODE_LOKASI_STOK = 3; // mst_cab char(3)
+// Batas tanggal potong stok = tanggal stok awal P02 diinput (opname go-live).
+// LHK bertanggal sebelum ini tidak memotong stok, baru maupun diubah, karena
+// stoknya belum ada. GANTI saat cutover ke tanggal stok awal di DB prod.
+const TANGGAL_MULAI_POTONG_STOK = "2026-11-01";
+
+// tanggal = 'YYYY-MM-DD' (tanggal LHK yang disimpan). lhkLama = LHK yang
+// baris bahannya sudah bertanda lab_potong_stok = 0.
+const bolehPotongStok = (tanggal, lhkLama) =>
+  !lhkLama && tanggal >= TANGGAL_MULAI_POTONG_STOK;
 
 const qtyBahan = (v, label) => {
   const s = teks(v);
@@ -183,16 +248,18 @@ const qtyBahan = (v, label) => {
   return n;
 };
 
-// Body.Bahan: [{ Kode_Bahan, Qty }], boleh kosong
+// Body.Bahan: [{ Kode_Bahan (string), Qty }], boleh kosong
 const siapkanBahan = (daftar) => {
   const list = Array.isArray(daftar) ? daftar : [];
   const sudah = new Set();
   return list.map((t, i) => {
     const label = `Bahan ${i + 1}`;
-    const s = teks(t?.Kode_Bahan);
-    const kode = Number(s);
-    if (!/^\d+$/.test(s) || kode <= 0 || !Number.isSafeInteger(kode)) {
+    const kode = teks(t?.Kode_Bahan).toUpperCase();
+    if (!kode) {
       throw galat(`${label}: bahan wajib dipilih`);
+    }
+    if (kode.length > MAKS_KODE_BAHAN) {
+      throw galat(`${label}: kode bahan maksimal ${MAKS_KODE_BAHAN} karakter`);
     }
     if (sudah.has(kode)) {
       throw galat(`${label}: bahan ${kode} sudah ada di daftar`);
@@ -202,59 +269,69 @@ const siapkanBahan = (daftar) => {
   });
 };
 
-// Bahan harus ada di master, kategori & divisi yang benar, dan aktif.
-// Bahan yang sudah tercatat di LHK ini (sudahAda) tetap boleh walau
-// belakangan dinonaktifkan. Mengembalikan peta kode -> baris master.
+// Bahan harus ada di master tgarmen_brg kategori SPANDUK dan aktif. Bahan yang
+// sudah tercatat di LHK ini (sudahAda) tetap boleh walau dinonaktifkan.
+// PK master = (brg_jenis, brg_kode): kode yang sama di dua jenis ditolak,
+// karena trigger tidak bisa menentukan tabel stok mana yang dipotong.
+// Mengembalikan peta kode (huruf besar) -> baris master.
 const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
   if (bahan.length === 0) {
     return new Map();
   }
   const [master] = await q.query(
-    `SELECT brg_kode, brg_satuan, brg_isaktif
-     FROM ${T.barang}
-     WHERE brg_kode IN (?)
-       AND (brg_ktg_kode = ? OR brg_kode IN (?))
-       AND brg_divisi = ?`,
-    [
-      bahan.map((b) => b.kode),
-      KATEGORI_BAHAN,
-      BAHAN_LUAR_KATEGORI,
-      DIVISI_BAHAN,
-    ],
+    `SELECT brg_kode, brg_satuan, brg_aktif
+     FROM ${T.garmenBrg}
+     WHERE brg_ktg = ? AND brg_kode IN (?)`,
+    [KTG_BAHAN, bahan.map((b) => b.kode)],
   );
-  const peta = new Map(master.map((m) => [Number(m.brg_kode), m]));
+  const peta = new Map();
+  for (const m of master) {
+    const k = String(m.brg_kode).toUpperCase();
+    if (peta.has(k)) {
+      throw galat(`Kode bahan ${k} ada di lebih dari satu jenis barang master`);
+    }
+    peta.set(k, m);
+  }
   bahan.forEach((b, i) => {
     const m = peta.get(b.kode);
     if (!m) {
       throw galat(
-        `Bahan ${i + 1}: ${b.kode} bukan bahan pemakaian Afdruk atau tidak ada di master`,
+        `Bahan ${i + 1}: ${b.kode} bukan bahan spanduk atau tidak ada di master`,
       );
     }
-    if (Number(m.brg_isaktif) !== 1 && !sudahAda.has(b.kode)) {
+    if (m.brg_aktif !== "Y" && !sudahAda.has(b.kode)) {
       throw galat(`Bahan ${i + 1}: ${b.kode} sudah tidak aktif`);
     }
   });
   return peta;
 };
 
-// Hapus lalu isi ulang; satuan disalin dari master saat simpan
-const simpanBahan = async (conn, nomor, bahan, peta) => {
+// Hapus lalu isi ulang. DELETE memicu trigger yang membalik stok, INSERT
+// (potongStok = true) memicu trigger yang memotong. Satuan disalin dari master.
+// Header harus sudah ditulis/di-update sebelum fungsi ini dipanggil: trigger
+// membaca tanggal dan lokasi dari tlhk_afdruk_hdr.
+const simpanBahan = async (conn, nomor, bahan, peta, potongStok) => {
   await conn.query(`DELETE FROM ${T.bahan} WHERE lab_lah_nomor = ?`, [nomor]);
   if (bahan.length === 0) {
     return;
   }
   await conn.query(
     `INSERT INTO ${T.bahan}
-       (lab_lah_nomor, lab_brg_kode, lab_qty, lab_satuan, lab_nourut)
+       (lab_lah_nomor, lab_brg_kode, lab_qty, lab_satuan, lab_nourut,
+        lab_potong_stok)
      VALUES ?`,
     [
-      bahan.map((b, i) => [
-        nomor,
-        b.kode,
-        b.qty,
-        peta.get(b.kode).brg_satuan,
-        i + 1,
-      ]),
+      bahan.map((b, i) => {
+        const m = peta.get(b.kode);
+        return [
+          nomor,
+          m.brg_kode,
+          b.qty,
+          m.brg_satuan,
+          i + 1,
+          potongStok ? 1 : 0,
+        ];
+      }),
     ],
   );
 };
@@ -262,78 +339,107 @@ const simpanBahan = async (conn, nomor, bahan, peta) => {
 const getBahanLhk = async (q, nomor) => {
   const [rows] = await q.query(
     `SELECT a.lab_brg_kode AS Kode_Bahan,
-            b.brg_nama AS Nama_Bahan,
+            IF(IFNULL(b.brg_note, '') = '', b.brg_nama,
+               CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama_Bahan,
             IFNULL(a.lab_satuan, b.brg_satuan) AS Satuan,
             a.lab_qty AS Qty
      FROM ${T.bahan} a
-     LEFT JOIN ${T.barang} b ON b.brg_kode = a.lab_brg_kode
+     LEFT JOIN ${T.garmenBrg} b ON b.brg_kode = a.lab_brg_kode
      WHERE a.lab_lah_nomor = ?
      ORDER BY a.lab_nourut`,
     [nomor],
   );
   return rows.map((r) => ({
-    Kode_Bahan: Number(r.Kode_Bahan),
+    Kode_Bahan: String(r.Kode_Bahan),
     Nama_Bahan: r.Nama_Bahan,
     Satuan: r.Satuan,
     Qty: Number(r.Qty),
   }));
 };
 
-const getLookupBahan = async (search) => {
+// Stok per lokasi (mst_cab). Pemakaian LHK itu sendiri (mst_noreferensi =
+// nomor) tidak dihitung, supaya peringatan stok kurang saat ubah LHK tidak
+// menghitung ganda. Tabel stok dipilih dari brg_jenis lewat CASE (bukan
+// membandingkan kolom jenis hasil UNION: menghindari galat collation 1267).
+const stokSub = (tabel) => `(
+  SELECT mst_brg_kode AS kode, SUM(mst_stok_in - mst_stok_out) AS stok
+  FROM ${tabel}
+  WHERE mst_aktif = 'Y' AND mst_cab = ?
+    AND (? = '' OR mst_noreferensi <> ?)
+  GROUP BY mst_brg_kode
+)`;
+
+// Stok hanya dihitung bila Lokasi dikirim (form). Tanpa Lokasi (browse, untuk
+// judul kolom) Stok = null dan tabel stok tidak disentuh. Non-superadmin selalu
+// memakai cabangnya sendiri, apa pun isi parameter pabrik.
+const getLookupBahan = async (search, user, pabrik, nomor) => {
+  let cab = "";
+  if (norm(pabrik) !== "") {
+    cab = adalahSuperadmin(user) ? norm(pabrik) : cabangUser(user);
+  }
+  const no = teks(nomor);
   const kata = teks(search);
-  const kondisi = [
-    "(brg_ktg_kode = ? OR brg_kode IN (?))",
-    "brg_divisi = ?",
-    "brg_isaktif = 1",
-  ];
-  // urutan params mengikuti urutan ? di SQL: subquery stok dulu
-  const params = [
-    GUDANG_BAHAN,
-    KATEGORI_BAHAN,
-    BAHAN_LUAR_KATEGORI,
-    DIVISI_BAHAN,
-  ];
+
+  let kolomStok = "NULL";
+  let joinStok = "";
+  // urutan params mengikuti urutan ? di SQL: empat subquery stok dulu
+  const params = [];
+  if (cab) {
+    kolomStok = `IFNULL(CASE b.brg_jenis
+              WHEN 'OBAT' THEN so.stok
+              WHEN 'ACCESORIES' THEN sa.stok
+              WHEN 'SPAREPART' THEN ss.stok
+              ELSE sk.stok
+            END, 0)`;
+    joinStok = `
+     LEFT JOIN ${stokSub(T.stokObat)} so ON so.kode = b.brg_kode
+     LEFT JOIN ${stokSub(T.stokAcc)} sa ON sa.kode = b.brg_kode
+     LEFT JOIN ${stokSub(T.stokSparepart)} ss ON ss.kode = b.brg_kode
+     LEFT JOIN ${stokSub(T.stokAtk)} sk ON sk.kode = b.brg_kode`;
+    for (let i = 0; i < 4; i += 1) {
+      params.push(cab, no, no);
+    }
+  }
+
+  const kondisi = ["b.brg_ktg = ?", "b.brg_aktif = 'Y'"];
+  params.push(KTG_BAHAN);
   if (kata) {
-    kondisi.push("(brg_nama LIKE ? OR brg_kode LIKE ?)");
+    kondisi.push("(b.brg_nama LIKE ? OR b.brg_kode LIKE ?)");
     params.push(`%${kata}%`, `%${kata}%`);
   }
+
   const [rows] = await db.query(
-    `SELECT brg_kode AS Kode, brg_nama AS Nama, brg_satuan AS Satuan,
-            s.stok AS Stok
-     FROM ${T.barang}
-     LEFT JOIN (
-       SELECT mst_brg_kode, SUM(mst_stok_in - mst_stok_out) AS stok
-       FROM ${T.stok}
-       WHERE mst_gdg_kode = ?
-       GROUP BY mst_brg_kode
-     ) s ON s.mst_brg_kode = brg_kode
+    `SELECT b.brg_kode AS Kode,
+            IF(IFNULL(b.brg_note, '') = '', b.brg_nama,
+               CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama,
+            b.brg_satuan AS Satuan,
+            ${kolomStok} AS Stok
+     FROM ${T.garmenBrg} b${joinStok}
      WHERE ${kondisi.join(" AND ")}
-     ORDER BY brg_nama
+     ORDER BY b.brg_nama
      LIMIT 500`,
     params,
   );
   return rows.map((r) => ({
-    Kode: Number(r.Kode),
+    Kode: String(r.Kode),
     Nama: r.Nama,
     Satuan: r.Satuan,
     Stok: r.Stok === null ? null : round2(Number(r.Stok)),
   }));
 };
 
-// J Meter = J Plangkan x panjang SPK/MAP. Baris lama yang J Plangkan-nya tidak
-// berubah mempertahankan nilai tersimpan (seperti Hapus Plankan), supaya simpan
-// ulang tidak mengubah riwayat bila panjang SPK/MAP berubah. NULL = belum pernah
-// dihitung (baris lama) -> dihitung ulang.
-const hitungJumlahMeter = (baris, peta, lamaPeta) =>
+// J Meter = jumlah (ukuran x Qty) seluruh ukuran pada Detail Plangkan.
+// Dihitung dari data yang sama dengan yang disimpan di dtl2, jadi tidak ada
+// nilai lama yang perlu dipertahankan. Dipanggil setelah validasiUkuran
+// (p.nilai sudah terisi dari master).
+const hitungJumlahMeter = (baris) =>
   baris.map((b) => {
-    const lama = lamaPeta ? lamaPeta.get(b.spk) : null;
-    const pakaiLama =
-      lama &&
-      lama.jumlahmeter !== null &&
-      Number(lama.plangkan) === b.jPlangkan;
-    const jumlahMeter = pakaiLama
-      ? Number(lama.jumlahmeter)
-      : round2(b.jPlangkan * Number(peta.get(b.spk)?.panjang ?? 0));
+    const jumlahMeter = round2(
+      b.plangkan.reduce((a, p) => a + p.nilai * p.qty, 0),
+    );
+    if (jumlahMeter > MAKS_ANGKA) {
+      throw galat(`SPK/MAP ${b.spk}: J Meter terlalu besar`);
+    }
     return { ...b, jumlahMeter };
   });
 
@@ -424,9 +530,6 @@ const getLhkAfdrukById = async (nomor, user) => {
             x.spk_jumlah AS Jumlah_Order,
             x.spk_panjang AS Panjang,
             x.spk_lebar AS Lebar,
-            IFNULL(d.lad_jumlahmeter,
-              ROUND(IFNULL(d.lad_j_plangkan, 0) * IFNULL(x.spk_panjang, 0), 2)
-            ) AS J_Meter,
             d.lad_keterangan AS Keterangan
      FROM ${T.dtl} d
      LEFT JOIN (
@@ -483,12 +586,19 @@ const getInfoSpk = async (nomor, user) => {
   // Cek rantai saat nomor di-Enter / dipilih, supaya penolakan muncul sebelum
   // Simpan. Cek di createLhkAfdruk / updateLhkAfdruk tetap berjalan.
   await pastikanRantaiLhk(db, { kodeLini: "AFDRUK", daftarSpk: [no] });
+  const hp = (await ambilPlangkanHp(db, [info.nomor])).get(norm(info.nomor));
+  const ukuran = await getLookupUkuran();
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,
     Jumlah_Order: info.jumlah,
     Panjang: info.panjang,
     Lebar: info.lebar,
+    Terkunci: !!hp,
+    Plangkan: ukuran.map((u) => ({
+      Ukuran: u.Ukuran,
+      Qty: hp?.get(kunciUkuran(u.Ukuran)) ?? 0,
+    })),
   };
 };
 
@@ -534,13 +644,14 @@ const createLhkAfdruk = async (body, user) => {
 
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
-    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await validasiSumberBaris(conn, data.baris, user);
     await pastikanRantaiLhk(conn, {
       kodeLini: "AFDRUK",
       daftarSpk: data.baris.map((b) => b.spk),
     });
+    await terapkanKunciHp(conn, data.baris);
     await validasiUkuran(conn, data.baris);
-    const baris = hitungJumlahMeter(data.baris, peta, null);
+    const baris = hitungJumlahMeter(data.baris);
     const petaBahan = await validasiBahan(conn, data.bahan);
 
     const nomor = await buatNomor(conn, data.tanggal);
@@ -561,7 +672,13 @@ const createLhkAfdruk = async (body, user) => {
       throw e;
     }
     await simpanDetail(conn, nomor, baris);
-    await simpanBahan(conn, nomor, data.bahan, petaBahan);
+    await simpanBahan(
+      conn,
+      nomor,
+      data.bahan,
+      petaBahan,
+      bolehPotongStok(data.tanggal, false),
+    );
 
     await conn.commit();
     return nomor;
@@ -604,31 +721,35 @@ const updateLhkAfdruk = async (nomor, body, user) => {
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
-    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await validasiSumberBaris(conn, data.baris, user);
     await pastikanRantaiLhk(conn, {
       kodeLini: "AFDRUK",
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });
-    await validasiUkuran(conn, data.baris);
-
-    const [lamaRows] = await conn.query(
-      `SELECT lad_spk_nomor AS spk, lad_j_plangkan AS plangkan,
-              lad_jumlahmeter AS jumlahmeter
-       FROM ${T.dtl} WHERE lad_lah_nomor = ?`,
+    const [spkLama] = await conn.query(
+      `SELECT lad_spk_nomor AS spk FROM ${T.dtl} WHERE lad_lah_nomor = ?`,
       [no],
     );
-    const lamaPeta = new Map(lamaRows.map((r) => [r.spk, r]));
-    const baris = hitungJumlahMeter(data.baris, peta, lamaPeta);
+    await terapkanKunciHp(
+      conn,
+      data.baris,
+      new Set(spkLama.map((r) => norm(r.spk))),
+    );
+    await validasiUkuran(conn, data.baris);
+    const baris = hitungJumlahMeter(data.baris);
 
     const [bahanAda] = await conn.query(
-      `SELECT lab_brg_kode AS kode FROM ${T.bahan} WHERE lab_lah_nomor = ?`,
+      `SELECT lab_brg_kode AS kode, lab_potong_stok AS potong
+       FROM ${T.bahan} WHERE lab_lah_nomor = ?`,
       [no],
     );
+    // LHK lama (baris bahan bertanda 0) tetap tidak memotong stok saat diubah
+    const lhkLama = bahanAda.some((r) => Number(r.potong) === 0);
     const petaBahan = await validasiBahan(
       conn,
       data.bahan,
-      new Set(bahanAda.map((r) => Number(r.kode))),
+      new Set(bahanAda.map((r) => String(r.kode).toUpperCase())),
     );
 
     await conn.query(
@@ -639,7 +760,13 @@ const updateLhkAfdruk = async (nomor, body, user) => {
       [data.tanggal, data.pabrik, user?.kode ?? null, no],
     );
     await simpanDetail(conn, no, baris);
-    await simpanBahan(conn, no, data.bahan, petaBahan);
+    await simpanBahan(
+      conn,
+      no,
+      data.bahan,
+      petaBahan,
+      bolehPotongStok(data.tanggal, lhkLama),
+    );
 
     await conn.commit();
     return no;

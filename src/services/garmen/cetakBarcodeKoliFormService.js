@@ -18,9 +18,9 @@ const { getGudangByMutasi } = require("./mutasiProduksiFormService");
 const FG_SCOPE = { GJ001: "P04", GJ002: "P01" };
 const MAKS_KOLI_PER_SPK = 500;
 // STBJ bertanggal sebelum ini tidak diatur QR koli (legacy)
-const QR_KOLI_MULAI = "2026-11-07";
+const QR_KOLI_MULAI = "2026-11-15";
 // Sebelum tanggal ini gate LHK hanya memberi peringatan (tidak memblokir)
-const GATE_LHK_BLOKIR_MULAI = "2026-11-14";
+const GATE_LHK_BLOKIR_MULAI = "2026-11-21";
 
 const hariIni = () => {
   const d = new Date();
