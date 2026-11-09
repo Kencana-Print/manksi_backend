@@ -433,6 +433,8 @@ const save = async (data, userKode, isNewMode) => {
         mspkAktif,
       ];
 
+      await conn.query(insertQ, insertParams);
+
       if (data.IsRevisi === "Y" && data.Referensi) {
         await conn.query(
           `UPDATE tmemospk SET mspk_revisi="Y", mspk_aktif="N" WHERE mspk_nomor=?`,
