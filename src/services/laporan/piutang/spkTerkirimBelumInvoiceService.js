@@ -62,7 +62,7 @@ const getSpkTerkirimBelumInvoice = async (query) => {
         GROUP BY d.sjd_spk_nomor
       ) t
       LEFT JOIN tspk sp ON sp.spk_nomor = t.spk
-      LEFT JOIN tsalesorder sox ON sox.so_nomor = sp.spk_so_ref AND sox.so_aktif = 'Y'
+      LEFT JOIN tsalesorder sox ON sox.so_nomor = sp.spk_so_ref
       GROUP BY COALESCE(sox.so_nomor, t.spk)
     ) k
     LEFT JOIN (
@@ -78,16 +78,17 @@ const getSpkTerkirimBelumInvoice = async (query) => {
         GROUP BY d.invd_spk_nomor
       ) t
       LEFT JOIN tspk spi ON spi.spk_nomor = t.spk
-      LEFT JOIN tsalesorder soi ON soi.so_nomor = spi.spk_so_ref AND soi.so_aktif = 'Y'
+      LEFT JOIN tsalesorder soi ON soi.so_nomor = spi.spk_so_ref
       GROUP BY COALESCE(soi.so_nomor, t.spk)
     ) i ON i.Nomor = k.Nomor
-    LEFT JOIN tsalesorder so ON so.so_nomor = k.Nomor AND so.so_aktif = 'Y'
+    LEFT JOIN tsalesorder so ON so.so_nomor = k.Nomor
     LEFT JOIN tspk s ON s.spk_nomor = CONVERT(k.Nomor USING latin1) AND s.spk_aktif = 'Y'
     LEFT JOIN tcustomer c ON c.cus_kode = COALESCE(so.so_cus_kode, s.spk_cus_kode)
     WHERE k.QtyKirim > IFNULL(i.QtyInvoice, 0)
       AND IF(so.so_nomor IS NOT NULL,
-       IFNULL(so.so_harga, 0) > 0,
-       IFNULL(s.spk_harga, 0) > 0)
+        IFNULL(so.so_harga, 0) > 0,
+        IFNULL(s.spk_harga, 0) > 0)
+      AND (so.so_nomor IS NULL OR so.so_aktif = 'Y')   -- SO pasif tidak ikut
     ORDER BY k.TglKirimTerakhir DESC, k.Nomor DESC
   `;
 
