@@ -1,7 +1,9 @@
 const db = require("../../../config/database");
-const { validasiPeriode } = require("./lhkCommon");
+const { validasiPeriode, adalahSuperadmin, norm } = require("./lhkCommon");
 const {
   T,
+  APV,
+  JABATAN_APPROVE,
   galat,
   filterCabang,
   pastikanLhkDiCabang,
@@ -38,7 +40,13 @@ const getBrowseLhkCetak = async (tglAwal, tglAkhir, user) => {
            h.lch_jkar_harian AS Kar_Harian,
            h.lch_sesi AS Sesi,
            IFNULL(xx.jmeter, 0) AS Jml_Meter,
-           kk.kain AS Jml_Kain
+           kk.kain AS Jml_Kain,
+           h.lch_apv_status AS Apv_Status,
+           h.lch_apv_user AS Apv_User,
+           DATE_FORMAT(h.lch_apv_tgl, '%Y-%m-%d %H:%i') AS Apv_Tgl,
+           h.lch_apv_alasan AS Apv_Alasan,
+           IF(h.lch_sesi = 'PAGI' AND h.lch_jam_input > '13:00:00', 1, 0)
+             AS Input_Terlambat
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.lch_pab_kode
     LEFT JOIN (
@@ -108,15 +116,15 @@ const getKainLhkCetak = async (tglAwal, tglAkhir, user) => {
   const query = `
     SELECT k.lck_lch_nomor AS Nomor,
            k.lck_brg_kode AS Kode_Bahan,
-           b.brg_nama AS Nama_Bahan,
-           b.brg_lebar AS Lebar,
+           b.Bhn_Name AS Nama_Bahan,
+           b.bhn_lebar AS Lebar,
            k.lck_qty_meter AS Qty_Meter
     FROM ${T.kain} k
     JOIN ${T.hdr} h ON h.lch_nomor = k.lck_lch_nomor
-    LEFT JOIN ${T.barang} b ON b.brg_kode = k.lck_brg_kode
+    LEFT JOIN ${T.bahan} b ON b.Bhn_kode = k.lck_brg_kode
     WHERE h.lch_tanggal BETWEEN ? AND ?
     ${cab.sql}
-    ORDER BY k.lck_lch_nomor, b.brg_nama, k.lck_brg_kode
+    ORDER BY k.lck_lch_nomor, b.Bhn_Name, k.lck_brg_kode
   `;
   const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
   return rows;
@@ -164,9 +172,110 @@ const deleteLhkCetak = async (nomor, user) => {
   }
 };
 
+// Approver: jabatan aktif SPV/MGR/DIR di HRD, atau superadmin.
+// Dua query terpisah (tuser lalu HRD), sama dengan rbacService.cariRoleHrd.
+const pastikanBolehApprove = async (q, user) => {
+  if (adalahSuperadmin(user)) {
+    return;
+  }
+  const [[u]] = await q.query(
+    `SELECT user_nik FROM tuser WHERE user_kode = ?`,
+    [user?.kode ?? ""],
+  );
+  const nik = String(u?.user_nik ?? "").trim();
+  let jab = "";
+  if (nik) {
+    const [kar] = await q.query(
+      `SELECT kar_jab_kode AS jab FROM ${T.karyawan}
+       WHERE kar_Nik = ? AND kar_status_aktif = 1 LIMIT 1`,
+      [nik],
+    );
+    jab = norm(kar[0]?.jab);
+  }
+  if (!JABATAN_APPROVE.includes(jab)) {
+    throw galat(
+      "Hanya SPV, Manager, atau Direksi yang dapat melakukan approval",
+      "forbidden",
+    );
+  }
+};
+
+// Approval kelebihan kain. status: APPROVE (dari Menunggu atau Ditolak) atau
+// TOLAK (dari Menunggu, alasan wajib).
+const approveLhkCetak = async (nomor, status, alasan, user) => {
+  const no = String(nomor || "").trim();
+  const aksi = String(status || "").toUpperCase();
+  const ket = String(alasan || "").trim();
+  if (!no) {
+    throw galat("Nomor LHK tidak boleh kosong");
+  }
+  if (aksi !== "APPROVE" && aksi !== "TOLAK") {
+    throw galat("Aksi approval tidak valid");
+  }
+  if (aksi === "TOLAK" && !ket) {
+    throw galat("Alasan penolakan wajib diisi");
+  }
+  if (ket.length > 200) {
+    throw galat("Alasan maksimal 200 karakter");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    await pastikanBolehApprove(conn, user);
+
+    const [cek] = await conn.query(
+      `SELECT DATE_FORMAT(lch_tanggal, '%Y-%m-%d') AS tgl,
+              lch_apv_status AS apv
+       FROM ${T.hdr} WHERE lch_nomor = ? FOR UPDATE`,
+      [no],
+    );
+    if (cek.length === 0) {
+      throw galat("Data LHK Cetak tidak ditemukan", "notFound");
+    }
+    if (cek[0].tgl) {
+      await cekTutupBuku(cek[0].tgl);
+    }
+    await pastikanLhkDiCabang(conn, no, user);
+
+    const dari = cek[0].apv;
+    if (dari === APV.TIDAK_PERLU) {
+      throw galat("LHK ini tidak memerlukan approval");
+    }
+    if (dari === APV.SETUJU) {
+      throw galat("LHK sudah disetujui");
+    }
+    if (aksi === "TOLAK" && dari !== APV.MENUNGGU) {
+      throw galat("LHK ini sudah ditolak");
+    }
+
+    await conn.query(
+      `UPDATE ${T.hdr}
+       SET lch_apv_status = ?, lch_apv_user = ?, lch_apv_tgl = NOW(),
+           lch_apv_alasan = ?
+       WHERE lch_nomor = ?`,
+      [
+        aksi === "APPROVE" ? APV.SETUJU : APV.TOLAK,
+        user?.kode ?? null,
+        ket || null,
+        no,
+      ],
+    );
+
+    await conn.commit();
+    return true;
+  } catch (e) {
+    await conn.rollback().catch(() => {});
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
 module.exports = {
   getBrowseLhkCetak,
   getDetailLhkCetak,
   getKainLhkCetak,
   deleteLhkCetak,
+  approveLhkCetak,
 };

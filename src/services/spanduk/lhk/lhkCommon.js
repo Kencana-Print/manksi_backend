@@ -5,6 +5,16 @@ const DIVISI_BOLEH = [1, 5];
 // MP-13: batas "SPK/MAP lama" yang dikecualikan dari gate rantai LHK
 const TANGGAL_MULAI_MUTASI = "2026-10-13";
 const REGEX_TANGGAL = /^\d{4}-\d{2}-\d{2}$/;
+// Batas tanggal potong stok = tanggal stok awal P02 diinput (opname go-live).
+// LHK bertanggal sebelum ini tidak memotong stok, baru maupun diubah, karena
+// stoknya belum ada. GANTI saat cutover ke tanggal stok awal di DB prod.
+// Dipakai LHK Afdruk dan LHK Proof.
+const TANGGAL_MULAI_POTONG_STOK = "2026-11-01";
+
+// tanggal = 'YYYY-MM-DD'. lhkLama = LHK yang baris pemakaiannya sudah bertanda
+// potong_stok = 0.
+const bolehPotongStok = (tanggal, lhkLama) =>
+  !lhkLama && tanggal >= TANGGAL_MULAI_POTONG_STOK;
 
 const galat = (pesan, jenis) => {
   const e = new Error(pesan);
@@ -96,6 +106,17 @@ const cabangUser = (user) => {
     throw galat("Cabang user tidak terdeteksi", "forbidden");
   }
   return cab;
+};
+
+// Lokasi dikunci ke cabang user (kecuali superadmin)
+const pastikanLokasiUser = (pabrik, user) => {
+  if (adalahSuperadmin(user)) {
+    return;
+  }
+  const cab = cabangUser(user);
+  if (norm(pabrik) !== cab) {
+    throw galat(`Lokasi harus sesuai cabang Anda (${cab})`, "forbidden");
+  }
 };
 
 // Tutup buku otomatis (tanggal LHK dibanding batas periode terbuka)
@@ -200,16 +221,18 @@ const buatPembantuLhk = ({
   // Sumber: SPK + memo/MAP
   const ambilInfoSpk = async (q, daftarNomor) => {
     const [rows] = await q.query(
-      `SELECT x.nomor, x.nama, x.jumlah, x.panjang, x.lebar, x.divisi, x.cab
+      `SELECT x.nomor, x.nama, x.jumlah, x.panjang, x.lebar, x.divisi, x.cab,
+              x.bahan
        FROM (
          SELECT spk_nomor AS nomor, spk_nama AS nama, spk_jumlah AS jumlah,
                 IFNULL(spk_panjang, 0) AS panjang, IFNULL(spk_lebar, 0) AS lebar,
-                spk_divisi AS divisi, ${sqlCabSpk} AS cab
+                spk_divisi AS divisi, ${sqlCabSpk} AS cab,
+                spk_bhn_kode AS bahan
          FROM ${T.spk}
          UNION ALL
          SELECT mspk_nomor, mspk_nama, mspk_jumlah,
                 IFNULL(mspk_panjang, 0), IFNULL(mspk_lebar, 0),
-                mspk_divisi, ${sqlCabMemo}
+                mspk_divisi, ${sqlCabMemo}, NULL
          FROM ${T.memoSpk}
        ) x
        WHERE x.nomor IN (?)`,
@@ -269,6 +292,7 @@ module.exports = {
   round2,
   angka,
   bilangan,
+  bolehPotongStok,
   MAKS_ANGKA,
   MAKS_INT,
   fmtTgl,
@@ -276,6 +300,7 @@ module.exports = {
   validasiPeriode,
   adalahSuperadmin,
   cabangUser,
+  pastikanLokasiUser,
   cekTutupBuku,
   buatPembantuLhk,
   DIVISI_BOLEH,

@@ -138,6 +138,9 @@ const getDetail = async (nomor) => {
     header[0].spk_dateline = toLocalDateStr(header[0].spk_dateline);
   }
 
+  // Kolom DATE: hindari mundur 1 hari lewat serialisasi JSON (lihat toLocalDateStr)
+  header[0].spk_bhn_est_datang = toLocalDateStr(header[0].spk_bhn_est_datang);
+
   const isPremium = isPremiumWorkshop(header[0].spk_cab);
   const isKaosan = isDivisiTiga(header[0].spk_divisi);
 
@@ -163,7 +166,9 @@ const getDetail = async (nomor) => {
     isPremium ? getKeteranganKhusus(nomor) : [],
     getAlokasi(nomor),
     isKaosan ? getSpkKaosanList(nomor) : [],
-    !isPremium ? getBabaran(nomor) : { rows: [], source: "manual" },
+    !isPremium && !isDivisiSpanduk(header[0].spk_divisi)
+      ? getBabaran(nomor)
+      : { rows: [], source: "manual" },
   ]);
 
   const [masterKet] = isPremium
@@ -178,6 +183,10 @@ const getDetail = async (nomor) => {
       )
     : [[]];
 
+  const bahan = isDivisiSpanduk(header[0].spk_divisi)
+    ? await getBahanSpandukInfo(header[0].spk_bhn_kode)
+    : null;
+
   return {
     header: header[0],
     isPremiumFlow: isPremium, // ← baru, dipakai frontend switch tab
@@ -190,6 +199,7 @@ const getDetail = async (nomor) => {
     alokasi,
     babaran: babaranResult.rows,
     babaranSource: babaranResult.source,
+    bahan,
   };
 };
 
@@ -236,6 +246,9 @@ const getSoSourceDetail = async (soNomor) => {
   const soKaosan = isDivisiTiga(header.spk_divisi)
     ? await getSoKaosanReference(soNomor, source)
     : [];
+  const bahan = isDivisiSpanduk(header.spk_divisi)
+    ? await getBahanSpandukInfo(header.spk_bhn_kode)
+    : null;
 
   return {
     header,
@@ -244,6 +257,7 @@ const getSoSourceDetail = async (soNomor) => {
     isPremiumFlow: isPremium,
     soAlokasi, // referensi saja, untuk tombol "copy dari SO" di frontend
     dtlKaosan: soKaosan,
+    bahan,
   };
 };
 
@@ -662,6 +676,78 @@ const getSoKaosanReference = async (soNomor, source) => {
 
 const isDivisiTiga = (divisi) => String(divisi).charAt(0) === "3";
 
+const isDivisiSpanduk = (divisi) => String(divisi).charAt(0) === "1";
+
+const STATUS_BAHAN_SPANDUK = [
+  "Stok ready",
+  "Belum ready",
+  "Belum ready dan sudah PO",
+  "Ready sebagian dan belum PO",
+  "Ready sebagian dan sudah PO",
+  "Belum ready dan kedatangan partial",
+];
+
+// Status yang masih menunggu bahan: estimasi datang wajib (ubah di sini bila aturan berubah)
+const STATUS_WAJIB_EST = [
+  "Belum ready",
+  "Belum ready dan sudah PO",
+  "Belum ready dan kedatangan partial",
+];
+
+const simpanStatusBahan = async (conn, nomor, data) => {
+  const [[spk]] = await conn.query(
+    `SELECT spk_divisi, spk_bhn_kode FROM tspk WHERE spk_nomor = ?`,
+    [nomor],
+  );
+  if (!isDivisiSpanduk(spk?.spk_divisi)) return;
+
+  const status = String(data?.status || "");
+  if (status && !spk.spk_bhn_kode) {
+    throw new Error(
+      "SO belum memiliki bahan, status bahan tidak bisa disimpan.",
+    );
+  }
+  if (status && !STATUS_BAHAN_SPANDUK.includes(status)) {
+    throw new Error("Status bahan tidak dikenal.");
+  }
+  const sebagian = status.startsWith("Ready sebagian");
+  const qtyReady = Number(data?.qtyReady) || 0;
+  if (sebagian && qtyReady <= 0) {
+    throw new Error("Qty ready wajib diisi untuk status Ready sebagian.");
+  }
+  const est =
+    status === "Stok ready"
+      ? null
+      : String(data?.estDatang ?? "").trim() || null;
+  const estValid =
+    est && /^\d{4}-\d{2}-\d{2}$/.test(est) && !Number.isNaN(Date.parse(est));
+  if (STATUS_WAJIB_EST.includes(status) && !estValid) {
+    throw new Error("Estimasi datang bahan wajib diisi untuk status ini.");
+  }
+  if (est && !estValid) throw new Error("Format estimasi datang tidak valid.");
+  await conn.query(
+    `UPDATE tspk
+        SET spk_bhn_status = ?, spk_bhn_qty_ready = ?, spk_bhn_est_datang = ?
+      WHERE spk_nomor = ?`,
+    [status, sebagian ? qtyReady : 0, est, nomor],
+  );
+};
+
+const getBahanSpandukInfo = async (kode) => {
+  if (!kode) return null;
+  const [[b]] = await db.query(
+    `SELECT Bhn_kode AS kode, Bhn_Name AS nama FROM tbahan WHERE Bhn_kode = ?`,
+    [kode],
+  );
+  const [[st]] = await db.query(
+    `SELECT IFNULL(SUM(mst_stok_in - mst_stok_out), 0) AS stok
+       FROM tmasterstok_bahan
+      WHERE mst_aktif = 'Y' AND mst_brg_kode = ?`,
+    [kode],
+  );
+  return { kode, nama: b?.nama || "", stok: Number(st.stok) || 0 };
+};
+
 // ============================================================
 // SAVE DATA — create & edit SPK PPIC
 // ============================================================
@@ -821,6 +907,10 @@ const saveData = async (payload, user) => {
       if (isDivisiTiga(exist[0].spk_divisi) && dtlKaosan !== undefined) {
         await saveSpkKaosan(conn, nomor, dtlKaosan);
       }
+    }
+
+    if (payload.bahanStatus !== undefined) {
+      await simpanStatusBahan(conn, nomor, payload.bahanStatus);
     }
 
     // ─────────────────────────────────────────────

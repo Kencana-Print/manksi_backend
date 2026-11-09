@@ -55,8 +55,7 @@ const getDetailLhkJahit = async (tglAwal, tglAkhir, user) => {
            x.spk_lebar AS Lebar,
            d.ljd_qty_jahit AS Qty_Jahit,
            d.ljd_tambah_jahit AS Tambah_Jahit,
-           d.ljd_tambah_tali AS Tambah_Tali,
-           d.ljd_bs_jahit AS BS_Jahit
+           d.ljd_tambah_tali AS Tambah_Tali
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.ljh_nomor = d.ljd_ljh_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.ljd_spk_nomor

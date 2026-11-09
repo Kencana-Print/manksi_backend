@@ -26,13 +26,17 @@ const BATASI_KIRIM_MAKS_JADI = false;
 
 const str = (v) => String(v ?? "").trim();
 const MO_SQL = `IFNULL(NULLIF(u.user_nama, ''), IFNULL(m.user_create, ''))`;
-// BAST "semua N" hanya boleh diserahkan bila keputusannya LANJUT.
+// Boleh diserahkan bila keputusan LANJUT; selain itu tidak boleh ada keputusan
+// ULANG (produksi ulang menahan), dan BAST tidak boleh "semua N" tanpa keputusan.
 const KODE_SPANDUK = KESESUAIAN_SPANDUK.join(",");
 const SQL_BOLEH_SERAH = `(
   EXISTS (SELECT 1 FROM ${T.putus} p WHERE p.map = m.mspk_nomor AND p.keputusan = 'LANJUT')
-  OR NOT (
-    EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}))
-    AND NOT EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}) AND k.status <> 'N')
+  OR (
+    NOT EXISTS (SELECT 1 FROM ${T.putus} p WHERE p.map = m.mspk_nomor AND p.keputusan = 'ULANG')
+    AND NOT (
+      EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}))
+      AND NOT EXISTS (SELECT 1 FROM ${T.bast} k WHERE k.mspk_nomor = m.mspk_nomor AND k.kode_sesuai IN (${KODE_SPANDUK}) AND k.status <> 'N')
+    )
   )
 )`;
 
@@ -117,6 +121,7 @@ const siapkanMap = async (conn, daftar, user, nomorDok) => {
             (SELECT COUNT(*) FROM ${T.lock} l
               WHERE l.map = m.mspk_nomor AND l.apv = 'N') AS jml_lock,
             (SELECT IF(${SQL_BOLEH_SERAH}, 1, 0)) AS boleh_serah,
+            (SELECT p.keputusan FROM ${T.putus} p WHERE p.map = m.mspk_nomor) AS keputusan,
             (SELECT d.mmkd_nomor FROM ${T.dtl} d
               WHERE d.mmkd_mspk_nomor = m.mspk_nomor LIMIT 1) AS doc_lain
      FROM ${T.memo} m
@@ -148,7 +153,9 @@ const siapkanMap = async (conn, daftar, user, nomorDok) => {
     if (Number(r.jml_lock)) throw galat(`BAST MAP ${no} masih On Progress`);
     if (!Number(r.boleh_serah)) {
       throw galat(
-        `BAST MAP ${no} berstatus N dan belum diputuskan LANJUT (lihat Cetak BAST MAP)`,
+        str(r.keputusan) === "ULANG"
+          ? `BAST MAP ${no} diputuskan Produksi Ulang, belum bisa diserahkan (ubah keputusan di Cetak BAST MAP)`
+          : `BAST MAP ${no} berstatus N dan belum diputuskan LANJUT (lihat Cetak BAST MAP)`,
       );
     }
     if (r.doc_lain && r.doc_lain !== nomorDok) {

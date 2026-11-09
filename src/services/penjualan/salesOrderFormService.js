@@ -690,6 +690,25 @@ const saveData = async (payload, user) => {
         "Ukuran Panjang dan Lebar harus diisi untuk divisi MMT/Spanduk.",
       );
     }
+    // Bahan (kode tbahan SB…) hanya untuk Spanduk (divisi 1). Wajib untuk SO baru;
+    // SO lama yang diubah boleh tetap kosong supaya edit lama tidak terblokir.
+    if (divisiStr === "1") {
+      const bhnKode = String(header.spk_bhn_kode || "").trim();
+      if (!bhnKode && !isEdit) throw new Error("Bahan belum dipilih.");
+      if (bhnKode) {
+        const [bhn] = await conn.query(
+          `SELECT 1 FROM tbahan
+            WHERE Bhn_kode = ? AND LEFT(Bhn_kode, 2) = 'SB' AND bhn_aktif = 0`,
+          [bhnKode],
+        );
+        if (bhn.length === 0) {
+          throw new Error(`Bahan ${bhnKode} tidak valid atau tidak aktif.`);
+        }
+      }
+      header.spk_bhn_kode = bhnKode || null;
+    } else {
+      header.spk_bhn_kode = null;
+    }
     if (
       Number(header.spk_harga) === 0 &&
       !header.spk_ketpo &&
@@ -1259,6 +1278,10 @@ const saveData = async (payload, user) => {
         // turunan.
         await conn.query(
           `UPDATE tspk SET
+             spk_bhn_status = IF(spk_bhn_kode <=> ?, spk_bhn_status, ''),
+             spk_bhn_qty_ready = IF(spk_bhn_kode <=> ?, spk_bhn_qty_ready, 0),
+             spk_bhn_est_datang = IF(spk_bhn_kode <=> ?, spk_bhn_est_datang, NULL),
+             spk_bhn_kode = ?,
              spk_perush_kode = ?, spk_cus_kode = ?, spk_cus_kaosan = ?,
              spk_sal_kode = ?, spk_jo_kode = ?,
              spk_nama = ?, spk_nama2 = ?, spk_ukuran = ?, spk_jumlah = ?,
@@ -1275,6 +1298,10 @@ const saveData = async (payload, user) => {
              user_modified = ?, date_modified = NOW()
            WHERE spk_nomor = ?`,
           [
+            header.spk_bhn_kode || null,
+            header.spk_bhn_kode || null,
+            header.spk_bhn_kode || null,
+            header.spk_bhn_kode || null,
             header.spk_perush_kode,
             header.spk_cus_kode,
             header.spk_cus_kaosan || "",

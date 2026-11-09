@@ -3,10 +3,15 @@ const { galat, cekTutupBuku, buatPembantuLhk } = require("./lhkCommon");
 const T = {
   hdr: "tlhk_quiring_hdr",
   dtl: "tlhk_quiring_dtl",
+  dtl2: "tlhk_quiring_dtl_2",
   pabrik: "tpabrik",
   spk: "tspk",
   memoSpk: "tmemospk",
+  karyawan: "hrd2.tkaryawan",
 };
+
+// Ejaan "CUIRING" mengikuti data HRD (kar_bagian). Ganti di sini bila HRD membetulkannya.
+const BAGIAN_ABSENSI = "CUIRING";
 
 // Cabang efektif sumber. Memo: ganti ke "mspk_cab2" kalau itu cabang pengerjaan
 const SQL_CAB_SPK = "spk_cab";
@@ -48,6 +53,7 @@ const pastikanSpk = async (q, daftarNomor) => {
 
 module.exports = {
   T,
+  BAGIAN_ABSENSI,
   galat,
   cekTutupBuku,
   filterCabang,

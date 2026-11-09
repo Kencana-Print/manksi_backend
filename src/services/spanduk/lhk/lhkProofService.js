@@ -55,7 +55,12 @@ const getDetailLhkProof = async (tglAwal, tglAkhir, user) => {
            x.spk_lebar AS Lebar,
            d.lprd_j_plangkan AS J_Plangkan,
            d.lprd_j_proof AS J_Proof,
-           d.lprd_j_meter AS J_Meter,
+           IFNULL((
+             SELECT ROUND(SUM(w.lprd2_up_kode * w.lprd2_qty), 2)
+             FROM ${T.dtl2} w
+             WHERE w.lprd2_lpr_nomor = d.lprd_lpr_nomor
+               AND w.lprd2_spk_nomor = d.lprd_spk_nomor
+           ), 0) AS J_Meter,
            d.lprd_u1 AS U1, d.lprd_u2 AS U2, d.lprd_u3 AS U3,
            d.lprd_u4 AS U4, d.lprd_u5 AS U5, d.lprd_u6 AS U6,
            d.lprd_u7 AS U7, d.lprd_u8 AS U8, d.lprd_u9 AS U9,
@@ -79,22 +84,24 @@ const getResepLhkProof = async (tglAwal, tglAkhir, user) => {
   const query = `
     SELECT v.lpv_lpr_nomor AS Nomor,
            v.lpv_brg_kode AS Kode,
-           b.brg_nama AS Nama,
+           IF(IFNULL(b.brg_note, '') = '', b.brg_nama,
+              CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Nama,
            v.lpv_satuan AS Satuan,
-           v.lpv_qty_resep AS Qty_Resep,
            v.lpv_qty_actual AS Qty_Actual
     FROM ${T.resep} v
     JOIN ${T.hdr} h ON h.lpr_nomor = v.lpv_lpr_nomor
-    LEFT JOIN ${T.barang} b ON b.brg_kode = v.lpv_brg_kode
+    LEFT JOIN ${T.garmenBrg} b
+           ON b.brg_kode = v.lpv_brg_kode AND b.brg_jenis = 'OBAT'
     WHERE h.lpr_tanggal BETWEEN ? AND ?
     ${cab.sql}
     ORDER BY v.lpv_lpr_nomor, v.lpv_nourut
   `;
   const [rows] = await db.query(query, [tglAwal, tglAkhir, ...cab.params]);
   return rows.map((r) => ({
-    ...r,
-    Nama: String(r.Nama ?? "").trim(),
-    Qty_Resep: Number(r.Qty_Resep) || 0,
+    Nomor: r.Nomor,
+    Kode: String(r.Kode),
+    Nama: String(r.Nama ?? "").trim() || String(r.Kode),
+    Satuan: r.Satuan,
     Qty_Actual: Number(r.Qty_Actual) || 0,
   }));
 };
@@ -125,6 +132,8 @@ const deleteLhkProof = async (nomor, user) => {
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
 
+    // Hapus LHK: obat (trigger membalik stok), dtl_2, dtl, lalu header dalam satu transaksi
+    await conn.query(`DELETE FROM ${T.resep} WHERE lpv_lpr_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.dtl2} WHERE lprd2_lpr_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.dtl} WHERE lprd_lpr_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.hdr} WHERE lpr_nomor = ?`, [no]);

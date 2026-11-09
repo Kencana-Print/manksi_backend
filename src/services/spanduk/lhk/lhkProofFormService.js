@@ -3,11 +3,14 @@ const {
   galat,
   teks,
   norm,
+  round2,
   parseTanggal,
   adalahSuperadmin,
   cabangUser,
   bilangan,
   MAKS_INT,
+  MAKS_ANGKA,
+  bolehPotongStok,
 } = require("./lhkCommon");
 const {
   T,
@@ -19,7 +22,7 @@ const {
   pastikanPabrik,
 } = require("./lhkProofShared");
 const { pastikanRantaiLhk } = require("./lhkGerbangRantai");
-const { KODE_RESEP } = require("./lhkProofResep");
+const { KODE_OBAT_PROOF } = require("./lhkProofResep");
 
 const PREFIX_NOMOR = "LHK-PR";
 const NOMOR_LOCK = "lhk_proof_nomor";
@@ -125,7 +128,14 @@ const siapkanData = (body = {}) => {
     };
   });
 
-  return { tanggal, pabrik, baris, resep: siapkanResep(body) };
+  const resep = siapkanResep(body);
+  if (resep.length > 0 && pabrik.length > MAKS_KODE_LOKASI_STOK) {
+    throw galat(
+      `Kode lokasi maksimal ${MAKS_KODE_LOKASI_STOK} karakter bila ada pemakaian obat`,
+    );
+  }
+
+  return { tanggal, pabrik, baris, resep };
 };
 
 // Ukuran harus ada di master; nilai yang disimpan = nilai master
@@ -144,22 +154,20 @@ const validasiUkuran = async (q, baris) => {
   });
 };
 
-// Bahan resep dari master (nama + satuan diambil dari master, urutan sesuai konfigurasi)
-const getLookupResep = async (q = db) => {
-  const [rows] = await q.query(
-    `SELECT brg_kode AS kode, brg_nama AS nama, brg_satuan AS satuan
-     FROM ${T.barang} WHERE brg_kode IN (?)`,
-    [KODE_RESEP],
-  );
-  const peta = new Map(rows.map((r) => [Number(r.kode), r]));
-  return KODE_RESEP.filter((k) => peta.has(k)).map((k) => ({
-    Kode: k,
-    Nama: String(peta.get(k).nama ?? "").trim(),
-    Satuan: String(peta.get(k).satuan ?? "").trim(),
-  }));
-};
+// --- Pemakaian obat (Actual) ---
+// Master = tgarmen_brg (kategori SPANDUK, jenis OBAT), daftar tetap
+// KODE_OBAT_PROOF. Stok = tmasterstok_obat, dipotong trigger
+// tlhk_proof_resep_* hanya untuk baris ber-flag lpv_potong_stok = 1.
+const KTG_BAHAN = "SPANDUK";
+const JENIS_OBAT = "OBAT";
+const MAKS_KODE_LOKASI_STOK = 3; // mst_cab char(3)
+const MAKS_ACTUAL = 999999999; // decimal(14,4)
+const FAKTOR_ONS = 0.1; // 1 ons = 100 gram = 0,1 kg (atau liter)
+const FAKTOR_GRAM = 0.001;
 
-const angkaResep = (v, label) => {
+const round4 = (n) => Math.round((n + Number.EPSILON) * 10000) / 10000;
+
+const angkaInput = (v, label) => {
   const s = teks(v);
   if (s === "") {
     return 0;
@@ -169,68 +177,162 @@ const angkaResep = (v, label) => {
       `${label} harus angka tidak negatif (maks 4 desimal, pakai titik)`,
     );
   }
-  const n = Number(s);
-  if (n > 999999999) {
-    throw galat(`${label} terlalu besar`);
-  }
-  return n;
+  return Number(s);
 };
 
-// Body.Resep: [{ Brg_Kode, Qty_Resep, Qty_Actual }] -> Map kode -> {resep, actual}
+// Body.Resep: [{ Kode_Bahan, Kg, Ons, Gram }] -> [{ kode, qty }]
+// qty = total dalam satuan master (KG atau LITER), dihitung server.
+// Baris bertotal 0 dibuang. Urutan mengikuti KODE_OBAT_PROOF.
 const siapkanResep = (body) => {
   const daftar = Array.isArray(body.Resep) ? body.Resep : [];
-  const hasil = new Map();
-  for (const r of daftar) {
-    const kode = Number(r?.Brg_Kode);
-    if (!KODE_RESEP.includes(kode)) {
-      throw galat(`Bahan ${r?.Brg_Kode} tidak ada dalam daftar resep`);
+  const sudah = new Set();
+  const hasil = [];
+  daftar.forEach((r, i) => {
+    const label = `Obat ${i + 1}`;
+    const kode = teks(r?.Kode_Bahan).toUpperCase();
+    if (!KODE_OBAT_PROOF.includes(kode)) {
+      throw galat(
+        `${label}: ${kode || "(kosong)"} tidak ada dalam daftar obat Proof`,
+      );
     }
-    if (hasil.has(kode)) {
-      throw galat(`Bahan ${kode} muncul lebih dari sekali`);
+    if (sudah.has(kode)) {
+      throw galat(`${label}: ${kode} muncul lebih dari sekali`);
     }
-    hasil.set(kode, {
-      resep: angkaResep(r.Qty_Resep, `Resep bahan ${kode}`),
-      actual: angkaResep(r.Qty_Actual, `Actual bahan ${kode}`),
-    });
-  }
-  return hasil;
-};
-
-const ambilResepLama = async (q, nomor) => {
-  const [rows] = await q.query(
-    `SELECT lpv_brg_kode AS kode, lpv_qty_resep AS resep
-     FROM ${T.resep} WHERE lpv_lpr_nomor = ?`,
-    [nomor],
+    sudah.add(kode);
+    const qty = round4(
+      angkaInput(r.Kg, `${label}: KG/LTR`) +
+        angkaInput(r.Ons, `${label}: Ons`) * FAKTOR_ONS +
+        angkaInput(r.Gram, `${label}: Gram`) * FAKTOR_GRAM,
+    );
+    if (qty > MAKS_ACTUAL) {
+      throw galat(`${label}: jumlah terlalu besar`);
+    }
+    if (qty > 0) {
+      hasil.push({ kode, qty });
+    }
+  });
+  return hasil.sort(
+    (a, b) => KODE_OBAT_PROOF.indexOf(a.kode) - KODE_OBAT_PROOF.indexOf(b.kode),
   );
-  return new Map(rows.map((r) => [Number(r.kode), Number(r.resep)]));
 };
 
-// Resep terkunci bila dokumen sudah punya resep > 0; Actual selalu dari payload.
-const simpanResep = async (conn, nomor, resep, lama = null) => {
-  const terkunci = !!lama && [...lama.values()].some((v) => v > 0);
-  const master = await getLookupResep(conn);
-  await conn.query(`DELETE FROM ${T.resep} WHERE lpv_lpr_nomor = ?`, [nomor]);
-  const values = [];
-  let urut = 0;
-  for (const m of master) {
-    const p = resep.get(m.Kode);
-    const qResep = terkunci ? (lama.get(m.Kode) ?? 0) : (p?.resep ?? 0);
-    const qActual = p?.actual ?? 0;
-    if (qResep <= 0 && qActual <= 0) {
-      continue;
-    }
-    urut += 1;
-    values.push([nomor, m.Kode, qResep, qActual, m.Satuan.slice(0, 10), urut]);
+// Master obat Proof + stok per Lokasi. cab kosong = tanpa stok (Stok null,
+// tabel stok tidak disentuh). nomor = LHK yang sedang diubah: pemakaiannya
+// sendiri tidak dihitung supaya peringatan stok tidak menghitung ganda.
+const ambilMasterObat = async (q, cab = "", nomor = "") => {
+  let kolomStok = "NULL";
+  let joinStok = "";
+  const params = [];
+  if (cab) {
+    kolomStok = "IFNULL(s.stok, 0)";
+    joinStok = `
+     LEFT JOIN (
+       SELECT mst_brg_kode AS kode, SUM(mst_stok_in - mst_stok_out) AS stok
+       FROM ${T.stokObat}
+       WHERE mst_aktif = 'Y' AND mst_cab = ?
+         AND (? = '' OR mst_noreferensi <> ?)
+       GROUP BY mst_brg_kode
+     ) s ON s.kode = b.brg_kode`;
+    params.push(cab, nomor, nomor);
   }
-  if (values.length > 0) {
-    await conn.query(
-      `INSERT INTO ${T.resep}
-         (lpv_lpr_nomor, lpv_brg_kode, lpv_qty_resep, lpv_qty_actual,
-          lpv_satuan, lpv_nourut)
-       VALUES ?`,
-      [values],
+  params.push(KTG_BAHAN, JENIS_OBAT, KODE_OBAT_PROOF);
+
+  const [rows] = await q.query(
+    `SELECT b.brg_kode AS kode,
+            IF(IFNULL(b.brg_note, '') = '', b.brg_nama,
+               CONCAT(b.brg_nama, ' - ', b.brg_note)) AS nama,
+            b.brg_satuan AS satuan, b.brg_aktif AS aktif,
+            ${kolomStok} AS stok
+     FROM ${T.garmenBrg} b${joinStok}
+     WHERE b.brg_ktg = ? AND b.brg_jenis = ? AND b.brg_kode IN (?)`,
+    params,
+  );
+  const peta = new Map(rows.map((r) => [String(r.kode).toUpperCase(), r]));
+  return KODE_OBAT_PROOF.filter((k) => peta.has(k)).map((k) => {
+    const r = peta.get(k);
+    return {
+      Kode: k,
+      Nama: String(r.nama ?? "").trim(),
+      Satuan: String(r.satuan ?? "").trim(),
+      Aktif: r.aktif === "Y",
+      Stok: r.stok === null ? null : round4(Number(r.stok)),
+    };
+  });
+};
+
+// Lookup untuk baris default form. Stok hanya bila Lokasi dikirim;
+// non-superadmin selalu memakai cabangnya sendiri.
+const getLookupResep = async (user, pabrik, nomor) => {
+  let cab = "";
+  if (norm(pabrik) !== "") {
+    cab = adalahSuperadmin(user) ? norm(pabrik) : cabangUser(user);
+  }
+  const master = await ambilMasterObat(db, cab, teks(nomor));
+  return master
+    .filter((m) => m.Aktif)
+    .map((m) => ({
+      Kode: m.Kode,
+      Nama: m.Nama,
+      Satuan: m.Satuan,
+      Stok: m.Stok,
+    }));
+};
+
+// Obat harus ada di master (kategori SPANDUK, jenis OBAT) dan aktif; obat yang
+// sudah tercatat di LHK ini (sudahAda) boleh walau dinonaktifkan. Kode yang
+// sama di dua jenis barang ditolak: trigger tidak bisa menentukan tabel stok.
+const validasiObat = async (q, resep, sudahAda = new Set()) => {
+  if (resep.length === 0) {
+    return new Map();
+  }
+  const [ganda] = await q.query(
+    `SELECT brg_kode FROM ${T.garmenBrg}
+     WHERE brg_kode IN (?) GROUP BY brg_kode HAVING COUNT(*) > 1`,
+    [resep.map((r) => r.kode)],
+  );
+  if (ganda.length > 0) {
+    throw galat(
+      `Kode obat ${ganda[0].brg_kode} ada di lebih dari satu jenis barang master`,
     );
   }
+  const peta = new Map((await ambilMasterObat(q)).map((m) => [m.Kode, m]));
+  for (const r of resep) {
+    const m = peta.get(r.kode);
+    if (!m) {
+      throw galat(`Obat ${r.kode} bukan obat spanduk atau tidak ada di master`);
+    }
+    if (!m.Aktif && !sudahAda.has(r.kode)) {
+      throw galat(`Obat ${r.kode} sudah tidak aktif`);
+    }
+  }
+  return peta;
+};
+
+// Hapus lalu isi ulang. DELETE memicu trigger yang membalik stok, INSERT
+// (potongStok = true) memicu trigger yang memotong. Header harus sudah
+// ditulis/di-update sebelum dipanggil: trigger membaca tanggal dan lokasi.
+// lpv_qty_resep tidak ditulis lagi (default 0).
+const simpanResep = async (conn, nomor, resep, peta, potongStok) => {
+  await conn.query(`DELETE FROM ${T.resep} WHERE lpv_lpr_nomor = ?`, [nomor]);
+  if (resep.length === 0) {
+    return;
+  }
+  await conn.query(
+    `INSERT INTO ${T.resep}
+       (lpv_lpr_nomor, lpv_brg_kode, lpv_qty_actual, lpv_satuan,
+        lpv_nourut, lpv_potong_stok)
+     VALUES ?`,
+    [
+      resep.map((r, i) => [
+        nomor,
+        r.kode,
+        r.qty,
+        peta.get(r.kode).Satuan.slice(0, 10),
+        i + 1,
+        potongStok ? 1 : 0,
+      ]),
+    ],
+  );
 };
 
 // Qty plangkan per ukuran dari semua LHK Afdruk yang memuat SPK/MAP tsb (dijumlahkan).
@@ -253,7 +355,7 @@ const ambilPlangkanAfdruk = async (q, daftarSpk) => {
     if (qty <= 0) {
       continue;
     }
-    const spk = String(r.spk);
+    const spk = norm(r.spk);
     if (!hasil.has(spk)) {
       hasil.set(spk, new Map());
     }
@@ -265,13 +367,13 @@ const ambilPlangkanAfdruk = async (q, daftarSpk) => {
 // Baris yang Afdruk-nya punya data: qty ditimpa dari Afdruk (terkunci).
 // daftarKecuali: SPK yang dibiarkan apa adanya (mode ubah, baris lama).
 const terapkanKunciAfdruk = async (q, baris, daftarKecuali = new Set()) => {
-  const target = baris.filter((b) => !daftarKecuali.has(b.spk));
+  const target = baris.filter((b) => !daftarKecuali.has(norm(b.spk)));
   const peta = await ambilPlangkanAfdruk(
     q,
     target.map((b) => b.spk),
   );
   for (const b of target) {
-    const dariAfdruk = peta.get(b.spk);
+    const dariAfdruk = peta.get(norm(b.spk));
     if (!dariAfdruk) {
       continue;
     }
@@ -294,8 +396,21 @@ const validasiSumberBaris = async (q, baris, user) => {
   }
 };
 
+// J Meter = jumlah (ukuran x Qty) seluruh ukuran pada Detail Plangkan, yang
+// sudah terkunci dari Afdruk (Afdruk dari Hapus Plankan), jadi satu sumber.
+// Dipanggil setelah validasiUkuran (p.nilai terisi dari master).
+const hitungJumlahMeter = (baris) =>
+  baris.map((b) => {
+    const jumlahMeter = round2(
+      b.plangkan.reduce((a, p) => a + p.nilai * p.qty, 0),
+    );
+    if (jumlahMeter > MAKS_ANGKA) {
+      throw galat(`SPK/MAP ${b.spk}: J Meter terlalu besar`);
+    }
+    return { ...b, jumlahMeter };
+  });
+
 // Hapus semua detail + dtl_2 LHK per nomor, lalu isi ulang.
-// lprd_j_meter tidak ditulis (Delphi juga tidak; default 0).
 const simpanDetail = async (conn, nomor, baris) => {
   await conn.query(`DELETE FROM ${T.dtl2} WHERE lprd2_lpr_nomor = ?`, [nomor]);
   await conn.query(`DELETE FROM ${T.dtl} WHERE lprd_lpr_nomor = ?`, [nomor]);
@@ -305,11 +420,13 @@ const simpanDetail = async (conn, nomor, baris) => {
     b.spk,
     b.jPlangkan,
     b.jProof,
+    b.jumlahMeter,
     ...b.warna,
   ]);
   await conn.query(
     `INSERT INTO ${T.dtl}
        (lprd_lpr_nomor, lprd_spk_nomor, lprd_j_plangkan, lprd_j_proof,
+        lprd_j_meter,
         lprd_u1, lprd_u2, lprd_u3, lprd_u4, lprd_u5, lprd_u6, lprd_u7,
         lprd_u8, lprd_u9, lprd_u10)
      VALUES ?`,
@@ -416,33 +533,37 @@ const getLhkProofById = async (nomor, user) => {
   );
   const ukuran = await getLookupUkuran();
 
-  const Detail = detail.map((d) => ({
-    ...d,
-    Plangkan: ukuran.map((u) => ({
+  const Detail = detail.map((d) => {
+    const Plangkan = ukuran.map((u) => ({
       Ukuran: u.Ukuran,
       Qty: peta.get(`${norm(d.Nomor_SPK)}|${kunciUkuran(u.Ukuran)}`) ?? 0,
-    })),
-  }));
+    }));
+    return {
+      ...d,
+      Jumlah_Meter: round2(Plangkan.reduce((a, p) => a + p.Ukuran * p.Qty, 0)),
+      Plangkan,
+    };
+  });
 
-  const opsi = await getLookupResep(db);
-  const [resepRows] = await db.query(
-    `SELECT lpv_brg_kode AS kode, lpv_qty_resep AS resep, lpv_qty_actual AS actual
+  const [obatRows] = await db.query(
+    `SELECT lpv_brg_kode AS kode, lpv_qty_actual AS actual
      FROM ${T.resep} WHERE lpv_lpr_nomor = ?`,
     [no],
   );
-  const petaResep = new Map(resepRows.map((r) => [Number(r.kode), r]));
-  const Resep = opsi.map((o) => ({
-    ...o,
-    Qty_Resep: Number(petaResep.get(o.Kode)?.resep) || 0,
-    Qty_Actual: Number(petaResep.get(o.Kode)?.actual) || 0,
-  }));
+  const petaObat = new Map(
+    obatRows.map((r) => [String(r.kode).toUpperCase(), Number(r.actual) || 0]),
+  );
+  const master = await ambilMasterObat(db);
+  const Resep = master
+    .filter((m) => m.Aktif || petaObat.has(m.Kode))
+    .map((m) => ({
+      Kode: m.Kode,
+      Nama: m.Nama,
+      Satuan: m.Satuan,
+      Qty_Actual: petaObat.get(m.Kode) ?? 0,
+    }));
 
-  return {
-    ...hdr[0],
-    Detail,
-    Resep,
-    Resep_Terkunci: Resep.some((r) => r.Qty_Resep > 0),
-  };
+  return { ...hdr[0], Detail, Resep };
 };
 
 // --- Info SPK/MAP untuk mengisi baris ---
@@ -455,7 +576,9 @@ const getInfoSpk = async (nomor, user) => {
     kodeLini: "PROOF",
     daftarSpk: [no],
   });
-  const afdruk = (await ambilPlangkanAfdruk(db, [info.nomor])).get(info.nomor);
+  const afdruk = (await ambilPlangkanAfdruk(db, [info.nomor])).get(
+    norm(info.nomor),
+  );
   const ukuran = await getLookupUkuran();
   return {
     Nomor_SPK: info.nomor,
@@ -520,6 +643,8 @@ const createLhkProof = async (body, user) => {
     });
     await terapkanKunciAfdruk(conn, data.baris);
     await validasiUkuran(conn, data.baris);
+    const baris = hitungJumlahMeter(data.baris);
+    const petaObat = await validasiObat(conn, data.resep);
 
     const nomor = await buatNomor(conn, data.tanggal);
     try {
@@ -538,8 +663,14 @@ const createLhkProof = async (body, user) => {
       }
       throw e;
     }
-    await simpanDetail(conn, nomor, data.baris);
-    await simpanResep(conn, nomor, data.resep);
+    await simpanDetail(conn, nomor, baris);
+    await simpanResep(
+      conn,
+      nomor,
+      data.resep,
+      petaObat,
+      bolehPotongStok(data.tanggal, false),
+    );
 
     await conn.commit();
     return nomor;
@@ -595,9 +726,23 @@ const updateLhkProof = async (nomor, body, user) => {
     await terapkanKunciAfdruk(
       conn,
       data.baris,
-      new Set(spkLama.map((r) => String(r.spk))),
+      new Set(spkLama.map((r) => norm(r.spk))),
     );
     await validasiUkuran(conn, data.baris);
+    const baris = hitungJumlahMeter(data.baris);
+
+    const [obatAda] = await conn.query(
+      `SELECT lpv_brg_kode AS kode, lpv_potong_stok AS potong
+       FROM ${T.resep} WHERE lpv_lpr_nomor = ?`,
+      [no],
+    );
+    // LHK lama (baris bertanda 0) tetap tidak memotong stok saat diubah
+    const lhkLama = obatAda.some((r) => Number(r.potong) === 0);
+    const petaObat = await validasiObat(
+      conn,
+      data.resep,
+      new Set(obatAda.map((r) => String(r.kode).toUpperCase())),
+    );
 
     await conn.query(
       `UPDATE ${T.hdr}
@@ -606,9 +751,14 @@ const updateLhkProof = async (nomor, body, user) => {
        WHERE lpr_nomor = ?`,
       [data.tanggal, data.pabrik, user?.kode ?? null, no],
     );
-    const resepLama = await ambilResepLama(conn, no);
-    await simpanDetail(conn, no, data.baris);
-    await simpanResep(conn, no, data.resep, resepLama);
+    await simpanDetail(conn, no, baris);
+    await simpanResep(
+      conn,
+      no,
+      data.resep,
+      petaObat,
+      bolehPotongStok(data.tanggal, lhkLama),
+    );
 
     await conn.commit();
     return no;

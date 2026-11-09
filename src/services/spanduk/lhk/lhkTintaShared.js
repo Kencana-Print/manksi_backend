@@ -16,6 +16,8 @@ const T = {
   pabrik: "tpabrik",
   spk: "tspk",
   memoSpk: "tmemospk",
+  garmenBrg: "tgarmen_brg",
+  stokObat: "tmasterstok_obat",
 };
 
 // Tinta merujuk nomor LHK Cetak (bukan per SPK/MAP), jadi cabangnya dibaca
@@ -23,13 +25,24 @@ const T = {
 // (filterCabang, pastikanLhkDiCabang, pastikanBelumDipakai) tidak dipakai.
 const pembantu = buatPembantuLhk({ T });
 
+// Batas input LHK Pemakaian Obat: h+7 sejak tanggal LHK Cetak. Hanya penanda
+// (keputusan 9 Nov: input tetap boleh), tidak memblokir.
+const BATAS_HARI = 7;
+
+// Browse: LHK Cetak sejak tanggal ini yang belum punya LHK Pemakaian Obat tampil
+// merah. [KONFIRMASI] sementara = tanggal mulai berlaku rantai; ganti saat cutover.
+const TANGGAL_MULAI_OUTSTANDING = "2026-10-13";
+
+const sqlLewatBatas = (alias = "c") =>
+  `IF(CURDATE() > DATE_ADD(${alias}.lch_tanggal, INTERVAL ${BATAS_HARI} DAY), 1, 0)`;
+
 const SUMBER_CAB = `
   SELECT spk_nomor AS n, spk_cab AS c FROM ${T.spk}
   UNION ALL
   SELECT mspk_nomor, mspk_cab FROM ${T.memoSpk}`;
 
 // Browse: hanya LHK Tinta yang LHK Cetak-nya punya SPK/MAP dari cabang user
-const filterCabang = (user, alias = "h") => {
+const filterCabang = (user, alias = "h", kolom = "lnt_lch_nomor") => {
   if (adalahSuperadmin(user)) {
     return { sql: "", params: [] };
   }
@@ -38,7 +51,7 @@ const filterCabang = (user, alias = "h") => {
     sql: `AND EXISTS (
       SELECT 1 FROM ${T.cetakDtl} dc
       JOIN (${SUMBER_CAB}) sc ON sc.n = dc.lcd_spk_nomor
-      WHERE dc.lcd_lch_nomor = ${alias}.lnt_lch_nomor
+      WHERE dc.lcd_lch_nomor = ${alias}.${kolom}
         AND UPPER(TRIM(sc.c)) = ?
     )`,
     params: [cab],
@@ -107,6 +120,9 @@ const pastikanTintaBelumDikunciProof = async (
 
 module.exports = {
   T,
+  BATAS_HARI,
+  TANGGAL_MULAI_OUTSTANDING,
+  sqlLewatBatas,
   galat,
   cekTutupBuku,
   filterCabang,

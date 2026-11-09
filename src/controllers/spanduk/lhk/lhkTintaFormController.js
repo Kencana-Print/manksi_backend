@@ -51,7 +51,8 @@ const getLookupPabrik = async (req, res) => {
 
 const getLookupBahan = async (req, res) => {
   try {
-    const data = await service.getLookupBahan(req.query.search);
+    const { pabrik, nomor } = req.query;
+    const data = await service.getLookupBahan(req.user, pabrik, nomor);
     res.status(200).json({ success: true, data });
   } catch (error) {
     kirimError(res, error, 400);

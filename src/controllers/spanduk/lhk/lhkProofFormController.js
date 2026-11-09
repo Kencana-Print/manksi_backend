@@ -51,10 +51,14 @@ const getLookupUkuran = async (req, res) => {
 
 const getLookupResep = async (req, res) => {
   try {
-    const data = await service.getLookupResep();
+    const data = await service.getLookupResep(
+      req.user,
+      req.query.pabrik,
+      req.query.nomor,
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
-    kirimError(res, error, 400);
+    kirimError(res, error);
   }
 };
 
