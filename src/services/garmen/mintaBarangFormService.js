@@ -22,10 +22,14 @@ const generateNomor = async (jenis, tanggal, conn) => {
   } else if (jenis === "SPAREPART") {
     prefix = `SPP-${tahun}-`;
     searchPattern = `SPP-${tahun}-%`;
-  } else {
-    // ATK/RTK
+  } else if (jenis === "ASET") {
+    prefix = `MIS${tahun}.`;
+    searchPattern = `MIS${tahun}.%`;
+  } else if (jenis === "ATK/RTK") {
     prefix = `MIK${tahun}.`;
     searchPattern = `MIK${tahun}.%`;
+  } else {
+    throw new Error("Jenis permintaan tidak dikenal.");
   }
 
   const query = `
@@ -472,7 +476,10 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ? AND b.brg_kode = ?`;
   let params = [jenis, kode];
 
-  whereClause += kondisiSpanduk(cabang);
+  // ASET terlihat di semua cabang, di luar aturan SPANDUK (sama dengan master)
+  if (jenis !== "ASET") {
+    whereClause += kondisiSpanduk(cabang);
+  }
 
   // Replikasi filter sparepart dari searchBarangGarmen
   // if (jenis === "SPAREPART") {
@@ -488,6 +495,7 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
   else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
   else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+  else if (jenis === "ASET") stockTable = "tmasterstok_aset";
 
   const [rows] = await db.query(
     `SELECT 

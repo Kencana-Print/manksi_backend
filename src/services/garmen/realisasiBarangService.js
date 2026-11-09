@@ -5,6 +5,10 @@ const tutupBukuService = require("../tutupBukuService");
  * Mengambil Data Browse (Master dan Detail Realisasi)
  */
 const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
+  if (cabang && cabang !== "ALL" && !/^[A-Za-z0-9-]{1,5}$/.test(cabang)) {
+    throw new Error("Cabang tidak valid.");
+  }
+
   let filterCabang = "";
   if (cabang && cabang !== "ALL") {
     filterCabang = `AND h.re_cab = '${cabang}'`;
@@ -231,11 +235,13 @@ const deleteData = async (nomor, userCabang) => {
       [minCloseStatus, data.re_minta],
     );
 
-    // 4. Hapus Transaksi Realisasi (Header & Detail)
-    await conn.query(`DELETE FROM tgarmenrealisasi_hdr WHERE re_nomor = ?`, [
+    // 4. Hapus Transaksi Realisasi — DETAIL DULU, baru Header.
+    // Trigger before_delete di dtl membaca re_jenis dari hdr untuk memilih
+    // tabel stok; kalau hdr sudah terhapus, stok non-ATK tidak ikut kembali.
+    await conn.query(`DELETE FROM tgarmenrealisasi_dtl WHERE red_nomor = ?`, [
       nomor,
     ]);
-    await conn.query(`DELETE FROM tgarmenrealisasi_dtl WHERE red_nomor = ?`, [
+    await conn.query(`DELETE FROM tgarmenrealisasi_hdr WHERE re_nomor = ?`, [
       nomor,
     ]);
 

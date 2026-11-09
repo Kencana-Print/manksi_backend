@@ -1,11 +1,15 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+const JENIS_VALID = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
+
 const getStokTable = (jenis) => {
   if (jenis === "ACCESORIES") return "tmasterstok_acc";
   if (jenis === "OBAT") return "tmasterstok_obat";
   if (jenis === "SPAREPART") return "tmasterstok_sparepart";
-  return "tmasterstok_atk";
+  if (jenis === "ASET") return "tmasterstok_aset";
+  if (jenis === "ATK/RTK") return "tmasterstok_atk";
+  throw new Error("Jenis permintaan tidak dikenal.");
 };
 
 const generateNomor = async (jenis, tanggal, conn) => {
@@ -14,7 +18,9 @@ const generateNomor = async (jenis, tanggal, conn) => {
   if (jenis === "ACCESORIES") prefix = `REA${tahun}.`;
   else if (jenis === "OBAT") prefix = `REO${tahun}.`;
   else if (jenis === "SPAREPART") prefix = `RES${tahun}.`;
-  else prefix = `REK${tahun}.`;
+  else if (jenis === "ASET") prefix = `REI${tahun}.`;
+  else if (jenis === "ATK/RTK") prefix = `REK${tahun}.`;
+  else throw new Error("Jenis realisasi tidak dikenal.");
 
   const query = `SELECT IFNULL(MAX(CAST(RIGHT(re_nomor, 5) AS UNSIGNED)), 0) AS max_num FROM tgarmenrealisasi_hdr WHERE re_nomor LIKE ?`;
   const [rows] = await conn.query(query, [`${prefix}%`]);
@@ -301,6 +307,23 @@ const saveData = async (payload, user) => {
       0,
     );
     if (totalQty <= 0) throw new Error("Jumlah realisasi masih kosong semua!");
+
+    if (!JENIS_VALID.includes(jenis)) {
+      throw new Error("Jenis realisasi tidak dikenal.");
+    }
+    if (!noMinta && jenis !== "SPAREPART") {
+      throw new Error("Nomor permintaan wajib diisi.");
+    }
+    if (noMinta) {
+      const [mh] = await conn.query(
+        `SELECT min_jenis FROM tgarmenminta_hdr WHERE min_nomor = ?`,
+        [noMinta],
+      );
+      if (mh.length === 0) throw new Error("Nomor permintaan tidak ditemukan.");
+      if (mh[0].min_jenis !== jenis) {
+        throw new Error("Jenis realisasi tidak sama dengan jenis permintaan.");
+      }
+    }
 
     if (isEdit) {
       await conn.query(

@@ -1566,11 +1566,15 @@ const searchBarangGarmen = async (
   if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
   else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
   else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+  else if (jenis === "ASET") stockTable = "tmasterstok_aset";
 
   // 2. Siapkan kondisi dasar
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
   let whereParams = [jenis];
-  whereClause += kondisiSpanduk(cabang);
+  // ASET terlihat di semua cabang, di luar aturan SPANDUK (sama dengan master)
+  if (jenis !== "ASET") {
+    whereClause += kondisiSpanduk(cabang);
+  }
 
   // 3. Filter khusus Sparepart berdasarkan Bagian User
   // if (jenis === "SPAREPART") {

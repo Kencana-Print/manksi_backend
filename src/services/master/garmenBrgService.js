@@ -16,7 +16,7 @@ const kondisiSpanduk = (cabang, alias = "b") => {
 };
 
 const getBrowse = async (jenis, cabang, bagian) => {
-  const validJenis = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
+  const validJenis = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
   const selectedJenis = validJenis.includes(jenis) ? jenis : "ACCESORIES";
   if (!CABANG_BROWSE.includes(cabang)) {
     throw new Error("Cabang tidak valid untuk browse barang garmen.");
@@ -26,7 +26,10 @@ const getBrowse = async (jenis, cabang, bagian) => {
   let stokQuery = "";
   let whereClause = `WHERE b.brg_jenis = '${selectedJenis}'`;
 
-  whereClause += kondisiSpanduk(cabang);
+  // ASET terlihat di semua cabang browse, di luar aturan SPANDUK
+  if (selectedJenis !== "ASET") {
+    whereClause += kondisiSpanduk(cabang);
+  }
 
   if (selectedJenis === "ACCESORIES") {
     selectNote = "x.Note,";
@@ -39,6 +42,9 @@ const getBrowse = async (jenis, cabang, bagian) => {
     else if (bagian === "IT") whereClause += ` AND b.brg_ktg = 'IT'`;
   } else if (selectedJenis === "ATK/RTK") {
     stokQuery = `IFNULL((SELECT SUM(m.mst_stok_in - m.mst_stok_out) FROM tmasterstok_atk m WHERE m.mst_aktif="Y" AND m.mst_brg_kode=b.brg_kode AND m.mst_cab=?), 0) AS Stok`;
+  } else if (selectedJenis === "ASET") {
+    // belum ada tabel stok untuk Aset (tahap master)
+    stokQuery = `0 AS Stok`;
   }
 
   const query = `
@@ -148,6 +154,16 @@ const generateKode = async (jenis, kategori, accKodeAssembled) => {
     return searchPrefix + String(nextNum).padStart(4, "0"); // ex: AK260001
   }
 
+  if (jenis === "ASET") {
+    const searchPrefix = "AS" + yy;
+    const [[row]] = await db.query(
+      `SELECT IFNULL(MAX(RIGHT(brg_kode, 4)), 0) AS max_val FROM tgarmen_brg WHERE brg_jenis="ASET" AND LEFT(brg_kode, 4) = ?`,
+      [searchPrefix],
+    );
+    const nextNum = parseInt(row.max_val, 10) + 1;
+    return searchPrefix + String(nextNum).padStart(4, "0"); // ex: AS260001
+  }
+
   return null;
 };
 
@@ -161,13 +177,17 @@ const create = async (data, user) => {
   if (!generatedKode)
     throw new Error("Kode barang tidak terbentuk. Lengkapi komponen kode.");
 
-  if (data.brg_jenis === "ACCESORIES") {
+  if (data.brg_jenis === "ACCESORIES" || data.brg_jenis === "ASET") {
     const [exist] = await db.query(
       "SELECT brg_kode FROM tgarmen_brg WHERE brg_kode = ?",
       [generatedKode],
     );
     if (exist.length > 0)
-      throw new Error("Master Accesories yang akan dibuat sudah ada.");
+      throw new Error(
+        data.brg_jenis === "ASET"
+          ? `Kode ${generatedKode} sudah dipakai barang lain.`
+          : "Master Accesories yang akan dibuat sudah ada.",
+      );
   }
 
   const query = `
@@ -283,6 +303,12 @@ const getLookups = async (category) => {
           "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
         )
       )[0];
+    case "satuan_aset":
+      return (
+        await db.query(
+          "SELECT gs_satuan AS Nama FROM tgarmen_satuan ORDER BY gs_satuan ASC",
+        )
+      )[0];
 
     default:
       return [];
@@ -355,6 +381,7 @@ const KODE_IKUT = [
   ["tgarmenretur_dtl", "retd_brg_kode"],
   ["tgarmenreturlog_dtl", "retd_brg_kode"],
   ["tmasterstok_acc", "mst_brg_kode"],
+  ["tmasterstok_aset", "mst_brg_kode"],
   ["tmasterstok_atk", "mst_brg_kode"],
   ["tmasterstok_obat", "mst_brg_kode"],
   ["tmasterstok_sparepart", "mst_brg_kode"],
