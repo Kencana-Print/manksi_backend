@@ -1,10 +1,11 @@
 const db = require("../../config/database");
 
 const CABANG_BROWSE = ["HO-", "P01", "P02", "P04", "P05"];
-const CABANG_SPANDUK = ["P02", "P05"];
+const CABANG_SPANDUK = ["P02"];
 const KTG_SPANDUK = "SPANDUK";
 
-// Aturan #128: P02/P05 hanya SPANDUK, HO- melihat semua, cabang lain tidak melihat SPANDUK.
+// Aturan #128 (revisi 9 Nov): hanya P02 yang dibatasi ke SPANDUK, HO- melihat semua,
+// cabang lain (termasuk P05/MMT) tidak melihat SPANDUK, sama seperti garmen.
 // Dipakai browse master, lookup, dan form transaksi. Alias hanya dari pemanggil (konstan).
 const kondisiSpanduk = (cabang, alias = "b") => {
   if (CABANG_SPANDUK.includes(cabang))
