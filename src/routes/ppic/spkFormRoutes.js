@@ -74,4 +74,17 @@ router.get(
   controller.getAlokasi,
 );
 
+router.get(
+  "/bahan-spanduk",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getBahanSpanduk,
+);
+router.get(
+  "/bahan-info",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getBahanInfo,
+);
+
 module.exports = router;

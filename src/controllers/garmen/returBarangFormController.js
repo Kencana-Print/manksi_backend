@@ -3,7 +3,7 @@ const service = require("../../services/garmen/returBarangFormService");
 const getFormData = async (req, res) => {
   try {
     const { nomor } = req.params;
-    const data = await service.getFormData(nomor);
+    const data = await service.getFormData(nomor, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
