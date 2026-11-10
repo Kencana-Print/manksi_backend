@@ -1,23 +1,31 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { BAGIAN_PO_ASET_LIHAT } = require("./poNonBahanFormService");
 
 // --- GET BROWSE MASTER DETAIL ---
 const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   let whereClause = `WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?`;
   const params = [startDate, endDate];
 
+  const bagianUser = user.bagian ? user.bagian.toUpperCase() : "";
+  const bolehAset = BAGIAN_PO_ASET_LIHAT.includes(bagianUser);
+
   // Filter Jenis & Bagian (Logic Delphi FormCreate)
   if (jenis) {
+    if (jenis === "ASET" && !bolehAset) {
+      throw new Error("Bagian Anda tidak berhak melihat PO Aset.");
+    }
     whereClause += ` AND h.po_jenis = ?`;
     params.push(jenis);
 
     if (jenis === "SPAREPART") {
-      const bagian = user.bagian ? user.bagian.toUpperCase() : "";
-      if (bagian === "TEKNISI" || bagian === "IT") {
+      if (bagianUser === "TEKNISI" || bagianUser === "IT") {
         whereClause += ` AND h.po_bagian = ?`;
-        params.push(bagian);
+        params.push(bagianUser);
       }
     }
+  } else if (!bolehAset) {
+    whereClause += ` AND h.po_jenis <> 'ASET'`;
   }
 
   // Filter Cabang
@@ -58,7 +66,7 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
 
   // --- DETAIL QUERY ---
   let selectSpesifikasi =
-    jenis === "SPAREPART" || jenis === "ATK/RTK"
+    jenis === "SPAREPART" || jenis === "ATK/RTK" || jenis === "ASET"
       ? `d.pod_ket AS Spesifikasi, d.pod_kegunaan AS Kegunaan,`
       : `"" AS Spesifikasi, "" AS Kegunaan,`;
 
@@ -118,6 +126,15 @@ const deleteData = async (nomor) => {
     // 2. Cek Status (Sesuai Delphi: if Status <> '' then Tidak bisa dihapus)
     if (data.po_status && data.po_status.trim() !== "") {
       throw new Error(`Sudah ${data.po_status.trim()}. Tidak bisa dihapus.`);
+    }
+
+    // 3. PO yang sudah punya penerimaan BPB tidak boleh dihapus
+    const [[bpb]] = await conn.query(
+      "SELECT COUNT(*) AS n FROM tgarmenbpb_hdr WHERE bpb_po_nomor = ?",
+      [nomor],
+    );
+    if (Number(bpb.n) > 0) {
+      throw new Error("PO sudah ada penerimaan BPB. Tidak bisa dihapus.");
     }
 
     await conn.beginTransaction();

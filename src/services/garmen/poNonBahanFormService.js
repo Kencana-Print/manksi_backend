@@ -1,10 +1,29 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
-// Cabang tujuan PO (tempat barang diterima / stok masuk).
-// P02 (spanduk): gudang tunggal di P04; selain itu mengikuti cabang peminta.
 const KECAB_PO_DEFAULT = { P02: "P04" };
 const resolveKecab = (cabMinta) => KECAB_PO_DEFAULT[cabMinta] || cabMinta || "";
+
+const JENIS_PO = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
+const PREFIX_PO = {
+  ACCESORIES: "POA",
+  OBAT: "POO",
+  SPAREPART: "POS",
+  "ATK/RTK": "POK",
+  ASET: "POI",
+};
+// Boleh melihat PO Aset (browse)
+const BAGIAN_PO_ASET_LIHAT = [
+  "GA",
+  "EDP",
+  "FINANCE",
+  "AUDIT",
+  "DIREKSI",
+  "PEMBELIAN",
+  "PURCHASING",
+];
+// Boleh membuat/mengubah PO Aset. [KONFIRMASI] EDP belum kamu sebut, jadi tidak saya masukkan
+const BAGIAN_PO_ASET_PROSES = ["PEMBELIAN", "PURCHASING", "GA"];
 
 // --- HELPER UNTUK MENGHITUNG QTY BPB & QTY SUDAH PO (1:1 Logic Delphi) ---
 const getQtyBpb = async (poNomor, brgKode, conn) => {
@@ -174,6 +193,10 @@ const saveData = async (payload, user) => {
     } = payload;
     const tglPO = new Date(po_tanggal);
 
+    if (!isEdit && !JENIS_PO.includes(po_jenis)) {
+      throw new Error("Jenis PO tidak dikenal.");
+    }
+
     // 1. Validasi Awal & Tutup Buku
     if (!po_sup_kode || po_sup_kode.trim() === "")
       throw new Error("Supplier harus di isi. Tidak bisa disimpan.");
@@ -201,6 +224,13 @@ const saveData = async (payload, user) => {
           "Transaksi tsb sudah diclose. Silahkan minta approve untuk bisa menyimpan perubahan data.",
         );
       }
+    }
+
+    if (
+      po_jenis === "ASET" &&
+      !BAGIAN_PO_ASET_PROSES.includes(String(user.bagian || "").toUpperCase())
+    ) {
+      throw new Error("PO Aset hanya untuk bagian Pembelian atau GA.");
     }
 
     if (zdtClose && tglPO < zdtClose && pinStatus !== "ACC") {
@@ -247,14 +277,7 @@ const saveData = async (payload, user) => {
     // 2. Tarik / Ganti Nomor Baru Jika Mode Create
     if (!isEdit) {
       const year = tglPO.getFullYear().toString();
-      let cjenis =
-        po_jenis === "ACCESORIES"
-          ? "POA"
-          : po_jenis === "OBAT"
-            ? "POO"
-            : po_jenis === "SPAREPART"
-              ? "POS"
-              : "POK";
+      const cjenis = PREFIX_PO[po_jenis];
       const searchPrefix = cjenis + year;
       const [[maxRow]] = await conn.query(
         `SELECT IFNULL(MAX(CAST(RIGHT(po_nomor, 5) AS UNSIGNED)), 0) AS max_val FROM tgarmenpo_hdr WHERE LEFT(po_nomor, 7) = ?`,
@@ -301,11 +324,14 @@ const saveData = async (payload, user) => {
 
     // Cabang tujuan ditentukan server dari cabang peminta, bukan dari payload
     const [[mb]] = await conn.query(
-      `SELECT mb_cab FROM tgarmenmintabeli_hdr WHERE mb_nomor = ?`,
+      `SELECT mb_cab, mb_jenis FROM tgarmenmintabeli_hdr WHERE mb_nomor = ?`,
       [po_mb_nomor],
     );
     if (!mb) throw new Error("No. Permintaan tsb tidak ada.");
-    po_kecab = resolveKecab(mb.mb_cab);
+    if ((po_jenis === "ASET") !== (mb.mb_jenis === "ASET")) {
+      throw new Error("Jenis PO tidak sama dengan jenis Permintaan Pembelian.");
+    }
+    po_kecab = resolveKecab(mb.mb_cab, po_jenis);
 
     // 4. Eksekusi Header Upsert
     if (isEdit) {
@@ -400,4 +426,5 @@ module.exports = {
   getPermintaanDetail,
   saveData,
   getSupplierByKode,
+  BAGIAN_PO_ASET_LIHAT,
 };
