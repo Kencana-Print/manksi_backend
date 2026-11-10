@@ -257,9 +257,9 @@ const save = async (data, userKode, isNewMode) => {
     const isSpanduk = String(data.Divisi).charAt(0) === "1";
 
     // Spanduk: Ukuran, Gramasi, Sablon/Bordir/Sublim tidak dipakai → dinormalisasi
-    const panjang = isSpanduk ? 0 : safeNum(data.Panjang);
-    const lebar = isSpanduk ? 0 : safeNum(data.Lebar);
-    const ketUkuran = isSpanduk ? "" : data.KetUkuran || "";
+    const panjang = safeNum(data.Panjang);
+    const lebar = safeNum(data.Lebar);
+    const ketUkuran = data.KetUkuran || "";
     const gramasi = isSpanduk ? "" : data.Gramasi;
     const sablon = isSpanduk ? "N" : data.Sablon;
     const bordir = isSpanduk ? "N" : data.Bordir;

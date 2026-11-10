@@ -1,5 +1,17 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { KECAB_ASET, BAGIAN_PO_ASET_LIHAT } = require("./poNonBahanFormService");
+
+const JENIS_BPB = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
+const PREFIX_BPB = {
+  ACCESORIES: "PBA",
+  OBAT: "PBO",
+  SPAREPART: "PBS",
+  "ATK/RTK": "PBK",
+  ASET: "PBI",
+};
+// Boleh membuat/mengubah BPB Aset
+const BAGIAN_BPB_ASET_PROSES = ["GA", "EDP", "PEMBELIAN", "PURCHASING"];
 
 // --- HELPER UNTUK MENGHITUNG QTY SUDAH DITERIMA SEBELUMNYA ---
 // Replikasi: function TfrmBPBGarmen.getsudah()
@@ -321,6 +333,17 @@ const saveData = async (payload, user) => {
       throw new Error("No. Permintaan atau No. PO harus di isi.");
     }
 
+    // Jenis hanya diputihkan saat buat; BPB lama tidak diutak-atik
+    if (!isEdit && !JENIS_BPB.includes(bpb_jenis)) {
+      throw new Error("Jenis BPB tidak dikenal.");
+    }
+    if (
+      bpb_jenis === "ASET" &&
+      !BAGIAN_BPB_ASET_PROSES.includes(String(user.bagian || "").toUpperCase())
+    ) {
+      throw new Error("BPB Aset hanya untuk bagian GA, EDP, atau Pembelian.");
+    }
+
     const kodeList = [
       ...new Set(
         detail.filter((d) => Number(d.jumlah || 0) !== 0).map((d) => d.Kode),
@@ -353,14 +376,7 @@ const saveData = async (payload, user) => {
     // 4. Tarik / Ganti Nomor Baru Jika Mode Create
     if (!isEdit) {
       const year = tglBPB.getFullYear().toString();
-      let cjenis =
-        bpb_jenis === "ACCESORIES"
-          ? "PBA"
-          : bpb_jenis === "OBAT"
-            ? "PBO"
-            : bpb_jenis === "SPAREPART"
-              ? "PBS"
-              : "PBK";
+      const cjenis = PREFIX_BPB[bpb_jenis];
       const searchPrefix = cjenis + year;
       const [[maxRow]] = await conn.query(
         `SELECT IFNULL(MAX(CAST(RIGHT(bpb_nomor, 5) AS UNSIGNED)), 0) AS max_val FROM tgarmenbpb_hdr WHERE LEFT(bpb_nomor, 7) = ?`,
@@ -388,7 +404,7 @@ const saveData = async (payload, user) => {
           bpb_po_nomor || "",
           bpb_sup_kode || "",
           bpb_ket || "",
-          user.cabang || "HO-",
+          bpb_jenis === "ASET" ? KECAB_ASET : user.cabang || "HO-",
           user.kode,
         ],
       );

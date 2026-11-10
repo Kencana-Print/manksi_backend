@@ -2,7 +2,10 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
 const KECAB_PO_DEFAULT = { P02: "P04" };
-const resolveKecab = (cabMinta) => KECAB_PO_DEFAULT[cabMinta] || cabMinta || "";
+// Aset selalu masuk gudang P04, apa pun cabang peminta
+const KECAB_ASET = "P04";
+const resolveKecab = (cabMinta, jenis) =>
+  jenis === "ASET" ? KECAB_ASET : KECAB_PO_DEFAULT[cabMinta] || cabMinta || "";
 
 const JENIS_PO = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
 const PREFIX_PO = {
@@ -153,7 +156,7 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
   const qDtl = `
     SELECT d.mbd_brg_kode AS Kode, IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama, 
            b.brg_satuan AS Satuan, d.mbd_ket AS ket, d.mbd_kegunaan AS kegunaan, d.mbd_jumlah AS minta,
-           h.mb_cab AS cab, DATE_FORMAT(h.mb_tanggal, '%Y-%m-%d') AS tglminta
+           h.mb_cab AS cab, h.mb_jenis AS jenis, DATE_FORMAT(h.mb_tanggal, '%Y-%m-%d') AS tglminta
     FROM tgarmenmintabeli_dtl d
     INNER JOIN tgarmenmintabeli_hdr h ON h.mb_nomor = d.mbd_nomor
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
@@ -170,7 +173,7 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
     r.ppn = 0;
     r.total = 0;
     r.bpb = 0;
-    r.kecab = resolveKecab(r.cab);
+    r.kecab = resolveKecab(r.cab, r.jenis);
   }
   return rows;
 };
@@ -427,4 +430,5 @@ module.exports = {
   saveData,
   getSupplierByKode,
   BAGIAN_PO_ASET_LIHAT,
+  KECAB_ASET,
 };

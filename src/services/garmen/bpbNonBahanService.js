@@ -1,23 +1,31 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const { BAGIAN_PO_ASET_LIHAT } = require("./poNonBahanFormService");
 
 // --- GET BROWSE MASTER DETAIL ---
 const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   let whereClause = `WHERE h.bpb_tanggal >= ? AND h.bpb_tanggal <= ?`;
   const params = [startDate, endDate];
 
+  const bagianUser = user.bagian ? user.bagian.toUpperCase() : "";
+  const bolehAset = BAGIAN_PO_ASET_LIHAT.includes(bagianUser);
+
   // Filter Jenis & Bagian
   if (jenis) {
+    if (jenis === "ASET" && !bolehAset) {
+      throw new Error("Bagian Anda tidak berhak melihat BPB Aset.");
+    }
     whereClause += ` AND h.bpb_jenis = ?`;
     params.push(jenis);
 
     if (jenis === "SPAREPART") {
-      const bagian = user.bagian ? user.bagian.toUpperCase() : "";
-      if (bagian === "TEKNISI" || bagian === "IT") {
+      if (bagianUser === "TEKNISI" || bagianUser === "IT") {
         whereClause += ` AND h.bpb_bagian = ?`;
-        params.push(bagian);
+        params.push(bagianUser);
       }
     }
+  } else if (!bolehAset) {
+    whereClause += ` AND h.bpb_jenis <> 'ASET'`;
   }
 
   // Filter Cabang
@@ -61,7 +69,7 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
 
   // --- DETAIL QUERY ---
   let selectSpesifikasi =
-    jenis === "SPAREPART" || jenis === "ATK/RTK"
+    jenis === "SPAREPART" || jenis === "ATK/RTK" || jenis === "ASET"
       ? `d.bpbd_ket AS Spesifikasi, d.bpbd_kegunaan AS Kegunaan,`
       : `"" AS Spesifikasi, "" AS Kegunaan,`;
 
