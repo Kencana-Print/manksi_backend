@@ -1248,9 +1248,8 @@ const susunUsulanKode = async (executor, lots, poNomor) => {
   const master = await muatMasterKode(executor);
   const [poKode] = await executor.query(
     `SELECT DISTINCT pod_bhn_kode AS kode FROM tpo_dtl
-     WHERE pod_po_nomor = ? AND pod_bhn_kode <> '' AND pod_status <> 2`[
-      poNomor
-    ],
+     WHERE pod_po_nomor = ? AND pod_bhn_kode <> '' AND pod_status <> 2`,
+    [poNomor],
   );
   const kodeDiPo = new Set(poKode.map((r) => r.kode));
 
