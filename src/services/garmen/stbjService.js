@@ -26,6 +26,9 @@ const getBrowse = async (tglAwal, tglAkhir, gudang = "") => {
          WHERE p.pin_trs = 'STBJ' AND p.pin_nomor = h.stbj_nomor
          ORDER BY p.pin_urut DESC LIMIT 1
        ), '') AS Ngedit,
+       (SELECT COUNT(*) FROM tkoli k
+         WHERE k.koli_stbj_nomor = h.stbj_nomor
+           AND k.koli_status <> 'VOID') AS KoliQr,
        h.user_create AS Usr,
        h.date_create
      FROM tstbj_hdr h

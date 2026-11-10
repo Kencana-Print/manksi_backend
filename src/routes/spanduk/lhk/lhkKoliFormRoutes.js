@@ -19,12 +19,6 @@ router.get(
   controller.getInfoSpk,
 );
 router.get(
-  "/print/:nomor",
-  verifyToken,
-  checkPermission(4, "view"),
-  controller.getPrint,
-);
-router.get(
   "/:nomor",
   verifyToken,
   checkPermission(4, "view"),

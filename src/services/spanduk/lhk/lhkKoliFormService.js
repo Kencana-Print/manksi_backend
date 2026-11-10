@@ -88,69 +88,12 @@ const validasiSumberBaris = async (q, baris, user) => {
   await pastikanSemuaSpk(q, daftar);
 };
 
-// LHK terkunci bila ada koli yang sudah discan (STBJ)
-const pastikanBelumDiscan = async (q, nomor) => {
-  const [rows] = await q.query(
-    `SELECT lku_urut AS urut, lku_spk_nomor AS spk, lku_scan_stbj AS stbj
-     FROM ${T.unit}
-     WHERE lku_lkh_nomor = ? AND lku_scan_tgl IS NOT NULL LIMIT 1`,
-    [nomor],
-  );
-  if (rows.length > 0) {
-    throw galat(
-      `LHK Koli ${nomor} tidak bisa diubah/dihapus: koli ${rows[0].urut} SPK ${rows[0].spk} sudah discan${rows[0].stbj ? ` di ${rows[0].stbj}` : ""}`,
-    );
-  }
-};
-
-// Sinkronkan unit: pertahankan urut yang masih berlaku, tambah yang kurang,
-// buang yang berlebih (id lama tidak berubah, label lama tetap valid)
-const sinkronUnit = async (conn, nomor, baris) => {
-  const spkBaru = baris.map((b) => b.spk);
-  await conn.query(
-    `DELETE FROM ${T.unit} WHERE lku_lkh_nomor = ? AND lku_spk_nomor NOT IN (?)`,
-    [nomor, spkBaru],
-  );
-  for (const b of baris) {
-    await conn.query(
-      `DELETE FROM ${T.unit}
-       WHERE lku_lkh_nomor = ? AND lku_spk_nomor = ? AND lku_urut > ?`,
-      [nomor, b.spk, b.koli],
-    );
-    const [ada] = await conn.query(
-      `SELECT lku_urut AS urut FROM ${T.unit}
-       WHERE lku_lkh_nomor = ? AND lku_spk_nomor = ?`,
-      [nomor, b.spk],
-    );
-    const punya = new Set(ada.map((r) => Number(r.urut)));
-    const baru = [];
-    for (let u = 1; u <= b.koli; u += 1) {
-      if (!punya.has(u)) {
-        baru.push([nomor, b.spk, u, b.koli]);
-      }
-    }
-    if (baru.length > 0) {
-      await conn.query(
-        `INSERT INTO ${T.unit}
-           (lku_lkh_nomor, lku_spk_nomor, lku_urut, lku_total) VALUES ?`,
-        [baru],
-      );
-    }
-    await conn.query(
-      `UPDATE ${T.unit} SET lku_total = ?
-       WHERE lku_lkh_nomor = ? AND lku_spk_nomor = ?`,
-      [b.koli, nomor, b.spk],
-    );
-  }
-};
-
 const simpanDetail = async (conn, nomor, baris) => {
   await conn.query(`DELETE FROM ${T.dtl} WHERE lkd_lkh_nomor = ?`, [nomor]);
   await conn.query(
     `INSERT INTO ${T.dtl} (lkd_lkh_nomor, lkd_spk_nomor, lkd_j_koli) VALUES ?`,
     [baris.map((b) => [nomor, b.spk, b.koli])],
   );
-  await sinkronUnit(conn, nomor, baris);
 };
 
 const buatNomor = async (conn, tanggalStr) => {
@@ -198,12 +141,8 @@ const getLhkKoliById = async (nomor, user) => {
      ORDER BY d.lkd_spk_nomor`,
     [no],
   );
-  const [[sc]] = await db.query(
-    `SELECT COUNT(*) AS n FROM ${T.unit}
-     WHERE lku_lkh_nomor = ? AND lku_scan_tgl IS NOT NULL`,
-    [no],
-  );
-  return { ...hdr[0], Detail: detail, Jml_Discan: Number(sc.n) };
+
+  return { ...hdr[0], Detail: detail };
 };
 
 const getInfoSpk = async (nomor, user) => {
@@ -237,33 +176,6 @@ const getLookupPabrik = async (search) => {
     params,
   );
   return rows;
-};
-
-// Data label QR: satu baris per koli
-const getPrintKoli = async (nomor, user) => {
-  const no = teks(nomor);
-  const [hdr] = await db.query(
-    `SELECT h.lkh_nomor AS Nomor,
-            DATE_FORMAT(h.lkh_tanggal, '%Y-%m-%d') AS Tanggal,
-            h.lkh_pab_kode AS Kode_Pabrik
-     FROM ${T.hdr} h WHERE h.lkh_nomor = ?`,
-    [no],
-  );
-  if (hdr.length === 0) {
-    throw galat("Data LHK Koli tidak ditemukan", "notFound");
-  }
-  await pastikanLhkDiCabang(db, no, user);
-  const [units] = await db.query(
-    `SELECT u.lku_id AS Id, u.lku_spk_nomor AS Nomor_SPK,
-            x.spk_nama AS Nama_SPK, x.spk_panjang AS Panjang,
-            x.spk_lebar AS Lebar, u.lku_urut AS Urut, u.lku_total AS Total
-     FROM ${T.unit} u
-     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = u.lku_spk_nomor
-     WHERE u.lku_lkh_nomor = ?
-     ORDER BY u.lku_spk_nomor, u.lku_urut`,
-    [no],
-  );
-  return { ...hdr[0], Units: units };
 };
 
 const createLhkKoli = async (body, user) => {
@@ -341,7 +253,6 @@ const updateLhkKoli = async (nomor, body, user) => {
 
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
-    await pastikanBelumDiscan(conn, no);
     await pastikanPabrik(conn, data.pabrik);
     await validasiSumberBaris(conn, data.baris, user);
     await pastikanRantaiLhk(conn, {
@@ -372,8 +283,6 @@ module.exports = {
   getLhkKoliById,
   getInfoSpk,
   getLookupPabrik,
-  getPrintKoli,
   createLhkKoli,
   updateLhkKoli,
-  pastikanBelumDiscan,
 };
