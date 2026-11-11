@@ -1,5 +1,9 @@
 const db = require("../../config/database");
 const { kategoriDari, urutanKategori } = require("./rekapKategori");
+const {
+  petaRekeningSupplier,
+  infoRekening,
+} = require("./rekapPembayaranFormService");
 
 const buildWhere = (startDate, endDate) => {
   const where = [];
@@ -46,7 +50,7 @@ const getBrowse = async (startDate, endDate) => {
   return rows;
 };
 
-const getBrowseDetail = async (startDate, endDate) => {
+const getBrowseDetail = async (startDate, endDate, user) => {
   const { sql, params } = buildWhere(startDate, endDate);
   const [rows] = await db.query(
     `SELECT h.rkb_nomor AS nomor,
@@ -85,8 +89,13 @@ const getBrowseDetail = async (startDate, endDate) => {
     );
     for (const p of pj) petaPjt.set(p.vou_nomor, p.vou_link || "-");
   }
+  const petaRek = await petaRekeningSupplier(
+    rows.map((r) => r.kodeSupplier),
+    user,
+  );
   return rows.map((r) => ({
     ...r,
+    ...infoRekening(petaRek, r.kodeSupplier),
     kategori: kategoriDari(r.tipe),
     kategoriUrut: urutanKategori(r.tipe),
     pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",

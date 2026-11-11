@@ -125,6 +125,34 @@ const getOutstandingMintaBeliDetail = async (req, res) => {
   }
 };
 
+const getRekapOptions = async (req, res) => {
+  try {
+    const data = await svc.getRekapPanggilOptions(req.query.search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getRekapRows = async (req, res) => {
+  try {
+    const data = await svc.getRekapPanggilRows(req.query.nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const getKlaimOptions = async (req, res) => {
+  try {
+    const { search, nomor } = req.query;
+    const data = await svc.getKlaimBbkOptions(search, nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getAccountAll,
@@ -138,4 +166,7 @@ module.exports = {
   getPrintData,
   getOutstandingMintaBeli,
   getOutstandingMintaBeliDetail,
+  getRekapOptions,
+  getRekapRows,
+  getKlaimOptions,
 };

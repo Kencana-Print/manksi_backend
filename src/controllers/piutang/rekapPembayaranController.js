@@ -13,7 +13,7 @@ const getBrowse = async (req, res) => {
 const getBrowseDetail = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    const data = await svc.getBrowseDetail(startDate, endDate);
+    const data = await svc.getBrowseDetail(startDate, endDate, req.user);
     res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

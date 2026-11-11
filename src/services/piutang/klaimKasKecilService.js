@@ -23,6 +23,7 @@ const getBrowse = async (startDate, endDate, cabang, jenis = "") => {
       h.kkh_rek_tujuan AS RekTujuan,
       h.kkh_total AS Total,
       h.kkh_status AS Status,
+      h.kkh_bbk_nomor AS NomorBbk,
       h.kkh_keterangan AS Keterangan,
       h.user_create AS Dibuat,
       (SELECT COUNT(*) FROM tklaim_kaskecil_dtl d
@@ -67,7 +68,8 @@ const getBrowse = async (startDate, endDate, cabang, jenis = "") => {
     const p = infoPjt.get(r.Nomor);
     let statusTransfer = "-";
     if (r.Status === "AKTIF") {
-      if (!p) statusTransfer = "Belum diajukan";
+      if (r.NomorBbk) statusTransfer = "Dibayar BBK";
+      else if (!p) statusTransfer = "Belum diajukan";
       else if (Number(p.sudahRealisasi) === 1) statusTransfer = "Terealisasi";
       else statusTransfer = "Diajukan";
     }
@@ -146,13 +148,19 @@ const getBrowseDetail = async (startDate, endDate, cabang, jenis = "") => {
 // cabangScope: cabang user bila bukan pusat, null bila pusat.
 const batalKlaim = async (nomor, user, cabangScope) => {
   const [[h]] = await db.query(
-    `SELECT kkh_status, kkh_cabang FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
+    `SELECT kkh_status, kkh_cabang, kkh_bbk_nomor
+     FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
     [nomor],
   );
   if (!h) throw httpError("Klaim tidak ditemukan.", 404);
   if (cabangScope && h.kkh_cabang !== cabangScope)
     throw httpError("Klaim ini bukan milik cabang Anda.", 403);
   if (h.kkh_status !== "AKTIF") throw httpError("Klaim sudah dibatalkan.", 400);
+  if (h.kkh_bbk_nomor)
+    throw httpError(
+      `Klaim sudah dibayar lewat BBK ${h.kkh_bbk_nomor}. Tidak bisa dibatalkan.`,
+      400,
+    );
 
   const [[pjt]] = await db.query(
     `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl
@@ -171,7 +179,7 @@ const batalKlaim = async (nomor, user, cabangScope) => {
     const [upd] = await conn.query(
       `UPDATE tklaim_kaskecil_hdr
        SET kkh_status = 'BATAL', user_modified = ?, date_modified = NOW()
-       WHERE kkh_nomor = ? AND kkh_status = 'AKTIF'`,
+       WHERE kkh_nomor = ? AND kkh_status = 'AKTIF' AND kkh_bbk_nomor = ''`,
       [user.kode, nomor],
     );
     if (upd.affectedRows === 0) throw httpError("Klaim sudah dibatalkan.", 400);
