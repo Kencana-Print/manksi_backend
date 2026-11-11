@@ -674,6 +674,13 @@ const saveData = async (payload, user) => {
       nomor,
     ]);
 
+    if (noBkk) {
+      await conn.query(
+        `DELETE FROM finance.tjurnalitem WHERE jurd_jur_no = ?`,
+        [noBkk],
+      );
+    }
+
     if (totalTerpakai !== 0 && noBkk) {
       const firstVerified = detail.find((d) => d.verified && d.total > 0);
       await conn.query(
