@@ -216,7 +216,7 @@ const getDetailForm = async (nomor) => {
 
 // SEMENTARA: pengecekan tutup buku BKK dimatikan sampai tanggal ini
 // (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-30";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-11-30";
 
 const bypassTutupBukuAktif = () => {
   const n = new Date();
