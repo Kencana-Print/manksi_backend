@@ -53,6 +53,7 @@ const getBrowseList = async (filters) => {
        LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
        LEFT JOIN tmka_hdr h ON h.mkb_spk_nomor = s.spk_nomor
        WHERE s.spk_divisi IN (3, 4, 6)
+         AND (s.spk_divisi IN (3, 4) OR h.mkb_nomor IS NOT NULL)
          AND s.spk_aktif = 'Y'
          AND s.spk_tanggal >= ? AND s.spk_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
          ${extraWhere}
@@ -148,7 +149,7 @@ const getBrowseList = async (filters) => {
         LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
         WHERE s.spk_tanggal >= ? AND s.spk_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
           AND s.spk_aktif = 'Y'
-          AND IFNULL(v.divisi, '') NOT IN ('SPANDUK', 'MMT')
+          AND s.spk_divisi IN (3, 4)
           AND NOT EXISTS (SELECT 1 FROM tmka_hdr h WHERE h.mkb_spk_nomor = s.spk_nomor)
           ${extraWhereSPK}
      ) z

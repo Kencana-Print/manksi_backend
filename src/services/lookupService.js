@@ -2,6 +2,7 @@ const db = require("../config/database");
 const { sqlTanpaInduk } = require("./postingGuardService");
 const { filterTipe } = require("./master/bahanService");
 const { kondisiSpanduk } = require("./master/garmenBrgService");
+const { bolehLihatRekening } = require("./master/supplierService");
 
 const searchSpk = async (
   keyword,
@@ -2205,10 +2206,12 @@ const searchSupplier = async (
   page = 1,
   limit = 50,
   withRiwayat = false,
+  user = null,
 ) => {
   const limitNum = Number(limit);
   const pakaiRiwayat = withRiwayat && !!(keyword && keyword.trim() !== "");
   const offset = (Number(page) - 1) * limitNum;
+  const lihatRek = bolehLihatRekening(user);
   let params = [];
 
   let whereClause = `WHERE sup_aktif = "Y"`;
@@ -2227,16 +2230,33 @@ const searchSupplier = async (
     params,
   );
 
+  // Rekening hanya untuk bagian yang berhak (sama dengan Master Supplier).
+  // User lain: tanpa JOIN, satu baris per supplier, kolom rekening dikirim kosong
+  // supaya bentuk payload ke form pemanggil tidak berubah.
+  const kolomRek = lihatRek
+    ? `IFNULL(i.supd_bank, '') AS Bank,
+       IFNULL(i.supd_rekening, '') AS Rekening,
+       IFNULL(i.supd_atasnama, '') AS AtasNama`
+    : `'' AS Bank, '' AS Rekening, '' AS AtasNama`;
+  const joinRek = lihatRek
+    ? `LEFT JOIN tsupplieritem i ON i.supd_kode = s.sup_kode`
+    : "";
+  const urutRek = lihatRek ? `, i.supd_rekening ASC` : "";
+
+  // Paging per SUPPLIER (bukan per baris rekening): ambil halaman supplier dulu,
+  // baru JOIN rekening. Supplier dengan N rekening = N baris, tidak terpotong antar halaman.
   const query = `
-    SELECT sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota,
-           IFNULL(i.supd_bank, '') AS Bank,
-           IFNULL(i.supd_rekening, '') AS Rekening,
-           IFNULL(i.supd_atasnama, '') AS AtasNama
-      FROM tsupplier
-      LEFT JOIN tsupplieritem i ON i.supd_kode = tsupplier.sup_kode
-      ${whereClause}
-     ORDER BY sup_nama ASC, sup_kode ASC
-     LIMIT ? OFFSET ?
+    SELECT s.sup_kode AS Kode, s.sup_nama AS Nama, s.sup_alamat AS Alamat, s.sup_kota AS Kota,
+           ${kolomRek}
+      FROM (
+        SELECT sup_kode, sup_nama, sup_alamat, sup_kota
+          FROM tsupplier
+          ${whereClause}
+         ORDER BY sup_nama ASC, sup_kode ASC
+         LIMIT ? OFFSET ?
+      ) s
+      ${joinRek}
+     ORDER BY s.sup_nama ASC, s.sup_kode ASC ${urutRek}
   `;
   params.push(limitNum, offset);
 

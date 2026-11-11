@@ -69,6 +69,7 @@ const getDetail = async (nomor) => {
             DATE_FORMAT(h.mkb_tanggal, '%Y-%m-%d') AS mkb_tanggal,
             h.mkb_spk_nomor,
             h.mkb_note,
+            s.spk_so_ref AS so_nomor,
             s.spk_nama,
             s.spk_jumlah,
             s.spk_memo,
@@ -123,29 +124,66 @@ const getDetail = async (nomor) => {
 };
 
 // ─────────────────────────────────────────────
-// getSpkInfo — saat user pilih SPK baru
-// Cek apakah SPK sudah punya MKA → kalau ada, return nomor MKA existing
-// Kalau belum → return info SPK + pre-fill detail dari tkesesuaianmap_acc
-// Delphi: edtNomorSPKExit
+// Divisi yang boleh dibuatkan MKA baru
 // ─────────────────────────────────────────────
-const getSpkInfo = async (spkNomor) => {
-  const [spkRows] = await db.query(
-    `SELECT s.spk_nomor, s.spk_nama, s.spk_jumlah, s.spk_memo, v.divisi
+const DIVISI_MKA = ["3", "4"];
+
+// ─────────────────────────────────────────────
+// resolveSpk — terjemahkan nomor input (SO, MAP, atau SPK) ke satu
+// baris SPK aktif. Aturan: satu SO satu SPK.
+//   SO  → tspk.spk_so_ref
+//   MAP → tspk.spk_memo
+//   SPK → tspk.spk_nomor (SPK legacy / dari lookup mode so)
+// ─────────────────────────────────────────────
+const resolveSpk = async (nomorInput) => {
+  const nomor = String(nomorInput || "").trim();
+  if (!nomor) return { error: "Nomor SO harus diisi" };
+
+  const [rows] = await db.query(
+    `SELECT s.spk_nomor, s.spk_nama, s.spk_jumlah, s.spk_jumlah_kirim,
+            s.spk_memo, s.spk_so_ref, s.spk_cmo, s.spk_divisi, v.divisi
      FROM tspk s
      LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
      WHERE s.spk_aktif = 'Y'
-       AND s.spk_cmo <> ''
-       AND s.spk_jumlah <> s.spk_jumlah_kirim 
-       AND s.spk_nomor = ?`,
-    [spkNomor],
+       AND (s.spk_nomor = ? OR s.spk_so_ref = ? OR s.spk_memo = ?)`,
+    [nomor, nomor, nomor],
   );
-  if (!spkRows.length) {
+
+  if (!rows.length) {
     return {
-      exists: false,
-      error: "SPK tidak ditemukan, belum di-CMO, atau sudah selesai kirim",
+      error:
+        "SPK belum ada untuk nomor ini. Pastikan SO/MAP sudah dibuatkan SPK oleh PPIC.",
     };
   }
-  const spk = spkRows[0];
+
+  const aktif = rows.filter(
+    (r) => r.spk_cmo && Number(r.spk_jumlah) !== Number(r.spk_jumlah_kirim),
+  );
+  if (!aktif.length) {
+    return { error: "SPK belum di-CMO atau sudah selesai kirim" };
+  }
+  if (aktif.length > 1) {
+    return {
+      error: `Nomor ini terkait ${aktif.length} SPK (${aktif
+        .map((r) => r.spk_nomor)
+        .join(", ")}). Masukkan nomor SO-nya.`,
+    };
+  }
+  return { spk: aktif[0] };
+};
+
+// ─────────────────────────────────────────────
+// getSpkInfo — saat user mengisi nomor SO / MAP / SPK
+// Cek apakah SPK turunannya sudah punya MKA → kalau ada, return MKA existing
+// Kalau belum → return info SPK + pre-fill detail dari tkesesuaianmap_acc
+// Delphi: edtNomorSPKExit
+// ─────────────────────────────────────────────
+const getSpkInfo = async (nomorInput) => {
+  const hasil = await resolveSpk(nomorInput);
+  if (hasil.error) return { exists: false, error: hasil.error };
+
+  const spk = hasil.spk;
+  const spkNomor = spk.spk_nomor;
 
   const [mkaRows] = await db.query(
     `SELECT mkb_nomor FROM tmka_hdr WHERE mkb_spk_nomor = ? LIMIT 1`,
@@ -154,6 +192,11 @@ const getSpkInfo = async (spkNomor) => {
   if (mkaRows.length) {
     const existing = await getDetail(mkaRows[0].mkb_nomor);
     return { exists: true, hasExisting: true, existing };
+  }
+
+  // MKA baru hanya untuk divisi 3 dan 4 (MKA lama divisi lain tetap bisa dibuka di atas)
+  if (!DIVISI_MKA.includes(String(spk.spk_divisi))) {
+    return { exists: false, error: "MKA hanya untuk divisi 3 dan 4" };
   }
 
   const prefillDetail = [];
@@ -212,11 +255,7 @@ const getSpkInfo = async (spkNomor) => {
   if (legacySize.length > 0) {
     sizeRows = legacySize;
   } else {
-    const [[spkRefRow]] = await db.query(
-      `SELECT spk_so_ref FROM tspk WHERE spk_nomor = ?`,
-      [spkNomor],
-    );
-    const soRef = spkRefRow?.spk_so_ref || "";
+    const soRef = spk.spk_so_ref || "";
     if (soRef) {
       const [newSize] = await db.query(
         `SELECT sos_size AS size, sos_qty AS qty
@@ -247,14 +286,7 @@ const getSpkInfo = async (spkNomor) => {
       size: sz.size,
     };
 
-    // [FIX] Auto-lookup kode LABEL — SEMUA divisi, bukan cuma KAOSAN.
-    // getkdacc() Delphi sendiri generic: cari brg_nama LIKE '%LABEL%'
-    // + '- {size}%' + '%{divisi}%' tanpa syarat divisi tertentu.
-    // Pembatasan "cuma jalan kalau KAOSAN" itu ada di spksize() (si
-    // PEMANGGIL), bukan di getkdacc() itu sendiri — jadi divisi lain
-    // (misal GARMEN) yang punya barang LABEL dengan nama mengandung
-    // size + nama divisinya juga bakal ke-auto-fill. Kalau nggak
-    // ketemu, fallback ke templateRow kosong seperti biasa.
+    // Auto-lookup kode LABEL — SEMUA divisi (getkdacc() Delphi generic).
     const [labelRows] = await db.query(
       `SELECT b.brg_kode AS kode,
               IF(b.brg_note = '', b.brg_nama,
@@ -305,7 +337,8 @@ const getSpkInfo = async (spkNomor) => {
     exists: true,
     hasExisting: false,
     spk: {
-      spk_nomor: spk.spk_nomor,
+      spk_nomor: spk.spk_nomor, // ← yang disimpan ke mkb_spk_nomor
+      so_nomor: spk.spk_so_ref || "", // ← untuk ditampilkan di field Nomor SO
       spk_nama: spk.spk_nama,
       spk_jumlah: parseFloat(spk.spk_jumlah) || 0,
       spk_memo: spk.spk_memo,
@@ -397,23 +430,32 @@ const saveData = async (payload, userKode) => {
   const {
     mkb_nomor, // kosong = create baru
     mkb_tanggal,
-    mkb_spk_nomor,
+    mkb_spk_nomor, // create: boleh nomor SO / MAP / SPK, diterjemahkan ke SPK
     mkb_note,
     detail = [],
   } = payload;
 
   // Validasi
-  if (!mkb_spk_nomor) throw new Error("SPK harus diisi");
   if (!detail.length) throw new Error("Detail tidak boleh kosong");
 
   const hasEmpty = detail.some((d) => !d.nama || parseFloat(d.jumlah) === 0);
   if (hasEmpty) throw new Error("Jumlah detail tidak boleh 0");
 
+  // Create: terjemahkan input ke satu SPK + validasi divisi di server
+  let spkNomor = "";
+  if (!mkb_nomor) {
+    const hasil = await resolveSpk(mkb_spk_nomor);
+    if (hasil.error) throw new Error(hasil.error);
+    if (!DIVISI_MKA.includes(String(hasil.spk.spk_divisi))) {
+      throw new Error("MKA hanya untuk divisi 3 dan 4");
+    }
+    spkNomor = hasil.spk.spk_nomor;
+  }
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    const now = new Date();
     const tahun = new Date(mkb_tanggal).getFullYear();
     let nomor = mkb_nomor;
 
@@ -430,13 +472,23 @@ const saveData = async (payload, userKode) => {
       );
       // Catatan: mkb_spk_nomor tidak boleh diubah saat edit (Delphi: disabled)
     } else {
-      // CREATE — generate nomor
+      // CREATE — generate nomor (mengunci tabel per tahun)
       nomor = await generateNomor(conn, tahun);
+
+      // Cek duplikat setelah lock: satu SPK hanya boleh punya satu MKA
+      const [dup] = await conn.query(
+        `SELECT mkb_nomor FROM tmka_hdr WHERE mkb_spk_nomor = ? LIMIT 1`,
+        [spkNomor],
+      );
+      if (dup.length) {
+        throw new Error(`SPK ini sudah punya MKA (${dup[0].mkb_nomor})`);
+      }
+
       await conn.query(
         `INSERT INTO tmka_hdr
           (mkb_nomor, mkb_tanggal, mkb_note, mkb_spk_nomor, date_create, user_create)
          VALUES (?, ?, ?, ?, NOW(), ?)`,
-        [nomor, mkb_tanggal, mkb_note || "", mkb_spk_nomor, userKode],
+        [nomor, mkb_tanggal, mkb_note || "", spkNomor, userKode],
       );
     }
 

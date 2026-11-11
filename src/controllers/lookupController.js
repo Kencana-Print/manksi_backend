@@ -696,6 +696,7 @@ const searchSupplier = async (req, res) => {
       page,
       limit,
       withRiwayat,
+      req.user,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

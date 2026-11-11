@@ -52,16 +52,20 @@ const generateNomorBPB = async (tanggal) => {
 };
 
 // --- 1. VALIDASI FIELD (Migrasi OnExit Delphi) ---
-const validateField = async (type, value) => {
+const validateField = async (type, value, exclude = "") => {
   if (!value) return { valid: true };
 
-  // A. Validasi MPPB (edtmppbExit)
+  // A. Validasi MPPB (edtmppbExit) — MPPB kini ada di detail PO.
+  // exclude = nomor PO yang sedang diedit, supaya MPPB miliknya sendiri tidak dianggap terpakai.
   if (type === "mppb") {
     const [mppb] = await db.query(
-      `SELECT m.*, DATE_FORMAT(m.mpb_tanggal,"%Y-%m-%d") as tgl, IFNULL(h.po_nomor,"") as po 
-       FROM tmpb m LEFT JOIN tpo_hdr h ON h.po_mppb_nomor = m.mpb_nomor 
-       WHERE m.mpb_nomor = ?`,
-      [value],
+      `SELECT m.*, DATE_FORMAT(m.mpb_tanggal,"%Y-%m-%d") as tgl,
+              IFNULL((SELECT d.pod_po_nomor FROM tpo_dtl d
+                       WHERE d.pod_mppb_nomor = m.mpb_nomor AND d.pod_po_nomor <> ?
+                       LIMIT 1), "") as po
+         FROM tmpb m
+        WHERE m.mpb_nomor = ?`,
+      [exclude || "", value],
     );
 
     if (mppb.length === 0) throw new Error("No. MPPB tersebut tidak ada.");
@@ -75,6 +79,7 @@ const validateField = async (type, value) => {
       data: {
         tanggal: mppb[0].tgl,
         jumlah: mppb[0].mpb_jmlorder,
+        spk: await cariSpkDariMppb(db, value),
       },
     };
   }
@@ -100,6 +105,8 @@ const validateField = async (type, value) => {
         IFNULL(g.bg_nama,"") as gramasi, IFNULL(s.bs_nama,"") as setting, IFNULL(j.bj_nama,"") as jenis,
         d.pod_hargabeli as harga, d.pod_disc as diskon,
         d.pod_spk_nomor as spk, d.pod_mkb_nomor as mkb,
+        d.pod_mppb_nomor as mppb, mp.mpb_jmlorder as jmlmppb,
+        DATE_FORMAT(mp.mpb_tanggal,"%Y-%m-%d") as tglmppb,
         (d.pod_jumlah - IFNULL((
            SELECT SUM(x.pod_jumlah) FROM tpo_dtl x INNER JOIN tpo_hdr y ON y.po_nomor = x.pod_po_nomor 
            WHERE y.po_greige = ? AND x.pod_bhn_kode = d.pod_bhn_kode
@@ -109,6 +116,7 @@ const validateField = async (type, value) => {
       LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2)
       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2)
+      LEFT JOIN tmpb mp ON mp.mpb_nomor = d.pod_mppb_nomor AND d.pod_mppb_nomor <> ''
       WHERE d.pod_po_nomor = ?
     `,
       [value, value],
@@ -184,7 +192,8 @@ const getDetail = async (nomor) => {
             IFNULL(b.bhn_konstruksi, '') AS konstruksi, b.bhn_panjang AS panjang, b.bhn_lebar AS lebar,
             IF(IFNULL(d.pod_gramasia, '') <> '', d.pod_gramasia, IFNULL(g.bg_nama,"")) as gramasi,
             IF(IFNULL(d.pod_gramasia_awal, '') <> '', d.pod_gramasia_awal, IFNULL(g.bg_nama,"")) as gramasiAwal,
-            IF(IFNULL(d.pod_setting, '') <> '', d.pod_setting, IFNULL(s.bs_nama,"")) as setting
+            IF(IFNULL(d.pod_setting, '') <> '', d.pod_setting, IFNULL(s.bs_nama,"")) as setting,
+            DATE_FORMAT(mp.mpb_tanggal,"%Y-%m-%d") AS tgl_mppb, mp.mpb_jmlorder AS jmlmppb
       FROM tpo_dtl d
       INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
       LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
@@ -192,6 +201,7 @@ const getDetail = async (nomor) => {
       LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.pod_bhn_kode, 2)
       LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.pod_bhn_kode, 6, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
       LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.pod_bhn_kode, 2) AND LEFT(d.pod_bhn_kode, 2) <> 'SB'
+      LEFT JOIN tmpb mp ON mp.mpb_nomor = d.pod_mppb_nomor AND d.pod_mppb_nomor <> ''
       WHERE d.pod_po_nomor = ? AND d.pod_bhn_kode <> '' ORDER BY d.pod_nourut
     `,
     [nomor],
@@ -220,7 +230,6 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
-  // GANTI:
   // G. Get No BPB (Jika PO Celup) — hanya BPB otomatis; BPB dari QC Bahan
   // (punya lot di tbpb_qc_lot) memakai bpb_po_nomor yang sama tetapi bukan miliknya
   let noBPB = "";
@@ -237,6 +246,17 @@ const getDetail = async (nomor) => {
     if (bpb.length > 0) noBPB = bpb[0].bpb_nomor;
   }
 
+  // H. Sudah ada BPB? Tanggal PO boleh diubah selama belum ada BPB.
+  // PO Celup dikecualikan: BPB-nya otomatis dan tanggalnya ikut PO.
+  let sudahBpb = false;
+  if (Number(header.po_jenis) !== 2) {
+    const [cekBpb] = await db.query(
+      `SELECT 1 FROM tbpb_hdr WHERE bpb_po_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+    sudahBpb = cekBpb.length > 0;
+  }
+
   return {
     header,
     items,
@@ -246,6 +266,7 @@ const getDetail = async (nomor) => {
     statusNgedit,
     urutPin,
     isTutupBuku,
+    sudahBpb,
   };
 };
 
@@ -260,6 +281,88 @@ const cekNomorSpk = async (conn, daftar) => {
     [daftar, daftar, daftar],
   );
   return new Set(rows.map((r) => String(r.nomor).toUpperCase()));
+};
+
+// --- SPK OTOMATIS DARI MPPB ---
+// Urutan: SO aktif terbaru yang memanggil MPPB; bila belum ada, MAP aktif
+// terbaru dari baris penawaran yang sama dengan MPPB (nomor + id).
+// Hasil '' bila keduanya belum ada.
+const cariSpkDariMppb = async (runner, mppb) => {
+  const nomor = String(mppb || "").trim();
+  if (!nomor) return "";
+
+  const [so] = await runner.query(
+    `SELECT so_nomor FROM tsalesorder
+      WHERE so_mppb = ? AND so_aktif = 'Y'
+      ORDER BY so_tanggal DESC, so_nomor DESC
+      LIMIT 1`,
+    [nomor],
+  );
+  if (so.length > 0) return so[0].so_nomor;
+
+  const [map] = await runner.query(
+    `SELECT m.mspk_nomor
+       FROM tmpb p
+       JOIN tmemospk m ON m.mspk_pen_nomor = p.mpb_pen_nomor
+                      AND m.mspk_pen_id = p.mpb_pen_id
+      WHERE p.mpb_nomor = ?
+        AND IFNULL(p.mpb_pen_nomor, '') <> ''
+        AND m.mspk_aktif = 'Y'
+      ORDER BY m.mspk_tanggal DESC, m.mspk_nomor DESC
+      LIMIT 1`,
+    [nomor],
+  );
+  return map.length > 0 ? map[0].mspk_nomor : "";
+};
+
+// Isi kolom SPK baris PO yang ber-MPPB ini dengan `spk` (nomor SO atau MAP).
+// Dipanggil dari simpan SO dan simpan MAP, memakai conn transaksi pemanggil.
+// Yang diisi: baris yang SPK-nya kosong, atau berisi MAP milik MPPB ini
+// (MAP asal SO `mapNomor`, atau MAP dari baris penawaran MPPB itu).
+// Dilewati: baris yang sudah ber-BPB, dan PO yang sudah melewati tutup buku.
+const isiSpkPoDariMppb = async (conn, mppb, spk, mapNomor = "") => {
+  const m = String(mppb || "").trim();
+  const isi = String(spk || "").trim();
+  if (!m || !isi) return 0;
+
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const params = [isi, m, String(mapNomor || "")];
+  let syaratTutup = "";
+  if (zdtClose) {
+    syaratTutup = "AND h.po_tanggal >= ?";
+    params.push(zdtClose);
+  }
+
+  const [res] = await conn.query(
+    `UPDATE tpo_dtl d
+       JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
+        SET d.pod_spk_nomor = ?
+      WHERE d.pod_mppb_nomor = ?
+        AND d.pod_bhn_kode <> ''
+        AND (
+          d.pod_spk_nomor = ''
+          OR d.pod_spk_nomor = ?
+          OR d.pod_spk_nomor IN (
+            SELECT mm.mspk_nomor
+              FROM tmpb p
+              JOIN tmemospk mm ON mm.mspk_pen_nomor = p.mpb_pen_nomor
+                              AND mm.mspk_pen_id = p.mpb_pen_id
+             WHERE p.mpb_nomor = d.pod_mppb_nomor
+               AND IFNULL(p.mpb_pen_nomor, '') <> ''
+          )
+        )
+        AND d.pod_spk_nomor <> ?
+        ${syaratTutup}
+        AND NOT EXISTS (
+          SELECT 1
+            FROM tbpb_hdr b
+            JOIN tbpb_dtl bd ON bd.bpbd_bpb_Nomor = b.bpb_Nomor
+           WHERE b.bpb_po_Nomor = d.pod_po_nomor
+             AND bd.bpbd_bhn_kode = d.pod_bhn_kode
+        )`,
+    [...params.slice(0, 3), isi, ...params.slice(3)],
+  );
+  return res.affectedRows;
 };
 
 // --- 3. SAVE DATA (INSERT & UPDATE MASSIVE TRANSACTION) ---
@@ -447,6 +550,116 @@ const saveData = async (payload, userKode) => {
       }
     }
 
+    // A4. Permintaan Pembelian Bahan (MBB) ada di header: satu PO satu permintaan.
+    // MPPB ada di detail. Jumlah PO boleh melebihi sisa permintaan, jadi tidak ada
+    // cek sisa di sini.
+    const mppbBaris = (it) => String(it.mppb || "").trim();
+
+    // Tautan yang sudah ada di PO ini (edit) tidak divalidasi ulang agar PO lama
+    // tetap bisa disimpan walau permintaan/MPPB-nya berubah status.
+    let mbbLama = "";
+    const lamaMppb = new Set();
+    if (isEdit) {
+      const [lamaHdr] = await conn.query(
+        `SELECT po_mbb_nomor FROM tpo_hdr WHERE po_nomor = ?`,
+        [nomorPO],
+      );
+      mbbLama = String(lamaHdr[0]?.po_mbb_nomor || "").trim();
+
+      const [lama] = await conn.query(
+        `SELECT pod_mppb_nomor FROM tpo_dtl WHERE pod_po_nomor = ?`,
+        [nomorPO],
+      );
+      for (const r of lama) {
+        if (r.pod_mppb_nomor)
+          lamaMppb.add(String(r.pod_mppb_nomor).toUpperCase());
+      }
+    }
+
+    // A4a. MBB di header. PO Celup mewarisi PO Greige, jadi tidak punya permintaan
+    // sendiri. Saat edit, permintaan tidak boleh diganti (form juga mengunci).
+    const mbbHeader = jpo === 2 ? "" : String(header.po_mbb_nomor || "").trim();
+    if (isEdit && mbbHeader !== mbbLama)
+      throw new Error(
+        "Permintaan Pembelian Bahan tidak boleh diubah saat edit.",
+      );
+
+    if (mbbHeader) {
+      const [mbb] = await conn.query(
+        `SELECT mbb_status FROM tmintabelibahan_hdr WHERE mbb_nomor = ?`,
+        [mbbHeader],
+      );
+      if (mbb.length === 0)
+        throw new Error(`Permintaan ${mbbHeader} tidak ditemukan.`);
+      if (mbb[0].mbb_status && mbbHeader !== mbbLama)
+        throw new Error(`Permintaan ${mbbHeader} sudah ${mbb[0].mbb_status}.`);
+
+      // Semua bahan di PO harus ada di dokumen permintaan tersebut
+      const kodeList = [
+        ...new Set(itemsTerisi.map((i) => String(i.kode).trim())),
+      ];
+      if (kodeList.length > 0) {
+        const [adaBahan] = await conn.query(
+          `SELECT mbbd_bhn_kode FROM tmintabelibahan_dtl
+            WHERE mbbd_nomor = ? AND mbbd_bhn_kode IN (?)`,
+          [mbbHeader, kodeList],
+        );
+        const adaSet = new Set(
+          adaBahan.map((r) => String(r.mbbd_bhn_kode).toUpperCase()),
+        );
+        const luar = itemsTerisi.findIndex(
+          (i) => !adaSet.has(String(i.kode).trim().toUpperCase()),
+        );
+        if (luar >= 0)
+          throw new Error(
+            `Baris ${luar + 1}: bahan ${itemsTerisi[luar].kode} tidak ada di permintaan ${mbbHeader}.`,
+          );
+      }
+    }
+
+    // A4b. MPPB: satu MPPB boleh di banyak baris dalam satu PO, tapi tidak boleh
+    // sudah dipakai PO lain. PO Celup mewarisi MPPB PO Greige-nya, jadi dilewati.
+    const refMppb = itemsTerisi
+      .map((it, idx) => ({ idx, mppb: mppbBaris(it) }))
+      .filter((r) => r.mppb);
+    const mppbBaru = new Map(); // nomor (huruf besar) -> baris pertama pemakainya
+    for (const r of refMppb) {
+      const k = r.mppb.toUpperCase();
+      if (!lamaMppb.has(k) && !mppbBaru.has(k)) mppbBaru.set(k, r);
+    }
+    if (jpo !== 2 && mppbBaru.size > 0) {
+      const [cekMppb] = await conn.query(
+        `SELECT m.mpb_nomor, m.mpb_approve,
+                (SELECT d.pod_po_nomor FROM tpo_dtl d
+                  WHERE d.pod_mppb_nomor = m.mpb_nomor AND d.pod_po_nomor <> ?
+                  LIMIT 1) AS po
+           FROM tmpb m WHERE m.mpb_nomor IN (?)`,
+        [nomorPO || "", [...mppbBaru.values()].map((r) => r.mppb)],
+      );
+      const petaMppb = new Map(
+        cekMppb.map((r) => [String(r.mpb_nomor).toUpperCase(), r]),
+      );
+      for (const [k, r] of mppbBaru) {
+        const m = petaMppb.get(k);
+        if (!m)
+          throw new Error(`Baris ${r.idx + 1}: MPPB ${r.mppb} tidak ada.`);
+        if (m.mpb_approve === "N") {
+          throw new Error(
+            `Baris ${r.idx + 1}: MPPB ${r.mppb} belum di-approve oleh PPIC.`,
+          );
+        }
+        if (m.po) {
+          throw new Error(
+            `Baris ${r.idx + 1}: MPPB ${r.mppb} sudah di-input di PO ${m.po}.`,
+          );
+        }
+      }
+    }
+
+    // Kompatibilitas sementara: header tetap diisi MPPB baris pertama yang punya
+    // MPPB, untuk modul lain yang masih membaca tpo_hdr.po_mppb_nomor.
+    const mppbHeader = refMppb.length > 0 ? refMppb[0].mppb : "";
+
     // B. Header Eksekusi
     if (!isEdit) {
       nomorPO = await generateNomorPO(jpo, header.po_tanggal);
@@ -454,8 +667,8 @@ const saveData = async (payload, userKode) => {
       const insertHdr = `
         INSERT INTO tpo_hdr (
           po_nomor, po_greige, po_tanggal, po_jenis, po_keterangan, po_sup_kode, 
-          po_mppb_nomor, po_status_ppn, po_ppn, date_create, user_create, po_note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+          po_mppb_nomor, po_mbb_nomor, po_status_ppn, po_ppn, date_create, user_create, po_note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
       `;
       await conn.query(insertHdr, [
         nomorPO,
@@ -464,7 +677,8 @@ const saveData = async (payload, userKode) => {
         jpo,
         header.po_keterangan,
         supHeader,
-        header.po_mppb_nomor,
+        mppbHeader,
+        mbbHeader,
         statusPpnHeader,
         ppnHeader,
         userKode,
@@ -495,7 +709,8 @@ const saveData = async (payload, userKode) => {
 
       // 1. Cek Status PO (Tidak Boleh Edit Jika Close/OnProses)
       const [cekStatus] = await conn.query(
-        `SELECT po_close, po_jenis FROM tpo_hdr WHERE po_nomor=?`,
+        `SELECT po_close, po_jenis, DATE_FORMAT(po_tanggal, '%Y-%m-%d') AS tgl_lama
+           FROM tpo_hdr WHERE po_nomor=?`,
         [nomorPO],
       );
       if (cekStatus.length === 0) throw new Error("PO tidak ditemukan.");
@@ -503,6 +718,31 @@ const saveData = async (payload, userKode) => {
         throw new Error("Sudah CLOSE. Tidak bisa disimpan.");
       if (cekStatus[0].po_close === 2)
         throw new Error("Sudah ONPROSES. Tidak bisa disimpan.");
+
+      // Tanggal PO boleh diubah selama tanggal LAMA belum tutup buku dan belum ada BPB.
+      // (Tanggal baru sudah dicek di langkah A di atas.)
+      if (
+        zdtClose &&
+        new Date(cekStatus[0].tgl_lama) < zdtClose &&
+        statusNgedit !== "ACC"
+      ) {
+        throw new Error(
+          "Anda tidak boleh input/edit di tanggal periode yang sudah diclose.",
+        );
+      }
+      const tanggalBerubah =
+        String(header.po_tanggal || "").slice(0, 10) !== cekStatus[0].tgl_lama;
+      if (tanggalBerubah && Number(cekStatus[0].po_jenis) !== 2) {
+        const [adaBpb] = await conn.query(
+          `SELECT bpb_nomor FROM tbpb_hdr WHERE bpb_po_nomor = ? LIMIT 1`,
+          [nomorPO],
+        );
+        if (adaBpb.length > 0) {
+          throw new Error(
+            `PO sudah ada BPB ${adaBpb[0].bpb_nomor}, tanggal PO tidak bisa diubah.`,
+          );
+        }
+      }
 
       // Jenis 1/2/4 tidak boleh berpindah jenis (nomor, BPB & struktur detail
       // berbeda). 0 <-> 3 dibolehkan, tapi nilai yang tersimpan dipertahankan
@@ -591,7 +831,7 @@ const saveData = async (payload, userKode) => {
         jenisTersimpan,
         header.po_keterangan,
         supHeader,
-        header.po_mppb_nomor,
+        mppbHeader,
         statusPpnHeader,
         ppnHeader,
         header.po_note || "",
@@ -633,8 +873,8 @@ const saveData = async (payload, userKode) => {
                 pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan,
                 pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah,
                 pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode,
-                pod_ppn, pod_keterangan
-              ) VALUES (?, ?, ?, ?, ?, '', '', '', 0, ?, ?, ?, ?, '', NULL, 0, ?)
+                pod_ppn, pod_keterangan, pod_mppb_nomor
+              ) VALUES (?, ?, ?, ?, ?, '', '', '', 0, ?, ?, ?, ?, '', NULL, 0, ?, ?)
             `,
             [
               nomorPO,
@@ -647,6 +887,7 @@ const saveData = async (payload, userKode) => {
               Number(item.harga) || 0,
               String(item.spk || "").trim(),
               String(item.keterangan || "").trim(),
+              mppbBaris(item),
             ],
           );
           nourut++;
@@ -663,8 +904,9 @@ const saveData = async (payload, userKode) => {
           `
             INSERT INTO tpo_dtl (
               pod_po_nomor, pod_nourut, pod_bhn_kode, pod_namaext, pod_bhn_satuan, 
-              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode, pod_ppn
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              pod_gramasia, pod_gramasia_awal, pod_setting, pod_roll, pod_jumlah, pod_disc, pod_hargabeli, pod_spk_nomor, pod_mkb_nomor, pod_sup_kode, pod_ppn,
+              pod_mppb_nomor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomorPO,
@@ -683,6 +925,7 @@ const saveData = async (payload, userKode) => {
             item.mkb || "",
             isLainLain ? item.supKode : null,
             isLainLain ? Number(item.ppn) || 0 : 0,
+            mppbBaris(item),
           ],
         );
 
@@ -853,10 +1096,65 @@ const getSupplierByKode = async (kode) => {
   return rows[0];
 };
 
+// --- 5. LOOKUP: baris Permintaan Pembelian Bahan yang masih punya sisa ---
+// exclude = nomor PO yang sedang diedit (pesanan miliknya tidak mengurangi sisa)
+const getMbbOutstanding = async (jenis, exclude = "") => {
+  const jpo = Number(jenis);
+  if (![0, 1, 2, 3, 4, JENIS_SPANDUK].includes(jpo))
+    throw new Error("Jenis PO tidak valid.");
+
+  // Aturan yang sama dengan saveData: PO Spanduk hanya SB, jenis lain tanpa SB
+  const filterJenis =
+    jpo === JENIS_SPANDUK
+      ? `AND LEFT(d.mbbd_bhn_kode, 2) = 'SB'`
+      : `AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'`;
+
+  const [rows] = await db.query(
+    `SELECT
+       d.mbbd_nomor AS nomor,
+       DATE_FORMAT(h.mbb_tanggal, "%Y-%m-%d") AS tanggal,
+       h.mbb_cab AS cab,
+       h.mbb_ket AS ket,
+       d.mbbd_bhn_kode AS kode,
+       IFNULL(b.bhn_name, "") AS nama,
+       d.mbbd_satuan AS satuan,
+       IF(LEFT(d.mbbd_bhn_kode, 2) = "SB", "", IFNULL(s.bs_nama, "")) AS setting,
+       IFNULL(j.bj_nama, "") AS jenis,
+       IFNULL(g.bg_nama, "") AS gramasi,
+       IFNULL(b.bhn_hargabeli, 0) AS harga,
+       d.mbbd_jumlah AS jumlah,
+       IFNULL(p.dipesan, 0) AS dipesan,
+       ROUND(d.mbbd_jumlah - IFNULL(p.dipesan, 0), 2) AS sisa,
+       d.mbbd_ket AS keterangan
+     FROM tmintabelibahan_dtl d
+     JOIN tmintabelibahan_hdr h ON h.mbb_nomor = d.mbbd_nomor
+     LEFT JOIN tbahan b ON b.bhn_kode = d.mbbd_bhn_kode
+     LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.mbbd_bhn_kode, 2)
+     LEFT JOIN tbahan_gramasi g ON g.bg_kode = MID(d.mbbd_bhn_kode, 6, 2)
+                               AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
+     LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mbbd_bhn_kode, 2)
+                               AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
+     LEFT JOIN (
+       SELECT ph.po_mbb_nomor, pd.pod_bhn_kode, SUM(pd.pod_jumlah) AS dipesan
+         FROM tpo_hdr ph
+         JOIN tpo_dtl pd ON pd.pod_po_nomor = ph.po_nomor
+        WHERE ph.po_mbb_nomor <> '' AND ph.po_nomor <> ?
+        GROUP BY ph.po_mbb_nomor, pd.pod_bhn_kode
+     ) p ON p.po_mbb_nomor = d.mbbd_nomor AND p.pod_bhn_kode = d.mbbd_bhn_kode
+     WHERE h.mbb_status = ''
+       ${filterJenis}
+       AND ROUND(d.mbbd_jumlah - IFNULL(p.dipesan, 0), 2) > 0
+     ORDER BY h.mbb_tanggal, d.mbbd_nomor, d.mbbd_nourut`,
+    [exclude || ""],
+  );
+  return rows;
+};
+
 module.exports = {
   validateField,
   getDetail,
   saveData,
   getDetailMkbForPo,
   getSupplierByKode,
+  getMbbOutstanding,
 };

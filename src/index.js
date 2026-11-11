@@ -99,6 +99,8 @@ const mutasiMarketingSpandukFormRoutes = require("./routes/spanduk/mutasiMarketi
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
 const realisasiBahanRoutes = require("./routes/garmen/realisasiBahanRoutes");
 const realisasiBahanFormRoutes = require("./routes/garmen/realisasiBahanFormRoutes");
+const permintaanPembelianBahanRoutes = require("./routes/garmen/permintaanPembelianBahanRoutes");
+const permintaanPembelianBahanFormRoutes = require("./routes/garmen/permintaanPembelianBahanFormRoutes");
 const returBahanRoutes = require("./routes/garmen/returBahanRoutes");
 const returBahanFormRoutes = require("./routes/garmen/returBahanFormRoutes");
 const approveReturBahanRoutes = require("./routes/garmen/approveReturBahanRoutes");
@@ -706,6 +708,14 @@ app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
 app.use(
   "/api/garmen/bahan-baku/realisasi-minta-form",
   realisasiBahanFormRoutes,
+);
+app.use(
+  "/api/garmen/permintaan-pembelian-bahan",
+  permintaanPembelianBahanRoutes,
+);
+app.use(
+  "/api/garmen/permintaan-pembelian-bahan-form",
+  permintaanPembelianBahanFormRoutes,
 );
 app.use("/api/garmen/bahan-baku/retur-bahan", returBahanRoutes);
 app.use("/api/garmen/bahan-baku/retur-bahan/form", returBahanFormRoutes);

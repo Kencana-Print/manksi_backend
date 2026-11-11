@@ -4631,6 +4631,7 @@ const getSpkBelumMkbCount = async (user) => {
     WHERE s.so_aktif = 'Y'
       AND s.so_cmo <> ''
       AND s.so_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND s.so_bahan = 'Y'
       AND LEFT(s.so_divisi, 1) IN ('3', '4', '6')
       AND s.so_nomor NOT IN (
         SELECT h.MKB_SPK_NOMOR
@@ -5171,6 +5172,7 @@ const getSpkBelumMkbListPaged = async (user, limit = 20, offset = 0) => {
     WHERE s.so_aktif = 'Y'
       AND s.so_cmo <> ''
       AND s.so_jo_kode NOT IN ('BR', 'SB', 'SD', 'PL')
+      AND s.so_bahan = 'Y'
       AND LEFT(s.so_divisi, 1) IN ('3', '4', '6')
       AND s.so_nomor NOT IN (
         SELECT h.MKB_SPK_NOMOR FROM tmkb_hdr h WHERE h.MKB_SPK_NOMOR <> ''
@@ -6411,7 +6413,8 @@ const buildOutstandingPP = (cabang) => {
         UPPER(b.brg_jenis) AS Jenis,
         d.mbd_jumlah AS QtyMinta,
         IFNULL(k1.Qty, 0) + IFNULL(k2.Qty, 0)
-          + IFNULL(k3.Qty, 0) + IFNULL(k4.Qty, 0) AS QtyBeli,
+          + IFNULL(k3.Qty, 0) + IFNULL(k4.Qty, 0)
+          + IFNULL(k5.Qty, 0) AS QtyBeli,
         IFNULL(d2.Qty, 0) AS QtyDtl2
       FROM tgarmenmintabeli_hdr h
       JOIN tgarmenmintabeli_dtl d ON d.mbd_nomor = h.mb_nomor
@@ -6433,23 +6436,50 @@ const buildOutstandingPP = (cabang) => {
         FROM tgarmenmintabeli_dtl2
         GROUP BY mbd2_nomor, mbd2_brg_kode
       ) d2 ON d2.mbd2_nomor = d.mbd_nomor AND d2.mbd2_brg_kode = d.mbd_brg_kode
-      LEFT JOIN (
-        SELECT h.po_mb_nomor AS mb_nomor, d.pod_brg_kode AS brg_kode,
+            LEFT JOIN (
+        SELECT d.pod_mb_nomor AS mb_nomor, d.pod_brg_kode AS brg_kode,
                SUM(d.pod_jumlah) AS Qty
         FROM tgarmenpo_hdr h
         JOIN tgarmenpo_dtl d ON d.pod_nomor = h.po_nomor
-        WHERE h.po_status NOT LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
-        GROUP BY h.po_mb_nomor, d.pod_brg_kode
+        WHERE h.po_status NOT LIKE '%CLOSE%' AND d.pod_mb_nomor <> ''
+        GROUP BY d.pod_mb_nomor, d.pod_brg_kode
       ) k3 ON k3.mb_nomor = d.mbd_nomor AND k3.brg_kode = d.mbd_brg_kode
       LEFT JOIN (
-        SELECT h.po_mb_nomor AS mb_nomor, i.bpbd_brg_kode AS brg_kode,
-               SUM(i.bpbd_jumlah) AS Qty
-        FROM tgarmenpo_hdr h
-        JOIN tgarmenbpb_hdr j ON j.bpb_po_nomor = h.po_nomor
-        JOIN tgarmenbpb_dtl i ON i.bpbd_nomor = j.bpb_nomor
-        WHERE h.po_status LIKE '%CLOSE%' AND h.po_mb_nomor <> ''
-        GROUP BY h.po_mb_nomor, i.bpbd_brg_kode
+        SELECT r.pod_mb_nomor AS mb_nomor, r.pod_brg_kode AS brg_kode,
+               SUM(IF(r.pod_nourut = r.terakhir,
+                      GREATEST(r.bpb - r.sebelum, 0),
+                      LEAST(r.pod_jumlah, GREATEST(r.bpb - r.sebelum, 0)))) AS Qty
+        FROM (
+          SELECT d.pod_nomor, d.pod_nourut, d.pod_mb_nomor, d.pod_brg_kode,
+                 d.pod_jumlah, b.jml AS bpb,
+                 IFNULL((SELECT SUM(x.pod_jumlah) FROM tgarmenpo_dtl x
+                          WHERE x.pod_nomor = d.pod_nomor
+                            AND x.pod_brg_kode = d.pod_brg_kode
+                            AND x.pod_nourut < d.pod_nourut), 0) AS sebelum,
+                 (SELECT MAX(x.pod_nourut) FROM tgarmenpo_dtl x
+                   WHERE x.pod_nomor = d.pod_nomor
+                     AND x.pod_brg_kode = d.pod_brg_kode) AS terakhir
+          FROM tgarmenpo_hdr h
+          JOIN tgarmenpo_dtl d ON d.pod_nomor = h.po_nomor
+          JOIN (
+            SELECT j.bpb_po_nomor AS po, i.bpbd_brg_kode AS kode,
+                   SUM(i.bpbd_jumlah) AS jml
+            FROM tgarmenbpb_hdr j
+            JOIN tgarmenbpb_dtl i ON i.bpbd_nomor = j.bpb_nomor
+            GROUP BY j.bpb_po_nomor, i.bpbd_brg_kode
+          ) b ON b.po = d.pod_nomor AND b.kode = d.pod_brg_kode
+          WHERE h.po_status LIKE '%CLOSE%' AND d.pod_mb_nomor <> ''
+        ) r
+        GROUP BY r.pod_mb_nomor, r.pod_brg_kode
       ) k4 ON k4.mb_nomor = d.mbd_nomor AND k4.brg_kode = d.mbd_brg_kode
+      LEFT JOIN (
+        SELECT j.bpb_mb_nomor AS mb_nomor, i.bpbd_brg_kode AS brg_kode,
+               SUM(i.bpbd_jumlah) AS Qty
+        FROM tgarmenbpb_hdr j
+        JOIN tgarmenbpb_dtl i ON i.bpbd_nomor = j.bpb_nomor
+        WHERE IFNULL(j.bpb_po_nomor, '') = '' AND IFNULL(j.bpb_mb_nomor, '') <> ''
+        GROUP BY j.bpb_mb_nomor, i.bpbd_brg_kode
+      ) k5 ON k5.mb_nomor = d.mbd_nomor AND k5.brg_kode = d.mbd_brg_kode
       WHERE d.mbd_closed_manual = 0
         AND IFNULL(h.mb_status, '') NOT LIKE '%CLOSE%'
         AND h.mb_tanggal >= ?${c.sql}

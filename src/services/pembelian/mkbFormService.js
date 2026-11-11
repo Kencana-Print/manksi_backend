@@ -231,6 +231,16 @@ const saveData = async (payload, user) => {
       );
     }
 
+    if (nomorSpk && !isMap) {
+      const [nonBahan] = await conn.query(
+        `SELECT so_nomor FROM tsalesorder WHERE so_nomor = ? AND so_bahan = 'N' LIMIT 1`,
+        [nomorSpk],
+      );
+      if (nonBahan.length > 0) {
+        throw new Error("SO ini Non Bahan, tidak perlu dibuatkan MKB.");
+      }
+    }
+
     // 2. Insert / Update Header
     if (isEdit) {
       await conn.query(
@@ -399,6 +409,13 @@ const checkSpkDetails = async (nomorSpk, mkbNomorSekarang) => {
   );
   if (existing.length > 0) {
     throw new Error(`SPK tsb sudah dibuatkan MKB No: ${existing[0].mkb_nomor}`);
+  }
+  const [nonBahan] = await db.query(
+    `SELECT so_nomor FROM tsalesorder WHERE so_nomor = ? AND so_bahan = 'N' LIMIT 1`,
+    [nomorSpk],
+  );
+  if (nonBahan.length > 0) {
+    throw new Error("SO ini Non Bahan, tidak perlu dibuatkan MKB.");
   }
   // 2. Ambil detail SPK & Planning-nya
   const qSpk = `

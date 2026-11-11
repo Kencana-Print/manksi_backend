@@ -4,6 +4,7 @@ const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
 const penjadwalanPpicFormService = require("../ppic/penjadwalanPpicFormService");
+const poBahanFormService = require("../pembelian/poBahanFormService");
 
 // --- GENERATE NOMOR ---
 const generateNomor = async (perushKode, joKode) => {
@@ -578,6 +579,22 @@ const save = async (data, userKode, isNewMode) => {
       sqlPen += ` WHERE pend_pen_nomor=? AND pend_id=?`;
       paramsPen.push(data.Penawaran, data.PenawaranId);
       await conn.query(sqlPen, paramsPen);
+    }
+
+    // MAP aktif yang ber-penawaran: isi kolom SPK baris PO Bahan dari MPPB
+    // yang satu baris penawaran dengan MAP ini (SO yang sudah ada didahulukan).
+    if (data.Penawaran && data.PenawaranId && mspkAktif === "Y") {
+      const [mppbRows] = await conn.query(
+        `SELECT mpb_nomor FROM tmpb
+          WHERE mpb_pen_nomor = ? AND mpb_pen_id = ?`,
+        [data.Penawaran, data.PenawaranId],
+      );
+      for (const r of mppbRows) {
+        const spk = await poBahanFormService.cariSpkDariMppb(conn, r.mpb_nomor);
+        if (spk) {
+          await poBahanFormService.isiSpkPoDariMppb(conn, r.mpb_nomor, spk);
+        }
+      }
     }
 
     await conn.commit();

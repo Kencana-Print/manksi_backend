@@ -39,4 +39,11 @@ router.get(
   poBahanFormController.getMkbDetail,
 );
 
+router.get(
+  "/mbb-outstanding",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  poBahanFormController.getMbbOutstanding,
+);
+
 module.exports = router;

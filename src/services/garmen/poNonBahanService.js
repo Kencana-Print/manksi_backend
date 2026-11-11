@@ -43,7 +43,9 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   const queryMaster = `
     SELECT 
       h.po_nomor AS Nomor, h.po_jenis AS Jenis, DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS Tanggal, 
-      h.po_mb_nomor AS NoMinta, 
+      IFNULL((SELECT GROUP_CONCAT(DISTINCT x.pod_mb_nomor ORDER BY x.pod_mb_nomor SEPARATOR ', ')
+              FROM tgarmenpo_dtl x
+              WHERE x.pod_nomor = h.po_nomor AND x.pod_mb_nomor <> ''), h.po_mb_nomor) AS NoMinta,
       ${selectSup}
       h.po_ket AS Keterangan, h.po_status AS Status, h.po_cab AS Cab, h.po_kecab AS KeCab, 
       IFNULL(h.user_create, "") AS Usr, IFNULL(h.user_modified, "") AS Modified,
@@ -79,7 +81,7 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
 
   const queryDetail = `
     SELECT 
-      d.pod_nomor AS Nomor, d.pod_brg_kode AS Kode, 
+      d.pod_nomor AS Nomor, d.pod_mb_nomor AS NoMinta, d.pod_brg_kode AS Kode,
       IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama, 
       b.brg_satuan AS Satuan,
       ${selectSpesifikasi}
@@ -100,6 +102,31 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
 
   const [master] = await db.query(queryMaster, params);
   const [detail] = await db.query(queryDetail, params);
+
+  // QtyBpb dari query = total BPB per PO + kode. Kalau kode yang sama muncul di
+  // beberapa baris PO (dari permintaan berbeda), bagi FIFO menurut urutan baris;
+  // baris terakhir menampung sisa/kelebihan. (detail sudah urut pod_nomor, pod_nourut)
+  const barisTerakhir = new Map();
+  detail.forEach((d, i) => barisTerakhir.set(`${d.Nomor}|${d.Kode}`, i));
+  const sisaBpb = new Map();
+  detail.forEach((d, i) => {
+    const k = `${d.Nomor}|${d.Kode}`;
+    if (!sisaBpb.has(k)) sisaBpb.set(k, Number(d.QtyBpb) || 0);
+    const sisa = sisaBpb.get(k);
+    const alok =
+      barisTerakhir.get(k) === i ? sisa : Math.min(Number(d.Jumlah) || 0, sisa);
+    sisaBpb.set(k, sisa - alok);
+    d.QtyBpb = alok;
+  });
+
+  // Qty BPB di header = jumlah QtyBpb semua baris PO (hasil alokasi di atas)
+  const totalBpb = new Map();
+  detail.forEach((d) =>
+    totalBpb.set(d.Nomor, (totalBpb.get(d.Nomor) || 0) + d.QtyBpb),
+  );
+  master.forEach((m) => {
+    m.QtyBpb = totalBpb.get(m.Nomor) || 0;
+  });
 
   return { master, detail };
 };
@@ -137,9 +164,27 @@ const deleteData = async (nomor) => {
       throw new Error("PO sudah ada penerimaan BPB. Tidak bisa dihapus.");
     }
 
+    // Permintaan yang dipakai PO ini, dicatat dulu sebelum baris PO dihapus
+    const [mbs] = await conn.query(
+      `SELECT DISTINCT pod_mb_nomor FROM tgarmenpo_dtl
+       WHERE pod_nomor = ? AND pod_mb_nomor <> ''`,
+      [nomor],
+    );
+
     await conn.beginTransaction();
     await conn.query("DELETE FROM tgarmenpo_hdr WHERE po_nomor = ?", [nomor]);
     await conn.query("DELETE FROM tgarmenpo_dtl WHERE pod_nomor = ?", [nomor]);
+
+    // Permintaan yang tidak dipakai PO lain kembali ke status kosong
+    // (aturan sama dengan saat baris/permintaan dilepas di form PO)
+    for (const r of mbs) {
+      await conn.query(
+        `UPDATE tgarmenmintabeli_hdr SET mb_status = ""
+         WHERE mb_nomor = ? AND mb_status = "PROSES"
+           AND NOT EXISTS (SELECT 1 FROM tgarmenpo_dtl WHERE pod_mb_nomor = ?)`,
+        [r.pod_mb_nomor, r.pod_mb_nomor],
+      );
+    }
     await conn.commit();
     return true;
   } catch (error) {

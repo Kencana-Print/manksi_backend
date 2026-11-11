@@ -1,6 +1,9 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
-const { BAGIAN_PO_ASET_LIHAT } = require("./poNonBahanFormService");
+const {
+  BAGIAN_PO_ASET_LIHAT,
+  refreshStatusBpb,
+} = require("./poNonBahanFormService");
 
 // --- GET BROWSE MASTER DETAIL ---
 const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
@@ -43,7 +46,12 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   const queryMaster = `
     SELECT 
       h.bpb_nomor AS Nomor, h.bpb_jenis AS Jenis, DATE_FORMAT(h.bpb_tanggal, '%Y-%m-%d') AS Tanggal, 
-      h.bpb_mb_nomor AS NoMinta, h.bpb_po_nomor AS NoPO, 
+      IF(IFNULL(h.bpb_po_nomor,'') <> '',
+         IFNULL((SELECT GROUP_CONCAT(DISTINCT x.pod_mb_nomor ORDER BY x.pod_mb_nomor SEPARATOR ', ')
+                 FROM tgarmenpo_dtl x
+                 WHERE x.pod_nomor = h.bpb_po_nomor AND x.pod_mb_nomor <> ''), h.bpb_mb_nomor),
+         h.bpb_mb_nomor) AS NoMinta,
+      h.bpb_po_nomor AS NoPO,
       IFNULL(i.iv_nomor, "") AS VoucherPembelian,
       ${selectSup}
       h.bpb_ket AS Keterangan, 
@@ -142,56 +150,12 @@ const deleteData = async (nomor) => {
       nomor,
     ]);
 
-    // 4. Update Status di Permintaan Beli (tgarmenmintabeli_hdr)
-    if (data.bpb_mb_nomor && data.bpb_mb_nomor !== "") {
-      const qCekMinta = `
-        SELECT SUM(x.po) po, (SUM(if(x.bpb>x.po,x.po,x.bpb)) + SUM(if(x.mso>x.po,x.po,x.mso))) terima
-        FROM (
-          SELECT d.mbd_brg_kode, d.mbd_jumlah po,
-          IFNULL((SELECT ifnull(SUM(bpbd_jumlah),0) FROM tgarmenbpb_dtl b INNER JOIN tgarmenbpb_hdr a ON a.bpb_nomor=b.bpbd_nomor WHERE a.bpb_mb_nomor=d.mbd_nomor AND b.bpbd_brg_kode=d.mbd_brg_kode),0) bpb,
-          IFNULL((SELECT ifnull(SUM(msod_jumlah),0) FROM tgarmenmso_dtl i INNER JOIN tgarmenmso_hdr j ON j.mso_nomor=i.msod_nomor AND j.mso_msi_nomor<>"" WHERE i.msod_mb_nomor=d.mbd_nomor AND i.msod_brg_kode=d.mbd_brg_kode),0) mso
-          FROM tgarmenmintabeli_dtl d
-          WHERE d.mbd_nomor = ?
-        ) x
-      `;
-      const [resMinta] = await conn.query(qCekMinta, [data.bpb_mb_nomor]);
-      const tpo = Number(resMinta[0].po || 0);
-      const tbpb = Number(resMinta[0].terima || 0);
-
-      let statMinta = "PROSES";
-      if (tbpb >= tpo) statMinta = "CLOSE";
-      else if (tbpb === 0) statMinta = "";
-
-      await conn.query(
-        `UPDATE tgarmenmintabeli_hdr SET mb_status=? WHERE mb_nomor=?`,
-        [statMinta, data.bpb_mb_nomor],
-      );
-    }
-
-    // 4. Update Status di PO (tgarmenpo_hdr)
-    if (data.bpb_po_nomor && data.bpb_po_nomor !== "") {
-      const qCekPO = `
-        SELECT SUM(x.po) po, SUM(if(x.bpb>x.po,x.po,x.bpb)) bpb
-        FROM (
-          SELECT d.pod_jumlah po,
-          IFNULL((SELECT ifnull(SUM(bpbd_jumlah),0) FROM tgarmenbpb_dtl b INNER JOIN tgarmenbpb_hdr a ON a.bpb_nomor=b.bpbd_nomor WHERE a.bpb_po_nomor=d.pod_nomor AND b.bpbd_brg_kode=d.pod_brg_kode),0) bpb
-          FROM tgarmenpo_dtl d
-          WHERE d.pod_nomor = ?
-        ) x
-      `;
-      const [resPO] = await conn.query(qCekPO, [data.bpb_po_nomor]);
-      const tpo2 = Number(resPO[0].po || 0);
-      const tbpb2 = Number(resPO[0].bpb || 0);
-
-      let statPO = "PROSES";
-      if (tbpb2 >= tpo2) statPO = "CLOSE";
-      else if (tbpb2 === 0) statPO = "";
-
-      await conn.query(
-        `UPDATE tgarmenpo_hdr SET po_status=? WHERE po_nomor=?`,
-        [statPO, data.bpb_po_nomor],
-      );
-    }
+    // 4. Update status PO & semua Permintaan di PO tsb
+    await refreshStatusBpb(conn, {
+      poNomor: data.bpb_po_nomor || "",
+      mbNomor: data.bpb_mb_nomor || "",
+      bolehKosong: true,
+    });
 
     await conn.commit();
     return true;

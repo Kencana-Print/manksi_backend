@@ -6,22 +6,45 @@ const {
   SQL_NOMINAL_INSENTIF,
 } = require("./pengajuanUangMukaService");
 
-// Qty permintaan yang sudah dipenuhi lewat PO (aturan sama dengan getQtySudah di poNonBahanService):
-// PO belum CLOSE = qty PO, PO CLOSE = qty BPB yang benar-benar datang
+// Qty permintaan yang sudah dipenuhi lewat PO (PO bisa memuat beberapa permintaan: pod_mb_nomor):
+// PO belum CLOSE = qty PO, PO CLOSE = qty BPB yang dialokasikan FIFO ke baris-baris kode yang sama
+const SQL_SEBELUM_PO = (r) => `
+  IFNULL((SELECT SUM(x.pod_jumlah) FROM tgarmenpo_dtl x
+           WHERE x.pod_nomor = ${r}.pod_nomor AND x.pod_brg_kode = ${r}.pod_brg_kode
+             AND x.pod_nourut < ${r}.pod_nourut), 0)`;
+
 const SQL_QTY_PO_MB = (d) => `
   (IFNULL((
     SELECT SUM(po_d.pod_jumlah)
     FROM tgarmenpo_hdr po_h
     JOIN tgarmenpo_dtl po_d ON po_d.pod_nomor = po_h.po_nomor
-    WHERE po_h.po_mb_nomor = ${d}.mbd_nomor AND po_d.pod_brg_kode = ${d}.mbd_brg_kode
+    WHERE po_d.pod_mb_nomor = ${d}.mbd_nomor AND po_d.pod_brg_kode = ${d}.mbd_brg_kode
       AND po_h.po_status NOT LIKE '%CLOSE%'
   ), 0) + IFNULL((
-    SELECT SUM(bp_i.bpbd_jumlah)
+    SELECT SUM(IF(
+      po_d.pod_nourut = (SELECT MAX(l.pod_nourut) FROM tgarmenpo_dtl l
+                          WHERE l.pod_nomor = po_d.pod_nomor
+                            AND l.pod_brg_kode = po_d.pod_brg_kode),
+      GREATEST(bp.jml - ${SQL_SEBELUM_PO("po_d")}, 0),
+      LEAST(po_d.pod_jumlah, GREATEST(bp.jml - ${SQL_SEBELUM_PO("po_d")}, 0))))
     FROM tgarmenpo_hdr po_h
-    JOIN tgarmenbpb_hdr bp_h ON bp_h.bpb_po_nomor = po_h.po_nomor
-    JOIN tgarmenbpb_dtl bp_i ON bp_i.bpbd_nomor = bp_h.bpb_nomor
-    WHERE po_h.po_mb_nomor = ${d}.mbd_nomor AND bp_i.bpbd_brg_kode = ${d}.mbd_brg_kode
+    JOIN tgarmenpo_dtl po_d ON po_d.pod_nomor = po_h.po_nomor
+    JOIN (
+      SELECT bp_h.bpb_po_nomor AS po, bp_i.bpbd_brg_kode AS kode,
+             SUM(bp_i.bpbd_jumlah) AS jml
+      FROM tgarmenbpb_hdr bp_h
+      JOIN tgarmenbpb_dtl bp_i ON bp_i.bpbd_nomor = bp_h.bpb_nomor
+      GROUP BY bp_h.bpb_po_nomor, bp_i.bpbd_brg_kode
+    ) bp ON bp.po = po_d.pod_nomor AND bp.kode = po_d.pod_brg_kode
+    WHERE po_d.pod_mb_nomor = ${d}.mbd_nomor AND po_d.pod_brg_kode = ${d}.mbd_brg_kode
       AND po_h.po_status LIKE '%CLOSE%'
+  ), 0) + IFNULL((
+    SELECT SUM(bl_i.bpbd_jumlah)
+    FROM tgarmenbpb_hdr bl_h
+    JOIN tgarmenbpb_dtl bl_i ON bl_i.bpbd_nomor = bl_h.bpb_nomor
+    WHERE bl_h.bpb_mb_nomor = ${d}.mbd_nomor
+      AND IFNULL(bl_h.bpb_po_nomor, '') = ''
+      AND bl_i.bpbd_brg_kode = ${d}.mbd_brg_kode
   ), 0))`;
 
 // PUM masih memegang sumber ini (sedang diajukan, atau direalisasi & di-ACC)

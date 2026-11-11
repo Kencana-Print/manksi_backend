@@ -186,6 +186,13 @@ const closeManual = async (nomor, alasan, userKode) => {
      WHERE pmt_nomor = ?`,
     [alasan.trim(), userKode, pmtNomor],
   );
+
+  await db.query(
+    `UPDATE ga2.tpengajuan2_dtl
+     SET pjd_closed_manual = 1
+     WHERE pjd_pjh_nomor = ?`,
+    [nomor],
+  );
 };
 
 module.exports = {

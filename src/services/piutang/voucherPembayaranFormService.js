@@ -1109,6 +1109,30 @@ const save = async (payload, userKode) => {
 
   if (!supKode) throw new Error("Supplier belum diisi.");
 
+  // Bahan tambahan hanya untuk voucher yang memuat BPB Jasa (BPJ).
+  // Dicek ke database karena d.tipe dikirim klien.
+  const bahanIsi = (Array.isArray(bahanTambahan) ? bahanTambahan : []).filter(
+    (b) => b && b.nama,
+  );
+  if (bahanIsi.length) {
+    const nomorBpj = detail
+      .filter((d) => d.tipe === "BPJ" && d.nomor)
+      .map((d) => d.nomor);
+    let adaBpj = false;
+    if (nomorBpj.length) {
+      const [[row]] = await db.query(
+        `SELECT COUNT(*) AS n FROM tbpj_hdr WHERE bpj_nomor IN (?)`,
+        [nomorBpj],
+      );
+      adaBpj = Number(row.n) > 0;
+    }
+    if (!adaBpj) {
+      throw new Error(
+        "Bahan tambahan hanya boleh untuk voucher yang memuat BPB Jasa.",
+      );
+    }
+  }
+
   const daftarBpb = detail
     .filter((d) => d.tipe === "BPB" && d.nomor)
     .map((d) => d.nomor);

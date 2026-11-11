@@ -1,6 +1,11 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
-const { KECAB_ASET, BAGIAN_PO_ASET_LIHAT } = require("./poNonBahanFormService");
+const {
+  KECAB_ASET,
+  BAGIAN_PO_ASET_LIHAT,
+  refreshStatusBpb,
+  getQtyBpbPerMinta,
+} = require("./poNonBahanFormService");
 
 const JENIS_BPB = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
 const PREFIX_BPB = {
@@ -15,26 +20,33 @@ const BAGIAN_BPB_ASET_PROSES = ["GA", "EDP", "PEMBELIAN", "PURCHASING"];
 
 // --- HELPER UNTUK MENGHITUNG QTY SUDAH DITERIMA SEBELUMNYA ---
 // Replikasi: function TfrmBPBGarmen.getsudah()
-const getQtySudah = async (bpbNomorSaatIni, refNomor, brgKode, isPo, conn) => {
+// Mode PO: total BPB PO itu per kode. Mode permintaan: BPB langsung + BPB lewat PO
+// yang dialokasikan ke permintaan tsb (petaMinta boleh diberikan agar tidak query berulang).
+const getQtySudah = async (
+  bpbNomorSaatIni,
+  refNomor,
+  brgKode,
+  isPo,
+  conn,
+  petaMinta = null,
+) => {
   if (!refNomor || refNomor === "") return 0;
 
-  let sql = `
-    SELECT IFNULL(SUM(d.bpbd_jumlah), 0) AS jml 
-    FROM tgarmenbpb_hdr h 
-    INNER JOIN tgarmenbpb_dtl d ON d.bpbd_nomor = h.bpb_nomor 
-    WHERE h.bpb_nomor <> ? AND d.bpbd_brg_kode = ?
-  `;
-  let params = [bpbNomorSaatIni || "", brgKode];
-
   if (isPo) {
-    sql += ` AND h.bpb_po_nomor = ?`;
-  } else {
-    sql += ` AND h.bpb_mb_nomor = ?`;
+    const [rows] = await conn.query(
+      `SELECT IFNULL(SUM(d.bpbd_jumlah), 0) AS jml
+       FROM tgarmenbpb_hdr h
+       INNER JOIN tgarmenbpb_dtl d ON d.bpbd_nomor = h.bpb_nomor
+       WHERE h.bpb_nomor <> ? AND d.bpbd_brg_kode = ? AND h.bpb_po_nomor = ?`,
+      [bpbNomorSaatIni || "", brgKode, refNomor],
+    );
+    return Number(rows[0]?.jml || 0);
   }
-  params.push(refNomor);
 
-  const [rows] = await conn.query(sql, params);
-  return Number(rows[0]?.jml || 0);
+  const peta =
+    petaMinta ||
+    (await getQtyBpbPerMinta(refNomor, conn, bpbNomorSaatIni || ""));
+  return Number(peta.get(brgKode) || 0);
 };
 
 // --- AMBIL DETAIL FORM UNTUK EDIT (Replikasi: loaddataall) ---
@@ -115,17 +127,35 @@ const getDetailForm = async (nomor) => {
     const [dtlRows] = await conn.query(qDtl, [nomor]);
 
     // Kalkulasi master item berdasarkan sumber (PO atau Minta) untuk mendapat Minta & Sudah
+    const isPo = header.bpb_po_nomor !== "";
+    const refNomor = isPo ? header.bpb_po_nomor : header.bpb_mb_nomor;
+
+    let mintaPo = new Map(); // PO: qty minta per kode (SUM semua baris PO)
+    let petaMinta = null; // Permintaan: peta qty sudah-terima per kode
+    if (isPo) {
+      const [rows] = await conn.query(
+        `SELECT pod_brg_kode AS kode, SUM(pod_jumlah) AS jml
+         FROM tgarmenpo_dtl WHERE pod_nomor = ? GROUP BY pod_brg_kode`,
+        [refNomor],
+      );
+      mintaPo = new Map(rows.map((r) => [r.kode, Number(r.jml) || 0]));
+
+      const [mbs] = await conn.query(
+        `SELECT DISTINCT pod_mb_nomor FROM tgarmenpo_dtl
+         WHERE pod_nomor = ? AND pod_mb_nomor <> '' ORDER BY pod_mb_nomor`,
+        [refNomor],
+      );
+      header.po_mb_daftar = mbs.length
+        ? mbs.map((r) => r.pod_mb_nomor).join(", ")
+        : header.bpb_mb_nomor;
+    } else {
+      petaMinta = await getQtyBpbPerMinta(refNomor, conn, nomor);
+    }
+
     for (const d of dtlRows) {
       let minta = 0;
-      let isPo = header.bpb_po_nomor !== "";
-      let refNomor = isPo ? header.bpb_po_nomor : header.bpb_mb_nomor;
-
       if (isPo) {
-        const [[rowPo]] = await conn.query(
-          `SELECT pod_jumlah, pod_harga FROM tgarmenpo_dtl WHERE pod_nomor=? AND pod_brg_kode=?`,
-          [refNomor, d.bpbd_brg_kode],
-        );
-        minta = Number(rowPo?.pod_jumlah || 0);
+        minta = mintaPo.get(d.bpbd_brg_kode) || 0;
       } else {
         const [[rowMb]] = await conn.query(
           `SELECT mbd_jumlah FROM tgarmenmintabeli_dtl WHERE mbd_nomor=? AND mbd_brg_kode=?`,
@@ -135,7 +165,14 @@ const getDetailForm = async (nomor) => {
       }
 
       d.minta = minta;
-      d.sudah = await getQtySudah(nomor, refNomor, d.bpbd_brg_kode, isPo, conn);
+      d.sudah = await getQtySudah(
+        nomor,
+        refNomor,
+        d.bpbd_brg_kode,
+        isPo,
+        conn,
+        petaMinta,
+      );
       d.kurang = minta - d.sudah;
     }
 
@@ -160,8 +197,9 @@ const getPermintaanDetail = async (mbNomor, bpbNomor = "") => {
     const [rows] = await conn.query(qDtl, [mbNomor]);
     if (rows.length === 0) throw new Error("NO Permintaan tsb tidak ada.");
 
+    const peta = await getQtyBpbPerMinta(mbNomor, conn, bpbNomor);
     for (const r of rows) {
-      r.sudah = await getQtySudah(bpbNomor, mbNomor, r.Kode, false, conn);
+      r.sudah = Number(peta.get(r.Kode) || 0);
       r.kurang = Number(r.minta || 0) - r.sudah;
       r.jumlah = 0; // Default di Delphi = 0
       r.harga = 0;
@@ -180,22 +218,37 @@ const getPermintaanDetail = async (mbNomor, bpbNomor = "") => {
 };
 
 // --- LOAD DATA DARI NO. PO (edtpoExit) ---
+// Satu baris per KODE barang (qty dijumlah dari semua baris PO, termasuk dari
+// permintaan berbeda). Harga seragam per kode dijamin saat simpan PO.
 const getPoDetail = async (poNomor, bpbNomor = "") => {
   const conn = await db.getConnection();
   try {
+    const [hdrRows] = await conn.query(
+      `SELECT h.po_mb_nomor, DATE_FORMAT(m.mb_tanggal, '%Y-%m-%d') AS tglminta,
+              DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS tglpo, h.po_ket AS ketpo,
+              h.po_sup_kode, s.sup_nama, s.sup_alamat, s.sup_kota
+       FROM tgarmenpo_hdr h
+       LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+       LEFT JOIN tgarmenmintabeli_hdr m ON m.mb_nomor = h.po_mb_nomor
+       WHERE h.po_nomor = ?`,
+      [poNomor],
+    );
+    if (hdrRows.length === 0) throw new Error("NO PO tsb tidak ada.");
+
     const qDtl = `
-      SELECT d.pod_brg_kode AS Kode, IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama, 
-             b.brg_satuan AS Satuan, d.pod_jumlah AS minta, d.pod_harga AS harga,
-             d.pod_ket AS ket, d.pod_kegunaan AS kegunaan,
-             h.po_mb_nomor, DATE_FORMAT(m.mb_tanggal, '%Y-%m-%d') AS tglminta,
-             DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS tglpo, h.po_ket AS ketpo,
-             h.po_sup_kode, s.sup_nama, s.sup_alamat, s.sup_kota
+      SELECT d.pod_brg_kode AS Kode,
+             IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
+             b.brg_satuan AS Satuan,
+             SUM(d.pod_jumlah) AS minta,
+             MAX(d.pod_harga) AS harga,
+             IFNULL(GROUP_CONCAT(DISTINCT NULLIF(d.pod_ket, '') SEPARATOR ' / '), '') AS ket,
+             IFNULL(GROUP_CONCAT(DISTINCT NULLIF(d.pod_kegunaan, '') SEPARATOR ' / '), '') AS kegunaan,
+             MIN(d.pod_nourut) AS urut
       FROM tgarmenpo_dtl d
-      INNER JOIN tgarmenpo_hdr h ON h.po_nomor = d.pod_nomor
-      LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
-      LEFT JOIN tgarmenmintabeli_hdr m ON m.mb_nomor = h.po_mb_nomor
       LEFT JOIN tgarmen_brg b ON b.brg_kode = d.pod_brg_kode
-      WHERE d.pod_nomor = ? ORDER BY d.pod_nourut
+      WHERE d.pod_nomor = ?
+      GROUP BY d.pod_brg_kode, b.brg_nama, b.brg_note, b.brg_satuan
+      ORDER BY urut
     `;
     const [rows] = await conn.query(qDtl, [poNomor]);
     if (rows.length === 0) throw new Error("NO PO tsb tidak ada.");
@@ -208,15 +261,24 @@ const getPoDetail = async (poNomor, bpbNomor = "") => {
       r.namaspk = "";
     }
 
+    const [mbs] = await conn.query(
+      `SELECT DISTINCT pod_mb_nomor FROM tgarmenpo_dtl
+       WHERE pod_nomor = ? AND pod_mb_nomor <> '' ORDER BY pod_mb_nomor`,
+      [poNomor],
+    );
+    const h = hdrRows[0];
     const headerInfo = {
-      po_mb_nomor: rows[0].po_mb_nomor,
-      tglminta: rows[0].tglminta,
-      tglpo: rows[0].tglpo,
-      ketpo: rows[0].ketpo,
-      po_sup_kode: rows[0].po_sup_kode,
-      sup_nama: rows[0].sup_nama,
-      sup_alamat: rows[0].sup_alamat,
-      sup_kota: rows[0].sup_kota,
+      po_mb_nomor: h.po_mb_nomor,
+      po_mb_daftar: mbs.length
+        ? mbs.map((r) => r.pod_mb_nomor).join(", ")
+        : h.po_mb_nomor,
+      tglminta: h.tglminta,
+      tglpo: h.tglpo,
+      ketpo: h.ketpo,
+      po_sup_kode: h.po_sup_kode,
+      sup_nama: h.sup_nama,
+      sup_alamat: h.sup_alamat,
+      sup_kota: h.sup_kota,
     };
 
     return { header: headerInfo, detail: rows };
@@ -373,6 +435,25 @@ const saveData = async (payload, user) => {
     }
     const hargaPo = new Map(src.map((r) => [r.kode, Number(r.harga || 0)]));
 
+    // 3c. BPB langsung dari permintaan ditolak untuk barang yang sudah ada di PO
+    // (penerimaan harus lewat No. PO supaya PO ikut tercatat). Hanya saat buat baru.
+    if (!isEdit && !bpb_po_nomor && bpb_mb_nomor) {
+      const [diPo] = await conn.query(
+        `SELECT d.pod_brg_kode AS kode,
+                GROUP_CONCAT(DISTINCT d.pod_nomor ORDER BY d.pod_nomor SEPARATOR ', ') AS po
+         FROM tgarmenpo_dtl d
+         WHERE d.pod_mb_nomor = ? AND d.pod_brg_kode IN (?)
+         GROUP BY d.pod_brg_kode`,
+        [bpb_mb_nomor, kodeList],
+      );
+      if (diPo.length > 0) {
+        const daftar = diPo.map((r) => `${r.kode} (PO ${r.po})`).join(", ");
+        throw new Error(
+          `Barang berikut sudah di-PO-kan, terima lewat No. PO: ${daftar}`,
+        );
+      }
+    }
+
     // 4. Tarik / Ganti Nomor Baru Jika Mode Create
     if (!isEdit) {
       const year = tglBPB.getFullYear().toString();
@@ -435,60 +516,12 @@ const saveData = async (payload, user) => {
       }
     }
 
-    // 7. Update Status Permintaan & PO (1:1 Delphi)
-    if (bpb_po_nomor && bpb_po_nomor !== "") {
-      const [[stPo]] = await conn.query(
-        `SELECT IFNULL(SUM(x.minta), 0) AS minta,
-                IFNULL(SUM(LEAST(x.minta, x.bpb)), 0) AS terima
-         FROM (
-           SELECT d.pod_jumlah AS minta,
-                  IFNULL((
-                    SELECT SUM(i.bpbd_jumlah)
-                    FROM tgarmenbpb_dtl i
-                    INNER JOIN tgarmenbpb_hdr j ON j.bpb_nomor = i.bpbd_nomor
-                    WHERE j.bpb_po_nomor = d.pod_nomor
-                      AND i.bpbd_brg_kode = d.pod_brg_kode
-                  ), 0) AS bpb
-           FROM tgarmenpo_dtl d
-           WHERE d.pod_nomor = ?
-         ) x`,
-        [bpb_po_nomor],
-      );
-      const minta = Number(stPo.minta || 0);
-      const terima = Number(stPo.terima || 0);
-      let statPO = "PROSES";
-      if (terima >= minta) statPO = "CLOSE";
-      else if (terima === 0) statPO = "";
-      await conn.query(
-        `UPDATE tgarmenpo_hdr SET po_status=? WHERE po_nomor=?`,
-        [statPO, bpb_po_nomor],
-      );
-    }
-
-    // Jalankan juga update status Minta jika bersumber dari Minta
-    if (bpb_mb_nomor && bpb_mb_nomor !== "") {
-      // Re-query kalkulasi kompleks Minta (dari procedure delete/save Delphi)
-      const qCekMinta = `
-        SELECT SUM(x.po) po, (SUM(if(x.bpb>x.po,x.po,x.bpb)) + SUM(if(x.mso>x.po,x.po,x.mso))) terima
-        FROM (
-          SELECT d.mbd_brg_kode, d.mbd_jumlah po,
-          IFNULL((SELECT ifnull(SUM(bpbd_jumlah),0) FROM tgarmenbpb_dtl b INNER JOIN tgarmenbpb_hdr a ON a.bpb_nomor=b.bpbd_nomor WHERE a.bpb_mb_nomor=d.mbd_nomor AND b.bpbd_brg_kode=d.mbd_brg_kode),0) bpb,
-          IFNULL((SELECT ifnull(SUM(msod_jumlah),0) FROM tgarmenmso_dtl i INNER JOIN tgarmenmso_hdr j ON j.mso_nomor=i.msod_nomor AND j.mso_msi_nomor<>"" WHERE i.msod_mb_nomor=d.mbd_nomor AND i.msod_brg_kode=d.mbd_brg_kode),0) mso
-          FROM tgarmenmintabeli_dtl d
-          WHERE d.mbd_nomor = ?
-        ) x
-      `;
-      const [resMinta] = await conn.query(qCekMinta, [bpb_mb_nomor]);
-      const tpo = Number(resMinta[0].po || 0);
-      const tterima = Number(resMinta[0].terima || 0);
-
-      let statMinta = "PROSES";
-      if (tterima >= tpo) statMinta = "CLOSE";
-      await conn.query(
-        `UPDATE tgarmenmintabeli_hdr SET mb_status=? WHERE mb_nomor=?`,
-        [statMinta, bpb_mb_nomor],
-      );
-    }
+    // 7. Update Status PO & semua Permintaan di PO tsb
+    await refreshStatusBpb(conn, {
+      poNomor: bpb_po_nomor || "",
+      mbNomor: bpb_mb_nomor || "",
+      bolehKosong: false,
+    });
 
     // 8. Update PIN dipakai
     if (isEdit && pinStatus === "ACC") {
