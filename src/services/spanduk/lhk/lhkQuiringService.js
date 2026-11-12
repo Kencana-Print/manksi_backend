@@ -30,7 +30,10 @@ const getBrowseLhkQuiring = async (tglAwal, tglAkhir, user) => {
     SELECT h.lqh_nomor AS Nomor,
            DATE_FORMAT(h.lqh_tanggal, '%Y-%m-%d') AS Tanggal,
            h.lqh_pab_kode AS Kode_Pabrik,
-           p.pab_nama AS Nama_Pabrik
+           p.pab_nama AS Nama_Pabrik,
+           h.lqh_sesi AS Sesi,
+           (SELECT COUNT(*) FROM ${T.dtl2} k
+             WHERE k.lqd2_lqh_nomor = h.lqh_nomor) AS Jumlah_Karyawan
     FROM ${T.hdr} h
     LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.lqh_pab_kode
     WHERE h.lqh_tanggal BETWEEN ? AND ?
@@ -55,10 +58,7 @@ const getDetailLhkQuiring = async (tglAwal, tglAkhir, user) => {
            x.spk_lebar AS Lebar,
            d.lqd_j_oven AS J_Oven,
            d.lqd_j_jemuran AS J_Jemuran,
-           d.lqd_j_potong AS J_Potong,
-           d.lqd_bs_quiring AS BS_Quiring,
-           d.lqd_bs_cetak AS BS_Cetak,
-           d.lqd_bs_bahan AS BS_Bahan
+           d.lqd_j_potong AS J_Potong
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.lqh_nomor = d.lqd_lqh_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.lqd_spk_nomor
@@ -96,6 +96,7 @@ const deleteLhkQuiring = async (nomor, user) => {
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
 
+    await conn.query(`DELETE FROM ${T.dtl2} WHERE lqd2_lqh_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.dtl} WHERE lqd_lqh_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.hdr} WHERE lqh_nomor = ?`, [no]);
 

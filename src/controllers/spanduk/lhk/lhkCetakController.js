@@ -54,4 +54,22 @@ const remove = async (req, res) => {
   }
 };
 
-module.exports = { getBrowse, getDetail, getKain, remove };
+const approve = async (req, res) => {
+  try {
+    const status = String(req.body?.status ?? "").toUpperCase();
+    await service.approveLhkCetak(
+      req.params.nomor,
+      status,
+      req.body?.alasan,
+      req.user,
+    );
+    res.status(200).json({
+      success: true,
+      message: status === "TOLAK" ? "LHK ditolak" : "LHK disetujui",
+    });
+  } catch (error) {
+    kirimError(res, error, 400);
+  }
+};
+
+module.exports = { getBrowse, getDetail, getKain, remove, approve };

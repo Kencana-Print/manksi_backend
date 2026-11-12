@@ -106,7 +106,41 @@ const wajibPlafon = (plafon) => {
   }
 };
 
-const getBrowse = async (filterKorporasi) => {
+const digitNpwp = (s) => String(s || "").replace(/\D/g, "");
+
+const validNpwp = (s) => {
+  const v = String(s || "").trim();
+  return (
+    /^\d{15,16}$/.test(v) || /^\d{2}\.\d{3}\.\d{3}\.\d-\d{3}\.\d{3}$/.test(v)
+  );
+};
+
+// format: "DIGIT" = 16 digit tanpa spasi, "TITIK" = 00.000.000.0-000.000
+const formatNpwp = (raw, format) => {
+  const d = digitNpwp(raw);
+  if (!d) return "";
+  if (format === "DIGIT") return d.length === 15 ? `0${d}` : d;
+  const d15 = d.length === 16 && d[0] === "0" ? d.slice(1) : d;
+  if (d15.length !== 15) return d; // NIK 16 digit / tidak dikenal: tanpa titik
+  return `${d15.slice(0, 2)}.${d15.slice(2, 5)}.${d15.slice(5, 8)}.${d15[8]}-${d15.slice(9, 12)}.${d15.slice(12)}`;
+};
+
+// Buang spasi/karakter selain angka . -  (hasil paste dari PDF/Excel sering ada spasi)
+const bersihkanNpwp = (s) => String(s || "").replace(/[^\d.\-]/g, "");
+
+const cekNpwp = (data) => {
+  data.NpwpKode = bersihkanNpwp(data.NpwpKode);
+  const wajib = data.Korporasi === "Y";
+  if ((wajib || data.NpwpKode) && !validNpwp(data.NpwpKode)) {
+    const err = new Error(
+      "Format NPWP tidak valid (16 digit tanpa spasi atau 00.000.000.0-000.000).",
+    );
+    err.status = 400;
+    throw err;
+  }
+};
+
+const getBrowse = async (filterKorporasi, npwpFormat = "") => {
   // Filter status korporasi
   let korporasiClause = "";
   if (filterKorporasi === "Y" || filterKorporasi === "N") {
@@ -147,6 +181,7 @@ const getBrowse = async (filterKorporasi) => {
   const [rows] = await db.query(query);
   return rows.map((r) => ({
     ...r,
+    NPWP: npwpFormat ? formatNpwp(r.NPWP, npwpFormat) : r.NPWP,
     Kategori: getTierPlafon(r.Plafon)?.kategori || "",
   }));
 };
@@ -262,6 +297,8 @@ const create = async (data, user) => {
       throw new Error("Sistem sedang memproses customer lain, coba lagi.");
     }
 
+    cekNpwp(data);
+
     const kembar = await cariNamaKembar(data.Nama, "", conn, data.Kota);
     if (kembar.length) throw errNamaKembar(kembar[0]);
 
@@ -327,6 +364,8 @@ const update = async (kode, data, user) => {
     extraParams.push(plafon);
   }
 
+  cekNpwp(data);
+
   const query = `
     UPDATE tcustomer SET
       cus_kodei = ?, cus_nama = ?, cus_alamat = ?, cus_kota = ?,
@@ -385,6 +424,9 @@ module.exports = {
   getTierPlafon,
   cariNamaKembar,
   cariNamaMirip,
+  formatNpwp,
+  validNpwp,
+  bersihkanNpwp,
   getBrowse,
   getById,
   getJenisUsahaLookup,

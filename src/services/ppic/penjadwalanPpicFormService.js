@@ -1498,8 +1498,8 @@ const removeMapFromKomitmenKirim = async (mapNomor) => {
 // Best-effort: kegagalan TIDAK boleh menggagalkan aksi pemanggil.
 // ═══════════════════════════════════════════════════════════
 // Divisi SO yang TIDAK ditarik otomatis ke Komitmen Kirim, per cabang.
-// P04 divisi 3 tidak masuk Komitmen Kirim (permintaan user 2 Nov 2026).
-const DIVISI_TANPA_AUTO_PUSH = { P04: ["3"] };
+// P01 & P04: Kaosan (divisi 3) tidak masuk otomatis.
+const DIVISI_TANPA_AUTO_PUSH = { P01: ["3"], P04: ["3"] };
 
 const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
   const dikecualikan = DIVISI_TANPA_AUTO_PUSH[cab] || [];
@@ -1517,7 +1517,7 @@ const cariKandidatSoPeriode = async (cab, tgl1, tgl2, hanyaNomor = null) => {
        FROM tsalesorder
        WHERE so_aktif = 'Y' AND so_close = 0
          AND so_cab = ? AND so_dateline BETWEEN ? AND ?
-         ${dikecualikan.length ? "AND (so_divisi IS NULL OR so_divisi NOT IN (?))" : ""}
+         ${dikecualikan.length ? "AND (so_divisi IS NULL OR LEFT(so_divisi, 1) NOT IN (?))" : ""}
      ) x
      WHERE x.Kurang > 0
        ${hanyaNomor ? "AND x.Nomor = ?" : ""}

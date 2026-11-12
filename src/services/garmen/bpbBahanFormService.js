@@ -133,7 +133,8 @@ const validateField = async (type, value, opts = {}) => {
     const terimaParams = isLainLain ? [opts.supKode] : [];
 
     // 3. Tarik Rekapitulasi (Grid 1: Bahan)
-    // Sesuai Delphi: SELECT ... GROUP BY PO_nomor,po_tanggal,pod_bhn_kode ...
+    // Spanduk dengan Sat PO YARD: Terima dan Kurang dalam yard (bpbd_jumlahyard),
+    // sedangkan stok (bpbd_jumlah) dalam meter.
     const [rekapDetails] = await db.query(
       `SELECT 
         d.pod_bhn_kode AS kode, 
@@ -142,8 +143,9 @@ const validateField = async (type, value, opts = {}) => {
         b.bhn_satuan AS satuan, 
         SUM(d.pod_jumlah) AS totalpo, 
         d.pod_hargabeli AS harga,
+        (h.po_jenis = ${JENIS_PO_SPANDUK} AND UPPER(TRIM(d.pod_bhn_satuan)) = 'YARD') AS yardmeter,
         IFNULL((
-          SELECT SUM(dd.bpbd_jumlah) 
+          SELECT SUM(IF(h.po_jenis = ${JENIS_PO_SPANDUK} AND UPPER(TRIM(d.pod_bhn_satuan)) = 'YARD', dd.bpbd_jumlahyard, dd.bpbd_jumlah)) 
           FROM tbpb_dtl dd 
           INNER JOIN tbpb_hdr hh ON hh.bpb_nomor = dd.bpbd_bpb_nomor 
           WHERE hh.bpb_po_nomor = h.po_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old, ''), dd.bpbd_bhn_kode) = d.pod_bhn_kode ${terimaSup}
@@ -152,13 +154,14 @@ const validateField = async (type, value, opts = {}) => {
        INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor AND d.pod_status = 0 AND d.pod_bhn_kode <> ''
        LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
        WHERE h.po_nomor = ? ${supFilter}
-       GROUP BY h.po_nomor, h.po_tanggal, d.pod_bhn_kode, d.pod_bhn_satuan, b.bhn_name, b.bhn_satuan, d.pod_hargabeli`,
+       GROUP BY h.po_nomor, h.po_tanggal, h.po_jenis, d.pod_bhn_kode, d.pod_bhn_satuan, b.bhn_name, b.bhn_satuan, d.pod_hargabeli`,
       [...terimaParams, value, ...supParams],
     );
 
     // Hitung sisa/kurang untuk Grid 1
     const itemsGrid1 = rekapDetails.map((d) => ({
       ...d,
+      yardmeter: Number(d.yardmeter) === 1,
       kurang: Number(d.totalpo) - Number(d.terima),
     }));
 
@@ -251,7 +254,8 @@ const getDetail = async (nomor) => {
       d.bpbd_setting AS setting, d.bpbd_spk_nomor AS spk, IFNULL(COALESCE(k.spk_nama, so.so_nama), "") AS namaspk,
       IFNULL((SELECT t.pod_bhn_satuan FROM tpo_dtl t WHERE t.pod_bhn_kode=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) AND t.pod_po_nomor=h.bpb_po_nomor LIMIT 1),"") AS satuanpo,
       IFNULL((SELECT SUM(dd.pod_jumlah) FROM tpo_dtl dd WHERE dd.pod_po_nomor=h.bpb_po_nomor AND dd.pod_bhn_kode=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterPoSup}),0) AS totalpo,
-      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND hh.bpb_nomor<>h.bpb_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old,''), dd.bpbd_bhn_kode)=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterBpbSup}),0) AS total_terima_lain
+      IFNULL((SELECT SUM(dd.bpbd_jumlah) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND hh.bpb_nomor<>h.bpb_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old,''), dd.bpbd_bhn_kode)=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterBpbSup}),0) AS total_terima_lain,
+      IFNULL((SELECT SUM(dd.bpbd_jumlahyard) FROM tbpb_dtl dd INNER JOIN tbpb_hdr hh ON hh.bpb_nomor=dd.bpbd_bpb_nomor WHERE hh.bpb_po_nomor=h.bpb_po_nomor AND hh.bpb_nomor<>h.bpb_nomor AND COALESCE(NULLIF(dd.bpbd_bhn_kode_old,''), dd.bpbd_bhn_kode)=COALESCE(NULLIF(d.bpbd_bhn_kode_old,''), d.bpbd_bhn_kode) ${filterBpbSup}),0) AS total_terima_lain_yard
      FROM tbpb_dtl d
      INNER JOIN tbpb_hdr h ON h.bpb_nomor = d.bpbd_bpb_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.bpbd_bhn_kode
@@ -273,12 +277,25 @@ const getDetail = async (nomor) => {
     lotByUrut.set(k, [...(lotByUrut.get(k) || []), l.lot]);
   }
 
-  const mappedItems = items.map((d) => ({
-    ...d,
-    lot: (lotByUrut.get(Number(d.nourut_bpb)) || []).join(", "),
-    terima: Number(d.total_terima_lain),
-    kurang: Number(d.totalpo) - Number(d.total_terima_lain),
-  }));
+  const mappedItems = items.map((d) => {
+    // Spanduk dengan Sat PO YARD: Terima dan Kurang dalam yard, stok dalam meter
+    const yardmeter =
+      Number(header.po_jenis) === JENIS_PO_SPANDUK &&
+      String(d.satuanpo || "")
+        .trim()
+        .toUpperCase() === "YARD";
+    const terima = Number(
+      yardmeter ? d.total_terima_lain_yard : d.total_terima_lain,
+    );
+    return {
+      ...d,
+      lot: (lotByUrut.get(Number(d.nourut_bpb)) || []).join(", "),
+      yardmeter,
+      ...(yardmeter ? { jumlahmeter: Number(d.jumlah) } : {}),
+      terima,
+      kurang: Number(d.totalpo) - terima,
+    };
+  });
 
   // D. Grid 2: Items PO Detail (Realisasi)
   const poNomor = header.bpb_po_Nomor || header.bpb_po_nomor || "";
@@ -569,17 +586,41 @@ const saveData = async (payload, userKode) => {
       (item) => item.kode && String(item.kode).trim() !== "",
     );
 
-    // Spanduk: kode yang diterima harus ada di baris PO
+    // Spanduk: kode yang diterima harus ada di baris PO. Info satuan dan harga
+    // PO dibaca dari database; PO yard disimpan sebagai meter (stok) + harga per meter.
+    const infoPo = new Map();
     if (adalahSpanduk) {
-      const [kodePo] = await conn.query(
-        `SELECT DISTINCT pod_bhn_kode AS kode FROM tpo_dtl WHERE pod_po_nomor = ?`,
+      const [barisPo] = await conn.query(
+        `SELECT pod_bhn_kode AS kode,
+                UPPER(TRIM(pod_bhn_satuan)) AS satuan,
+                pod_hargabeli AS harga
+         FROM tpo_dtl
+         WHERE pod_po_nomor = ? AND pod_bhn_kode <> ''`,
         [header.bpb_po_nomor],
       );
-      const kodeSah = new Set(kodePo.map((r) => r.kode));
+      for (const r of barisPo) {
+        const ada = infoPo.get(r.kode) || {
+          satuan: r.satuan,
+          harga: Number(r.harga),
+          yard: false,
+          campur: false,
+        };
+        if (r.satuan === "YARD") ada.yard = true;
+        if (ada.satuan !== r.satuan || ada.harga !== Number(r.harga)) {
+          ada.campur = true;
+        }
+        infoPo.set(r.kode, ada);
+      }
       for (const item of validItemsToInsert) {
-        if (!kodeSah.has(item.kode)) {
+        const info = infoPo.get(item.kode);
+        if (!info) {
           throw new Error(
             `Kode ${item.kode} tidak ada di PO ${header.bpb_po_nomor}.`,
+          );
+        }
+        if (info.yard && info.campur) {
+          throw new Error(
+            `Kode ${item.kode} punya lebih dari satu harga/satuan di PO ${header.bpb_po_nomor}; konversi yard ke meter belum mendukung kasus ini.`,
           );
         }
       }
@@ -667,9 +708,19 @@ const saveData = async (payload, userKode) => {
     let totalBpb = 0;
 
     for (const item of validItemsToInsert) {
+      // Spanduk PO YARD: yard = input user (sumber kebenaran). Meter (stok) dan
+      // harga per meter dihitung server, kiriman klien untuk keduanya diabaikan.
+      const poInfo = adalahSpanduk ? infoPo.get(item.kode) : null;
+      const yardMeter = !!poInfo && poInfo.yard;
+      const yardTerima = yardMeter ? bulat2(item.jumlahyard) : 0;
+      const jumlahSimpan = yardMeter
+        ? bulat2(yardTerima * YARD_TO_METER)
+        : Number(item.jumlah || 0);
+
       // Kalkulasi sinkronisasi PO (Sesuai tpo, tbpb Delphi di simpandata)
       totalPoSisa += Number(item.totalpo || 0);
-      const jmlTrmPlusBpb = Number(item.terima || 0) + Number(item.jumlah || 0);
+      const jmlTrmPlusBpb =
+        Number(item.terima || 0) + (yardMeter ? yardTerima : jumlahSimpan);
       if (jmlTrmPlusBpb > Number(item.totalpo || 0)) {
         totalBpb += Number(item.totalpo || 0);
       } else {
@@ -679,10 +730,16 @@ const saveData = async (payload, userKode) => {
       // Baris kode baru: kode lama PO disimpan, harga/spesifikasi dari server
       const baru = usulanByKode.get(item.kode);
       const kodeOld = baru ? baru.kodePo : kodeLama.get(item.kode) || "";
-      const yard =
-        usulan && item.satuan === "MTR"
+      const yard = yardMeter
+        ? yardTerima
+        : usulan && item.satuan === "MTR"
           ? bulat2(Number(item.jumlah || 0) / YARD_TO_METER)
           : item.jumlahyard || 0;
+      const hargaSimpan = yardMeter
+        ? bulat2(poInfo.harga / YARD_TO_METER)
+        : baru
+          ? baru.harga
+          : item.harga || 0;
 
       await conn.query(
         `
@@ -697,9 +754,9 @@ const saveData = async (payload, userKode) => {
           item.kode,
           kodeOld,
           yard,
-          item.jumlah || 0,
+          jumlahSimpan,
           item.roll || 0,
-          baru ? baru.harga : item.harga || 0,
+          hargaSimpan,
           item.satuan || "",
           adalahSpanduk ? "" : baru ? baru.gramasi : item.gramasi || "",
           adalahSpanduk ? "" : baru ? baru.warna : item.warna || "",
@@ -728,9 +785,9 @@ const saveData = async (payload, userKode) => {
       }
 
       // F. SINKRONISASI STATUS CLOSE PO
-      // BPB dari QC: dihitung dari DB untuk seluruh PO (PO Lain-lain multi-supplier
-      // tidak boleh CLOSE hanya karena satu supplier selesai).
-      if (dariQc) {
+      // Spanduk juga dihitung dari DB (tbpb_dtl2 dalam satuan PO), bukan dari
+      // angka klien, karena Terima per baris bisa yard sedangkan stok meter.
+      if (dariQc || adalahSpanduk) {
         await syncStatusClosePo(conn, header.bpb_po_nomor);
       } else {
         let poCloseStatus = 2; // ONPROSES
@@ -1095,7 +1152,28 @@ const muatMasterKode = async (executor) => {
       settingByInch.set(item.inci, daftar);
     }
   }
-  return { gramasiList, gramasiByKode, settingByKode, settingByInch };
+
+  const [war] = await executor.query(
+    `SELECT bw_kode, bw_nama FROM tbahan_warna ORDER BY bw_kode`,
+  );
+  const normNama = (s) =>
+    String(s || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toUpperCase();
+  const warnaByNama = new Map();
+  for (const w of war) {
+    const k = normNama(w.bw_nama);
+    if (k && !warnaByNama.has(k)) warnaByNama.set(k, String(w.bw_kode).trim());
+  }
+  return {
+    gramasiList,
+    gramasiByKode,
+    settingByKode,
+    settingByInch,
+    warnaByNama,
+    normNama,
+  };
 };
 
 // Nilai ganda (mis. 42" = kode 42 dan 2K): pilih kode yang sama dengan angkanya
@@ -1119,6 +1197,7 @@ const evaluasiLot = (lot, master) => {
   const sKode = kodePo.substr(7, 2);
   let gBaru = gKode;
   let sBaru = sKode;
+  let wBaru = kodePo.substr(2, 3);
 
   const g = Number(lot.qcd_gramasi_cek) || 0;
   const bandPo = master.gramasiByKode.get(gKode);
@@ -1152,8 +1231,14 @@ const evaluasiLot = (lot, master) => {
       );
   }
 
+  const wQc = master.normNama(lot.qcd_warna);
+  if (wQc) {
+    const wKode = master.warnaByNama.get(wQc);
+    if (wKode) wBaru = wKode; // nama warna QC tidak ada di master: kode warna PO dipertahankan
+  }
+
   if (hasil.masalah.length === 0) {
-    hasil.kode = kodePo.substr(0, 5) + gBaru + sBaru + kodePo.substr(9);
+    hasil.kode = kodePo.substr(0, 2) + wBaru + gBaru + sBaru + kodePo.substr(9);
   }
   return hasil;
 };
@@ -1163,7 +1248,7 @@ const susunUsulanKode = async (executor, lots, poNomor) => {
   const master = await muatMasterKode(executor);
   const [poKode] = await executor.query(
     `SELECT DISTINCT pod_bhn_kode AS kode FROM tpo_dtl
-     WHERE pod_po_nomor = ? AND pod_bhn_kode <> ''`,
+     WHERE pod_po_nomor = ? AND pod_bhn_kode <> '' AND pod_status <> 2`,
     [poNomor],
   );
   const kodeDiPo = new Set(poKode.map((r) => r.kode));

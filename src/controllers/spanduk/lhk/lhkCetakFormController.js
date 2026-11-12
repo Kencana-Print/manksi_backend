@@ -64,11 +64,13 @@ const getLookupKaryawan = async (req, res) => {
 
 const create = async (req, res) => {
   try {
-    const nomor = await service.createLhkCetak(req.body, req.user);
+    const hasil = await service.createLhkCetak(req.body, req.user);
     res.status(201).json({
       success: true,
-      message: "Berhasil disimpan",
-      data: { Nomor: nomor },
+      message: hasil.menungguApproval
+        ? "Berhasil disimpan. LHK menunggu approval SPV/Manager karena pemakaian kain melebihi kebutuhan"
+        : "Berhasil disimpan",
+      data: { Nomor: hasil.nomor, Menunggu_Approval: hasil.menungguApproval },
     });
   } catch (error) {
     kirimError(res, error, 400);
@@ -77,15 +79,17 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   try {
-    const nomor = await service.updateLhkCetak(
+    const hasil = await service.updateLhkCetak(
       req.params.nomor,
       req.body,
       req.user,
     );
     res.status(200).json({
       success: true,
-      message: "Berhasil disimpan",
-      data: { Nomor: nomor },
+      message: hasil.menungguApproval
+        ? "Berhasil disimpan. LHK menunggu approval SPV/Manager karena pemakaian kain melebihi kebutuhan"
+        : "Berhasil disimpan",
+      data: { Nomor: hasil.nomor, Menunggu_Approval: hasil.menungguApproval },
     });
   } catch (error) {
     kirimError(res, error, 400);

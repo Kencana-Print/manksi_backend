@@ -54,9 +54,7 @@ const getDetailLhkLipat = async (tglAwal, tglAkhir, user) => {
            x.spk_panjang AS Panjang,
            x.spk_lebar AS Lebar,
            d.lld_qty_lipat AS Qty_Lipat,
-           d.lld_tambah_lipat AS Tambah_Lipat,
-           d.lld_mata_ayam AS Mata_Ayam,
-           d.lld_bs_lipat AS BS_Lipat
+           d.lld_mata_ayam AS Mata_Ayam
     FROM ${T.dtl} d
     JOIN ${T.hdr} h ON h.llh_nomor = d.lld_llh_nomor
     LEFT JOIN (${SUMBER_SPK}) x ON x.spk_nomor = d.lld_spk_nomor

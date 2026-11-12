@@ -4,11 +4,17 @@ const fs = require("fs");
 const path = require("path");
 const { kondisiSpanduk } = require("../master/garmenBrgService");
 
+// Jenis tak dikenal tetap jatuh ke MBK (perilaku lama); ASET = MBI
+const PREFIX_JENIS = {
+  ACCESORIES: "MBA",
+  OBAT: "MBO",
+  SPAREPART: "MBS",
+  ASET: "MBI",
+};
+const BAGIAN_ASET = ["GA", "EDP"]; // yang boleh membuat Permintaan Pembelian Aset
+
 const generateNomor = async (jenis, tanggal) => {
-  let prefix = "MBK";
-  if (jenis === "ACCESORIES") prefix = "MBA";
-  else if (jenis === "OBAT") prefix = "MBO";
-  else if (jenis === "SPAREPART") prefix = "MBS";
+  const prefix = PREFIX_JENIS[jenis] || "MBK";
 
   const year = new Date(tanggal).getFullYear().toString();
   const prefixYear = prefix + year;
@@ -102,14 +108,25 @@ const saveData = async (data, userKode, bagian, cabang) => {
   try {
     await conn.beginTransaction();
 
+    if (
+      data.header.mb_jenis === "ASET" &&
+      !BAGIAN_ASET.includes(String(bagian || "").toUpperCase())
+    ) {
+      throw new Error(
+        "Permintaan Pembelian Aset hanya untuk bagian GA atau EDP.",
+      );
+    }
+
     const itemTerisi = data.items.filter(
       (item) => item.kode && Number(item.jumlah) > 0,
     );
     const kodeUnik = [...new Set(itemTerisi.map((item) => item.kode))];
     if (kodeUnik.length > 0) {
+      const syaratCabang =
+        data.header.mb_jenis === "ASET" ? "" : kondisiSpanduk(cabang, "b");
       const [kodeOk] = await conn.query(
         `SELECT b.brg_kode FROM tgarmen_brg b
-         WHERE b.brg_jenis = ? AND b.brg_kode IN (?) ${kondisiSpanduk(cabang, "b")}`,
+         WHERE b.brg_jenis = ? AND b.brg_kode IN (?) ${syaratCabang}`,
         [data.header.mb_jenis, kodeUnik],
       );
       if (kodeOk.length !== kodeUnik.length) {
@@ -302,7 +319,9 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
     }
   }
 
-  whereClause += kondisiSpanduk(cabang);
+  if (jenis !== "ASET") {
+    whereClause += kondisiSpanduk(cabang);
+  }
 
   const [rows] = await db.query(
     `SELECT 

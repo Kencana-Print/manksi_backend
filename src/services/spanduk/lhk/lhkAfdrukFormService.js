@@ -8,6 +8,7 @@ const {
   adalahSuperadmin,
   cabangUser,
   MAKS_ANGKA,
+  bolehPotongStok,
 } = require("./lhkCommon");
 const {
   T,
@@ -223,15 +224,6 @@ const KTG_BAHAN = "SPANDUK";
 const MAKS_QTY_BAHAN = 9999999999.99; // decimal(12,2)
 const MAKS_KODE_BAHAN = 20; // lab_brg_kode varchar(20)
 const MAKS_KODE_LOKASI_STOK = 3; // mst_cab char(3)
-// Batas tanggal potong stok = tanggal stok awal P02 diinput (opname go-live).
-// LHK bertanggal sebelum ini tidak memotong stok, baru maupun diubah, karena
-// stoknya belum ada. GANTI saat cutover ke tanggal stok awal di DB prod.
-const TANGGAL_MULAI_POTONG_STOK = "2026-11-01";
-
-// tanggal = 'YYYY-MM-DD' (tanggal LHK yang disimpan). lhkLama = LHK yang
-// baris bahannya sudah bertanda lab_potong_stok = 0.
-const bolehPotongStok = (tanggal, lhkLama) =>
-  !lhkLama && tanggal >= TANGGAL_MULAI_POTONG_STOK;
 
 const qtyBahan = (v, label) => {
   const s = teks(v);

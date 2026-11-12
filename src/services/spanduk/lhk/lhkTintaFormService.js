@@ -6,92 +6,51 @@ const {
   parseTanggal,
   adalahSuperadmin,
   cabangUser,
+  bolehPotongStok,
 } = require("./lhkCommon");
 const {
   T,
+  sqlLewatBatas,
   cekTutupBuku,
   pastikanLhkDiCabang,
   pastikanPabrik,
   pastikanTintaBelumDikunciProof,
 } = require("./lhkTintaShared");
-const { KODE_RESEP } = require("./lhkProofResep");
+const { KODE_OBAT_PROOF } = require("./lhkProofResep");
 
 const PREFIX_NOMOR = "LHK-T";
 const NOMOR_LOCK = "lhk_tinta_nomor";
 const MAKS_QTY = 9999999999.9999; // decimal(14,4)
+const MAKS_LOKASI_STOK = 3; // mst_cab char(3)
 
-// Bahan tinta/cat = master bahan kategori 3 (OBAT & TINTA) divisi Spanduk
-const KATEGORI_TINTA = "3";
-const DIVISI_TINTA = 1;
+// Master obat = tgarmen_brg jenis OBAT kategori SPANDUK
+const JENIS_OBAT = "OBAT";
+const KTG_SPANDUK = "SPANDUK";
 
-// Konversi satuan massa. Hanya barang yang satuan masternya KG atau GR yang
-// boleh diinput dalam KG / ONS / GR (1 ons = 100 gram). Barang bersatuan lain
-// (LITER, PCS, ROLL, dst) diinput dalam satuan masternya.
-const GRAM_PER_SATUAN = { KG: 1000, ONS: 100, GR: 1 };
-const SATUAN_MASTER_MASSA = ["KG", "GR"];
-const PILIHAN_SATUAN_MASSA = ["KG", "ONS", "GR"];
+// Sama dengan LHK Proof: total dalam satuan master (KG atau LITER);
+// 1 ons = 0,1 dan 1 gram = 0,001
+const FAKTOR_ONS = 0.1;
+const FAKTOR_GRAM = 0.001;
 
 const upper = (v) =>
   String(v ?? "")
     .trim()
     .toUpperCase();
-const bulat4 = (n) => Math.round(n * 10000) / 10000;
-
-const pilihanSatuan = (satuanMaster) =>
-  SATUAN_MASTER_MASSA.includes(upper(satuanMaster)) ? PILIHAN_SATUAN_MASSA : [];
+const round4 = (n) => Math.round(n * 10000) / 10000;
 
 // --- util ---
-const qtyInput = (v, label) => {
+// Kosong dianggap 0; maks 4 desimal
+const angkaInput = (v, label) => {
   const s = teks(v);
+  if (s === "") {
+    return 0;
+  }
   if (!/^\d+(\.\d{1,4})?$/.test(s)) {
     throw galat(
-      `${label} harus angka lebih dari 0 (maks 4 desimal, desimal pakai titik)`,
+      `${label} harus angka 0 atau lebih (maks 4 desimal, desimal pakai titik)`,
     );
   }
-  const n = Number(s);
-  if (n <= 0) {
-    throw galat(`${label} harus lebih dari 0`);
-  }
-  if (n > MAKS_QTY) {
-    throw galat(`${label} terlalu besar`);
-  }
-  return n;
-};
-
-// Hasil: qty dalam satuan master + satuan yang diketik operator
-const konversiQty = (jumlah, satuanInput, satuanMasterRaw, label) => {
-  const master = upper(satuanMasterRaw);
-  if (SATUAN_MASTER_MASSA.includes(master)) {
-    const dari = upper(satuanInput) || master;
-    if (!PILIHAN_SATUAN_MASSA.includes(dari)) {
-      throw galat(`${label}: satuan harus KG, ONS, atau GR`);
-    }
-    const hasil = bulat4(
-      (jumlah * GRAM_PER_SATUAN[dari]) / GRAM_PER_SATUAN[master],
-    );
-    if (hasil <= 0) {
-      throw galat(
-        `${label}: jumlah terlalu kecil setelah dikonversi ke ${master}`,
-      );
-    }
-    if (hasil > MAKS_QTY) {
-      throw galat(
-        `${label}: jumlah terlalu besar setelah dikonversi ke ${master}`,
-      );
-    }
-    return { qty: hasil, satuan: master, satuanInput: dari };
-  }
-  const dari = upper(satuanInput);
-  if (dari && dari !== master) {
-    throw galat(
-      `${label}: bahan ini bersatuan ${String(satuanMasterRaw ?? "").trim() || "-"}, tidak bisa diinput dalam ${dari}`,
-    );
-  }
-  return {
-    qty: jumlah,
-    satuan: String(satuanMasterRaw ?? "").trim() || null,
-    satuanInput: master,
-  };
+  return Number(s);
 };
 
 // Lokasi dikunci ke cabang user (kecuali superadmin)
@@ -105,9 +64,24 @@ const pastikanLokasiUser = (pabrik, user) => {
   }
 };
 
+// mst_cab char(3): kode lokasi lebih panjang membuat trigger stok gagal
+const pastikanLokasiStok = (pabrik, potongStok) => {
+  if (potongStok && pabrik.length > MAKS_LOKASI_STOK) {
+    throw galat(
+      `Kode lokasi maksimal ${MAKS_LOKASI_STOK} karakter bila ada pemakaian obat`,
+    );
+  }
+};
+
+// Urutan baris mengikuti daftar tetap
+const urutDaftar = (kode) => {
+  const i = KODE_OBAT_PROOF.indexOf(kode);
+  return i < 0 ? KODE_OBAT_PROOF.length : i;
+};
+
 // --- validasi payload ---
 // Body: { Tanggal, Kode_Pabrik, Nomor_Cetak,
-//         Bahan: [{ Kode_Bahan, Qty, Satuan }] }
+//         Bahan: [{ Kode_Bahan, Kg, Ons, Gram }] }
 const siapkanData = (body = {}) => {
   const tanggal = parseTanggal(body.Tanggal);
 
@@ -129,44 +103,51 @@ const siapkanData = (body = {}) => {
 
   const daftar = Array.isArray(body.Bahan) ? body.Bahan : [];
   if (daftar.length === 0) {
-    throw galat("Minimal satu pemakaian tinta/cat harus diisi");
+    throw galat("Minimal satu pemakaian obat harus diisi");
   }
 
   const sudah = new Set();
-  const bahan = daftar.map((t, i) => {
-    const label = `Bahan ${i + 1}`;
-    const s = teks(t?.Kode_Bahan);
-    if (!/^\d+$/.test(s) || Number(s) <= 0) {
-      throw galat(`${label}: bahan wajib dipilih`);
-    }
-    const kode = Number(s);
-    if (!Number.isSafeInteger(kode)) {
-      throw galat(`${label}: kode bahan tidak valid`);
-    }
-    if (sudah.has(kode)) {
-      throw galat(`${label}: bahan ${kode} sudah ada di daftar`);
-    }
-    sudah.add(kode);
-    const satuan = teks(t?.Satuan);
-    if (satuan.length > 10) {
-      throw galat(`${label}: satuan maksimal 10 karakter`);
-    }
-    return {
-      kode,
-      jumlah: qtyInput(t?.Qty, `${label}: Qty`),
-      satuanInput: satuan,
-    };
-  });
+  const bahan = daftar
+    .map((t, i) => {
+      const label = `Bahan ${i + 1}`;
+      const kode = upper(t?.Kode_Bahan);
+      if (!kode) {
+        throw galat(`${label}: bahan wajib dipilih`);
+      }
+      if (kode.length > 20) {
+        throw galat(`${label}: kode bahan maksimal 20 karakter`);
+      }
+      if (sudah.has(kode)) {
+        throw galat(`${label}: bahan ${kode} sudah ada di daftar`);
+      }
+      sudah.add(kode);
+      const qty = round4(
+        angkaInput(t?.Kg, `${label}: KG/LTR`) +
+          angkaInput(t?.Ons, `${label}: Ons`) * FAKTOR_ONS +
+          angkaInput(t?.Gram, `${label}: Gram`) * FAKTOR_GRAM,
+      );
+      if (qty > MAKS_QTY) {
+        throw galat(`${label}: jumlah terlalu besar`);
+      }
+      return { kode, qty };
+    })
+    .filter((b) => b.qty > 0); // baris kosong dibuang, seperti LHK Proof
 
+  if (bahan.length === 0) {
+    throw galat("Minimal satu pemakaian obat harus diisi");
+  }
   return { tanggal, pabrik, nomorCetak, bahan };
 };
 
 // LHK Cetak harus ada, milik cabang user, selokasi, dan tidak lebih baru dari
-// tanggal Tinta
-const pastikanCetak = async (q, data, user) => {
+// tanggal Tinta. LHK Tinta baru ditolak bila LHK Cetak-nya pasif (menunggu
+// atau ditolak approval); LHK Tinta yang sudah ada tetap bisa diubah.
+// [KONFIRMASI] aturan pasif = default Claude 9 Nov (PRD #169).
+const pastikanCetak = async (q, data, user, baru = false) => {
   const [rows] = await q.query(
     `SELECT DATE_FORMAT(lch_tanggal, '%Y-%m-%d') AS tgl,
-            lch_pab_kode AS pabrik
+            lch_pab_kode AS pabrik,
+            lch_apv_status AS apv
      FROM ${T.cetakHdr} WHERE lch_nomor = ?`,
     [data.nomorCetak],
   );
@@ -185,63 +166,115 @@ const pastikanCetak = async (q, data, user) => {
       `Tanggal tidak boleh lebih awal dari tanggal LHK Cetak (${c.tgl})`,
     );
   }
+  if (baru && !["", "Y"].includes(String(c.apv ?? "").trim())) {
+    throw galat(
+      `LHK Cetak ${data.nomorCetak} belum disetujui (menunggu atau ditolak approval)`,
+    );
+  }
 };
 
-// Bahan harus ada di master, kategori Obat & Tinta, divisi Spanduk, dan aktif.
-// Bahan yang sudah tercatat di LHK ini (sudahAda) tetap boleh walau
-// belakangan dinonaktifkan. Mengembalikan baris siap simpan (sudah dikonversi).
-const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
-  const [master] = await q.query(
-    `SELECT brg_kode, brg_satuan, brg_isaktif
-     FROM ${T.barang}
-     WHERE brg_kode IN (?) AND brg_ktg_kode = ? AND brg_divisi = ?`,
-    [bahan.map((b) => b.kode), KATEGORI_TINTA, DIVISI_TINTA],
+// Master per kode, semua jenis (untuk mendeteksi kode ganda antar jenis)
+const bacaMaster = async (q, daftarKode) => {
+  const peta = new Map();
+  if (daftarKode.length === 0) {
+    return peta;
+  }
+  const [rows] = await q.query(
+    `SELECT brg_kode, brg_nama, brg_satuan, brg_aktif, brg_ktg, brg_jenis
+     FROM ${T.garmenBrg} WHERE brg_kode IN (?)`,
+    [daftarKode],
   );
-  const peta = new Map(master.map((m) => [Number(m.brg_kode), m]));
-
-  return bahan.map((b, i) => {
-    const label = `Bahan ${i + 1}`;
-    if (!KODE_RESEP.includes(b.kode) && !sudahAda.has(b.kode)) {
-      throw galat(
-        `${label}: bahan ${b.kode} tidak ada dalam daftar pemakaian obat`,
-      );
-    }
-    const m = peta.get(b.kode);
-    if (!m) {
-      throw galat(
-        `${label}: ${b.kode} bukan tinta/cat (Obat & Tinta) atau tidak ada di master`,
-      );
-    }
-    if (Number(m.brg_isaktif) !== 1 && !sudahAda.has(b.kode)) {
-      throw galat(`${label}: bahan ${b.kode} sudah tidak aktif`);
-    }
-    const k = konversiQty(b.jumlah, b.satuanInput, m.brg_satuan, label);
-    return {
-      kode: b.kode,
-      qtyInput: b.jumlah,
-      satuanInput: k.satuanInput,
-      qty: k.qty,
-      satuan: k.satuan,
-    };
-  });
+  for (const r of rows) {
+    const k = upper(r.brg_kode);
+    peta.set(k, [...(peta.get(k) ?? []), r]);
+  }
+  return peta;
 };
 
-const simpanBahan = async (conn, nomor, hasil) => {
+// Stok per Lokasi; pemakaian LHK itu sendiri (nomor) dikecualikan supaya
+// peringatan stok kurang tidak menghitungnya dua kali. null bila lokasi kosong.
+const ambilStok = async (q, daftarKode, cab, nomor) => {
+  if (!cab || daftarKode.length === 0) {
+    return null;
+  }
+  const [rows] = await q.query(
+    `SELECT mst_brg_kode AS kode,
+            SUM(IFNULL(mst_stok_in, 0) - IFNULL(mst_stok_out, 0)) AS stok
+     FROM ${T.stokObat}
+     WHERE mst_aktif = 'Y' AND mst_cab = ? AND mst_brg_kode IN (?)
+       AND IFNULL(mst_noreferensi, '') <> ?
+     GROUP BY mst_brg_kode`,
+    [cab, daftarKode, teks(nomor)],
+  );
+  return new Map(rows.map((r) => [upper(r.kode), Number(r.stok) || 0]));
+};
+
+// Obat harus di daftar tetap, tunggal di master, jenis OBAT kategori SPANDUK,
+// dan aktif. Obat yang sudah tercatat di LHK ini (sudahAda) tetap boleh walau
+// belakangan dinonaktifkan atau keluar dari daftar. Hasil: baris siap simpan.
+const validasiBahan = async (q, bahan, sudahAda = new Set()) => {
+  const master = await bacaMaster(
+    q,
+    bahan.map((b) => b.kode),
+  );
+
+  return bahan
+    .map((b, i) => {
+      const label = `Bahan ${i + 1}`;
+      if (!KODE_OBAT_PROOF.includes(b.kode) && !sudahAda.has(b.kode)) {
+        throw galat(
+          `${label}: bahan ${b.kode} tidak ada dalam daftar pemakaian obat`,
+        );
+      }
+      const baris = master.get(b.kode) ?? [];
+      if (baris.length === 0) {
+        throw galat(`${label}: ${b.kode} tidak ada di master barang`);
+      }
+      if (baris.length > 1) {
+        throw galat(
+          `${label}: kode ${b.kode} ada di lebih dari satu jenis barang, hubungi admin master`,
+        );
+      }
+      const m = baris[0];
+      if (
+        upper(m.brg_jenis) !== JENIS_OBAT ||
+        upper(m.brg_ktg) !== KTG_SPANDUK
+      ) {
+        throw galat(`${label}: ${b.kode} bukan obat spanduk`);
+      }
+      if (upper(m.brg_aktif) !== "Y" && !sudahAda.has(b.kode)) {
+        throw galat(`${label}: bahan ${b.kode} sudah tidak aktif`);
+      }
+      return {
+        kode: b.kode,
+        qty: b.qty,
+        satuan: String(m.brg_satuan ?? "").trim() || null,
+      };
+    })
+    .sort((a, b) => urutDaftar(a.kode) - urutDaftar(b.kode));
+};
+
+// Hapus lalu isi ulang. Trigger membalik stok saat DELETE dan memotong saat
+// INSERT, jadi header harus sudah ditulis/di-update sebelum fungsi ini.
+// ltb_qty_input/ltb_satuan_input tidak dipakai lagi (input = KG/Ons/Gram),
+// diisi salinan total dan satuan master supaya kolom lama tetap valid.
+const simpanBahan = async (conn, nomor, hasil, potongStok) => {
   await conn.query(`DELETE FROM ${T.bahan} WHERE ltb_lnt_nomor = ?`, [nomor]);
   await conn.query(
     `INSERT INTO ${T.bahan}
        (ltb_lnt_nomor, ltb_brg_kode, ltb_qty_input, ltb_satuan_input,
-        ltb_qty, ltb_satuan, ltb_nourut)
+        ltb_qty, ltb_satuan, ltb_nourut, ltb_potong_stok)
      VALUES ?`,
     [
       hasil.map((h, i) => [
         nomor,
         h.kode,
-        h.qtyInput,
-        h.satuanInput,
+        h.qty,
+        h.satuan ?? "",
         h.qty,
         h.satuan,
         i + 1,
+        potongStok ? 1 : 0,
       ]),
     ],
   );
@@ -312,16 +345,15 @@ const getLhkTintaById = async (nomor, user) => {
 
   const Detail = await ambilDetailCetak(db, hdr[0].Nomor_Cetak);
 
+  // Nama jatuh ke kode bila master tak ketemu (LHK lama sebelum remap)
   const [bahan] = await db.query(
     `SELECT b.ltb_brg_kode AS Kode_Bahan,
-            m.brg_nama AS Nama_Bahan,
-            m.brg_satuan AS Satuan_Master,
-            b.ltb_qty_input AS Qty_Input,
-            b.ltb_satuan_input AS Satuan_Input,
-            b.ltb_qty AS Qty,
-            IFNULL(b.ltb_satuan, m.brg_satuan) AS Satuan
+            IFNULL(m.brg_nama, b.ltb_brg_kode) AS Nama_Bahan,
+            IFNULL(b.ltb_satuan, m.brg_satuan) AS Satuan,
+            b.ltb_qty AS Qty
      FROM ${T.bahan} b
-     LEFT JOIN ${T.barang} m ON m.brg_kode = b.ltb_brg_kode
+     LEFT JOIN ${T.garmenBrg} m
+       ON m.brg_kode = b.ltb_brg_kode AND m.brg_jenis = '${JENIS_OBAT}'
      WHERE b.ltb_lnt_nomor = ?
      ORDER BY b.ltb_nourut`,
     [no],
@@ -331,26 +363,25 @@ const getLhkTintaById = async (nomor, user) => {
     ...hdr[0],
     Detail,
     Bahan: bahan.map((r) => ({
-      Kode_Bahan: Number(r.Kode_Bahan),
-      Nama_Bahan: r.Nama_Bahan,
-      Satuan_Master: r.Satuan_Master,
-      Pilihan_Satuan: pilihanSatuan(r.Satuan_Master),
-      Qty_Input: Number(r.Qty_Input),
-      Satuan_Input: r.Satuan_Input,
-      Qty: Number(r.Qty),
+      Kode_Bahan: upper(r.Kode_Bahan),
+      Nama_Bahan: String(r.Nama_Bahan ?? "").trim(),
       Satuan: r.Satuan,
+      Qty: Number(r.Qty),
     })),
   };
 };
 
 // --- Info LHK Cetak untuk mengisi form (SPK/MAP di dalamnya) ---
+// Lewat_Batas = hari ini sudah lewat h+7 dari tanggal LHK Cetak (hanya penanda)
 const getInfoCetak = async (nomor, user) => {
   const no = teks(nomor);
   const [rows] = await db.query(
     `SELECT c.lch_nomor AS Nomor,
             DATE_FORMAT(c.lch_tanggal, '%Y-%m-%d') AS Tanggal,
             c.lch_pab_kode AS Kode_Pabrik,
-            p.pab_nama AS Nama_Pabrik
+            p.pab_nama AS Nama_Pabrik,
+            c.lch_apv_status AS Apv_Status,
+            ${sqlLewatBatas("c")} AS Lewat_Batas
      FROM ${T.cetakHdr} c
      LEFT JOIN ${T.pabrik} p ON p.pab_kode = c.lch_pab_kode
      WHERE c.lch_nomor = ?`,
@@ -365,17 +396,22 @@ const getInfoCetak = async (nomor, user) => {
   ) {
     throw galat("LHK Cetak ini bukan milik cabang Anda", "forbidden");
   }
-  return { ...rows[0], Detail: await ambilDetailCetak(db, no) };
+  return {
+    ...rows[0],
+    Lewat_Batas: Number(rows[0].Lewat_Batas),
+    Detail: await ambilDetailCetak(db, no),
+  };
 };
 
 // --- Lookup LHK Cetak berhalaman (non-superadmin hanya cabangnya sendiri) ---
+// LHK Cetak pasif tidak ditawarkan ([KONFIRMASI], lihat pastikanCetak)
 const getLookupCetak = async (keyword, page, limit, user) => {
   const kata = teks(keyword);
   const limitNum = Math.min(Math.max(Math.floor(Number(limit)) || 50, 1), 100);
   const halaman = Math.max(Math.floor(Number(page)) || 1, 1);
   const offset = (halaman - 1) * limitNum;
 
-  const kondisi = [];
+  const kondisi = ["c.lch_apv_status IN ('', 'Y')"];
   const params = [];
   if (kata) {
     kondisi.push(
@@ -389,7 +425,7 @@ const getLookupCetak = async (keyword, page, limit, user) => {
     kondisi.push("c.lch_pab_kode = ?");
     params.push(cabangUser(user));
   }
-  const where = kondisi.length ? `WHERE ${kondisi.join(" AND ")}` : "";
+  const where = `WHERE ${kondisi.join(" AND ")}`;
 
   const [hitung] = await db.query(
     `SELECT COUNT(*) AS total FROM ${T.cetakHdr} c ${where}`,
@@ -438,34 +474,36 @@ const getLookupPabrik = async (search, user) => {
   return rows;
 };
 
-// --- Daftar bahan = baris default form: hanya bahan dalam daftar KODE_RESEP
-// (sama dengan Resep LHK Proof), urutan mengikuti konfigurasi.
-const getLookupBahan = async (search) => {
-  const kata = teks(search);
-  const kondisi = [
-    "brg_ktg_kode = ?",
-    "brg_divisi = ?",
-    "brg_isaktif = 1",
-    "brg_kode IN (?)",
-  ];
-  const params = [KATEGORI_TINTA, DIVISI_TINTA, KODE_RESEP];
-  if (kata) {
-    kondisi.push("(brg_nama LIKE ? OR brg_kode LIKE ?)");
-    params.push(`%${kata}%`, `%${kata}%`);
-  }
-  const [rows] = await db.query(
-    `SELECT brg_kode AS Kode, brg_nama AS Nama, brg_satuan AS Satuan
-     FROM ${T.barang}
-     WHERE ${kondisi.join(" AND ")}
-     ORDER BY FIELD(brg_kode, ${KODE_RESEP.join(",")})`,
-    params,
-  );
-  return rows.map((r) => ({
-    Kode: Number(r.Kode),
-    Nama: String(r.Nama ?? "").trim(),
-    Satuan: r.Satuan,
-    Pilihan_Satuan: pilihanSatuan(r.Satuan),
-  }));
+// --- Daftar obat = baris default form: daftar tetap KODE_OBAT_PROOF (sama
+// dengan LHK Proof), hanya yang aktif dan tunggal di master. Stok per Lokasi
+// (non-superadmin dipaksa cabangnya sendiri); null bila lokasi kosong.
+const getLookupBahan = async (user, pabrik, nomor) => {
+  const cab = adalahSuperadmin(user) ? upper(pabrik) : cabangUser(user);
+  const master = await bacaMaster(db, KODE_OBAT_PROOF);
+  const stok = await ambilStok(db, KODE_OBAT_PROOF, cab, nomor);
+
+  return KODE_OBAT_PROOF.flatMap((kode) => {
+    const baris = master.get(kode) ?? [];
+    if (baris.length !== 1) {
+      return [];
+    }
+    const m = baris[0];
+    if (
+      upper(m.brg_jenis) !== JENIS_OBAT ||
+      upper(m.brg_ktg) !== KTG_SPANDUK ||
+      upper(m.brg_aktif) !== "Y"
+    ) {
+      return [];
+    }
+    return [
+      {
+        Kode: kode,
+        Nama: String(m.brg_nama ?? "").trim(),
+        Satuan: String(m.brg_satuan ?? "").trim(),
+        Stok: stok ? (stok.get(kode) ?? 0) : null,
+      },
+    ];
+  });
 };
 
 // --- CREATE ---
@@ -473,6 +511,8 @@ const createLhkTinta = async (body, user) => {
   const data = siapkanData(body);
   pastikanLokasiUser(data.pabrik, user);
   await cekTutupBuku(data.tanggal);
+  const potongStok = bolehPotongStok(data.tanggal, false);
+  pastikanLokasiStok(data.pabrik, potongStok);
 
   const conn = await db.getConnection();
   let lockDiambil = false;
@@ -487,7 +527,7 @@ const createLhkTinta = async (body, user) => {
 
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
-    await pastikanCetak(conn, data, user);
+    await pastikanCetak(conn, data, user, true);
     const hasil = await validasiBahan(conn, data.bahan);
 
     const nomor = await buatNomor(conn, data.tanggal);
@@ -498,7 +538,7 @@ const createLhkTinta = async (body, user) => {
        VALUES (?, ?, ?, ?, CURDATE(), ?)`,
       [nomor, data.tanggal, data.pabrik, data.nomorCetak, user?.kode ?? null],
     );
-    await simpanBahan(conn, nomor, hasil);
+    await simpanBahan(conn, nomor, hasil, potongStok);
 
     await conn.commit();
     return nomor;
@@ -551,18 +591,25 @@ const updateLhkTinta = async (nomor, body, user) => {
       user,
     });
     await pastikanPabrik(conn, data.pabrik);
-    await pastikanCetak(conn, data, user);
+    await pastikanCetak(conn, data, user, false);
 
     const [ada] = await conn.query(
-      `SELECT ltb_brg_kode AS kode FROM ${T.bahan} WHERE ltb_lnt_nomor = ?`,
+      `SELECT ltb_brg_kode AS kode, ltb_potong_stok AS potong
+       FROM ${T.bahan} WHERE ltb_lnt_nomor = ?`,
       [no],
     );
+    // LHK lama (ada baris bertanda tidak potong stok) tetap tidak memotong stok
+    const lhkLama = ada.some((r) => Number(r.potong) === 0);
+    const potongStok = bolehPotongStok(data.tanggal, lhkLama);
+    pastikanLokasiStok(data.pabrik, potongStok);
+
     const hasil = await validasiBahan(
       conn,
       data.bahan,
-      new Set(ada.map((r) => Number(r.kode))),
+      new Set(ada.map((r) => upper(r.kode))),
     );
 
+    // header dulu: trigger stok membaca lnt_tanggal dan lnt_pab_kode
     await conn.query(
       `UPDATE ${T.hdr}
        SET lnt_tanggal = ?, lnt_pab_kode = ?,
@@ -570,7 +617,7 @@ const updateLhkTinta = async (nomor, body, user) => {
        WHERE lnt_nomor = ?`,
       [data.tanggal, data.pabrik, user?.kode ?? null, no],
     );
-    await simpanBahan(conn, no, hasil);
+    await simpanBahan(conn, no, hasil, potongStok);
 
     await conn.commit();
     return no;

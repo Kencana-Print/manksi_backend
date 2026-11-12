@@ -5,6 +5,16 @@ const {
   assertBkkBelumDiklaim,
   assertTidakKeKasKlaim,
 } = require("../piutang/klaimKasKecilGuardService");
+const {
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
+  SQL_NOMINAL_VOUCHER,
+  getVoucherNomor,
+  getKlaimKasKecilOptions,
+  ambilSupplierKlaim,
+  pastikanNominalBkk,
+  postingBiayaManual,
+} = require("../pembelian/pengajuanTransferFormService");
 
 // ── Account header BBK (A-112 atau rek_kol_id=12) ─────────────────────
 const getAccountOptions = async (cabang) => {
@@ -119,7 +129,7 @@ const getDetailForm = async (nomor) => {
       d.jurd_dcnama,
       d.jurd_sup_kode, d.jurd_sup_nama,
       d.jurd_bank, d.jurd_rekening, d.jurd_atasnama,
-      d.jurd_satuan,d.jurd_qty,d.jurd_harga,d.jurd_mb,d.jurd_brg_kode,
+      d.jurd_satuan,d.jurd_qty,d.jurd_harga,d.jurd_mb,d.jurd_brg_kode,d.jurd_ref,
       m.mb_jenis,m.mb_cab
     FROM finance.tjurnal h
     LEFT JOIN finance.tjurnalitem d ON d.jurd_jur_no = h.jur_no
@@ -149,6 +159,10 @@ const getDetailForm = async (nomor) => {
       dckode: r.jurd_cc_kode || 0,
       mb: r.jurd_mb || "",
       kdbrg: r.jurd_brg_kode || "",
+      vou: String(r.jurd_ref || "").startsWith("VOU|")
+        ? String(r.jurd_ref).slice(4)
+        : "",
+      klaim: (r.jurd_ref || "").startsWith("KLM|") ? r.jurd_ref.slice(4) : "",
       satuan: r.jurd_satuan || "",
       qty: Number(r.jurd_qty),
       harga: Number(r.jurd_harga),
@@ -176,12 +190,238 @@ const getDetailForm = async (nomor) => {
 
 // SEMENTARA: pengecekan tutup buku BBK dimatikan sampai tanggal ini
 // (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-30";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-11-30";
 
 const bypassTutupBukuAktif = () => {
   const n = new Date();
   const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   return hariIni <= BYPASS_TUTUP_BUKU_SAMPAI;
+};
+
+// Periode tertutup untuk satu tanggal (manual override menang).
+const periodeTertutup = async (tgl, cid = "BBK") => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const limitDate = await tutupBukuService.getTanggalTutupBukuUntukTanggal(tgl);
+  limitDate.setHours(0, 0, 0, 0);
+  const zCloseManual = await tutupBukuService.getManualTutupBuku(cid);
+  if (zCloseManual) {
+    zCloseManual.setHours(0, 0, 0, 0);
+    return new Date(tgl) < zCloseManual;
+  }
+  return limitDate < today;
+};
+
+// ── Baris dari Rekap Pembayaran (voucher) ─────────────────────────────
+// Server memastikan: voucher ada, supplier sama, belum dipakai dokumen
+// lain (PJT/BBK lain), sisa > 0. Nominal diambil dari sisa voucher di
+// server, bukan dari klien. Link milik BBK ini sendiri tidak dihitung.
+const validasiVoucherRekap = async (conn, baris, nomorSendiri) => {
+  if (!baris.length) return [];
+  const daftar = baris.map((d) => String(d.vou).trim());
+  if (new Set(daftar).size !== daftar.length)
+    throw new Error("Ada voucher yang diinput lebih dari satu kali.");
+
+  const [vou] = await conn.query(
+    `SELECT h.vou_nomor AS nomor, h.vou_sup_kode AS sup,
+            ${SQL_NOMINAL_VOUCHER} AS nominal
+     FROM tvoucher_hdr h
+     WHERE h.vou_nomor IN (?)
+     FOR UPDATE`,
+    [daftar],
+  );
+  const peta = new Map(vou.map((v) => [v.nomor, v]));
+
+  const sqlPakai = nomorSendiri
+    ? `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor IN (?) AND NOT (vou_link <=> ?)`
+    : `SELECT vou_nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor IN (?)`;
+  const [lain] = await conn.query(
+    sqlPakai,
+    nomorSendiri ? [daftar, nomorSendiri] : [daftar],
+  );
+  const dipakai = new Map(lain.map((r) => [r.vou_nomor, r.vou_link]));
+
+  const hasil = [];
+  for (const d of baris) {
+    const v = peta.get(String(d.vou).trim());
+    if (!v) throw new Error(`Voucher ${d.vou} tidak ditemukan.`);
+    if (dipakai.has(v.nomor)) {
+      const link = dipakai.get(v.nomor);
+      throw new Error(
+        `Voucher ${v.nomor} sudah dibayar/diajukan${link ? ` di ${link}` : ""}.`,
+      );
+    }
+    if (
+      String(d.kdsup ?? d.supkode ?? "").trim() !== String(v.sup || "").trim()
+    )
+      throw new Error(
+        `Supplier baris ${v.nomor} tidak sama dengan supplier voucher (${v.sup}).`,
+      );
+    const nilai = Number(v.nominal) || 0;
+    if (!(nilai > 0.005))
+      throw new Error(`Voucher ${v.nomor} tidak punya sisa untuk dibayar.`);
+
+    // Nominal dikunci ke sisa voucher; jurd_mb harus kosong (trigger stok).
+    d.vou = v.nomor;
+    d.qty = 1;
+    d.harga = nilai;
+    d.total = nilai;
+    d.mb = "";
+    d.kdbrg = "";
+    d.pck = "";
+    hasil.push({ nomor: v.nomor, nilai });
+  }
+  return hasil;
+};
+
+// Lepas semua tautan voucher milik satu BBK (edit, hapus).
+const lepasTautanVoucher = async (conn, nomorBbk) => {
+  const [byr] = await conn.query(
+    `SELECT DISTINCT nomor FROM bayar_debet_detail WHERE vou_link = ?`,
+    [nomorBbk],
+  );
+  if (!byr.length) return;
+  await conn.query(`DELETE FROM bayar_debet_detail WHERE vou_link = ?`, [
+    nomorBbk,
+  ]);
+  await conn.query(
+    `DELETE FROM bayar_debet
+     WHERE kode = 'BT' AND nomor IN (?)
+       AND nomor NOT IN (SELECT nomor FROM bayar_debet_detail)`,
+    [byr.map((r) => r.nomor)],
+  );
+};
+
+// Tandai voucher "sudah dibayar" (dipakai BBK dan BKK).
+const pasangTautanVoucher = async (
+  conn,
+  { dataVou, tanggal, rekKode, user, nomorDok, label },
+) => {
+  if (!dataVou.length) return;
+  const byr = await getVoucherNomor(tanggal, conn);
+  const nilaiTotal = dataVou.reduce((s, v) => s + v.nilai, 0);
+  await conn.query(
+    `INSERT INTO bayar_debet
+       (nomor, kode, tanggal, tanggal_tempo, account, notes, kodeuser, total)
+     VALUES (?, 'BT', ?, ?, ?, ?, ?, ?)`,
+    [
+      byr,
+      tanggal,
+      tanggal,
+      rekKode,
+      `${label} ${nomorDok}`,
+      user.kode,
+      nilaiTotal,
+    ],
+  );
+  for (const v of dataVou) {
+    await conn.query(
+      `INSERT INTO bayar_debet_detail (nomor, vou_nomor, vou_link, nilai)
+       VALUES (?, ?, ?, ?)`,
+      [byr, v.nomor, nomorDok, v.nilai],
+    );
+  }
+};
+
+// ── Klaim Kas Kecil dipanggil ke BBK ──────────────────────────────────
+const getKlaimBbkOptions = (search = "", bbkNomor = "") =>
+  getKlaimKasKecilOptions(search, "", bbkNomor);
+
+// Dipanggil SEBELUM penulisan apa pun ke tabel Finance (MyISAM, tanpa rollback).
+// Mengunci baris klaim (InnoDB) sampai commit/rollback, memvalidasi, lalu
+// menormalkan baris dari data server (akun, nominal, supplier tidak dipercaya
+// dari klien).
+const validasiKlaimBbk = async (
+  conn,
+  baris,
+  { rekHeader, cabang, nomorSendiri },
+) => {
+  if (cabang !== "P01")
+    throw new Error("Klaim Kas Kecil hanya bisa dibayar dari BBK cabang P01.");
+
+  const sudah = new Set();
+  for (const d of baris) {
+    const nomorKlaim = String(d.klaim || "").trim();
+    if (!nomorKlaim) throw new Error("Nomor klaim pada baris tidak valid.");
+    if (d.vou || d.mb)
+      throw new Error(
+        `Baris klaim ${nomorKlaim} tidak boleh digabung dengan voucher/Minta Beli.`,
+      );
+    if (sudah.has(nomorKlaim))
+      throw new Error(`Klaim ${nomorKlaim} diinput lebih dari satu kali.`);
+    sudah.add(nomorKlaim);
+
+    const [[k]] = await conn.query(
+      `SELECT kkh_nomor, kkh_status, kkh_total, kkh_rek_tujuan, kkh_bbk_nomor
+       FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ? FOR UPDATE`,
+      [nomorKlaim],
+    );
+    if (!k) throw new Error(`Klaim ${nomorKlaim} tidak ditemukan.`);
+    if (k.kkh_status !== "AKTIF")
+      throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
+    if (k.kkh_bbk_nomor && k.kkh_bbk_nomor !== nomorSendiri)
+      throw new Error(
+        `Klaim ${k.kkh_nomor} sudah dibayar lewat BBK ${k.kkh_bbk_nomor}.`,
+      );
+    if (rekHeader === k.kkh_rek_tujuan)
+      throw new Error(
+        `Account header BBK tidak boleh sama dengan kas kecil tujuan (${k.kkh_rek_tujuan}).`,
+      );
+
+    const [[pjt]] = await conn.query(
+      `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_trs = ? AND ptd_batal = '' LIMIT 1`,
+      [k.kkh_nomor],
+    );
+    if (pjt)
+      throw new Error(
+        `Klaim ${k.kkh_nomor} sudah dipanggil di Pengajuan Transfer ${pjt.ptd_nomor}.`,
+      );
+
+    await pastikanNominalBkk(conn, k);
+
+    // Cek dini tanggal baris MANUAL (klaim ATM) supaya postingBiayaManual
+    // tidak gagal di tengah jalan setelah tabel Finance terlanjur ditulis.
+    const [manual] = await conn.query(
+      `SELECT DATE_FORMAT(kkd_tanggal,'%Y-%m-%d') AS tanggal, kkd_akun_biaya AS akun
+       FROM tklaim_kaskecil_dtl
+       WHERE kkd_kkh_nomor = ? AND kkd_tipe = 'MANUAL'`,
+      [k.kkh_nomor],
+    );
+    for (const m of manual)
+      await assertBolehPosting([m.akun, k.kkh_rek_tujuan], m.tanggal, conn);
+
+    const sup = await ambilSupplierKlaim(conn, k.kkh_rek_tujuan);
+    const nominal = Number(k.kkh_total);
+
+    d.klaim = k.kkh_nomor;
+    d.klaimRek = k.kkh_rek_tujuan;
+    d.uraian = d.uraian || `Klaim Kas Kecil ${k.kkh_nomor}`;
+    d.rekkode = k.kkh_rek_tujuan;
+    d.qty = 1;
+    d.harga = nominal;
+    d.total = nominal;
+    d.satuan = "";
+    d.cckode = Number(d.cckode) || 0;
+    d.dcnama = d.cckode ? String(d.dcnama || "") : "";
+    d.mb = "";
+    d.kdbrg = "";
+    d.kdsup = sup.kode;
+    d.supplier = sup.nama;
+    d.bank = sup.bank;
+    d.rekening = sup.rekening;
+    d.atasnama = sup.atasnama;
+  }
+};
+
+const lepasKlaimBbk = async (conn, nomorBbk) => {
+  if (!nomorBbk) return;
+  await conn.query(
+    `UPDATE tklaim_kaskecil_hdr SET kkh_bbk_nomor = '' WHERE kkh_bbk_nomor = ?`,
+    [nomorBbk],
+  );
 };
 
 // ── Simpan ────────────────────────────────────────────────────────────
@@ -204,25 +444,15 @@ const saveData = async (payload, user) => {
     await assertBkkBelumDiklaim(nomor);
   }
 
-  // Cek tutup buku — pola sama dengan bbkService.js (browse/delete):
-  // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
-  // (pengaturan.tclose, cid="BBK") menang kalau ada.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const limitDate =
-    await tutupBukuService.getTanggalTutupBukuUntukTanggal(tanggal);
-  limitDate.setHours(0, 0, 0, 0);
-
-  const zCloseManual = await tutupBukuService.getManualTutupBuku("BBK");
-
-  let isTutupBuku = false;
-  const tglTrs = new Date(tanggal);
-  if (zCloseManual) {
-    zCloseManual.setHours(0, 0, 0, 0);
-    if (tglTrs < zCloseManual) isTutupBuku = true;
-  } else {
-    if (limitDate < today) isTutupBuku = true;
+  // Cek tutup buku. Saat edit, tanggal TERSIMPAN juga dicek, supaya BBK di
+  // periode tertutup tidak bisa "dikeluarkan" dengan memindah tanggalnya.
+  let isTutupBuku = await periodeTertutup(tanggal);
+  if (!isTutupBuku && isEdit) {
+    const [[lama]] = await db.query(
+      `SELECT jur_tanggal FROM finance.tjurnal WHERE jur_no = ?`,
+      [nomor],
+    );
+    if (lama) isTutupBuku = await periodeTertutup(lama.jur_tanggal);
   }
 
   if (isTutupBuku) {
@@ -239,6 +469,41 @@ const saveData = async (payload, user) => {
   let localNn = 0;
 
   try {
+    // Baris dari Rekap: uraian default, lalu validasi ke voucher (server
+    // yang menentukan nominal).
+    for (const d of detail) {
+      if (d.vou && !d.uraian) d.uraian = `Pembayaran voucher ${d.vou}`;
+    }
+    const barisAktif = detail.filter((d) => d.uraian);
+    const barisVou = barisAktif.filter((d) => d.vou);
+    if (barisVou.length && cabang !== "P01")
+      throw new Error(
+        "Baris dari Rekap Pembayaran hanya boleh untuk BBK cabang P01.",
+      );
+    if (barisVou.some((d) => d.mb))
+      throw new Error("Baris Rekap Pembayaran tidak boleh terkait Minta Beli.");
+    const dataVou = await validasiVoucherRekap(
+      conn,
+      barisVou,
+      isEdit ? nomor : "",
+    );
+    for (const d of barisAktif) {
+      if (!d.rekkode)
+        throw new Error(`Account baris "${d.uraian}" wajib diisi.`);
+      if (!(Number(d.total) > 0))
+        throw new Error(`Total baris "${d.uraian}" harus lebih dari 0.`);
+    }
+
+    // Baris klaim: kunci + validasi + normalisasi dari DB (sebelum tulis Finance)
+    const barisKlaim = detail.filter((d) => d.klaim);
+    if (barisKlaim.length) {
+      await validasiKlaimBbk(conn, barisKlaim, {
+        rekHeader: rek_kode,
+        cabang,
+        nomorSendiri: isEdit ? nomor : "",
+      });
+    }
+
     // Pagar induk kas: tolak posting ke akun induk mulai tanggal cut-off.
     await assertBolehPosting(
       [
@@ -252,11 +517,17 @@ const saveData = async (payload, user) => {
     // Isi saldo kas klaim hanya lewat Klaim, bukan BBK manual ke akunnya
     await assertTidakKeKasKlaim(
       detail
-        .filter((d) => d.uraian)
+        .filter((d) => d.uraian && !d.klaim)
         .map((d) => d.rekkode)
         .filter(Boolean),
       tanggal,
     );
+
+    // Edit: tautan voucher lama dilepas dulu, lalu dipasang ulang di bawah
+    // (nomor BBK bisa berubah kalau cabang berubah).
+    if (isEdit) await lepasTautanVoucher(conn, nomor);
+
+    await lepasKlaimBbk(conn, nomor);
 
     let actualNomor = nomor;
     let flagEdit = isEdit;
@@ -325,7 +596,10 @@ const saveData = async (payload, user) => {
       actualNomor,
     ]);
 
-    const total = detail.reduce((s, d) => s + (Number(d.total) || 0), 0);
+    // Kredit header = jumlah baris yang benar-benar dibuatkan debet.
+    const total = detail
+      .filter((d) => d.uraian)
+      .reduce((s, d) => s + (Number(d.total) || 0), 0);
 
     // Insert kredit header
     await conn.query(
@@ -348,10 +622,10 @@ const saveData = async (payload, user) => {
         `
         INSERT INTO finance.tjurnalitem
           (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
-          jurd_satuan,jurd_qty,jurd_harga,jurd_mb,jurd_brg_kode,
+          jurd_satuan,jurd_qty,jurd_harga,jurd_mb,jurd_brg_kode,jurd_ref,
            jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
            jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening, jurd_atasnama)
-        VALUES (?, 'BBK', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, 'BBK', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           actualNomor,
@@ -362,6 +636,7 @@ const saveData = async (payload, user) => {
           Number(d.harga),
           d.mb,
           d.kdbrg,
+          d.vou ? `VOU|${d.vou}` : d.klaim ? `KLM|${d.klaim}` : "",
           Number(d.total),
           d.rekkode || "",
           d.cckode || 0,
@@ -446,6 +721,31 @@ const saveData = async (payload, user) => {
       }
 
       i++;
+    }
+
+    // Tandai voucher "sudah dibayar" dengan penanda yang sama dengan PJT,
+    // supaya PJT, Rekap, F2, dan Daftar Hutang ikut membacanya.
+    await pasangTautanVoucher(conn, {
+      dataVou,
+      tanggal,
+      rekKode: rek_kode,
+      user,
+      nomorDok: actualNomor,
+      label: "BBK",
+    });
+
+    for (const d of detail.filter((x) => x.uraian && x.klaim)) {
+      const [upd] = await conn.query(
+        `UPDATE tklaim_kaskecil_hdr
+            SET kkh_bbk_nomor = ?, user_modified = ?, date_modified = NOW()
+          WHERE kkh_nomor = ? AND kkh_status = 'AKTIF' AND kkh_bbk_nomor = ''`,
+        [actualNomor, user.kode, d.klaim],
+      );
+      if (upd.affectedRows === 0)
+        throw new Error(
+          `Klaim ${d.klaim} sudah dipakai atau dibatalkan pengguna lain.`,
+        );
+      await postingBiayaManual(conn, actualNomor, d.klaim, d.klaimRek, user);
     }
 
     await conn.commit();
@@ -594,4 +894,12 @@ module.exports = {
   getPrintData,
   getOutstandingMintaBeli,
   getOutstandingMintaBeliDetail,
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
+  lepasTautanVoucher,
+  validasiVoucherRekap,
+  pasangTautanVoucher,
+  periodeTertutup,
+  getKlaimBbkOptions,
+  lepasKlaimBbk,
 };

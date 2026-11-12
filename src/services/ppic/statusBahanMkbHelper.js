@@ -4,6 +4,7 @@
 const db = require("../../config/database");
 
 const STATUS_BELUM_MKB = "MKB belum dibuat";
+const STATUS_NON_BAHAN = "Non Bahan";
 
 // Dua nilai: Ready / PO. Kondisi lain ditampilkan apa adanya.
 const ringkasStatus = (ket) => {
@@ -114,7 +115,11 @@ const getStatusBahanBySpk = async (spkList) => {
   if (!list.length) return {};
 
   const [spkRows] = await db.query(
-    `SELECT spk_nomor, spk_so_ref, spk_memo FROM tspk WHERE spk_nomor IN (?)`,
+    `SELECT t.spk_nomor, t.spk_so_ref, t.spk_memo,
+            IFNULL(so.so_bahan, 'Y') AS so_bahan
+     FROM tspk t
+     LEFT JOIN tsalesorder so ON so.so_nomor = t.spk_so_ref
+     WHERE t.spk_nomor IN (?)`,
     [list],
   );
   const spkMap = {};
@@ -162,7 +167,8 @@ const getStatusBahanBySpk = async (spkList) => {
     const kunci = kunciBySpk[spk].find((k) => mkbByKunci[k]);
     if (!kunci) {
       result[spk] = {
-        StatusBahan: STATUS_BELUM_MKB,
+        StatusBahan:
+          spkMap[spk]?.so_bahan === "N" ? STATUS_NON_BAHAN : STATUS_BELUM_MKB,
         MkbNomor: "",
         EstimasiKedatangan: "",
       };

@@ -3,6 +3,7 @@ const tutupBukuService = require("../tutupBukuService");
 const {
   assertBkkBelumDiklaim,
 } = require("../piutang/klaimKasKecilGuardService");
+const { lepasTautanVoucher } = require("./bbkFormService");
 
 // ── Browse ────────────────────────────────────────────────────────────
 const getBrowse = async (startDate, endDate, cabang) => {
@@ -73,7 +74,7 @@ const getBrowseDetail = async (startDate, endDate, cabang) => {
 
 // SEMENTARA: pengecekan tutup buku BKK dimatikan sampai tanggal ini
 // (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-30";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-11-30";
 const bypassTutupBukuAktif = () => {
   const n = new Date();
   const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
@@ -138,13 +139,15 @@ const deleteData = async (nomor) => {
   const conn = await db.getConnection();
   await conn.beginTransaction();
   try {
-    // Delphi: hapus tjurnal utama
+    // Delphi: hapus tjurnal utama (trigger ikut menghapus tjurnalitem)
     await conn.query(`DELETE FROM finance.tjurnal WHERE jur_no = ?`, [nomor]);
     // Delphi: hapus jurnal otomatis yang terkait (mid(jur_no,3,18))
     await conn.query(
       `DELETE FROM finance.tjurnal WHERE jur_otomatis = 1 AND MID(jur_no,3,18) = ?`,
       [nomor],
     );
+    // Terakhir: lepas voucher yang ditandai dibayar oleh BKK ini
+    await lepasTautanVoucher(conn, nomor);
     await conn.commit();
   } catch (e) {
     await conn.rollback();

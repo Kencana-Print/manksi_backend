@@ -12,7 +12,14 @@ const getBrowseList = async (startDate, endDate) => {
       SELECT DISTINCT 
         h.mpb_nomor AS Nomor,
         h.mpb_pen_nomor AS NoPenawaran,
-        IFNULL((SELECT po_nomor FROM tpo_hdr p WHERE p.po_mppb_nomor=h.mpb_nomor ORDER BY p.po_tanggal DESC LIMIT 1), "") AS NO_PO,
+        IFNULL((
+          SELECT p.po_nomor
+          FROM tpo_dtl d
+          JOIN tpo_hdr p ON p.po_nomor = d.pod_po_nomor
+          WHERE d.pod_mppb_nomor = h.mpb_nomor
+          ORDER BY p.po_tanggal DESC, p.po_nomor DESC
+          LIMIT 1
+        ), "") AS NO_PO,
         h.mpb_tanggal AS Tanggal,
         v.Divisi, 
         h.mpb_nama AS NamaProduk,

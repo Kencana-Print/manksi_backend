@@ -68,6 +68,24 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getOutstandingMintaBeliDetail,
 );
+router.get(
+  "/rekap-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapOptions,
+);
+router.get(
+  "/rekap-rows",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getRekapRows,
+);
+router.get(
+  "/klaim-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getKlaimOptions,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.put("/", verifyToken, checkPermission(MENU_ID, "edit"), ctrl.update);

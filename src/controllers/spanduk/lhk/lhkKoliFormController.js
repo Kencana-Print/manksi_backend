@@ -39,15 +39,6 @@ const getLookupPabrik = async (req, res) => {
   }
 };
 
-const getPrint = async (req, res) => {
-  try {
-    const data = await service.getPrintKoli(req.params.nomor, req.user);
-    res.status(200).json({ success: true, data });
-  } catch (error) {
-    kirimError(res, error, 400);
-  }
-};
-
 const create = async (req, res) => {
   try {
     const nomor = await service.createLhkKoli(req.body, req.user);
@@ -82,7 +73,6 @@ module.exports = {
   getById,
   getInfoSpk,
   getLookupPabrik,
-  getPrint,
   create,
   update,
 };

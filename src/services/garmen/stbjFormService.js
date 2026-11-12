@@ -19,6 +19,25 @@ const generateNomor = async (tanggal, conn) => {
   return `STBJ/${String(next).padStart(5, "0")}/${tahun}`;
 };
 
+// STBJ Spanduk hanya untuk SPK (bukan MAP)
+const pastikanSemuaSpk = async (q, daftar) => {
+  const spk = [...new Set(daftar.map((n) => String(n || "").trim()))];
+  if (spk.some((n) => !n)) {
+    throw new Error("Nomor SPK pada detail STBJ tidak boleh kosong.");
+  }
+  const [rows] = await q.query(
+    `SELECT spk_nomor FROM tspk WHERE spk_nomor IN (?)`,
+    [spk],
+  );
+  const ada = new Set(rows.map((r) => String(r.spk_nomor).toUpperCase()));
+  const bukan = spk.filter((n) => !ada.has(n.toUpperCase()));
+  if (bukan.length) {
+    throw new Error(
+      `STBJ Spanduk hanya untuk SPK, bukan MAP: ${bukan.join(", ")}`,
+    );
+  }
+};
+
 // ─────────────────────────────────────────────────────────
 // GET BY NOMOR (untuk form edit)
 // Sesuai Delphi loaddataall
@@ -137,6 +156,44 @@ const getJadi = async (spkNomor, size, excludeNomor = "") => {
   }
 };
 
+// STBJ Spanduk: Jumlah awal = Lipat bersih - STBJ lain; Koli awal = LHK Koli - STBJ lain.
+// Hanya untuk SPK satu baris (tanpa size).
+const lipatBersihSpk = async (q, spkNomor) => {
+  const [[r]] = await q.query(
+    `SELECT IFNULL(SUM(lld_qty_lipat), 0) AS lipat
+     FROM tlhk_lipat_dtl WHERE lld_spk_nomor = ?`,
+    [spkNomor],
+  );
+  return Number(r.lipat) || 0;
+};
+
+const isiDariLhkSpanduk = async (rows, spkNomor, excludeNomor) => {
+  if (rows.length !== 1) return;
+  const row = rows[0];
+  const lipat = await lipatBersihSpk(db, spkNomor);
+  const sisa = Math.max(0, lipat - (Number(row.Jadi) || 0));
+
+  const [[lk]] = await db.query(
+    `SELECT COUNT(*) AS n, IFNULL(SUM(lkd_j_koli), 0) AS koli
+     FROM tlhk_koli_dtl WHERE lkd_spk_nomor = ?`,
+    [spkNomor],
+  );
+  const [[lain]] = await db.query(
+    `SELECT IFNULL(SUM(stbjd_koli), 0) AS koli
+     FROM tstbj_dtl WHERE stbjd_spk_nomor = ? AND stbjd_stbj_nomor <> ?`,
+    [spkNomor, excludeNomor],
+  );
+
+  row.Lipat = lipat;
+  row.Jumlah = sisa;
+  row.Koli =
+    Number(lk.n) > 0
+      ? Math.max(0, Number(lk.koli) - (Number(lain.koli) || 0))
+      : 0;
+  // Batas keras hanya setelah masa toleransi
+  row.Batas = koliSvc.gateMemblokir(koliSvc.GUDANG_SPANDUK) ? sisa : null;
+};
+
 // ─────────────────────────────────────────────────────────
 // GET SPK DETAIL untuk auto-fill grid saat pilih SPK
 // Sesuai Delphi loaddatadetail — SPK biasa (ada/tidak tspk_size)
@@ -154,6 +211,19 @@ const getSpkDetail = async (spkNomor, gudangKode, excludeNomor = "") => {
     [spkNomor],
   );
   if (!spkRow) throw new Error("SPK tidak ditemukan.");
+
+  // Spanduk: hanya SPK; cek dini LHK Lipat (peringatan saja, simpan yang memutuskan)
+  let peringatan = [];
+  if (gudangKode === koliSvc.GUDANG_SPANDUK) {
+    const [[adaSpk]] = await db.query(
+      `SELECT COUNT(*) AS n FROM tspk WHERE spk_nomor = ?`,
+      [spkNomor],
+    );
+    if (!Number(adaSpk.n)) {
+      throw new Error("STBJ Spanduk hanya untuk SPK, bukan MAP.");
+    }
+    peringatan = await koliSvc.peringatanGateSpanduk(db, [spkNomor]);
+  }
 
   // Cek apakah ada tspk_size (SPK baru per size)
   const [[sizeCheck]] = await db.query(
@@ -220,6 +290,10 @@ const getSpkDetail = async (spkNomor, gudangKode, excludeNomor = "") => {
     }
   }
 
+  if (gudangKode === koliSvc.GUDANG_SPANDUK) {
+    await isiDariLhkSpanduk(rows, spkNomor, excludeNomor);
+  }
+
   // Load CDS2 jika WH003
   let dc = [];
   if (gudangKode === "WH003") {
@@ -247,7 +321,7 @@ const getSpkDetail = async (spkNomor, gudangKode, excludeNomor = "") => {
     }));
   }
 
-  return { detail: rows, detail2: dc };
+  return { detail: rows, detail2: dc, peringatan };
 };
 
 // ─────────────────────────────────────────────────────────
@@ -493,6 +567,43 @@ const save = async (data, userKode, isNew, perangkat = "") => {
   try {
     await conn.beginTransaction();
 
+    // Hanya STBJ yang masuk cakupan QR; STBJ lama tidak dipaksa
+    if (
+      GudangKode === koliSvc.GUDANG_SPANDUK &&
+      String(Tanggal).slice(0, 10) >= koliSvc.mulaiQr(GudangKode)
+    ) {
+      await pastikanSemuaSpk(
+        conn,
+        validDetail.map((r) => r.SpkNomor),
+      );
+    }
+
+    if (
+      GudangKode === koliSvc.GUDANG_SPANDUK &&
+      koliSvc.gateMemblokir(GudangKode) &&
+      String(Tanggal).slice(0, 10) >= koliSvc.mulaiQr(GudangKode)
+    ) {
+      const perSpk = new Map();
+      for (const r of validDetail) {
+        perSpk.set(
+          r.SpkNomor,
+          (perSpk.get(r.SpkNomor) ?? 0) + Number(r.Jumlah),
+        );
+      }
+      for (const [spk, jml] of perSpk) {
+        const sisa = Math.max(
+          0,
+          (await lipatBersihSpk(conn, spk)) -
+            (await getJadi(spk, "", isNew ? "" : data.Nomor)),
+        );
+        if (jml > sisa) {
+          throw new Error(
+            `SPK ${spk}: jumlah ${jml} melebihi sisa LHK Lipat (${sisa}).`,
+          );
+        }
+      }
+    }
+
     let nomor = isNew ? await generateNomor(Tanggal, conn) : data.Nomor;
 
     if (isNew) {
@@ -592,6 +703,19 @@ const save = async (data, userKode, isNew, perangkat = "") => {
   }
 };
 
+// [3,1,2,5,6] -> "1-3, 5-6"
+const padatkanUrut = (arr) => {
+  const u = [...new Set(arr.map(Number))].sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i < u.length; ) {
+    let j = i;
+    while (j + 1 < u.length && u[j + 1] === u[j] + 1) j++;
+    out.push(i === j ? `${u[i]}` : `${u[i]}-${u[j]}`);
+    i = j + 1;
+  }
+  return out.join(", ");
+};
+
 // ─────────────────────────────────────────────────────────
 // CETAK — data untuk print view
 // Sesuai Delphi cetak
@@ -625,7 +749,28 @@ const getDataCetak = async (nomor) => {
     [nomor],
   );
 
-  return { header: hdr, detail: dtl };
+  // Nomor urut koli aktif (QR) per SPK, kosong untuk STBJ legacy / di luar cakupan
+  const [koli] = await db.query(
+    `SELECT koli_spk_nomor AS spk, koli_urut AS urut, koli_kch_nomor AS kch
+     FROM tkoli WHERE koli_stbj_nomor = ? AND koli_status <> 'VOID'`,
+    [nomor],
+  );
+  const urutPerSpk = new Map();
+  for (const k of koli) {
+    if (!urutPerSpk.has(k.spk)) urutPerSpk.set(k.spk, []);
+    urutPerSpk.get(k.spk).push(k.urut);
+  }
+  const detail = dtl.map((r) => ({
+    ...r,
+    no_koli: urutPerSpk.has(r.stbjd_spk_nomor)
+      ? padatkanUrut(urutPerSpk.get(r.stbjd_spk_nomor))
+      : "",
+  }));
+
+  return {
+    header: { ...hdr, kch_nomor: koli[0]?.kch ?? "" },
+    detail,
+  };
 };
 
 // ─────────────────────────────────────────────────────────

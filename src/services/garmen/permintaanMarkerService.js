@@ -116,11 +116,33 @@ const getAntrean = async (user) => {
     [],
     `h.pm_deadline, h.pm_nomor`,
   );
+  // Daftar SPK + nama per permintaan (hanya untuk antrean)
+  const nomors = rows.map((r) => r.nomor);
+  const byPm = new Map();
+  if (nomors.length) {
+    const [spkRows] = await db.query(
+      `SELECT DISTINCT d.pm2_pm_nomor AS pm, d.pm2_spk_nomor AS nomor,
+              IFNULL(s.spk_nama, m.mspk_nama) AS nama
+         FROM tpermintaan_marker_detail d
+         LEFT JOIN tspk s ON s.spk_nomor = d.pm2_spk_nomor
+         LEFT JOIN tmemospk m ON m.mspk_nomor = d.pm2_spk_nomor
+        WHERE d.pm2_pm_nomor IN (?)
+        ORDER BY d.pm2_pm_nomor, d.pm2_spk_nomor`,
+      [nomors],
+    );
+    for (const s of spkRows) {
+      const arr = byPm.get(s.pm) || [];
+      arr.push({ nomor: s.nomor, nama: s.nama });
+      byPm.set(s.pm, arr);
+    }
+  }
+
   const siap = [];
   const saya = [];
   const lain = [];
   for (const r of rows) {
     if (r.status !== "OPEN" && r.status !== "PROSES") continue;
+    r.spkList = byPm.get(r.nomor) || [];
     if (!r.pic) siap.push(r);
     else if (r.pic === kode) saya.push(r);
     else lain.push(r);

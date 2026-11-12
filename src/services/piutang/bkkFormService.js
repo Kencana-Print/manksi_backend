@@ -5,6 +5,14 @@ const {
   assertBkkBelumDiklaim,
   assertTidakKeKasKlaim,
 } = require("./klaimKasKecilGuardService");
+const {
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
+  lepasTautanVoucher,
+  validasiVoucherRekap,
+  pasangTautanVoucher,
+  periodeTertutup,
+} = require("./bbkFormService");
 
 // ── Lookup account header (KAS sesuai cabang) ─────────────────────────
 const getAccountOptions = async (cabang) => {
@@ -152,7 +160,7 @@ const getDetailForm = async (nomor) => {
       d.jurd_uraian, d.jurd_debet,
       r.rek_nama AS det_reknama,
       d.jurd_cc_kode, c.cc_nama, d.jurd_dcnama,
-      d.jurd_satuan, d.jurd_qty, d.jurd_harga, d.jurd_mb, d.jurd_pck, d.jurd_brg_kode,
+      d.jurd_satuan, d.jurd_qty, d.jurd_harga, d.jurd_mb, d.jurd_pck, d.jurd_brg_kode, d.jurd_ref,
       m.mb_jenis, m.mb_cab,
       p.pck_cab AS pck_store, gp.gdg_nama AS pck_namaStore,
       d.jurd_sup_kode, d.jurd_sup_nama, d.jurd_bank, d.jurd_rekening, d.jurd_atasnama
@@ -188,6 +196,9 @@ const getDetailForm = async (nomor) => {
       pck: r.jurd_pck || "",
       pckStore: r.pck_namaStore || "",
       kdbrg: r.jurd_brg_kode || "",
+      vou: String(r.jurd_ref || "").startsWith("VOU|")
+        ? String(r.jurd_ref).slice(4)
+        : "",
       satuan: r.jurd_satuan || "",
       qty: Number(r.jurd_qty),
       harga: Number(r.jurd_harga),
@@ -216,12 +227,22 @@ const getDetailForm = async (nomor) => {
 
 // SEMENTARA: pengecekan tutup buku BKK dimatikan sampai tanggal ini
 // (inklusif, format YYYY-MM-DD). Lewat tanggal ini otomatis aktif lagi.
-const BYPASS_TUTUP_BUKU_SAMPAI = "2026-10-30";
+const BYPASS_TUTUP_BUKU_SAMPAI = "2026-11-30";
 
 const bypassTutupBukuAktif = () => {
   const n = new Date();
   const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
   return hariIni <= BYPASS_TUTUP_BUKU_SAMPAI;
+};
+
+// SEMENTARA: BKK yang sudah diklaim Kas Kecil boleh diedit sampai tanggal ini
+// (inklusif, format YYYY-MM-DD). Lewat tanggal ini guard aktif lagi otomatis.
+const BYPASS_EDIT_BKK_KLAIM_SAMPAI = "2026-11-21";
+
+const bypassEditBkkKlaimAktif = () => {
+  const n = new Date();
+  const hariIni = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  return hariIni <= BYPASS_EDIT_BKK_KLAIM_SAMPAI;
 };
 
 // ── Simpan ────────────────────────────────────────────────────────────
@@ -241,31 +262,25 @@ const saveData = async (payload, user) => {
 
   // Klaim Kas Kecil: BKK yang sudah diklaim tidak boleh diubah, dan detail
   // ke kas kecil yang diisi ulang lewat klaim ditolak.
-  if (isEdit) await assertBkkBelumDiklaim(nomor);
-  assertTidakKeKasKlaim(
-    detail.filter((d) => d.uraian && d.rekkode).map((d) => d.rekkode),
-    tanggal,
-  );
+  if (isEdit) {
+    if (bypassEditBkkKlaimAktif()) {
+      console.warn(
+        `[BYPASS edit BKK terklaim] ${nomor} diedit oleh ${user?.username || user?.nama || "-"} (berlaku s/d ${BYPASS_EDIT_BKK_KLAIM_SAMPAI})`,
+      );
+    } else {
+      await assertBkkBelumDiklaim(nomor);
+    }
+  }
 
-  // Cek tutup buku — pola sama dengan bkkService.js (browse/delete):
-  // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
-  // (pengaturan.tclose, cid="BKK") menang kalau ada.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const limitDate =
-    await tutupBukuService.getTanggalTutupBukuUntukTanggal(tanggal);
-  limitDate.setHours(0, 0, 0, 0);
-
-  const zCloseManual = await tutupBukuService.getManualTutupBuku("BKK");
-
-  let isTutupBuku = false;
-  const tglTrs = new Date(tanggal);
-  if (zCloseManual) {
-    zCloseManual.setHours(0, 0, 0, 0);
-    if (tglTrs < zCloseManual) isTutupBuku = true;
-  } else {
-    if (limitDate < today) isTutupBuku = true;
+  // Cek tutup buku. Saat edit, tanggal TERSIMPAN juga dicek, supaya BKK di
+  // periode tertutup tidak bisa "dikeluarkan" dengan memindah tanggalnya.
+  let isTutupBuku = await periodeTertutup(tanggal, "BKK");
+  if (!isTutupBuku && isEdit) {
+    const [[lama]] = await db.query(
+      `SELECT jur_tanggal FROM finance.tjurnal WHERE jur_no = ?`,
+      [nomor],
+    );
+    if (lama) isTutupBuku = await periodeTertutup(lama.jur_tanggal, "BKK");
   }
 
   if (isTutupBuku) {
@@ -282,6 +297,33 @@ const saveData = async (payload, user) => {
   let localNn = 0; // reset counter otomatis per transaksi
 
   try {
+    // Baris dari Rekap: uraian default, lalu validasi ke voucher (server
+    // yang menentukan nominal).
+    for (const d of detail) {
+      if (d.vou && !d.uraian) d.uraian = `Pembayaran voucher ${d.vou}`;
+    }
+    const barisAktif = detail.filter((d) => d.uraian);
+    const barisVou = barisAktif.filter((d) => d.vou);
+    if (barisVou.length && cabang !== "P01")
+      throw new Error(
+        "Baris dari Rekap Pembayaran hanya boleh untuk BKK cabang P01.",
+      );
+    if (barisVou.some((d) => d.mb || d.pck))
+      throw new Error(
+        "Baris Rekap Pembayaran tidak boleh terkait Minta Beli atau Petty Cash.",
+      );
+    const dataVou = await validasiVoucherRekap(
+      conn,
+      barisVou,
+      isEdit ? nomor : "",
+    );
+    for (const d of barisAktif) {
+      if (!d.rekkode)
+        throw new Error(`Account baris "${d.uraian}" wajib diisi.`);
+      if (!(Number(d.total) > 0))
+        throw new Error(`Total baris "${d.uraian}" harus lebih dari 0.`);
+    }
+
     // Pagar induk kas: tolak posting ke akun induk mulai tanggal cut-off.
     await assertBolehPosting(
       [
@@ -291,6 +333,10 @@ const saveData = async (payload, user) => {
       tanggal,
       conn,
     );
+
+    // Edit: tautan voucher lama dilepas dulu, lalu dipasang ulang di bawah
+    // (nomor BKK bisa berubah kalau cabang berubah).
+    if (isEdit) await lepasTautanVoucher(conn, nomor);
 
     let actualNomor = nomor;
     let flagEdit = isEdit;
@@ -360,8 +406,10 @@ const saveData = async (payload, user) => {
       actualNomor,
     ]);
 
-    // Hitung total
-    const total = detail.reduce((s, d) => s + (Number(d.total) || 0), 0);
+    // Kredit header = jumlah baris yang benar-benar dibuatkan debet.
+    const total = detail
+      .filter((d) => d.uraian)
+      .reduce((s, d) => s + (Number(d.total) || 0), 0);
 
     // Insert kredit header di tjurnalitem
     await conn.query(
@@ -384,10 +432,10 @@ const saveData = async (payload, user) => {
         `
         INSERT INTO finance.tjurnalitem
           (jurd_jur_no, jurd_trs, jurd_nourut, jurd_uraian,
-           jurd_satuan, jurd_qty, jurd_harga, jurd_mb, jurd_pck, jurd_brg_kode,
+           jurd_satuan, jurd_qty, jurd_harga, jurd_mb, jurd_pck, jurd_brg_kode, jurd_ref,
            jurd_debet, jurd_rek_kode, jurd_cc_kode, jurd_dcnama,
            jurd_sup_kode, jurd_sup_nama, jurd_bank, jurd_rekening, jurd_atasnama)
-        VALUES (?, 'BKK', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, 'BKK', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           actualNomor,
@@ -399,6 +447,7 @@ const saveData = async (payload, user) => {
           d.mb || "",
           d.pck || "",
           d.kdbrg,
+          d.vou ? `VOU|${d.vou}` : "",
           Number(d.total),
           d.rekkode || "",
           d.cckode || 0,
@@ -510,6 +559,15 @@ const saveData = async (payload, user) => {
 
       i++;
     }
+
+    await pasangTautanVoucher(conn, {
+      dataVou,
+      tanggal,
+      rekKode: rek_kode,
+      user,
+      nomorDok: actualNomor,
+      label: "BKK",
+    });
 
     await conn.commit();
     return { nomor: actualNomor };
@@ -682,4 +740,6 @@ module.exports = {
   getAccountKasHeaderOptions,
   getOutstandingMintaBeli,
   getOutstandingMintaBeliDetail,
+  getRekapPanggilOptions,
+  getRekapPanggilRows,
 };

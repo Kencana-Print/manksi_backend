@@ -2,10 +2,12 @@ const customerService = require("../../services/master/customerService");
 
 const getBrowse = async (req, res) => {
   try {
-    // parameter filterKorporasi dari query: "Y", "N", atau ""
     const filterKorporasi = req.query.filterKorporasi || "";
-    const data = await customerService.getBrowse(filterKorporasi);
-    res.status(200).json({ success: true, data: data });
+    const npwpFormat = ["DIGIT", "TITIK"].includes(req.query.npwpFormat)
+      ? req.query.npwpFormat
+      : "";
+    const data = await customerService.getBrowse(filterKorporasi, npwpFormat);
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -8,6 +8,25 @@ const JENIS_LOG = ["ACCESORIES", "OBAT"];
 // Cabang yang tidak memakai Gudang Produksi pada retur ACC/OBAT
 const CABANG_TANPA_GP = ["P02", "P03"];
 
+const JENIS_VALID = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
+// Aset selalu P04 (keputusan 10 Nov)
+const KECAB_ASET = "P04";
+const BAGIAN_RETUR_ASET_LIHAT = [
+  "GA",
+  "EDP",
+  "FINANCE",
+  "AUDIT",
+  "DIREKSI",
+  "PEMBELIAN",
+  "PURCHASING",
+];
+const BAGIAN_RETUR_ASET_PROSES = ["GA", "EDP", "PEMBELIAN", "PURCHASING"];
+// Prefix jalur langsung. Jangan awali dengan "RET": getFormData membedakan
+// tabel log dari nomor.startsWith("RET").
+const PREFIX_LANGSUNG = { SPAREPART: "RTS", "ATK/RTK": "RTK", ASET: "RTI" };
+
+const bagianUser = (user) => String(user?.bagian || "").toUpperCase();
+
 // ── Helper: resolusi tabel & prefix nomor sesuai jenis ──
 const getTableConfig = (jenis) => {
   if (JENIS_LOG.includes(jenis)) {
@@ -21,9 +40,22 @@ const getTableConfig = (jenis) => {
   return {
     hdrTable: "tgarmenretur_hdr",
     dtlTable: "tgarmenretur_dtl",
-    prefix: jenis === "SPAREPART" ? "RTS" : "RTK",
+    prefix: PREFIX_LANGSUNG[jenis],
     prefixLen: 7, // 3 huruf + 4 digit tahun
   };
+};
+
+// Jenis dokumen yang sudah ada dibaca dari DB (tidak mempercayai client).
+const getJenisDokumen = async (nomor) => {
+  const hdrTable = nomor.startsWith("RET")
+    ? "tgarmenreturlog_hdr"
+    : "tgarmenretur_hdr";
+  const [rows] = await db.query(
+    `SELECT ret_jenis FROM ${hdrTable} WHERE ret_nomor = ?`,
+    [nomor],
+  );
+  if (rows.length === 0) throw new Error("Data retur tidak ditemukan.");
+  return rows[0].ret_jenis;
 };
 
 // ── cekClose equivalent: status pengajuan tutup buku (PIN5) ──
@@ -134,7 +166,7 @@ const getSudah = async (jenis, currentNomor, nominta, kode) => {
 };
 
 // ── Load data untuk form edit (loaddataall) ──
-const getFormData = async (nomor) => {
+const getFormData = async (nomor, user) => {
   const isLog = nomor.startsWith("RET"); // sesuai LeftStr(akode,3)='RET'
   const hdrTable = isLog ? "tgarmenreturlog_hdr" : "tgarmenretur_hdr";
   const dtlTable = isLog ? "tgarmenreturlog_dtl" : "tgarmenretur_dtl";
@@ -158,6 +190,10 @@ const getFormData = async (nomor) => {
 
   const header = rows[0];
   const jenis = header.ret_jenis;
+
+  if (jenis === "ASET" && !BAGIAN_RETUR_ASET_LIHAT.includes(bagianUser(user))) {
+    throw new Error("Bagian Anda tidak boleh melihat Retur Aset.");
+  }
 
   const details = [];
   for (const r of rows) {
@@ -222,24 +258,41 @@ const validateDetails = (details) => {
  * Simpan data (create baru atau update existing)
  */
 const saveData = async (payload, user, existingNomor = null) => {
-  const { jenis, tanggal, cabang, gudangProduksi, keterangan, details } =
-    payload;
+  const { tanggal, gudangProduksi, keterangan, details } = payload;
+  const isEdit = !!existingNomor;
 
-  if (!["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"].includes(jenis)) {
+  // Edit: jenis dari DB. Create: dari client, divalidasi whitelist.
+  const jenis = isEdit ? await getJenisDokumen(existingNomor) : payload.jenis;
+
+  if (!JENIS_VALID.includes(jenis)) {
     throw new Error("Jenis tidak valid.");
+  }
+  if (
+    jenis === "ASET" &&
+    !BAGIAN_RETUR_ASET_PROSES.includes(bagianUser(user))
+  ) {
+    throw new Error("Bagian Anda tidak boleh memproses Retur Aset.");
   }
 
   const filledDetails = validateDetails(details);
   const cabUser = user.cabang;
+  // Aset selalu P04, jenis lain mengikuti cabang user
+  const cabDok = jenis === "ASET" ? KECAB_ASET : cabUser;
+  const syaratCabang = jenis === "ASET" ? "" : kondisiSpanduk(cabUser, "b");
 
+  // Kode harus bertipe sama dengan jenis dokumen (stok ditentukan trigger dari jenis header)
   const kodeUnik = [...new Set(filledDetails.map((d) => d.kode))];
   const [kodeOk] = await db.query(
     `SELECT b.brg_kode FROM tgarmen_brg b
-     WHERE b.brg_kode IN (?) ${kondisiSpanduk(cabUser, "b")}`,
-    [kodeUnik],
+     WHERE b.brg_kode IN (?) AND b.brg_jenis = ? ${syaratCabang}`,
+    [kodeUnik, jenis],
   );
   if (kodeOk.length !== kodeUnik.length) {
-    throw new Error("Ada barang yang tidak boleh diretur dari cabang ini.");
+    throw new Error(
+      "Ada barang yang bukan jenis " +
+        jenis +
+        " atau tidak boleh diretur dari cabang ini.",
+    );
   }
 
   // Gudang Produksi wajib untuk ACCESORIES/OBAT kecuali cabang tanpa GP
@@ -251,14 +304,12 @@ const saveData = async (payload, user, existingNomor = null) => {
   const gpKode = needsGp ? gudangProduksi?.kode || "" : "";
 
   const { hdrTable, dtlTable } = getTableConfig(jenis);
-  const isEdit = !!existingNomor;
 
   // Kalau edit, ambil status pin5 terkini utk validasi periode & pin_urut
   let statusPin5 = "";
   let urutPin5 = 0;
-  const tglCekStatus = tanggal;
   if (isEdit) {
-    const resolved = await resolveEditStatus(existingNomor, tglCekStatus);
+    const resolved = await resolveEditStatus(existingNomor, tanggal);
     statusPin5 = resolved.status;
     urutPin5 = resolved.urut;
   }
@@ -288,7 +339,7 @@ const saveData = async (payload, user, existingNomor = null) => {
           `INSERT INTO ${hdrTable}
              (ret_jenis, ret_nomor, ret_tanggal, ret_cab, ret_gp, ret_keterangan, date_create, user_create)
            VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)`,
-          [jenis, nomor, tanggal, cabUser, gpKode, keterangan || "", user.kode],
+          [jenis, nomor, tanggal, cabDok, gpKode, keterangan || "", user.kode],
         );
       } else {
         await conn.query(
@@ -299,7 +350,7 @@ const saveData = async (payload, user, existingNomor = null) => {
             jenis,
             nomor,
             tanggal,
-            cabUser,
+            cabDok,
             user.bagian,
             gpKode,
             keterangan || "",
@@ -435,10 +486,20 @@ const searchBarang = async (
     OBAT: "tmasterstok_obat",
     SPAREPART: "tmasterstok_sparepart",
     "ATK/RTK": "tmasterstok_atk",
+    ASET: "tmasterstok_aset",
   };
   const stokTable = stokTableMap[jenis];
   if (!stokTable)
     throw new Error("Jenis ini tidak memakai pencarian barang langsung.");
+
+  if (
+    jenis === "ASET" &&
+    !BAGIAN_RETUR_ASET_PROSES.includes(String(bagian || "").toUpperCase())
+  ) {
+    throw new Error("Bagian Anda tidak boleh memproses Retur Aset.");
+  }
+  const cabStok = jenis === "ASET" ? KECAB_ASET : cabang;
+  const syaratCabang = jenis === "ASET" ? "" : kondisiSpanduk(cabang, "b");
 
   const where = ['b.brg_aktif = "Y"', "b.brg_jenis = ?"];
   const params = [jenis];
@@ -448,7 +509,7 @@ const searchBarang = async (
     where.push("(b.brg_kode LIKE ? OR b.brg_nama LIKE ?)");
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
-  const whereSql = where.join(" AND ") + kondisiSpanduk(cabang, "b");
+  const whereSql = where.join(" AND ") + syaratCabang;
 
   const [countRows] = await db.query(
     `SELECT COUNT(*) AS total FROM tgarmen_brg b WHERE ${whereSql}`,
@@ -469,7 +530,7 @@ const searchBarang = async (
      WHERE ${whereSql}
      ORDER BY b.brg_nama
      LIMIT ? OFFSET ?`,
-    [cabang, ...params, limit, offset],
+    [cabStok, ...params, limit, offset],
   );
 
   return { items: rows, total };
@@ -481,4 +542,6 @@ module.exports = {
   searchRealisasiHeader,
   searchRealisasiDetail,
   searchBarang,
+  BAGIAN_RETUR_ASET_LIHAT,
+  BAGIAN_RETUR_ASET_PROSES,
 };

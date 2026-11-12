@@ -144,4 +144,23 @@ const pastikanMapPunyaLhk = async (q, { kodeLini, nomor }) => {
   }
 };
 
-module.exports = { pastikanRantaiLhk, pastikanMapPunyaLhk };
+// Gate di luar LHK (mis. STBJ Spanduk): daftar SPK/MAP yang BELUM punya LHK di
+// lini tertentu. Tidak melempar error supaya pemanggil bisa memilih peringatan
+// atau blokir. SPK/MAP lama (MP-13) dikecualikan, sama seperti gate rantai.
+const spkTanpaLhk = async (q, { kodeLini, daftar }) => {
+  const kandidat = [...new Set(daftar.map((n) => String(n).trim()))].filter(
+    Boolean,
+  );
+  if (kandidat.length === 0) {
+    return [];
+  }
+  const lama = await spkLamaMp13(q, kandidat, TANGGAL_MULAI_MUTASI);
+  const perlu = kandidat.filter((n) => !lama.has(n.toUpperCase()));
+  if (perlu.length === 0) {
+    return [];
+  }
+  const ada = await spkPunyaLhk(q, kodeLini, perlu);
+  return perlu.filter((n) => !ada.has(n.toUpperCase()));
+};
+
+module.exports = { pastikanRantaiLhk, pastikanMapPunyaLhk, spkTanpaLhk };

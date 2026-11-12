@@ -1,5 +1,5 @@
 const db = require("../../../config/database");
-const { teks, parseTanggal, angka, bilangan } = require("./lhkCommon");
+const { teks, parseTanggal, bilangan } = require("./lhkCommon");
 const {
   T,
   galat,
@@ -34,17 +34,11 @@ const cekTanggalInput = (tgl, hariIni) => {
   }
 };
 
-// BS wajib diisi (0 bila tidak ada)
-const bsWajib = (v, label) => {
-  if (v === undefined || v === null || teks(v) === "") {
-    throw galat(`${label} wajib diisi (isi 0 bila tidak ada BS)`);
-  }
-  return bilangan(v, label);
-};
-
-// Body: { Tanggal, Kode_Pabrik, Sesi, Detail: [{ Nomor_SPK, Qty_Lipat, Tambah_Lipat,
-//   Mata_Ayam, BS_Lipat, Karyawan: [{ NIK, Qty }] }] }
+// Body: { Tanggal, Kode_Pabrik, Detail: [{ Nomor_SPK, Qty_Lipat, Mata_Ayam,
+//   Karyawan: [{ NIK, Qty }] }] }
 // Jam kerja tidak diterima dari client; dihitung server dari absensi.
+// Tambah Lipat dan BS Lipat tidak lagi diinput: field Tambah_Lipat/BS_Lipat dari
+// client diabaikan, nilai tersimpan dipertahankan di simpanDetail.
 const siapkanData = (body = {}) => {
   const tanggal = parseTanggal(body.Tanggal);
 
@@ -76,9 +70,7 @@ const siapkanData = (body = {}) => {
     }
     sudahSpk.add(spk.toUpperCase());
 
-    const tambahLipat = angka(d.Tambah_Lipat, `Baris ${n}: Tambah lipat`);
     const mataAyam = bilangan(d.Mata_Ayam, `Baris ${n}: Mata ayam`);
-    const bsLipat = bsWajib(d.BS_Lipat, `Baris ${n}: BS Lipat`);
 
     // Karyawan: qty 0 dibuang
     const daftar = Array.isArray(d.Karyawan) ? d.Karyawan : [];
@@ -105,9 +97,7 @@ const siapkanData = (body = {}) => {
 
     return {
       spk,
-      tambahLipat,
       mataAyam,
-      bsLipat,
       karyawan,
       qtyManual: d.Qty_Lipat,
     };
@@ -228,7 +218,20 @@ const finalisasiBaris = (data) => {
 };
 
 // tulisKaryawan=false: LHK lama (tanpa jam input), dtl_2 tidak disentuh
+// Tambah Lipat dan BS Lipat tidak diinput lagi: nilai tersimpan per SPK dipertahankan (baru = 0)
 const simpanDetail = async (conn, nomor, baris, tulisKaryawan = true) => {
+  const [lama] = await conn.query(
+    `SELECT lld_spk_nomor AS spk, lld_tambah_lipat AS tambah, lld_bs_lipat AS bs
+     FROM ${T.dtl} WHERE lld_llh_nomor = ?`,
+    [nomor],
+  );
+  const tersimpan = new Map(
+    lama.map((r) => [
+      String(r.spk).toUpperCase(),
+      { tambah: Number(r.tambah) || 0, bs: Number(r.bs) || 0 },
+    ]),
+  );
+
   if (tulisKaryawan) {
     await conn.query(`DELETE FROM ${T.dtl2} WHERE lld2_llh_nomor = ?`, [nomor]);
   }
@@ -240,14 +243,17 @@ const simpanDetail = async (conn, nomor, baris, tulisKaryawan = true) => {
         lld_tambah_lipat, lld_mata_ayam, lld_bs_lipat)
      VALUES ?`,
     [
-      baris.map((b) => [
-        nomor,
-        b.spk,
-        b.qtyLipat,
-        b.tambahLipat,
-        b.mataAyam,
-        b.bsLipat,
-      ]),
+      baris.map((b) => {
+        const s = tersimpan.get(b.spk.toUpperCase());
+        return [
+          nomor,
+          b.spk,
+          b.qtyLipat,
+          s?.tambah ?? 0,
+          b.mataAyam,
+          s?.bs ?? 0,
+        ];
+      }),
     ],
   );
 
@@ -311,9 +317,7 @@ const getLhkLipatById = async (nomor, user) => {
             x.spk_panjang AS Panjang,
             x.spk_lebar AS Lebar,
             d.lld_qty_lipat AS Qty_Lipat,
-            d.lld_tambah_lipat AS Tambah_Lipat,
-            d.lld_mata_ayam AS Mata_Ayam,
-            d.lld_bs_lipat AS BS_Lipat
+            d.lld_mata_ayam AS Mata_Ayam
      FROM ${T.dtl} d
      LEFT JOIN (
        SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -579,7 +583,7 @@ const updateLhkLipat = async (nomor, body, user) => {
       });
       finalisasiBaris(data);
     } else {
-      // LHK lama: SPK dan karyawan tidak berubah, hanya Tambah Lipat, Mata Ayam, BS
+      // LHK lama: SPK dan karyawan tidak berubah, hanya Mata Ayam
       const [dtlLama] = await conn.query(
         `SELECT lld_spk_nomor AS spk, lld_qty_lipat AS qty
          FROM ${T.dtl} WHERE lld_llh_nomor = ?`,

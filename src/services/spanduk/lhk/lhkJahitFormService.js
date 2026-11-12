@@ -34,17 +34,11 @@ const cekTanggalInput = (tgl, hariIni) => {
   }
 };
 
-// BS wajib diisi (0 bila tidak ada)
-const bsWajib = (v, label) => {
-  if (v === undefined || v === null || teks(v) === "") {
-    throw galat(`${label} wajib diisi (isi 0 bila tidak ada BS)`);
-  }
-  return bilangan(v, label);
-};
-
 // Body: { Tanggal, Kode_Pabrik, Detail: [{ Nomor_SPK, Qty_Jahit, Tambah_Jahit,
-//   Tambah_Tali, BS_Jahit, Karyawan: [{ NIK, Qty }] }] }
+//   Tambah_Tali, Karyawan: [{ NIK, Qty }] }] }
 // Jam kerja tidak diterima dari client; dihitung server dari absensi.
+// BS Jahit tidak lagi diinput di LHK Jahit (pindah ke LHK BS): field BS_Jahit
+// dari client diabaikan, nilai tersimpan dipertahankan di simpanDetail.
 const siapkanData = (body = {}) => {
   const tanggal = parseTanggal(body.Tanggal);
 
@@ -78,7 +72,6 @@ const siapkanData = (body = {}) => {
 
     const tambahJahit = angka(d.Tambah_Jahit, `Baris ${n}: Tambah jahit`);
     const tambahTali = bilangan(d.Tambah_Tali, `Baris ${n}: Tambah tali`);
-    const bsJahit = bsWajib(d.BS_Jahit, `Baris ${n}: BS Jahit`);
 
     // Karyawan: qty 0 dibuang
     const daftar = Array.isArray(d.Karyawan) ? d.Karyawan : [];
@@ -107,7 +100,6 @@ const siapkanData = (body = {}) => {
       spk,
       tambahJahit,
       tambahTali,
-      bsJahit,
       karyawan,
       qtyManual: d.Qty_Jahit,
     };
@@ -228,7 +220,17 @@ const finalisasiBaris = (data) => {
 };
 
 // tulisKaryawan=false: LHK lama (tanpa sesi), dtl_2 tidak disentuh
+// BS Jahit tidak diinput lagi: nilai tersimpan per SPK dipertahankan (baru = 0)
 const simpanDetail = async (conn, nomor, baris, tulisKaryawan = true) => {
+  const [lama] = await conn.query(
+    `SELECT ljd_spk_nomor AS spk, ljd_bs_jahit AS bs
+     FROM ${T.dtl} WHERE ljd_ljh_nomor = ?`,
+    [nomor],
+  );
+  const bsTersimpan = new Map(
+    lama.map((r) => [String(r.spk).toUpperCase(), Number(r.bs) || 0]),
+  );
+
   if (tulisKaryawan) {
     await conn.query(`DELETE FROM ${T.dtl2} WHERE ljd2_ljh_nomor = ?`, [nomor]);
   }
@@ -246,7 +248,7 @@ const simpanDetail = async (conn, nomor, baris, tulisKaryawan = true) => {
         b.qtyJahit,
         b.tambahJahit,
         b.tambahTali,
-        b.bsJahit,
+        bsTersimpan.get(b.spk.toUpperCase()) ?? 0,
       ]),
     ],
   );
@@ -312,8 +314,7 @@ const getLhkJahitById = async (nomor, user) => {
             x.spk_lebar AS Lebar,
             d.ljd_qty_jahit AS Qty_Jahit,
             d.ljd_tambah_jahit AS Tambah_Jahit,
-            d.ljd_tambah_tali AS Tambah_Tali,
-            d.ljd_bs_jahit AS BS_Jahit
+            d.ljd_tambah_tali AS Tambah_Tali
      FROM ${T.dtl} d
      LEFT JOIN (
        SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -581,7 +582,7 @@ const updateLhkJahit = async (nomor, body, user) => {
       });
       finalisasiBaris(data);
     } else {
-      // LHK lama: SPK dan karyawan tidak berubah, hanya Tambah Jahit/Tali dan BS
+      // LHK lama: SPK dan karyawan tidak berubah, hanya Tambah Jahit/Tali
       const [dtlLama] = await conn.query(
         `SELECT ljd_spk_nomor AS spk, ljd_qty_jahit AS qty
          FROM ${T.dtl} WHERE ljd_ljh_nomor = ?`,

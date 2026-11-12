@@ -11,6 +11,8 @@ const T = {
   afdrukDtl2: "tlhk_afdruk_dtl_2",
   barang: "tbarang_new",
   resep: "tlhk_proof_resep",
+  garmenBrg: "tgarmen_brg",
+  stokObat: "tmasterstok_obat",
 };
 
 // Proof tidak masuk rantai mutasi produksi (keputusan 16 Okt 2026)

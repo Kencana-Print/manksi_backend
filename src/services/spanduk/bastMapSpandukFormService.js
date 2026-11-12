@@ -15,6 +15,8 @@ const T = {
   bahan: "tkesesuaianmap_komponen",
   lock: "tkesesuaianmap_lock",
   barang: "tbarang_new",
+  garmenBrg: "tgarmen_brg",
+  stokObat: "tmasterstok_obat",
   putus: "tkesesuaianmap_keputusan",
 };
 
@@ -34,9 +36,6 @@ const hariKerjaSql = (a, b) =>
 const MAKS_KETERANGAN = 200;
 const MAKS_JUMLAH = 99999999.99;
 const KEPUTUSAN_VALID = ["LANJUT", "ULANG"];
-// BAST "N" = semua baris kesesuaian berstatus N
-const SQL_SEMUA_N = `(SELECT COUNT(*) FROM ${T.bast} a WHERE a.mspk_nomor = ? AND a.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")})) > 0
-  AND (SELECT COUNT(*) FROM ${T.bast} a WHERE a.mspk_nomor = ? AND a.kode_sesuai IN (${KESESUAIAN_SPANDUK.join(",")}) AND a.status <> 'N') = 0`;
 
 // ── util ──
 const angkaTidakNegatif = (v, label) => {
@@ -354,6 +353,16 @@ const simpan = async (mode, nomorUrl, payload, user) => {
       [d.jumlah, d.kendala, nomor],
     );
 
+    // Status lama dibaca sebelum di-upsert: keputusan hanya gugur bila status berubah
+    const [lama] = await conn.query(
+      `SELECT kode_sesuai, status FROM ${T.bast}
+        WHERE mspk_nomor = ? AND kode_sesuai IN (?)`,
+      [nomor, KESESUAIAN_SPANDUK],
+    );
+    const statusLama = new Map(
+      lama.map((r) => [Number(r.kode_sesuai), norm(r.status)]),
+    );
+
     // 2. Kesesuaian (upsert; user_create/date_create tidak ditimpa)
     for (const c of d.checklist) {
       await conn.query(
@@ -367,9 +376,14 @@ const simpan = async (mode, nomorUrl, payload, user) => {
       );
     }
 
-    // Status bisa berubah, jadi keputusan lama tidak berlaku lagi
+    // Keputusan didasarkan pada status kesesuaian: gugur hanya bila ada yang berubah
     if (mode === "update") {
-      await conn.query(`DELETE FROM ${T.putus} WHERE map = ?`, [nomor]);
+      const statusBerubah = d.checklist.some(
+        (c) => statusLama.get(c.no) !== c.status,
+      );
+      if (statusBerubah) {
+        await conn.query(`DELETE FROM ${T.putus} WHERE map = ?`, [nomor]);
+      }
     }
 
     // 3. Bahan (hapus lalu isi ulang; komponen/warna/babaran tidak dipakai Spanduk)
@@ -457,12 +471,13 @@ const setKeputusan = async (nomorUrl, payload, user) => {
     await conn.beginTransaction();
     await ambilMap(conn, nomor, user, true);
 
-    const [[sn]] = await conn.query(`SELECT ${SQL_SEMUA_N} AS ok`, [
-      nomor,
-      nomor,
-    ]);
-    if (!Number(sn.ok)) {
-      throw galat("Keputusan hanya untuk BAST yang seluruh kesesuaiannya N");
+    const [[ada]] = await conn.query(
+      `SELECT COUNT(*) AS n FROM ${T.bast}
+        WHERE mspk_nomor = ? AND kode_sesuai IN (?)`,
+      [nomor, KESESUAIAN_SPANDUK],
+    );
+    if (!Number(ada.n)) {
+      throw galat(`MAP ${nomor} belum memiliki BAST`);
     }
     const [serah] = await conn.query(
       `SELECT mmkd_nomor FROM tmutasi_marketing_spanduk_dtl

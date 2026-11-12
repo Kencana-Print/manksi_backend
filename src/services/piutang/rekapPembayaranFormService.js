@@ -2,6 +2,7 @@ const db = require("../../config/database");
 const voucherForm = require("./voucherPembayaranFormService");
 const { kategoriDari, urutanKategori } = require("./rekapKategori");
 const daftarHutang = require("../laporan/finance/daftarHutangService");
+const { bolehLihatRekening } = require("../master/supplierService");
 const { SQL_BPB_MILIK_PO } = require("./voucherPoBahanKonstanta");
 
 const PREFIX_CABANG = "P01";
@@ -84,10 +85,58 @@ const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
   WHERE voud2_vou_nomor = h.vou_nomor
 ), 0)`;
 
+// ── Rekening supplier (master tsupplieritem) ──────────────────────────
+// Hanya untuk bagian berhak (BAGIAN_LIHAT_REKENING); selain itu peta kosong
+// dan field rekening dikirim string kosong. Yang ditampilkan rekening
+// pertama (urut bank); jumlahRekening > 1 ditandai supaya Finance memeriksa.
+// Tidak disimpan di rekap: dibaca dari master saat ditampilkan.
+const petaRekeningSupplier = async (kodeList, user) => {
+  const peta = new Map();
+  const kode = [
+    ...new Set(kodeList.map((k) => String(k || "").trim()).filter(Boolean)),
+  ];
+  if (!kode.length || !bolehLihatRekening(user)) {
+    return peta;
+  }
+  const [rows] = await db.query(
+    `SELECT supd_kode AS kode, supd_bank AS bank, supd_rekening AS rekening,
+            supd_atasnama AS atasnama
+     FROM tsupplieritem
+     WHERE supd_kode IN (?)
+     ORDER BY supd_kode, supd_bank`,
+    [kode],
+  );
+  for (const r of rows) {
+    const arr = peta.get(r.kode) || [];
+    arr.push({
+      bank: r.bank || "",
+      rekening: r.rekening || "",
+      atasnama: r.atasnama || "",
+    });
+    peta.set(r.kode, arr);
+  }
+  return peta;
+};
+
+const infoRekening = (peta, supKode) => {
+  const daftar = peta.get(String(supKode || "").trim()) || [];
+  const p = daftar[0];
+  return {
+    bank: p?.bank || "",
+    rekening: p?.rekening || "",
+    atasnama: p?.atasnama || "",
+    jumlahRekening: daftar.length,
+  };
+};
+
 // ── Lookup ────────────────────────────────────────────────────────────
 const searchSupplier = (search = "") => voucherForm.searchSupplier(search);
 
-const getSupplier = (kode) => voucherForm.getSupplier(kode);
+const getSupplier = async (kode, user) => {
+  const s = await voucherForm.getSupplier(kode);
+  const peta = await petaRekeningSupplier([s.kode], user);
+  return { kode: s.kode, nama: s.nama, ...infoRekening(peta, s.kode) };
+};
 
 const searchNota = async (tipe, supKode, search = "") => {
   if (!TIPE_VALID.includes(tipe)) {
@@ -281,7 +330,7 @@ const getTagihan = async (supKode, startDate, endDate, excludeNomor = "") => {
 // Belum dibayar/diajukan (bayar_debet_detail) dan belum ada di baris Rekap
 // AKTIF mana pun. Baris VOU milik rekap yang sedang diedit tidak dihitung
 // sebagai terpakai (form sendiri yang mencegah duplikat di layar).
-const getVoucherOptions = async (search = "", excludeNomor = "") => {
+const getVoucherOptions = async (search = "", excludeNomor = "", user) => {
   const [terpakai] = await db.query(
     `SELECT DISTINCT d.rkbd_vou_nomor AS vou
      FROM trekap_bayar_dtl d
@@ -312,7 +361,7 @@ const getVoucherOptions = async (search = "", excludeNomor = "") => {
     [kata, kata, kata],
   );
 
-  return rows
+  const daftar = rows
     .filter((r) => !dikecualikan.has(r.nomor) && Number(r.nominal) > 0.005)
     .slice(0, 200)
     .map((r) => ({
@@ -321,6 +370,11 @@ const getVoucherOptions = async (search = "", excludeNomor = "") => {
       kategori: kategoriDari(TIPE_VOUCHER),
       kategoriUrut: urutanKategori(TIPE_VOUCHER),
     }));
+  const petaRek = await petaRekeningSupplier(
+    daftar.map((r) => r.supKode),
+    user,
+  );
+  return daftar.map((r) => ({ ...r, ...infoRekening(petaRek, r.supKode) }));
 };
 
 // Data voucher dari server (sumber kebenaran saat simpan): nomor kanonik,
@@ -381,7 +435,7 @@ const cekVoucherBebas = async (nomors, nomorEdit) => {
 };
 
 // ── Ambil satu (edit + print) ─────────────────────────────------
-const getById = async (nomor) => {
+const getById = async (nomor, user) => {
   const [[h]] = await db.query(
     `SELECT h.rkb_nomor AS nomor,
             DATE_FORMAT(h.rkb_tanggal, '%Y-%m-%d') AS tanggal,
@@ -400,9 +454,6 @@ const getById = async (nomor) => {
     `SELECT d.rkbd_nourut AS noUrut,
             d.rkbd_sup_kode AS supKode,
             IFNULL(s.sup_nama, '') AS supNama,
-            IFNULL(s.sup_rekening, '') AS supRekening,
-            IFNULL(s.sup_bank, '') AS supBank,
-            IFNULL(s.sup_atasnama, '') AS supAtasnama,
             d.rkbd_bulan_tagihan AS bulanTagihan,
             d.rkbd_tipe AS tipe,
             d.rkbd_nota AS nota,
@@ -432,14 +483,25 @@ const getById = async (nomor) => {
     );
     for (const p of pj) petaPjt.set(p.vou_nomor, p.vou_link || "-");
   }
-  const detail = rows.map((r) => ({
-    ...r,
-    nilaiNota: Number(r.nilaiNota),
-    nominal: Number(r.nominal),
-    kategori: kategoriDari(r.tipe),
-    kategoriUrut: urutanKategori(r.tipe),
-    pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
-  }));
+  const petaRek = await petaRekeningSupplier(
+    rows.map((r) => r.supKode),
+    user,
+  );
+  const detail = rows.map((r) => {
+    const rek = infoRekening(petaRek, r.supKode);
+    return {
+      ...r,
+      supBank: rek.bank,
+      supRekening: rek.rekening,
+      supAtasnama: rek.atasnama,
+      jumlahRekening: rek.jumlahRekening,
+      nilaiNota: Number(r.nilaiNota),
+      nominal: Number(r.nominal),
+      kategori: kategoriDari(r.tipe),
+      kategoriUrut: urutanKategori(r.tipe),
+      pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
+    };
+  });
   return {
     ...h,
     bisaUbah: h.status === "AKTIF",
@@ -921,4 +983,6 @@ module.exports = {
   getVoucherOptions,
   getById,
   save,
+  petaRekeningSupplier,
+  infoRekening,
 };

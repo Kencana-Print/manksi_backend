@@ -16,47 +16,66 @@ const bolehLihatRekening = (user) =>
 const getBrowse = async (user) => {
   const lihatRek = bolehLihatRekening(user);
 
-  // Rekening hanya di-JOIN untuk yang berhak: satu baris per rekening.
-  // User lain tetap satu baris per supplier dan datanya tidak ikut terkirim.
-  const kolomRek = lihatRek
-    ? `, i.supd_bank AS Bank, i.supd_atasnama AS AtasNama, i.supd_rekening AS Rekening`
-    : "";
-  const joinRek = lihatRek
-    ? `LEFT JOIN tsupplieritem i ON i.supd_kode = s.sup_kode`
-    : "";
-  const urutRek = lihatRek ? `, i.supd_rekening ASC` : "";
-
-  const query = `
-    SELECT 
-      s.sup_kode AS Kode, s.sup_nama AS Nama, s.sup_alamat AS Alamat, s.sup_kota AS Kota, 
-      s.sup_fax AS Fax, s.sup_telp AS Telp, s.sup_cp AS Contact, s.sup_hp AS HP, 
-      s.sup_targetmitra AS TargetMitra, s.sup_ket AS Keterangan, s.sup_aktif AS Aktif, 
+  // Header: satu baris per supplier
+  const [rows] = await db.query(`
+    SELECT
+      s.sup_kode AS Kode, s.sup_nama AS Nama, s.sup_alamat AS Alamat, s.sup_kota AS Kota,
+      s.sup_fax AS Fax, s.sup_telp AS Telp, s.sup_cp AS Contact, s.sup_hp AS HP,
+      s.sup_targetmitra AS TargetMitra, s.sup_ket AS Keterangan, s.sup_aktif AS Aktif,
       s.user_create AS Usr, DATE_FORMAT(s.date_create, '%d/%m/%Y %H:%i:%s') AS Created
-      ${kolomRek}
     FROM tsupplier s
-    ${joinRek}
-    ORDER BY s.sup_nama ASC, s.sup_kode ASC ${urutRek}
-  `;
-  const [rows] = await db.query(query);
+    ORDER BY s.sup_nama ASC, s.sup_kode ASC
+  `);
 
-  // Key unik per baris (Kode berulang kalau supplier punya >1 rekening)
-  return rows.map((r, i) => ({ RowId: i + 1, ...r }));
+  // Detail rekening: hanya diambil untuk yang berhak, satu query untuk semua supplier.
+  // User lain tidak menerima data rekening sama sekali.
+  if (!lihatRek) return rows;
+
+  const [rek] = await db.query(`
+    SELECT supd_kode AS Kode, supd_bank AS Bank, supd_atasnama AS AtasNama, supd_rekening AS Rekening
+    FROM tsupplieritem
+    ORDER BY supd_kode, supd_rekening
+  `);
+
+  // Key di-uppercase supaya cocok dengan perilaku JOIN lama (collation case-insensitive)
+  const rekPerSupplier = new Map();
+  for (const r of rek) {
+    const key = String(r.Kode || "").toUpperCase();
+    if (!rekPerSupplier.has(key)) rekPerSupplier.set(key, []);
+    rekPerSupplier.get(key).push({
+      Bank: r.Bank,
+      AtasNama: r.AtasNama,
+      Rekening: r.Rekening,
+    });
+  }
+
+  return rows.map((r) => {
+    const list = rekPerSupplier.get(String(r.Kode).toUpperCase()) || [];
+    return { ...r, JmlRekening: list.length, RekeningList: list };
+  });
 };
 
-const getById = async (kode) => {
+const getById = async (kode, user) => {
   // Ambil Data Header
   const queryHeader = "SELECT * FROM tsupplier WHERE sup_kode = ?";
   const [rowsHeader] = await db.query(queryHeader, [kode]);
   if (rowsHeader.length === 0) return null;
 
-  // Ambil Data Detail (Rekening)
-  const queryDetail =
-    "SELECT supd_bank AS Bank, supd_rekening AS Rekening, supd_atasnama AS AtasNama FROM tsupplieritem WHERE supd_kode = ?";
-  const [rowsDetail] = await db.query(queryDetail, [kode]);
+  // Rekening hanya untuk bagian yang berhak (sama dengan getBrowse)
+  const lihatRek = bolehLihatRekening(user);
+  let rowsDetail = [];
+  if (lihatRek) {
+    const [rek] = await db.query(
+      "SELECT supd_bank AS Bank, supd_rekening AS Rekening, supd_atasnama AS AtasNama FROM tsupplieritem WHERE supd_kode = ?",
+      [kode],
+    );
+    rowsDetail = rek;
+  }
 
   return {
     ...rowsHeader[0],
     RekeningList: rowsDetail,
+    RekeningTerkunci: !lihatRek,
   };
 };
 
@@ -143,27 +162,27 @@ const insertSupplier = async (data, user) => {
     await conn.query(queryHeader, [
       kode,
       data.Nama,
-      data.Alamat,
-      data.Kota,
-      data.Telp,
-      data.Hp,
-      data.Fax,
-      data.Contact,
-      data.NpwpKode,
-      data.NpwpNama,
-      data.NpwpAlamat,
-      data.NpwpKota,
+      data.Alamat || "",
+      data.Kota || "",
+      data.Telp || "",
+      data.Hp || "",
+      data.Fax || "",
+      data.Contact || "",
+      data.NpwpKode || "",
+      data.NpwpNama || "",
+      data.NpwpAlamat || "",
+      data.NpwpKota || "",
       data.Top || 0,
       data.TargetMitra || 0,
       data.Keterangan || "",
-      data.Jenis.Bahan ? "Y" : "N",
-      data.Jenis.Cmt ? "Y" : "N",
-      data.Jenis.Acc ? "Y" : "N",
-      data.Jenis.Obat ? "Y" : "N",
-      data.Jenis.Sparepart ? "Y" : "N",
-      data.Jenis.Atk ? "Y" : "N",
-      data.Jenis.Jasa ? "Y" : "N",
-      data.Aktif,
+      data.Jenis?.Bahan ? "Y" : "N",
+      data.Jenis?.Cmt ? "Y" : "N",
+      data.Jenis?.Acc ? "Y" : "N",
+      data.Jenis?.Obat ? "Y" : "N",
+      data.Jenis?.Sparepart ? "Y" : "N",
+      data.Jenis?.Atk ? "Y" : "N",
+      data.Jenis?.Jasa ? "Y" : "N",
+      data.Aktif || "Y",
       user,
     ]);
 
@@ -171,7 +190,7 @@ const insertSupplier = async (data, user) => {
     if (data.RekeningList && data.RekeningList.length > 0) {
       const detailVals = data.RekeningList.filter(
         (r) => r.Rekening && r.Rekening.trim() !== "",
-      ).map((r) => [kode, r.Bank, r.Rekening, r.AtasNama]);
+      ).map((r) => [kode, r.Bank || "", r.Rekening, r.AtasNama || ""]);
 
       if (detailVals.length > 0) {
         await conn.query(
@@ -214,7 +233,7 @@ const create = async (data, user) => {
   }
 };
 
-const update = async (kode, data, user) => {
+const update = async (kode, data, user, userLogin) => {
   if (!normalisasiNama(data.Nama)) throw errNamaKosong();
 
   const [[lama]] = await db.query(
@@ -267,20 +286,24 @@ const update = async (kode, data, user) => {
       kode,
     ]);
 
-    // Hapus detail lama
-    await conn.query("DELETE FROM tsupplieritem WHERE supd_kode = ?", [kode]);
+    // Rekening hanya disentuh oleh bagian yang berhak. User lain tidak menerima daftar
+    // rekening dari getById, jadi DELETE+INSERT di sini akan menghapus semua rekening.
+    if (bolehLihatRekening(userLogin)) {
+      // Hapus detail lama
+      await conn.query("DELETE FROM tsupplieritem WHERE supd_kode = ?", [kode]);
 
-    // Insert detail baru
-    if (data.RekeningList && data.RekeningList.length > 0) {
-      const detailVals = data.RekeningList.filter(
-        (r) => r.Rekening && r.Rekening.trim() !== "",
-      ).map((r) => [kode, r.Bank, r.Rekening, r.AtasNama]);
+      // Insert detail baru
+      if (data.RekeningList && data.RekeningList.length > 0) {
+        const detailVals = data.RekeningList.filter(
+          (r) => r.Rekening && r.Rekening.trim() !== "",
+        ).map((r) => [kode, r.Bank, r.Rekening, r.AtasNama]);
 
-      if (detailVals.length > 0) {
-        await conn.query(
-          "INSERT INTO tsupplieritem (supd_kode, supd_bank, supd_rekening, supd_atasnama) VALUES ?",
-          [detailVals],
-        );
+        if (detailVals.length > 0) {
+          await conn.query(
+            "INSERT INTO tsupplieritem (supd_kode, supd_bank, supd_rekening, supd_atasnama) VALUES ?",
+            [detailVals],
+          );
+        }
       }
     }
 
@@ -300,4 +323,5 @@ module.exports = {
   update,
   cariNamaKembar,
   cariNamaMirip,
+  bolehLihatRekening,
 };

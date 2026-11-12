@@ -1,6 +1,8 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
+const JENIS_SPANDUK = 5;
+
 // PPN (%) efektif per baris: PO Lain-lain dari detail, jenis lain dari header
 const PPN_EXPR = `IF(h.po_jenis = 4, d.pod_ppn, IF(h.po_status_ppn = 1, h.po_ppn, 0))`;
 
@@ -35,6 +37,7 @@ const getBrowse = async (query, canLihatSup = false) => {
       ${JENIS_PO_EXPR} AS JenisPO,
       h.po_greige AS PoGreige,
       IFNULL((SELECT CAST(GROUP_CONCAT(hh.po_nomor SEPARATOR ", ") AS CHAR) FROM tpo_hdr hh WHERE hh.po_greige = h.po_nomor), "") AS PoCelup,
+      h.po_mbb_nomor AS Permintaan,
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
       
@@ -94,8 +97,8 @@ const getBrowse = async (query, canLihatSup = false) => {
   const params = [dStart, dEnd];
 
   if (search) {
-    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`);
+    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
   }
 
   sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC`;
@@ -144,6 +147,7 @@ const getBrowseDetail = async (
       ${hargaCols}
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
+      d.pod_mppb_nomor AS MPPB,
       d.pod_spk_nomor AS SPK,
       d.pod_keterangan AS KetItem,
       IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, s.spk_nama, m.Mspk_nama), "") AS Nama_SPK
@@ -192,9 +196,12 @@ const deleteData = async (nomor) => {
 
     // PO yang sudah divoucher (POB/POL) tidak boleh diubah: nilai PO jadi tidak
     // sama dengan voucher. Hapus voucher dahulu bila memang perlu diubah.
+    // Spanduk: tipe nota voucher tidak dibatasi (sama dengan saveData)
     const [cekVoucher] = await conn.query(
-      `SELECT voud_vou_nomor FROM tvoucher_dtl
-       WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
+      Number(header.po_jenis) === JENIS_SPANDUK
+        ? `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`
+        : `SELECT voud_vou_nomor FROM tvoucher_dtl
+           WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
       [nomor],
     );
     if (cekVoucher.length > 0) {
@@ -281,17 +288,19 @@ const requestPinEdit = async (nomor, alasan, userKode) => {
   const conn = await db.getConnection();
   try {
     const [headers] = await conn.query(
-      `SELECT po_tanggal, IF(po_jenis=1,"GREIGE",IF(po_jenis=2,"CELUP","BAHAN")) AS JenisPO FROM tpo_hdr WHERE po_nomor=?`,
+      `SELECT h.po_tanggal, h.po_jenis, ${JENIS_PO_EXPR} AS JenisPO
+         FROM tpo_hdr h WHERE h.po_nomor=?`,
       [nomor],
     );
     if (headers.length === 0) throw new Error("Data PO tidak ditemukan.");
     const header = headers[0];
 
-    // PO yang sudah divoucher (POB) tidak boleh diubah: nilai PO jadi tidak
-    // sama dengan voucher. Hapus voucher dahulu bila memang perlu diubah.
+    // Spanduk: tipe nota voucher tidak dibatasi (sama dengan saveData)
     const [cekVoucher] = await conn.query(
-      `SELECT voud_vou_nomor FROM tvoucher_dtl
-       WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
+      Number(header.po_jenis) === JENIS_SPANDUK
+        ? `SELECT voud_vou_nomor FROM tvoucher_dtl WHERE voud_nota = ? LIMIT 1`
+        : `SELECT voud_vou_nomor FROM tvoucher_dtl
+           WHERE voud_nota = ? AND voud_type IN ('POB', 'POL') LIMIT 1`,
       [nomor],
     );
     if (cekVoucher.length > 0) {
@@ -361,6 +370,7 @@ const getAllDetail = async (
       h.po_nomor AS Nomor,
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
+      h.po_mbb_nomor AS Permintaan,
       ${JENIS_PO_EXPR} AS JenisPO,
       h.po_keterangan AS Keterangan,
       ${supCols}
@@ -376,6 +386,7 @@ const getAllDetail = async (
       ${hargaCols}
       IF(d.pod_status = 0, "Delay", IF(d.pod_status = 1, "True", "Cancel")) AS Status_barang,
       d.pod_mkb_nomor AS MKB,
+      d.pod_mppb_nomor AS MPPB,
       d.pod_spk_nomor AS SPK,
       d.pod_keterangan AS KetItem,
       IF(d.pod_spk_nomor <> "", COALESCE(so.so_nama, spk.spk_nama, m.Mspk_nama), "") AS Nama_SPK
@@ -392,8 +403,8 @@ const getAllDetail = async (
   const params = [dStart, dEnd];
 
   if (search) {
-    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`);
+    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?)`;
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
   }
 
   sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC, d.pod_nourut ASC`;

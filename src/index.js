@@ -88,6 +88,8 @@ const spandukLhkProofRoutes = require("./routes/spanduk/lhk/lhkProofRoutes");
 const spandukLhkProofFormRoutes = require("./routes/spanduk/lhk/lhkProofFormRoutes");
 const spandukLhkKoliRoutes = require("./routes/spanduk/lhk/lhkKoliRoutes");
 const spandukLhkKoliFormRoutes = require("./routes/spanduk/lhk/lhkKoliFormRoutes");
+const spandukLhkBsRoutes = require("./routes/spanduk/lhk/lhkBsRoutes");
+const spandukLhkBsFormRoutes = require("./routes/spanduk/lhk/lhkBsFormRoutes");
 const spandukBastMapRoutes = require("./routes/spanduk/bastMapSpandukRoutes");
 const spandukBastMapFormRoutes = require("./routes/spanduk/bastMapSpandukFormRoutes");
 const mutasiMarketingSpandukRoutes = require("./routes/spanduk/mutasiMarketingSpandukRoutes");
@@ -97,6 +99,8 @@ const mutasiMarketingSpandukFormRoutes = require("./routes/spanduk/mutasiMarketi
 const mintaBahanRoutes = require("./routes/garmen/mintaBahanRoutes");
 const realisasiBahanRoutes = require("./routes/garmen/realisasiBahanRoutes");
 const realisasiBahanFormRoutes = require("./routes/garmen/realisasiBahanFormRoutes");
+const permintaanPembelianBahanRoutes = require("./routes/garmen/permintaanPembelianBahanRoutes");
+const permintaanPembelianBahanFormRoutes = require("./routes/garmen/permintaanPembelianBahanFormRoutes");
 const returBahanRoutes = require("./routes/garmen/returBahanRoutes");
 const returBahanFormRoutes = require("./routes/garmen/returBahanFormRoutes");
 const approveReturBahanRoutes = require("./routes/garmen/approveReturBahanRoutes");
@@ -249,6 +253,7 @@ const jadwalKirimRoutes = require("./routes/penjualan/jadwalKirimRoutes");
 const jadwalKirimFormRoutes = require("./routes/penjualan/jadwalKirimFormRoutes");
 const permintaanDriverRoutes = require("./routes/penjualan/permintaanDriverRoutes");
 const gaPermintaanDriverRoutes = require("./routes/ga/permintaanDriverRoutes");
+const terimaMutasiDariProduksiRoutes = require("./routes/penjualan/terimaMutasiDariProduksiRoutes");
 const gaKendaraanRoutes = require("./routes/ga/kendaraanRoutes");
 const gaPenggunaRoutes = require("./routes/ga/penggunaRoutes");
 const gaPerawatanRoutes = require("./routes/ga/perawatanRoutes");
@@ -691,6 +696,8 @@ app.use("/api/spanduk/lhk/lhk-proof", spandukLhkProofRoutes);
 app.use("/api/spanduk/lhk/lhk-proof-form", spandukLhkProofFormRoutes);
 app.use("/api/spanduk/lhk/lhk-koli", spandukLhkKoliRoutes);
 app.use("/api/spanduk/lhk/lhk-koli-form", spandukLhkKoliFormRoutes);
+app.use("/api/spanduk/lhk/lhk-bs", spandukLhkBsRoutes);
+app.use("/api/spanduk/lhk/lhk-bs-form", spandukLhkBsFormRoutes);
 app.use("/api/spanduk/bast-map", spandukBastMapRoutes);
 app.use("/api/spanduk/bast-map-form", spandukBastMapFormRoutes);
 app.use("/api/spanduk/mutasi-marketing", mutasiMarketingSpandukRoutes);
@@ -701,6 +708,14 @@ app.use("/api/garmen/bahan-baku/realisasi-minta", realisasiBahanRoutes);
 app.use(
   "/api/garmen/bahan-baku/realisasi-minta-form",
   realisasiBahanFormRoutes,
+);
+app.use(
+  "/api/garmen/permintaan-pembelian-bahan",
+  permintaanPembelianBahanRoutes,
+);
+app.use(
+  "/api/garmen/permintaan-pembelian-bahan-form",
+  permintaanPembelianBahanFormRoutes,
 );
 app.use("/api/garmen/bahan-baku/retur-bahan", returBahanRoutes);
 app.use("/api/garmen/bahan-baku/retur-bahan/form", returBahanFormRoutes);
@@ -882,6 +897,7 @@ app.use("/api/penjualan/insentif/form", insentifFormRoutes);
 app.use("/api/penjualan/jadwal-kirim", jadwalKirimRoutes);
 app.use("/api/penjualan/jadwal-kirim-form", jadwalKirimFormRoutes);
 app.use("/api/penjualan/permintaan-driver", permintaanDriverRoutes);
+app.use("/api/penjualan/terima-mutasi", terimaMutasiDariProduksiRoutes);
 app.use("/api/ga/permintaan-driver", gaPermintaanDriverRoutes);
 app.use("/api/ga/master-kendaraan", gaKendaraanRoutes);
 app.use("/api/ga/master-pengguna", gaPenggunaRoutes);

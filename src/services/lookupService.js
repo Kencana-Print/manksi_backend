@@ -2,6 +2,7 @@ const db = require("../config/database");
 const { sqlTanpaInduk } = require("./postingGuardService");
 const { filterTipe } = require("./master/bahanService");
 const { kondisiSpanduk } = require("./master/garmenBrgService");
+const { bolehLihatRekening } = require("./master/supplierService");
 
 const searchSpk = async (
   keyword,
@@ -1566,11 +1567,15 @@ const searchBarangGarmen = async (
   if (jenis === "ACCESORIES") stockTable = "tmasterstok_acc";
   else if (jenis === "OBAT") stockTable = "tmasterstok_obat";
   else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
+  else if (jenis === "ASET") stockTable = "tmasterstok_aset";
 
   // 2. Siapkan kondisi dasar
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
   let whereParams = [jenis];
-  whereClause += kondisiSpanduk(cabang);
+  // ASET terlihat di semua cabang, di luar aturan SPANDUK (sama dengan master)
+  if (jenis !== "ASET") {
+    whereClause += kondisiSpanduk(cabang);
+  }
 
   // 3. Filter khusus Sparepart berdasarkan Bagian User
   // if (jenis === "SPAREPART") {
@@ -2201,10 +2206,12 @@ const searchSupplier = async (
   page = 1,
   limit = 50,
   withRiwayat = false,
+  user = null,
 ) => {
   const limitNum = Number(limit);
   const pakaiRiwayat = withRiwayat && !!(keyword && keyword.trim() !== "");
   const offset = (Number(page) - 1) * limitNum;
+  const lihatRek = bolehLihatRekening(user);
   let params = [];
 
   let whereClause = `WHERE sup_aktif = "Y"`;
@@ -2223,16 +2230,33 @@ const searchSupplier = async (
     params,
   );
 
+  // Rekening hanya untuk bagian yang berhak (sama dengan Master Supplier).
+  // User lain: tanpa JOIN, satu baris per supplier, kolom rekening dikirim kosong
+  // supaya bentuk payload ke form pemanggil tidak berubah.
+  const kolomRek = lihatRek
+    ? `IFNULL(i.supd_bank, '') AS Bank,
+       IFNULL(i.supd_rekening, '') AS Rekening,
+       IFNULL(i.supd_atasnama, '') AS AtasNama`
+    : `'' AS Bank, '' AS Rekening, '' AS AtasNama`;
+  const joinRek = lihatRek
+    ? `LEFT JOIN tsupplieritem i ON i.supd_kode = s.sup_kode`
+    : "";
+  const urutRek = lihatRek ? `, i.supd_rekening ASC` : "";
+
+  // Paging per SUPPLIER (bukan per baris rekening): ambil halaman supplier dulu,
+  // baru JOIN rekening. Supplier dengan N rekening = N baris, tidak terpotong antar halaman.
   const query = `
-    SELECT sup_kode AS Kode, sup_nama AS Nama, sup_alamat AS Alamat, sup_kota AS Kota,
-           IFNULL(i.supd_bank, '') AS Bank,
-           IFNULL(i.supd_rekening, '') AS Rekening,
-           IFNULL(i.supd_atasnama, '') AS AtasNama
-      FROM tsupplier
-      LEFT JOIN tsupplieritem i ON i.supd_kode = tsupplier.sup_kode
-      ${whereClause}
-     ORDER BY sup_nama ASC, sup_kode ASC
-     LIMIT ? OFFSET ?
+    SELECT s.sup_kode AS Kode, s.sup_nama AS Nama, s.sup_alamat AS Alamat, s.sup_kota AS Kota,
+           ${kolomRek}
+      FROM (
+        SELECT sup_kode, sup_nama, sup_alamat, sup_kota
+          FROM tsupplier
+          ${whereClause}
+         ORDER BY sup_nama ASC, sup_kode ASC
+         LIMIT ? OFFSET ?
+      ) s
+      ${joinRek}
+     ORDER BY s.sup_nama ASC, s.sup_kode ASC ${urutRek}
   `;
   params.push(limitNum, offset);
 

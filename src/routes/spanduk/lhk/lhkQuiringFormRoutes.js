@@ -14,6 +14,12 @@ router.get(
   controller.lookupPabrik,
 );
 router.get(
+  "/lookups/karyawan",
+  verifyToken,
+  checkPermission(1224, "view"),
+  controller.lookupKaryawan,
+);
+router.get(
   "/info-spk/:nomor",
   verifyToken,
   checkPermission(1224, "view"),

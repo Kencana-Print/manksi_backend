@@ -11,7 +11,7 @@ const getBrowse = async (req, res) => {
 
 const getById = async (req, res) => {
   try {
-    const data = await supplierService.getById(req.params.kode);
+    const data = await supplierService.getById(req.params.kode, req.user);
     if (!data)
       return res
         .status(404)
@@ -37,7 +37,12 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   try {
-    await supplierService.update(req.params.kode, req.body, req.user.kode);
+    await supplierService.update(
+      req.params.kode,
+      req.body,
+      req.user.kode,
+      req.user,
+    );
     res
       .status(200)
       .json({ success: true, message: "Supplier berhasil diperbarui" });

@@ -283,7 +283,7 @@ const getDetailForm = async (
   const [[h]] = await db.query(
     `SELECT kkh_nomor, DATE_FORMAT(kkh_tanggal,'%Y-%m-%d') AS tanggal,
             kkh_cabang, kkh_rek_tujuan, kkh_total,
-            kkh_keterangan, kkh_status, user_create
+            kkh_keterangan, kkh_status, kkh_bbk_nomor, user_create
      FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
     [nomor],
   );
@@ -317,9 +317,9 @@ const getDetailForm = async (
     status: h.kkh_status,
     dibuat: h.user_create,
     nomorPjt,
-    // Boleh diubah hanya bila AKTIF, belum dipanggil Pengajuan Transfer,
-    // dan user punya hak tulis atas klaim ini (cabang sendiri atau akses penuh)
-    bisaUbah: h.kkh_status === "AKTIF" && !nomorPjt && bolehTulis,
+    nomorBbk: h.kkh_bbk_nomor || "",
+    bisaUbah:
+      h.kkh_status === "AKTIF" && !nomorPjt && !h.kkh_bbk_nomor && bolehTulis,
     detail: dtl.map((d) => ({
       ...d,
       nominal: Number(d.nominal),
@@ -398,7 +398,7 @@ const saveData = async (payload, user) => {
 
     if (isEdit) {
       const [[h]] = await conn.query(
-        `SELECT kkh_cabang, kkh_status FROM tklaim_kaskecil_hdr
+        `SELECT kkh_cabang, kkh_status, kkh_bbk_nomor FROM tklaim_kaskecil_hdr
          WHERE kkh_nomor = ? FOR UPDATE`,
         [nomor],
       );
@@ -411,6 +411,10 @@ const saveData = async (payload, user) => {
       if (pjt)
         throw httpError(
           `Klaim sudah dipanggil di Pengajuan Transfer ${pjt}. Tidak bisa diubah.`,
+        );
+      if (h.kkh_bbk_nomor)
+        throw httpError(
+          `Klaim sudah dibayar lewat BBK ${h.kkh_bbk_nomor}. Tidak bisa diubah.`,
         );
       // Lepas kunci BKK lama supaya bisa dipilih ulang di transaksi ini
       await conn.query(

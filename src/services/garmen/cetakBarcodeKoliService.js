@@ -1,5 +1,5 @@
 const db = require("../../config/database");
-const { FG_SCOPE } = require("./cetakBarcodeKoliFormService");
+const { FG_SCOPE, mulaiQr } = require("./cetakBarcodeKoliFormService");
 
 // ============================================================
 // CETAK BARCODE KOLI — BROWSE SERVICE (fase 1)
@@ -107,8 +107,8 @@ const getSelisih = async (
   }
   const hasil = [];
 
-  // 1) STBJ dalam rentang tanggal
-  const [hdr] = gudang.length
+  // 1) STBJ dalam rentang tanggal (STBJ sebelum tanggal mulai QR = legacy, dilewati)
+  const [hdrSemua] = gudang.length
     ? await db.query(
         `SELECT stbj_nomor AS nomor,
                 DATE_FORMAT(stbj_tanggal, '%Y-%m-%d') AS tanggal,
@@ -118,6 +118,7 @@ const getSelisih = async (
         [tglAwal, tglAkhir, gudang],
       )
     : [[]];
+  const hdr = hdrSemua.filter((h) => h.tanggal >= mulaiQr(h.gdg));
 
   if (hdr.length) {
     const nomorList = hdr.map((h) => h.nomor);

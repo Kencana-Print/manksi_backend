@@ -14,19 +14,43 @@ const { getGudangByMutasi } = require("./mutasiProduksiFormService");
 // (operator memilih label yang hilang/batal), baru simpan STBJ.
 // ============================================================
 
-// Gudang jadi STBJ yang masuk cakupan → cabang (divisi 4)
-const FG_SCOPE = { GJ001: "P04", GJ002: "P01" };
+const { spkTanpaLhk } = require("../spanduk/lhk/lhkGerbangRantai"); // [SESUAIKAN path]
+
+// Gudang jadi STBJ yang masuk cakupan → cabang.
+// GJ001/GJ002 = Garmen divisi 4; WH002 = gudang Spanduk P02.
+const FG_SCOPE = { GJ001: "P04", GJ002: "P01", WH002: "P02" };
+const GUDANG_SPANDUK = "WH002";
 const MAKS_KOLI_PER_SPK = 500;
 // STBJ bertanggal sebelum ini tidak diatur QR koli (legacy)
-const QR_KOLI_MULAI = "2026-11-15";
+const QR_KOLI_MULAI = "2026-11-21";
 // Sebelum tanggal ini gate LHK hanya memberi peringatan (tidak memblokir)
 const GATE_LHK_BLOKIR_MULAI = "2026-11-21";
+// Spanduk: sama dengan Garmen. Ubah dua konstanta ini saja untuk membuka lebih
+// awal saat uji (kembalikan sebelum deploy).
+const QR_KOLI_MULAI_SPANDUK = QR_KOLI_MULAI;
+const GATE_LHK_BLOKIR_MULAI_SPANDUK = GATE_LHK_BLOKIR_MULAI;
 
 const hariIni = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-const gateMemblokir = () => hariIni() >= GATE_LHK_BLOKIR_MULAI;
+const mulaiQr = (gdg) =>
+  gdg === GUDANG_SPANDUK ? QR_KOLI_MULAI_SPANDUK : QR_KOLI_MULAI;
+const gateMemblokir = (gdg) =>
+  hariIni() >=
+  (gdg === GUDANG_SPANDUK
+    ? GATE_LHK_BLOKIR_MULAI_SPANDUK
+    : GATE_LHK_BLOKIR_MULAI);
+
+// Spanduk: SPK wajib sudah punya LHK Lipat (ada/tidak; jumlah tidak dicek)
+const spkTanpaLipat = (q, daftar) =>
+  spkTanpaLhk(q, { kodeLini: "LIPAT", daftar });
+
+// Untuk cek dini di form STBJ (getSpkDetail): hanya pesan, tidak pernah memblokir
+const peringatanGateSpanduk = async (q, spkList) =>
+  (await spkTanpaLipat(q, spkList)).map(
+    (n) => `SPK ${n}: belum punya LHK Lipat.`,
+  );
 
 // ─────────────────────────────────────────────
 // GENERATE NOMOR — CBK.{yymm}{00001}
@@ -78,7 +102,8 @@ const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
   if (!h.length) throw new Error("STBJ tidak ditemukan.");
   const { tanggal, gdg } = h[0];
   const cab = FG_SCOPE[gdg] || null;
-  const dalamCakupan = !!cab && tanggal >= QR_KOLI_MULAI;
+  const spanduk = gdg === GUDANG_SPANDUK;
+  const dalamCakupan = !!cab && tanggal >= mulaiQr(gdg);
 
   // Koli yang sudah ada untuk STBJ ini (dikunci selama transaksi)
   const [ada] = await conn.query(
@@ -174,74 +199,108 @@ const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
     );
   }
 
-  // ── Gate LHK: pcs STBJ <= LHK Finishing (ter-approve) − pcs STBJ lain ──
-  // LHK = MAX per kode bahan dari SUM(mpd_jumlah) mutasi lipat→koli.
+  // ── Gate LHK ──
   const spkList = [...new Set(rows.map((r) => r.spk))];
-  const pair = getGudangByMutasi(cab, 6); // lipat → koli
+  let gate;
+  let pesanGate;
 
-  const [lhkRows] = await conn.query(
-    `SELECT h.mph_spk_nomor AS spk,
-            IFNULL(NULLIF(d.mpd_size, ''), 'ALLSIZE') AS size,
-            d.mpd_bhn_kode AS bhn,
-            SUM(d.mpd_jumlah) AS qty
-     FROM tmutasiproduksi_hdr h
-     INNER JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
-     WHERE h.mph_spk_nomor IN (?) AND h.mph_gdgasal = ? AND h.mph_gdgtujuan = ?
-       AND h.mph_apv = 'Y'
-     GROUP BY h.mph_spk_nomor, IFNULL(NULLIF(d.mpd_size, ''), 'ALLSIZE'), d.mpd_bhn_kode`,
-    [spkList, pair.asal, pair.tujuan],
-  );
-  const lhkMap = new Map();
-  for (const r of lhkRows) {
-    const k = `${r.spk}|${r.size}`;
-    lhkMap.set(k, Math.max(lhkMap.get(k) ?? 0, Number(r.qty) || 0));
+  if (spanduk) {
+    // Spanduk: setiap SPK wajib sudah punya LHK Lipat
+    const tanpaLipat = new Set(
+      (await spkTanpaLipat(conn, spkList)).map((n) => n.toUpperCase()),
+    );
+    gate = rows.map((r) => {
+      const k = `${r.spk}|${r.size}`;
+      const d = dasar.get(k);
+      const ok = !tanpaLipat.has(String(r.spk).toUpperCase());
+      // baris baru, atau baris yang sebelumnya belum lolos, dicek ulang
+      const dicek = !d || !d.ok;
+      return {
+        spk: r.spk,
+        size: r.size,
+        pcs: Number(r.pcs) || 0,
+        lhk: null,
+        lain: 0,
+        dicek,
+        ok,
+        okSimpan: dicek ? ok : d.ok,
+      };
+    });
+    pesanGate = gate
+      .filter((g) => g.dicek && !g.ok)
+      .map(
+        (g) =>
+          `SPK ${g.spk}: belum punya LHK Lipat. Buat LHK Lipat terlebih dahulu.`,
+      );
+  } else {
+    // Garmen: pcs STBJ <= LHK Finishing (ter-approve) − pcs STBJ lain.
+    // LHK = MAX per kode bahan dari SUM(mpd_jumlah) mutasi lipat→koli.
+    const pair = getGudangByMutasi(cab, 6); // lipat → koli
+
+    const [lhkRows] = await conn.query(
+      `SELECT h.mph_spk_nomor AS spk,
+              IFNULL(NULLIF(d.mpd_size, ''), 'ALLSIZE') AS size,
+              d.mpd_bhn_kode AS bhn,
+              SUM(d.mpd_jumlah) AS qty
+       FROM tmutasiproduksi_hdr h
+       INNER JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
+       WHERE h.mph_spk_nomor IN (?) AND h.mph_gdgasal = ? AND h.mph_gdgtujuan = ?
+         AND h.mph_apv = 'Y'
+       GROUP BY h.mph_spk_nomor, IFNULL(NULLIF(d.mpd_size, ''), 'ALLSIZE'), d.mpd_bhn_kode`,
+      [spkList, pair.asal, pair.tujuan],
+    );
+    const lhkMap = new Map();
+    for (const r of lhkRows) {
+      const k = `${r.spk}|${r.size}`;
+      lhkMap.set(k, Math.max(lhkMap.get(k) ?? 0, Number(r.qty) || 0));
+    }
+
+    const [lainRows] = await conn.query(
+      `SELECT stbjd_spk_nomor AS spk,
+              IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE') AS size,
+              SUM(stbjd_jumlah) AS qty
+       FROM tstbj_dtl
+       WHERE stbjd_spk_nomor IN (?) AND stbjd_stbj_nomor <> ?
+       GROUP BY stbjd_spk_nomor, IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE')`,
+      [spkList, stbjNomor],
+    );
+    const lainMap = new Map(
+      lainRows.map((r) => [`${r.spk}|${r.size}`, Number(r.qty) || 0]),
+    );
+
+    gate = rows.map((r) => {
+      const k = `${r.spk}|${r.size}`;
+      const pcs = Number(r.pcs) || 0;
+      const lhk = lhkMap.has(k) ? lhkMap.get(k) : null;
+      const lain = lainMap.get(k) || 0;
+      const sisa = (lhk ?? 0) - lain;
+      const d = dasar.get(k);
+      const dicek = !d || pcs > d.pcs + 0.001; // baris baru atau bertambah
+      const ok = lhk !== null && pcs <= sisa + 0.001;
+      return {
+        spk: r.spk,
+        size: r.size,
+        pcs,
+        lhk,
+        lain,
+        sisa,
+        dicek,
+        ok,
+        okSimpan: dicek ? ok : d.ok,
+      };
+    });
+    pesanGate = gate
+      .filter((g) => g.dicek && !g.ok)
+      .map((g) =>
+        g.lhk === null
+          ? `SPK ${g.spk} size ${g.size}: LHK Finishing (ter-approve) belum ada.`
+          : `SPK ${g.spk} size ${g.size}: STBJ ${g.pcs} > sisa LHK ${g.sisa} (LHK ${g.lhk}, dipakai STBJ lain ${g.lain}).`,
+      );
   }
 
-  const [lainRows] = await conn.query(
-    `SELECT stbjd_spk_nomor AS spk,
-            IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE') AS size,
-            SUM(stbjd_jumlah) AS qty
-     FROM tstbj_dtl
-     WHERE stbjd_spk_nomor IN (?) AND stbjd_stbj_nomor <> ?
-     GROUP BY stbjd_spk_nomor, IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE')`,
-    [spkList, stbjNomor],
-  );
-  const lainMap = new Map(
-    lainRows.map((r) => [`${r.spk}|${r.size}`, Number(r.qty) || 0]),
-  );
-
-  const gate = rows.map((r) => {
-    const k = `${r.spk}|${r.size}`;
-    const pcs = Number(r.pcs) || 0;
-    const lhk = lhkMap.has(k) ? lhkMap.get(k) : null;
-    const lain = lainMap.get(k) || 0;
-    const sisa = (lhk ?? 0) - lain;
-    const d = dasar.get(k);
-    const dicek = !d || pcs > d.pcs + 0.001; // baris baru atau bertambah
-    const ok = lhk !== null && pcs <= sisa + 0.001;
-    return {
-      spk: r.spk,
-      size: r.size,
-      pcs,
-      lhk,
-      lain,
-      sisa,
-      dicek,
-      ok,
-      okSimpan: dicek ? ok : d.ok,
-    };
-  });
-
-  const pesanGate = gate
-    .filter((g) => g.dicek && !g.ok)
-    .map((g) =>
-      g.lhk === null
-        ? `SPK ${g.spk} size ${g.size}: LHK Finishing (ter-approve) belum ada.`
-        : `SPK ${g.spk} size ${g.size}: STBJ ${g.pcs} > sisa LHK ${g.sisa} (LHK ${g.lhk}, dipakai STBJ lain ${g.lain}).`,
-    );
   const peringatan = [];
   if (pesanGate.length) {
-    if (gateMemblokir()) throw new Error(pesanGate.join("\n"));
+    if (gateMemblokir(gdg)) throw new Error(pesanGate.join("\n"));
     peringatan.push(
       ...pesanGate.map((p) => `${p} (masa toleransi, belum memblokir)`),
     );
@@ -601,6 +660,10 @@ const voidKoli = async (payload, user, perangkat = "") => {
 
 module.exports = {
   FG_SCOPE,
+  GUDANG_SPANDUK,
+  mulaiQr,
+  gateMemblokir,
+  peringatanGateSpanduk,
   generateKoliStbj,
   lepasKoliStbj,
   searchStbj,

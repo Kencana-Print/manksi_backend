@@ -19,6 +19,12 @@ router.get(
   checkPermission(4, "view"),
   controller.getKain,
 );
+router.put(
+  "/:nomor/approve",
+  verifyToken,
+  checkPermission(4, "view"),
+  controller.approve,
+);
 router.delete(
   "/:nomor",
   verifyToken,

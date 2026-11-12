@@ -1,3 +1,5 @@
+const { galat } = require("./lhkCommon");
+
 // Helper absensi fingerprint HRD (sesi Pagi/Siang) untuk LHK
 const SESI_VALID = ["PAGI", "SIANG"];
 const BATAS_SIANG = 13 * 3600; // 13:00
@@ -69,6 +71,41 @@ const hitungJamHarian = (row, detikAkhir) => {
   return { kerja: Math.floor(potongIstirahat(s1, akhir) / 60) };
 };
 
+// Jam kerja per sesi, aturan sama dengan LHK Cetak (cutoff 13:00 untuk Pagi).
+// PAGI : scan1 s/d batas akhir (jam input, maks 13:00), dipotong jam pulang bila
+//        sudah scan pulang.
+// SIANG: max(13:00, scan1) s/d scan pulang; wajib scan pulang setelah 13:00.
+// null = tidak memenuhi syarat sesi. hitungJam di atas = aturan lama, tidak diubah.
+const hitungJamSesi = (sesi, row, detikAkhirPagi) => {
+  const s1 = detik(row.scan1);
+  const s2 = detik(row.scan2);
+  const keluar = detik(row.keluar);
+  if (s1 === null) {
+    return null;
+  }
+  if (sesi === "PAGI") {
+    const akhir = s2 === null ? detikAkhirPagi : Math.min(detikAkhirPagi, s2);
+    return akhir > s1 ? { kerja: selisihMenit(s1, akhir), lembur: 0 } : null;
+  }
+  if (s2 === null || s2 <= BATAS_SIANG) {
+    return null;
+  }
+  const mulai = Math.max(BATAS_SIANG, s1);
+  return {
+    kerja: selisihMenit(mulai, s2),
+    lembur: keluar === null ? 0 : selisihMenit(keluar, s2),
+  };
+};
+
+const cekTanggalInput = (tgl, hariIni, namaLhk) => {
+  if (tgl > hariIni) {
+    throw galat("Tanggal tidak boleh lebih dari hari ini");
+  }
+  if (tgl < hariIni && !BOLEH_MUNDUR) {
+    throw galat(`${namaLhk} hanya boleh diinput pada tanggal hari ini`);
+  }
+};
+
 const sekarangServer = async (q) => {
   const [r] = await q.query(
     `SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS tgl,
@@ -89,7 +126,7 @@ const ambilAbsensi = async (
     params.push(niks);
   }
   const [rows] = await q.query(
-    `SELECT k.kar_nik AS nik, k.kar_nama AS nama, a.scan1, a.scan2
+    `SELECT k.kar_nik AS nik, k.kar_nama AS nama, a.scan1, a.scan2, a.keluar
      FROM ${tabelKaryawan} k
      JOIN hrd2.tabsensi a
        ON a.nik = k.kar_kode_absensi AND a.tanggal = ?
@@ -111,6 +148,8 @@ module.exports = {
   fmtJam,
   hitungJam,
   hitungJamHarian,
+  hitungJamSesi,
+  cekTanggalInput,
   sekarangServer,
   ambilAbsensi,
 };

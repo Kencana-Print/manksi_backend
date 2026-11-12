@@ -183,6 +183,29 @@ const getAlokasi = async (req, res) => {
   }
 };
 
+const getBahanSpanduk = async (req, res) => {
+  try {
+    const data = await service.getBahanSpanduk();
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getBahanInfo = async (req, res) => {
+  try {
+    const { kode } = req.query;
+    if (!kode)
+      return res
+        .status(400)
+        .json({ success: false, message: "Kode bahan wajib diisi." });
+    const data = await service.getBahanInfo(kode);
+    res.json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getDetail,
   getSoSource,
@@ -198,4 +221,6 @@ module.exports = {
   getMkaFromMap,
   getKomponenFromProof,
   getAlokasi,
+  getBahanSpanduk,
+  getBahanInfo,
 };

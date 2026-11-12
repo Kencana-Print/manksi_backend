@@ -3,6 +3,7 @@ const {
   galat,
   teks,
   norm,
+  round2,
   parseTanggal,
   adalahSuperadmin,
   cabangUser,
@@ -10,6 +11,10 @@ const {
 const {
   T,
   KAIN,
+  APV,
+  TOLERANSI_KAIN,
+  hitungKelebihanKain,
+  ambilPlangkanMap,
   cekTutupBuku,
   pastikanLhkDiCabang,
   pastikanBelumDipakai,
@@ -99,6 +104,8 @@ const fmtJam = (menit) => {
 };
 
 // Hitung jam kerja satu karyawan dari baris absensi. null = tidak memenuhi syarat sesi.
+// PAGI: scan1 sampai batas akhir (jam input, maksimal cutoff 13:00), dipotong jam pulang bila sudah scan pulang.
+// SIANG: max(13:00, scan1) sampai scan pulang; wajib scan pulang setelah 13:00.
 const hitungJam = (sesi, row, detikAkhirPagi) => {
   const s1 = detik(row.scan1);
   const s2 = detik(row.scan2);
@@ -107,13 +114,11 @@ const hitungJam = (sesi, row, detikAkhirPagi) => {
     return null;
   }
   if (sesi === "PAGI") {
-    if (s2 !== null) {
-      return null; // sudah pulang
-    }
-    return { kerja: selisihMenit(s1, detikAkhirPagi), lembur: 0 };
+    const akhir = s2 === null ? detikAkhirPagi : Math.min(detikAkhirPagi, s2);
+    return akhir > s1 ? { kerja: selisihMenit(s1, akhir), lembur: 0 } : null;
   }
-  if (s2 === null) {
-    return null; // belum pulang, jam siang belum bisa dihitung
+  if (s2 === null || s2 <= BATAS_SIANG) {
+    return null;
   }
   const mulai = Math.max(BATAS_SIANG, s1);
   return {
@@ -253,15 +258,15 @@ const siapkanData = (body = {}) => {
   const sudahKain = new Set();
   const kain = daftarKain.map((k, i) => {
     const n = i + 1;
-    const kode = teks(k?.Kode_Bahan);
-    if (!/^\d+$/.test(kode) || Number(kode) <= 0 || Number(kode) > MAKS_INT) {
+    const kode = teks(k?.Kode_Bahan).toUpperCase();
+    if (!/^SB\d{7}$/.test(kode)) {
       throw galat(`Kain ${n}: kode bahan tidak valid`);
     }
     if (sudahKain.has(kode)) {
       throw galat(`Kain ${n}: bahan ${kode} muncul lebih dari sekali`);
     }
     sudahKain.add(kode);
-    return { kode: Number(kode), qty: meter(k.Qty_Meter, `Kain ${n}: qty`) };
+    return { kode, qty: meter(k.Qty_Meter, `Kain ${n}: qty`) };
   });
 
   return {
@@ -284,30 +289,57 @@ const validasiSumberBaris = async (q, baris, user) => {
   for (const b of baris) {
     periksaSumber(peta.get(b.spk), b.spk, user);
   }
+  return peta;
 };
 
-// Kain harus bahan baku utama spanduk yang aktif; kain yang sudah tersimpan di
-// LHK ini tetap lolos walau kemudian dinonaktifkan
+// Plangkan otomatis dari HP. Baris yang sudah tersimpan di LHK ini mempertahankan
+// nilainya (snapshot); baris baru memakai sisa. Tanpa MAP/HP, nilai manual dari client.
+const terapkanPlangkan = async (q, data, nomorLhk) => {
+  const peta = await ambilPlangkanMap(
+    q,
+    data.baris.map((b) => b.spk),
+    nomorLhk,
+    true,
+  );
+  let tersimpan = new Map();
+  if (nomorLhk) {
+    const [rows] = await q.query(
+      `SELECT lcd_spk_nomor AS spk, lcd_qty_plangkan AS plg
+       FROM ${T.dtl} WHERE lcd_lch_nomor = ?`,
+      [nomorLhk],
+    );
+    tersimpan = new Map(rows.map((r) => [String(r.spk), Number(r.plg) || 0]));
+  }
+  for (const b of data.baris) {
+    if (!peta.get(b.spk)?.otomatis) {
+      continue;
+    }
+    b.plangkan = tersimpan.has(b.spk)
+      ? tersimpan.get(b.spk)
+      : peta.get(b.spk).sisa;
+  }
+};
+
+// Kain harus bahan Spanduk (kode SB) yang aktif di tbahan (bhn_aktif 0); kain yang
+// sudah tersimpan di LHK ini tetap lolos walau kemudian dinonaktifkan
 const validasiKain = async (q, kain, nomorLhk) => {
   if (kain.length === 0) {
     return;
   }
   const [rows] = await q.query(
-    `SELECT b.brg_kode AS kode
-     FROM ${T.barang} b
-     WHERE b.brg_kode IN (?)
-       AND b.brg_divisi = ? AND b.brg_ktg_kode = ? AND b.brg_jenis = ?
-       AND (b.brg_isaktif = 1
-            OR b.brg_kode IN (SELECT lck_brg_kode FROM ${T.kain}
+    `SELECT b.Bhn_kode AS kode
+     FROM ${T.bahan} b
+     WHERE b.Bhn_kode IN (?)
+       AND LEFT(b.Bhn_kode, 2) = ?
+       AND (b.bhn_aktif = 0
+            OR b.Bhn_kode IN (SELECT lck_brg_kode FROM ${T.kain}
                               WHERE lck_lch_nomor = ?))`,
-    [kain.map((k) => k.kode), KAIN.divisi, KAIN.kategori, KAIN.jenis, nomorLhk],
+    [kain.map((k) => k.kode), KAIN.prefix, nomorLhk],
   );
-  const ada = new Set(rows.map((r) => Number(r.kode)));
+  const ada = new Set(rows.map((r) => String(r.kode)));
   const salah = kain.find((k) => !ada.has(k.kode));
   if (salah) {
-    throw galat(
-      `Bahan ${salah.kode} bukan bahan baku utama spanduk yang aktif`,
-    );
+    throw galat(`Bahan ${salah.kode} bukan bahan Spanduk yang aktif`);
   }
 };
 
@@ -351,16 +383,12 @@ const hitungKaryawan = async (
         );
       }
       // Tanggal lampau: semua karyawan sudah punya scan pulang, jadi abaikan untuk Pagi
-      const rowPakai =
-        data.sesi === "PAGI" && data.tanggal < hariIni
-          ? { ...r, scan2: null }
-          : r;
-      const jam = hitungJam(data.sesi, rowPakai, jamAkhir);
+      const jam = hitungJam(data.sesi, r, jamAkhir);
       if (!jam) {
         throw galat(
           data.sesi === "PAGI"
-            ? `Karyawan ${k.nik} (${r.nama}) belum scan masuk atau sudah scan pulang`
-            : `Karyawan ${k.nik} (${r.nama}) belum scan masuk atau belum scan pulang`,
+            ? `Karyawan ${k.nik} (${r.nama}) belum scan masuk atau tidak punya jam kerja pagi`
+            : `Karyawan ${k.nik} (${r.nama}) belum scan masuk, belum scan pulang, atau pulang sebelum 13.00`,
         );
       }
       k.nama = teks(r.nama);
@@ -454,7 +482,11 @@ const getLhkCetakById = async (nomor, user) => {
             IFNULL(h.lch_jkar_borongan, 0) AS Kar_Borongan,
             IFNULL(h.lch_jkar_harian, 0) AS Kar_Harian,
             h.lch_sesi AS Sesi,
-            TIME_FORMAT(h.lch_jam_input, '%H:%i') AS Jam_Input
+            TIME_FORMAT(h.lch_jam_input, '%H:%i') AS Jam_Input,
+            h.lch_apv_status AS Apv_Status,
+            h.lch_apv_user AS Apv_User,
+            DATE_FORMAT(h.lch_apv_tgl, '%Y-%m-%d %H:%i') AS Apv_Tgl,
+            h.lch_apv_alasan AS Apv_Alasan
      FROM ${T.hdr} h
      LEFT JOIN ${T.pabrik} p ON p.pab_kode = h.lch_pab_kode
      WHERE h.lch_nomor = ?`,
@@ -489,6 +521,12 @@ const getLhkCetakById = async (nomor, user) => {
     [no],
   );
 
+  const plg = await ambilPlangkanMap(
+    db,
+    detail.map((d) => d.Nomor_SPK),
+    no,
+  );
+
   // Digabung per NIK (format lama menyimpan karyawan berulang per SPK;
   // nilai yang sama berulang, jadi diambil MAX, bukan dijumlah)
   const [karyawan] = await db.query(
@@ -507,19 +545,29 @@ const getLhkCetakById = async (nomor, user) => {
 
   const [kain] = await db.query(
     `SELECT k.lck_brg_kode AS Kode_Bahan,
-            b.brg_nama AS Nama_Bahan,
-            b.brg_lebar AS Lebar,
+            b.Bhn_Name AS Nama_Bahan,
+            b.bhn_lebar AS Lebar,
             k.lck_qty_meter AS Qty_Meter
      FROM ${T.kain} k
-     LEFT JOIN ${T.barang} b ON b.brg_kode = k.lck_brg_kode
+     LEFT JOIN ${T.bahan} b ON b.Bhn_kode = k.lck_brg_kode
      WHERE k.lck_lch_nomor = ?
-     ORDER BY b.brg_nama, k.lck_brg_kode`,
+     ORDER BY b.Bhn_Name, k.lck_brg_kode`,
     [no],
   );
 
   return {
     ...hdr[0],
-    Detail: detail,
+    Kain_Kebutuhan: round2(
+      detail.reduce(
+        (t, d) => t + Number(d.Qty_Cetak) * (Number(d.Panjang) || 0),
+        0,
+      ),
+    ),
+    Kain_Toleransi: TOLERANSI_KAIN,
+    Detail: detail.map((d) => ({
+      ...d,
+      Plangkan_Otomatis: plg.get(d.Nomor_SPK)?.otomatis === true,
+    })),
     Kain: kain.map((k) => ({
       Kode_Bahan: String(k.Kode_Bahan),
       Nama_Bahan: k.Nama_Bahan,
@@ -551,12 +599,18 @@ const getInfoSpk = async (nomor, user) => {
     kodeLini: "CETAK",
     daftarSpk: [no],
   });
+  const plg = (await ambilPlangkanMap(db, [info.nomor])).get(info.nomor);
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,
     Jumlah_Order: info.jumlah,
     Panjang: info.panjang,
     Lebar: info.lebar,
+    Kode_Bahan: info.bahan || "",
+    Plangkan_Otomatis: plg?.otomatis === true,
+    Plangkan: plg?.sisa ?? 0,
+    Plangkan_Total: plg?.total ?? 0,
+    Plangkan_Terpakai: plg?.terpakai ?? 0,
   };
 };
 
@@ -583,23 +637,22 @@ const getLookupPabrik = async (search, user) => {
   return rows;
 };
 
-// --- Lookup kain: bahan baku utama spanduk yang aktif ---
+// --- Lookup kain: bahan Spanduk (kode SB) yang aktif ---
 const getLookupKain = async (search) => {
   const kata = teks(search);
-  const params = [KAIN.divisi, KAIN.kategori, KAIN.jenis];
+  const params = [KAIN.prefix];
   let filter = "";
   if (kata) {
-    filter = "AND (b.brg_kode LIKE ? OR b.brg_nama LIKE ?)";
+    filter = "AND (b.Bhn_kode LIKE ? OR b.Bhn_Name LIKE ?)";
     params.push(`%${kata}%`, `%${kata}%`);
   }
   const [rows] = await db.query(
-    `SELECT b.brg_kode AS Kode, b.brg_nama AS Nama,
-            b.brg_gramasi AS Konstruksi, b.brg_lebar AS Lebar
-     FROM ${T.barang} b
-     WHERE b.brg_divisi = ? AND b.brg_ktg_kode = ? AND b.brg_jenis = ?
-       AND b.brg_isaktif = 1
+    `SELECT b.Bhn_kode AS Kode, b.Bhn_Name AS Nama,
+            IFNULL(b.bhn_konstruksi, '') AS Konstruksi, b.bhn_lebar AS Lebar
+     FROM ${T.bahan} b
+     WHERE LEFT(b.Bhn_kode, 2) = ? AND b.bhn_aktif = 0
        ${filter}
-     ORDER BY b.brg_nama, b.brg_lebar, b.brg_kode`,
+     ORDER BY b.Bhn_Name, b.bhn_lebar, b.Bhn_kode`,
     params,
   );
   return rows;
@@ -624,17 +677,14 @@ const getLookupKaryawan = async (pabrik, sesiParam, tanggalParam, user) => {
   cekTanggalInput(tanggal, sekarang.tgl);
   const mundur = tanggal < sekarang.tgl;
 
-  const jamAkhir = mundur ? BATAS_SIANG : (detik(sekarang.jam) ?? 0);
-  if (!mundur && sesi === "PAGI" && jamAkhir >= BATAS_SIANG) {
-    throw galat(
-      "Sesi pagi sudah berakhir (setelah jam 13.00). Pilih sesi Siang.",
-    );
-  }
+  // Sesi pagi dibatasi cutoff 13:00 supaya input siang hari tidak membengkakkan jam kerja
+  const jamAkhir = mundur
+    ? BATAS_SIANG
+    : Math.min(detik(sekarang.jam) ?? 0, BATAS_SIANG);
   const rows = await ambilAbsensi(db, tanggal, kode);
   const hasil = [];
   for (const r of rows) {
-    const rowPakai = mundur && sesi === "PAGI" ? { ...r, scan2: null } : r;
-    const jam = hitungJam(sesi, rowPakai, jamAkhir);
+    const jam = hitungJam(sesi, r, jamAkhir);
     if (!jam) {
       continue;
     }
@@ -677,7 +727,8 @@ const createLhkCetak = async (body, user) => {
 
     await conn.beginTransaction();
     await pastikanPabrik(conn, data.pabrik);
-    await validasiSumberBaris(conn, data.baris, user);
+    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await terapkanPlangkan(conn, data, "");
     await validasiKain(conn, data.kain, "");
     await pastikanRantaiLhk(conn, {
       kodeLini: "CETAK",
@@ -686,17 +737,11 @@ const createLhkCetak = async (body, user) => {
     const sekarang = await sekarangServer(conn);
     cekTanggalInput(data.tanggal, sekarang.tgl);
     const mundur = data.tanggal < sekarang.tgl;
-    const jamSkrg = detik(sekarang.jam) ?? 0;
-    if (!mundur && data.sesi === "PAGI" && jamSkrg >= BATAS_SIANG) {
-      throw galat(
-        "LHK sesi pagi tidak bisa diinput setelah jam 13.00. Gunakan sesi Siang.",
-      );
-    }
-    // Tanggal lampau: batas akhir Pagi dipatok 13:00
+    // Tanggal lampau: jam input dipatok 13:00. Jam input > 13:00 menandai pagi diinput terlambat
     const jamInput = mundur ? "13:00:00" : sekarang.jam;
     await hitungKaryawan(conn, data, {
       hariIni: sekarang.tgl,
-      jamAkhir: detik(jamInput) ?? 0,
+      jamAkhir: Math.min(detik(jamInput) ?? 0, BATAS_SIANG),
     });
     await cekDobelSesi(
       conn,
@@ -706,14 +751,16 @@ const createLhkCetak = async (body, user) => {
       "",
     );
 
+    const kelebihan = hitungKelebihanKain(data.baris, data.kain, peta);
+    const statusApv = kelebihan.perluApproval ? APV.MENUNGGU : APV.TIDAK_PERLU;
     const nomor = await buatNomor(conn, data.tanggal);
     try {
       await conn.query(
         `INSERT INTO ${T.hdr}
            (lch_nomor, lch_tanggal, lch_pab_kode, lch_jkar_borongan,
             lch_jkar_harian, lch_sesi, lch_jam_input,
-            lch_date_create, lch_user_create)
-         VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)`,
+            lch_date_create, lch_user_create, lch_apv_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?)`,
         [
           nomor,
           data.tanggal,
@@ -723,6 +770,7 @@ const createLhkCetak = async (body, user) => {
           data.sesi,
           jamInput,
           user?.kode ?? null,
+          statusApv,
         ],
       );
     } catch (e) {
@@ -737,7 +785,7 @@ const createLhkCetak = async (body, user) => {
     await simpanDetail(conn, nomor, data);
 
     await conn.commit();
-    return nomor;
+    return { nomor, menungguApproval: statusApv === APV.MENUNGGU };
   } catch (e) {
     await conn.rollback().catch(() => {});
     throw e;
@@ -779,17 +827,18 @@ const updateLhkCetak = async (nomor, body, user) => {
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
     await pastikanPabrik(conn, data.pabrik);
-    await validasiSumberBaris(conn, data.baris, user);
+    const peta = await validasiSumberBaris(conn, data.baris, user);
+    await terapkanPlangkan(conn, data, no);
     await validasiKain(conn, data.kain, no);
     await pastikanRantaiLhk(conn, {
       kodeLini: "CETAK",
       daftarSpk: data.baris.map((b) => b.spk),
       nomorLhk: no,
     });
+    const legacy = lama[0].sesi === "";
     if (!legacy && data.kain.length === 0) {
       throw galat("Minimal satu baris kain harus diisi");
     }
-    const legacy = lama[0].sesi === "";
     let jamInput = lama[0].jam;
     if (!legacy) {
       if (data.sesi !== lama[0].sesi) {
@@ -827,23 +876,12 @@ const updateLhkCetak = async (nomor, body, user) => {
           ]),
         );
       }
-      const adaBaru = data.karyawan.some((k) => !nikLama.has(k.nik));
-      if (
-        !mundur &&
-        data.sesi === "PAGI" &&
-        adaBaru &&
-        jamSkrg >= BATAS_SIANG
-      ) {
-        throw galat(
-          "Karyawan baru tidak bisa ditambahkan ke LHK pagi setelah jam 13.00.",
-        );
-      }
       if (tglBerubah) {
         jamInput = mundur ? "13:00:00" : sekarang.jam;
       }
       await hitungKaryawan(conn, data, {
         hariIni: sekarang.tgl,
-        jamAkhir: detik(jamInput) ?? jamSkrg,
+        jamAkhir: mundur ? BATAS_SIANG : Math.min(jamSkrg, BATAS_SIANG),
         nikLama,
       });
       await cekDobelSesi(
@@ -854,11 +892,15 @@ const updateLhkCetak = async (nomor, body, user) => {
         no,
       );
     }
+    const kelebihan = hitungKelebihanKain(data.baris, data.kain, peta);
+    const statusApv = kelebihan.perluApproval ? APV.MENUNGGU : APV.TIDAK_PERLU;
 
     await conn.query(
       `UPDATE ${T.hdr}
        SET lch_tanggal = ?, lch_pab_kode = ?, lch_jkar_borongan = ?,
            lch_jkar_harian = ?, lch_jam_input = ?,
+           lch_apv_status = ?, lch_apv_user = NULL, lch_apv_tgl = NULL,
+           lch_apv_alasan = NULL,
            lch_date_modified = CURDATE(), lch_user_modified = ?
        WHERE lch_nomor = ?`,
       [
@@ -867,6 +909,7 @@ const updateLhkCetak = async (nomor, body, user) => {
         data.karBorongan,
         data.karHarian,
         jamInput,
+        statusApv,
         user?.kode ?? null,
         no,
       ],
@@ -880,7 +923,7 @@ const updateLhkCetak = async (nomor, body, user) => {
     );
 
     await conn.commit();
-    return no;
+    return { nomor: no, menungguApproval: statusApv === APV.MENUNGGU };
   } catch (e) {
     await conn.rollback().catch(() => {});
     throw e;

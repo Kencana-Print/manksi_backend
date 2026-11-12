@@ -716,7 +716,11 @@ const ambilSupplierKlaim = async (conn, rekKode) => {
 // ── Klaim Kas Kecil (F8) ──────────────────────────────────────────────
 // Klaim AKTIF yang belum dipanggil baris PJT aktif lain. Dua langkah
 // (bukan JOIN lintas schema). excludeNomor = pengajuan yang sedang diedit.
-const getKlaimKasKecilOptions = async (search = "", excludeNomor = "") => {
+const getKlaimKasKecilOptions = async (
+  search = "",
+  excludeNomor = "",
+  bbkNomor = "",
+) => {
   const [rows] = await db.query(
     `SELECT h.kkh_nomor AS nomor,
         DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS tanggal,
@@ -728,10 +732,11 @@ const getKlaimKasKecilOptions = async (search = "", excludeNomor = "") => {
           WHERE d.kkd_kkh_nomor = h.kkh_nomor) AS jumlahBkk
      FROM tklaim_kaskecil_hdr h
      WHERE h.kkh_status = 'AKTIF'
+       AND (h.kkh_bbk_nomor = '' OR h.kkh_bbk_nomor = ?)
        AND (h.kkh_nomor LIKE ? OR h.kkh_cabang LIKE ?)
      ORDER BY h.kkh_nomor DESC
      LIMIT 200`,
-    [`%${search}%`, `%${search}%`],
+    [bbkNomor || "", `%${search}%`, `%${search}%`],
   );
   if (!rows.length) return [];
 
@@ -822,8 +827,9 @@ const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
     );
 
   const [klaim] = await conn.query(
-    `SELECT kkh_nomor, kkh_cabang, kkh_status, kkh_total, kkh_rek_tujuan
-     FROM tklaim_kaskecil_hdr WHERE kkh_nomor IN (?)`,
+    `SELECT kkh_nomor, kkh_cabang, kkh_status, kkh_total, kkh_rek_tujuan,
+            kkh_bbk_nomor
+     FROM tklaim_kaskecil_hdr WHERE kkh_nomor IN (?) FOR UPDATE`,
     [daftarTrs],
   );
   if (!klaim.length) return;
@@ -836,6 +842,10 @@ const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
 
     if (k.kkh_status !== "AKTIF")
       throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
+    if (k.kkh_bbk_nomor)
+      throw new Error(
+        `Klaim ${k.kkh_nomor} sudah dibayar lewat BBK ${k.kkh_bbk_nomor}.`,
+      );
     if (dipakaiDiForm.has(k.kkh_nomor))
       throw new Error(`Klaim ${k.kkh_nomor} diinput lebih dari satu kali.`);
     dipakaiDiForm.add(k.kkh_nomor);
@@ -940,7 +950,7 @@ const terapkanKlaimRealisasi = async (conn, nomorPjt, d, rekKode) => {
   );
   if (!row || !row.ptd_trs) return null;
   const [[k]] = await conn.query(
-    `SELECT kkh_nomor, kkh_status, kkh_total, kkh_rek_tujuan
+    `SELECT kkh_nomor, kkh_status, kkh_total, kkh_rek_tujuan, kkh_bbk_nomor
      FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
     [row.ptd_trs],
   );
@@ -948,6 +958,10 @@ const terapkanKlaimRealisasi = async (conn, nomorPjt, d, rekKode) => {
 
   if (k.kkh_status !== "AKTIF")
     throw new Error(`Klaim ${k.kkh_nomor} sudah dibatalkan.`);
+  if (k.kkh_bbk_nomor)
+    throw new Error(
+      `Klaim ${k.kkh_nomor} sudah dibayar lewat BBK ${k.kkh_bbk_nomor}.`,
+    );
   if (rekKode === k.kkh_rek_tujuan)
     throw new Error(
       `Rekening asal tidak boleh sama dengan kas kecil tujuan (${k.kkh_rek_tujuan}).`,
@@ -1790,12 +1804,17 @@ module.exports = {
   getRekapVoucherOptions,
   getRekapPanggilOptions,
   getRekapPanggilRows,
+  SQL_NOMINAL_VOUCHER,
+  getVoucherNomor,
   getVoucherOptions,
   getPoExternalOptions,
   getPettyCashOptions,
   getBkkOptions,
   getPoLainOptions,
   getKlaimKasKecilOptions,
+  ambilSupplierKlaim,
+  pastikanNominalBkk,
+  postingBiayaManual,
   getDetailForm,
   saveData,
   getPrintData,

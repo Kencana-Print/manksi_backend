@@ -13,7 +13,7 @@ const searchSupplier = async (req, res) => {
 
 const getSupplier = async (req, res) => {
   try {
-    const data = await svc.getSupplier(req.params.kode);
+    const data = await svc.getSupplier(req.params.kode, req.user);
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -42,7 +42,7 @@ const getInfoNota = async (req, res) => {
 
 const getById = async (req, res) => {
   try {
-    const data = await svc.getById(req.params.nomor);
+    const data = await svc.getById(req.params.nomor, req.user);
     res.json({ success: true, data });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -95,6 +95,7 @@ const getVoucherOptions = async (req, res) => {
     const data = await svc.getVoucherOptions(
       req.query.search || "",
       req.query.excludeNomor || "",
+      req.user,
     );
     res.json({ success: true, data });
   } catch (err) {

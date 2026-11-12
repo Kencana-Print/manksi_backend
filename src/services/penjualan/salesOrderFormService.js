@@ -3,6 +3,7 @@ const sharp = require("sharp");
 const fs = require("fs");
 const path = require("path");
 const tutupBukuService = require("../tutupBukuService");
+const poBahanFormService = require("../pembelian/poBahanFormService");
 
 // ============================================================
 // HELPER MAPPING — spk_* (kontrak field frontend, TIDAK berubah)
@@ -25,6 +26,17 @@ const mapSpkHeaderToSo = (header) => {
   }
   return out;
 };
+
+// Jenis order divisi 3 yang hanya pengerjaan (tanpa bahan, tanpa MKB) →
+// otomatis Non Bahan. Jenis order lain default Bahan dan bisa di-set N manual.
+const JO_NON_BAHAN_OTOMATIS = ["BR", "DP", "KS", "PL", "SB", "SD", "TG", "PM"];
+const isJoNonBahanOtomatis = (divisi, joKode) =>
+  String(divisi).charAt(0) === "3" &&
+  JO_NON_BAHAN_OTOMATIS.includes(
+    String(joKode || "")
+      .toUpperCase()
+      .trim(),
+  );
 
 // ============================================================
 // HELPER BARU: cek SPK PPIC turunan + status Ngedit (Pengajuan
@@ -309,6 +321,12 @@ const getDetailFromNew = async (nomor, headerRows) => {
 
   header[0].isSalesOrder = true;
   header[0].isLegacy = false;
+  header[0].bahanOtomatis = isJoNonBahanOtomatis(
+    header[0].spk_divisi,
+    header[0].spk_jo_kode,
+  )
+    ? 1
+    : 0;
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
@@ -429,6 +447,13 @@ const getDetailLegacy = async (nomor, legacyRows) => {
 
   header[0].isSalesOrder = true;
   header[0].isLegacy = true; // ⬅ flag utama yang dibaca frontend
+  header[0].bahanOtomatis = isJoNonBahanOtomatis(
+    header[0].spk_divisi,
+    header[0].spk_jo_kode,
+  )
+    ? 1
+    : 0;
+  header[0].spk_bahan = header[0].bahanOtomatis ? "N" : "Y";
   header[0].pin_customer = pin_customer;
   header[0].ketpo_acc = ketpo_acc;
   header[0].kepentingan_acc = kepentingan_acc;
@@ -594,6 +619,8 @@ const HEADER_EXTRA_FIELDS = [
   "spk_lhk_nomor",
   "isSalesOrder",
   "isSalesOrder",
+  "spk_bhn_kode",
+  "bahanOtomatis",
 ];
 const cleanHeader = (h) => {
   const result = { ...h };
@@ -690,6 +717,8 @@ const saveData = async (payload, user) => {
         "Ukuran Panjang dan Lebar harus diisi untuk divisi MMT/Spanduk.",
       );
     }
+    // Bahan dikelola di SPK PPIC, bukan di SO.
+    delete header.spk_bhn_kode;
     if (
       Number(header.spk_harga) === 0 &&
       !header.spk_ketpo &&
@@ -762,6 +791,37 @@ const saveData = async (payload, user) => {
           (Number(header.spk_hargariil) || 0)) *
           100,
       ) / 100;
+
+    // Flag Bahan / Non Bahan (menentukan perlu-tidaknya MKB). Server yang
+    // memutuskan: jenis order pengerjaan divisi 3 dipaksa Non Bahan.
+    let flagBahan = String(header.spk_bahan || "").toUpperCase();
+    if (!flagBahan && isEdit) {
+      // Frontend belum mengirim field ini: pertahankan nilai tersimpan.
+      const [cur] = await conn.query(
+        `SELECT so_bahan FROM tsalesorder WHERE so_nomor = ?`,
+        [nomor],
+      );
+      flagBahan = cur[0]?.so_bahan || "Y";
+    }
+    if (!["3", "4"].includes(divisiStr)) {
+      flagBahan = "Y";
+    } else if (isJoNonBahanOtomatis(header.spk_divisi, header.spk_jo_kode)) {
+      flagBahan = "N";
+    } else {
+      flagBahan = flagBahan === "N" ? "N" : "Y";
+    }
+    if (flagBahan === "N" && isEdit) {
+      const [adaMkb] = await conn.query(
+        `SELECT mkb_nomor FROM tmkb_hdr WHERE mkb_spk_nomor = ? LIMIT 1`,
+        [nomor],
+      );
+      if (adaMkb.length > 0) {
+        throw new Error(
+          `SO ini sudah dibuatkan MKB ${adaMkb[0].mkb_nomor}, tidak bisa dijadikan Non Bahan. Hapus MKB-nya terlebih dahulu.`,
+        );
+      }
+    }
+    header.spk_bahan = flagBahan;
 
     // ==========================================
     // 2. EKSEKUSI HEADER — target tsalesorder
@@ -1357,6 +1417,17 @@ const saveData = async (payload, user) => {
           );
         }
       }
+    }
+
+    // Isi kolom SPK baris PO Bahan yang ber-MPPB ini dengan nomor SO.
+    // Satu transaksi dengan simpan SO: SO gagal disimpan → PO tidak berubah.
+    if (header.spk_mppb && header.spk_aktif === "Y") {
+      await poBahanFormService.isiSpkPoDariMppb(
+        conn,
+        header.spk_mppb,
+        nomor,
+        header.spk_memo || "",
+      );
     }
 
     await conn.commit();

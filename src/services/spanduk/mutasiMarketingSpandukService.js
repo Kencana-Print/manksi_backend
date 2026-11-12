@@ -6,12 +6,38 @@ const {
   galat,
   cekTutupBuku,
 } = require("./lhk/lhkCommon");
+const { getLookupMap } = require("./mutasiMarketingSpandukFormService");
 
 const T = {
   hdr: "tmutasi_marketing_spanduk",
   dtl: "tmutasi_marketing_spanduk_dtl",
   memo: "tmemospk",
   user: "tuser",
+};
+
+// Outstanding hanya ditampilkan untuk MAP bertanggal >= nilai ini (kosong = semua)
+const TANGGAL_MULAI_OUTSTANDING = "";
+
+// MAP yang boleh diserahkan tapi belum masuk dokumen mutasi (definisi = lookup form)
+const getOutstanding = async (user) => {
+  const daftar = await getLookupMap(user);
+  return daftar
+    .filter(
+      (m) =>
+        !TANGGAL_MULAI_OUTSTANDING || m.Tanggal >= TANGGAL_MULAI_OUTSTANDING,
+    )
+    .map((m) => ({
+      Nomor: m.Nomor,
+      Tanggal: m.Tanggal,
+      Lokasi: m.Lokasi,
+      Keterangan: m.Nama,
+      Jumlah_MAP: 1,
+      Total_Jadi: Number(m.Jumlah),
+      Total_Kirim: 0,
+      MO: m.MO,
+      Jumlah_Diterima: 0,
+      Tipe: "OUTSTANDING",
+    }));
 };
 
 // Browse: satu baris per dokumen. MO diambil dari tmemospk.user_create
@@ -35,7 +61,8 @@ const getBrowse = async (tglAwal, tglAkhir, user) => {
            IFNULL(x.total_jadi, 0) AS Total_Jadi,
            IFNULL(x.total_kirim, 0) AS Total_Kirim,
            IFNULL(x.mo, '') AS MO,
-           IFNULL(x.jml_diterima, 0) AS Jumlah_Diterima
+           IFNULL(x.jml_diterima, 0) AS Jumlah_Diterima,
+           'DOKUMEN' AS Tipe
     FROM ${T.hdr} h
     LEFT JOIN (
       SELECT d.mmkd_nomor AS xnomor,
@@ -57,7 +84,8 @@ const getBrowse = async (tglAwal, tglAkhir, user) => {
     ORDER BY h.mmk_tanggal DESC, h.mmk_nomor DESC
   `;
   const [rows] = await db.query(query, params);
-  return rows;
+  const outstanding = await getOutstanding(user);
+  return [...outstanding, ...rows];
 };
 
 // Detail: satu baris per MAP dalam dokumen (periode dan cabang sama dengan browse)

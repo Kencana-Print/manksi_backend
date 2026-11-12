@@ -25,19 +25,35 @@ const withCuttingOutput = async (
   const [lhk] = await db.query(
     `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS kelompok,
             DATE_FORMAT(h.mph_tanggal, '%Y-%m-%d') AS tgl,
-            IFNULL(SUM(h.mph_jumlah), 0) AS qty
+            d.mpd_nama AS komponen,
+            IFNULL(SUM(d.mpd_jumlah), 0) AS qty
      FROM tmutasiproduksi_hdr h
+     JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
      WHERE h.mph_spk_nomor IN (?)
        AND ((h.mph_gdgasal = 'GP001' AND h.mph_gdgtujuan = 'GP012')
          OR (h.mph_gdgasal = 'GP015' AND h.mph_gdgtujuan = 'GP021'))
        AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-     GROUP BY h.mph_spk_nomor, h.mph_kelompok, DATE(h.mph_tanggal)`,
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok, DATE(h.mph_tanggal), d.mpd_nama`,
     [spkList, tgl1, tgl2],
   );
+
+  // Komponen acuan per SPK = komponen dengan total potong terbesar
+  const totalKomp = {};
+  for (const r of lhk) {
+    const t = (totalKomp[r.spk] ??= {});
+    t[r.komponen] = (t[r.komponen] || 0) + (Number(r.qty) || 0);
+  }
+  const acuan = {};
+  for (const [spk, t] of Object.entries(totalKomp)) {
+    acuan[spk] = Object.entries(t).sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0][0];
+  }
 
   // bucket[spk][tgl] = { MANUAL, MESIN, LAIN }
   const bucket = {};
   for (const r of lhk) {
+    if (r.komponen !== acuan[r.spk]) continue;
     const perTgl = (bucket[r.spk] ??= {});
     const b = (perTgl[r.tgl] ??= { MANUAL: 0, MESIN: 0, LAIN: 0 });
     b[golongkan(r.kelompok)] += Number(r.qty) || 0;

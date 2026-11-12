@@ -1,5 +1,9 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
+const {
+  BAGIAN_RETUR_ASET_LIHAT,
+  BAGIAN_RETUR_ASET_PROSES,
+} = require("./returBarangFormService");
 
 // ⚠️ Sesuai koreksi user: hanya ACCESORIES yang butuh approval gudang.
 // Source Delphi (ufrmBrowReturGarmen.pas) mengecek (rbAcc OR rbObat) di banyak
@@ -9,7 +13,7 @@ const tutupBukuService = require("../tutupBukuService");
 const JENIS_BUTUH_APPROVAL = ["ACCESORIES", "OBAT"];
 const MODUL_TUTUP_BUKU = "RETUR GARMEN";
 
-const VALID_JENIS = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
+const VALID_JENIS = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK", "ASET"];
 
 /**
  * Mengambil Data Browse (Master dan Detail Retur Barang)
@@ -18,6 +22,12 @@ const VALID_JENIS = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
 const getBrowseData = async (startDate, endDate, cabang, jenis, user) => {
   if (!VALID_JENIS.includes(jenis)) {
     throw new Error("Jenis tidak valid.");
+  }
+  if (
+    jenis === "ASET" &&
+    !BAGIAN_RETUR_ASET_LIHAT.includes(String(user?.bagian || "").toUpperCase())
+  ) {
+    throw new Error("Bagian Anda tidak boleh melihat Retur Aset.");
   }
 
   let filterCabang = "";
@@ -221,15 +231,25 @@ const deleteData = async (nomor, user) => {
       data = finalRows[0];
     }
 
-    // Validasi Hak Akses Cabang
-    const userCabang = user.cabang;
-    if (
-      userCabang &&
-      data.ret_cab !== userCabang &&
-      userCabang !== "ALL" &&
-      !userCabang.startsWith("HO")
-    ) {
-      throw new Error("Bukan cabang Anda.");
+    // Aset: dokumen selalu di P04, yang dicek bagian. Jenis lain: cabang.
+    if (data.ret_jenis === "ASET") {
+      if (
+        !BAGIAN_RETUR_ASET_PROSES.includes(
+          String(user?.bagian || "").toUpperCase(),
+        )
+      ) {
+        throw new Error("Bagian Anda tidak boleh menghapus Retur Aset.");
+      }
+    } else {
+      const userCabang = user.cabang;
+      if (
+        userCabang &&
+        data.ret_cab !== userCabang &&
+        userCabang !== "ALL" &&
+        !userCabang.startsWith("HO")
+      ) {
+        throw new Error("Bukan cabang Anda.");
+      }
     }
 
     // Validasi sudah di-approve (hanya berlaku untuk ACCESORIES)

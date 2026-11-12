@@ -8,7 +8,6 @@ const {
   pastikanBelumDipakai,
   cekTutupBuku,
 } = require("./lhkKoliShared");
-const { pastikanBelumDiscan } = require("./lhkKoliFormService");
 
 const SUMBER_SPK = `
   SELECT spk_nomor, spk_nama, spk_jumlah,
@@ -102,7 +101,6 @@ const deleteLhkKoli = async (nomor, user) => {
     }
     await pastikanLhkDiCabang(conn, no, user);
     await pastikanBelumDipakai(conn, no, user);
-    await pastikanBelumDiscan(conn, no);
     await conn.query(`DELETE FROM ${T.unit} WHERE lku_lkh_nomor = ?`, [no]);
     await conn.query(`DELETE FROM ${T.hdr} WHERE lkh_nomor = ?`, [no]);
 

@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const tutupBukuService = require("../tutupBukuService");
 
 // ⚠️ Jenis SPAREPART/ATK-RTK secara STRUKTURAL tidak pernah punya data di
 // modul approval ini — mereka tidak pernah masuk tgarmenreturlog_hdr
@@ -11,6 +12,17 @@ const VALID_JENIS = ["ACCESORIES", "OBAT", "SPAREPART", "ATK/RTK"];
 
 // ret_gp final dikosongkan untuk cabang ini (P03 sengaja tidak diubah)
 const CABANG_GP_KOSONG = ["P02"];
+
+// Approve terkena tutup buku (pola sama dengan deleteData Retur)
+const pastikanPeriodeTerbuka = async (tanggal) => {
+  const zdtClose =
+    await tutupBukuService.getTanggalTutupBukuUntukTanggal(tanggal);
+  if (new Date() > zdtClose) {
+    throw new Error(
+      "Transaksi tsb sudah close. Tidak bisa disimpan/dibatalkan.",
+    );
+  }
+};
 
 // ── Master browse: draft (log) LEFT JOIN status approval-nya ──
 const getBrowseData = async (startDate, endDate, jenis) => {
@@ -99,10 +111,10 @@ const getApprovalDetail = async (logNomor, noApprov) => {
       LEFT JOIN tgarmen_brg b ON b.brg_kode = d.retd_brg_kode
       LEFT JOIN tgarmenreturlog_hdr r ON r.ret_nomor = h.ret_log
       LEFT JOIN tgudangproduksi p ON p.gdgp_kode = r.ret_gp
-      WHERE h.ret_nomor = ?
+      WHERE h.ret_nomor = ? AND h.ret_log = ?
       ORDER BY d.retd_urut
     `;
-    const [rows] = await db.query(q, [noApprov]);
+    const [rows] = await db.query(q, [noApprov, logNomor]);
     if (rows.length === 0) throw new Error("Nomor tersebut belum ada.");
     const h = rows[0];
 
@@ -244,12 +256,13 @@ const saveApproval = async (payload, user) => {
   } = payload;
 
   if (!logNomor) throw new Error("Referensi nomor retur (log) wajib ada.");
+  if (!tanggalApprove) throw new Error("Tanggal approve wajib diisi.");
 
   const filled = (details || []).filter((d) => d.kode && d.kode.trim() !== "");
   if (filled.length === 0) throw new Error("Detail harus diisi.");
   for (const d of filled) {
-    if (!d.jumlah || Number(d.jumlah) === 0) {
-      throw new Error("Jumlah harus di isi!");
+    if (!(Number(d.jumlah) > 0)) {
+      throw new Error("Jumlah harus di isi dan lebih dari 0!");
     }
   }
 
@@ -268,10 +281,52 @@ const saveApproval = async (payload, user) => {
       throw new Error("Jenis tidak sesuai dengan draft retur.");
     }
 
+    // Detail wajib berasal dari draft; Jumlah approve tidak boleh melebihi draft
+    const [draftDtl] = await conn.query(
+      `SELECT retd_nominta, retd_brg_kode, SUM(retd_jumlah) AS jumlah
+       FROM tgarmenreturlog_dtl WHERE retd_nomor = ?
+       GROUP BY retd_nominta, retd_brg_kode`,
+      [logNomor],
+    );
+    const batas = new Map(
+      draftDtl.map((r) => [
+        `${r.retd_nominta}|${r.retd_brg_kode}`,
+        Number(r.jumlah),
+      ]),
+    );
+    const terpakai = new Map();
+    for (const d of filled) {
+      const key = `${d.nominta || ""}|${d.kode}`;
+      if (!batas.has(key)) {
+        throw new Error(
+          `Barang ${d.kode} tidak ada di draft retur ${logNomor}.`,
+        );
+      }
+      terpakai.set(key, (terpakai.get(key) || 0) + Number(d.jumlah));
+    }
+    for (const [key, total] of terpakai) {
+      if (total > batas.get(key)) {
+        throw new Error(
+          `Jumlah approve ${key.split("|")[1]} melebihi jumlah di draft (${batas.get(key)}).`,
+        );
+      }
+    }
+
     let nomor = noApprov;
     const isEdit = !!noApprov;
 
-    if (!isEdit) {
+    if (isEdit) {
+      // No.Approve harus milik draft ini
+      const [final] = await conn.query(
+        `SELECT ret_tanggal FROM tgarmenretur_hdr
+         WHERE ret_nomor = ? AND ret_log = ? FOR UPDATE`,
+        [noApprov, logNomor],
+      );
+      if (final.length === 0) {
+        throw new Error("No.Approve tidak sesuai dengan draft retur.");
+      }
+      await pastikanPeriodeTerbuka(final[0].ret_tanggal);
+    } else {
       const [sudahAda] = await conn.query(
         `SELECT ret_nomor FROM tgarmenretur_hdr WHERE ret_log = ? LIMIT 1`,
         [logNomor],
@@ -282,6 +337,8 @@ const saveApproval = async (payload, user) => {
         );
       }
     }
+    await pastikanPeriodeTerbuka(tanggalApprove);
+
     const gpFinal = CABANG_GP_KOSONG.includes(logHdr.ret_cab)
       ? ""
       : gudangProduksi?.kode || "";
@@ -298,6 +355,7 @@ const saveApproval = async (payload, user) => {
       const tahun = new Date(tanggalApprove).getFullYear().toString();
       nomor = await generateNomor(conn, jenis, tahun);
 
+      // ret_cab = cabang approver (keputusan 10 Nov), stok masuk di cabang ini
       await conn.query(
         `INSERT INTO tgarmenretur_hdr
            (ret_jenis, ret_nomor, ret_log, ret_tanggal, ret_cab, ret_bagian, ret_gp, ret_keterangan, date_create, user_create)
@@ -350,11 +408,9 @@ const saveApproval = async (payload, user) => {
 };
 
 /**
- * Batalkan approve (cxButton4). ⚠️ Source Delphi cuma DELETE header
- * (tgarmenretur_hdr), TIDAK hapus detail — jadi row tgarmenretur_dtl jadi
- * orphan (bug, bukan business rule). Di sini saya hapus header+detail
- * sekaligus supaya tidak ninggalin sampah data. Kalau mau replikasi
- * persis (biarkan orphan), tinggal hapus baris DELETE detail di bawah.
+ * Batalkan approve (cxButton4). Hanya untuk dokumen hasil approve
+ * (ret_log <> ''). Trigger tgarmenretur_hdr_before_delete menghapus detail,
+ * dan trigger detail menghapus baris stok.
  */
 const cancelApproval = async (noApprov, user) => {
   const conn = await db.getConnection();
@@ -362,15 +418,15 @@ const cancelApproval = async (noApprov, user) => {
     await conn.beginTransaction();
 
     const [rows] = await conn.query(
-      `SELECT ret_nomor FROM tgarmenretur_hdr WHERE ret_nomor = ? FOR UPDATE`,
+      `SELECT ret_tanggal FROM tgarmenretur_hdr
+       WHERE ret_nomor = ? AND ret_log <> '' FOR UPDATE`,
       [noApprov],
     );
     if (rows.length === 0) throw new Error("No.Retur tsb belum di approve.");
 
+    await pastikanPeriodeTerbuka(rows[0].ret_tanggal);
+
     await conn.query(`DELETE FROM tgarmenretur_hdr WHERE ret_nomor = ?`, [
-      noApprov,
-    ]);
-    await conn.query(`DELETE FROM tgarmenretur_dtl WHERE retd_nomor = ?`, [
       noApprov,
     ]);
 

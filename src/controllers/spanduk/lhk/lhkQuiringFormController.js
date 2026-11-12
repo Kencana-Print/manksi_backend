@@ -19,7 +19,21 @@ const kirimError = (res, e) => {
 
 const lookupPabrik = async (req, res) => {
   try {
-    const data = await service.getLookupPabrik(req.query.search);
+    const data = await service.getLookupPabrik(req.query.search, req.user);
+    res.json({ success: true, data });
+  } catch (e) {
+    kirimError(res, e);
+  }
+};
+
+const lookupKaryawan = async (req, res) => {
+  try {
+    const data = await service.getLookupKaryawan(
+      req.query.pabrik,
+      req.query.sesi,
+      req.query.tanggal,
+      req.user,
+    );
     res.json({ success: true, data });
   } catch (e) {
     kirimError(res, e);
@@ -74,4 +88,11 @@ const update = async (req, res) => {
   }
 };
 
-module.exports = { lookupPabrik, infoSpk, getById, create, update };
+module.exports = {
+  lookupPabrik,
+  lookupKaryawan,
+  infoSpk,
+  getById,
+  create,
+  update,
+};

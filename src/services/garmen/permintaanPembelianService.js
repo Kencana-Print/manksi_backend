@@ -60,7 +60,8 @@ const getBrowse = async (startDate, endDate, jenis, cabang, userBagian) => {
 };
 
 const getBrowseDetail = async (nomor, jenis) => {
-  const isKeteranganExtra = jenis === "SPAREPART" || jenis === "ATK/RTK";
+  const isKeteranganExtra =
+    jenis === "SPAREPART" || jenis === "ATK/RTK" || jenis === "ASET";
   const extraCols = isKeteranganExtra
     ? `d.mbd_ket AS Spesifikasi, d.mbd_kegunaan AS Kegunaan,`
     : ``;

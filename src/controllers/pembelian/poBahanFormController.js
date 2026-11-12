@@ -2,8 +2,8 @@ const poBahanFormService = require("../../services/pembelian/poBahanFormService"
 
 const validateField = async (req, res) => {
   try {
-    const { type, value } = req.query;
-    const data = await poBahanFormService.validateField(type, value);
+    const { type, value, exclude } = req.query;
+    const data = await poBahanFormService.validateField(type, value, exclude);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -60,10 +60,21 @@ const getSupplierByKode = async (req, res) => {
   }
 };
 
+const getMbbOutstanding = async (req, res) => {
+  try {
+    const { jenis, exclude } = req.query;
+    const data = await poBahanFormService.getMbbOutstanding(jenis, exclude);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   validateField,
   getDetail,
   save,
   getMkbDetail,
   getSupplierByKode,
+  getMbbOutstanding,
 };
