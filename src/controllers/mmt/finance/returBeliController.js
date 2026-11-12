@@ -10,16 +10,36 @@ exports.getNewNomor = async (req, res) => {
   }
 };
 
+// Scan Barcode atau Cari SKU Barang MMT
+exports.scanItem = async (req, res) => {
+  try {
+    const { barcode } = req.params;
+    const item = await returService.scanBarcodeOrSku(barcode);
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Barang tidak ditemukan untuk barcode/kode tersebut",
+      });
+    }
+    res.status(200).json({
+      success: true,
+      data: item,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Mendapatkan daftar seluruh Retur Beli (dengan pencarian & pagination)
 exports.getAllRetur = async (req, res) => {
   try {
-    const { search, startDate, endDate, limit = 10, offset = 0 } = req.query;
+    const { search, startDate, endDate, limit, offset = 0 } = req.query;
 
     const data = await returService.getAllReturBeli({
       search,
       startDate,
       endDate,
-      limit: parseInt(limit, 10),
+      limit: limit ? parseInt(limit, 10) : 500,
       offset: parseInt(offset, 10),
     });
 

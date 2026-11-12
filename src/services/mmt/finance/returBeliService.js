@@ -46,15 +46,18 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
   try {
     await connection.beginTransaction();
 
-    let {
-      Nomor,
-      Gudang,
-      Tanggal,
-      Keterangan,
-      SupplierKode, // Field supplier wajib/utama pada retur beli
-      NoPenerimaan, // Relasi ke nomor penerimaan/pembelian asli (ret_rec_nomor)
-      Details,
-    } = data;
+    let Nomor = data.Nomor || data.nomor;
+    let Gudang = data.Gudang || data.gudangKode || data.gudang || "WH-16";
+    let Tanggal = data.Tanggal || data.tanggal;
+    let Keterangan = data.Keterangan || data.keterangan || data.Memo || data.memo || "";
+    let SupplierKode = data.SupplierKode || data.supplierKode || "";
+    let NoPenerimaan = data.NoPenerimaan || data.noPenerimaan || data.InvoiceNomor || data.invoiceNomor || "";
+    let IsPajak = (data.IsPajak !== undefined ? data.IsPajak : (data.isPajak !== undefined ? data.isPajak : 1)) ? 1 : 0;
+    let DiscPrHeader = Number(data.DiscPrHeader ?? data.discPrHeader ?? 0);
+    let DiscRpHeader = Number(data.DiscRpHeader ?? data.discRpHeader ?? 0);
+    let TotalAmount = Number(data.TotalAmount ?? data.totalAmount ?? data.Total ?? data.total ?? 0);
+    let TaxAmount = Number(data.TaxAmount ?? data.taxAmount ?? data.PPN ?? data.ppn ?? 0);
+    let Details = data.Details || data.details || data.items || data.detail || [];
 
     const serverTime = new Date();
     const activeUser = userLogin || "SYSTEM";
@@ -72,7 +75,12 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
                     ret_tanggal=?, 
                     ret_sup_kode=?,
                     ret_rec_nomor=?,
-                    ret_memo=?, 
+                    ret_memo=?,
+                    ret_istax=?,
+                    ret_disc_fakturpr=?,
+                    ret_disc_faktur=?,
+                    ret_amount=?,
+                    ret_taxamount=?,
                     user_modified=?, 
                     date_modified=? 
                 WHERE ret_nomor=?`,
@@ -82,6 +90,11 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
           SupplierKode || "",
           NoPenerimaan || "",
           Keterangan,
+          IsPajak,
+          DiscPrHeader,
+          DiscRpHeader,
+          TotalAmount,
+          TaxAmount,
           activeUser,
           serverTime,
           Nomor,
@@ -96,8 +109,8 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
       // Insert Header Baru
       await connection.query(
         `INSERT INTO tret_hdr_mmt 
-                    (ret_nomor, ret_gdg_kode, ret_tanggal, ret_sup_kode, ret_rec_nomor, ret_memo, user_create, date_create) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    (ret_nomor, ret_gdg_kode, ret_tanggal, ret_sup_kode, ret_rec_nomor, ret_memo, ret_istax, ret_disc_fakturpr, ret_disc_faktur, ret_amount, ret_taxamount, user_create, date_create) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           Nomor,
           Gudang,
@@ -105,6 +118,11 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
           SupplierKode || "",
           NoPenerimaan || "",
           Keterangan,
+          IsPajak,
+          DiscPrHeader,
+          DiscRpHeader,
+          TotalAmount,
+          TaxAmount,
           activeUser,
           serverTime,
         ],
@@ -113,24 +131,29 @@ exports.saveReturBeli = async (data, isUpdate = false, userLogin) => {
 
     // 2. Simpan Detail Retur Beli
     if (Details && Details.length > 0) {
-      const detailValues = Details.map((d, index) => [
-        Nomor, // retd_ret_nomor
-        d.sku, // retd_brg_kode
-        d.satuan, // retd_brg_satuan
-        d.qty, // retd_qty
-        d.harga || 0, // retd_harga
-        d.diskon || 0, // retd_discpr
-        index + 1, // retd_nourut
-        d.expired || null, // retd_expired (DATE)
-        d.keterangan || "", // retd_keterangan
-      ]);
-
-      await connection.query(
-        `INSERT INTO tret_dtl_mmt 
-                (retd_ret_nomor, retd_brg_kode, retd_brg_satuan, retd_qty, retd_harga, retd_discpr, retd_nourut, retd_expired, retd_keterangan) 
-                VALUES ?`,
-        [detailValues],
+      const validDetails = Details.filter(
+        (d) => (d.sku || d.Kode || d.brg_kode || d.barcode) && Number(d.qty || 0) > 0,
       );
+      if (validDetails.length > 0) {
+        const detailValues = validDetails.map((d, index) => [
+          Nomor, // retd_ret_nomor
+          d.sku || d.Kode || d.brg_kode || "", // retd_brg_kode
+          d.satuan || d.Satuan || d.brg_satuan || "ROLL", // retd_brg_satuan
+          Number(d.qty || 0), // retd_qty
+          Number(d.harga || d.Harga || 0), // retd_harga
+          Number(d.diskon || d.disc || d.discpr || 0), // retd_discpr
+          index + 1, // retd_nourut
+          d.expired || null, // retd_expired (DATE)
+          d.keterangan || d.Keterangan || "", // retd_keterangan
+        ]);
+
+        await connection.query(
+          `INSERT INTO tret_dtl_mmt 
+                  (retd_ret_nomor, retd_brg_kode, retd_brg_satuan, retd_qty, retd_harga, retd_discpr, retd_nourut, retd_expired, retd_keterangan) 
+                  VALUES ?`,
+          [detailValues],
+        );
+      }
     }
 
     await connection.commit();
@@ -184,13 +207,19 @@ exports.getAllReturBeli = async (options = {}) => {
     let whereClauses = [];
     let queryParams = [];
 
-    // 1. Filter Search (Pencarian Nomor, Kode Supplier, atau Keterangan)
+    // 1. Filter Search (Pencarian Nomor, Kode Supplier, Nama Supplier, No Penerimaan, atau Keterangan)
     if (search) {
       const searchPattern = `%${search}%`;
       whereClauses.push(
-        `(h.ret_nomor LIKE ? OR h.ret_sup_kode LIKE ? OR h.ret_memo LIKE ?)`,
+        `(h.ret_nomor LIKE ? OR h.ret_sup_kode LIKE ? OR s.sup_nama LIKE ? OR h.ret_rec_nomor LIKE ? OR h.ret_memo LIKE ?)`,
       );
-      queryParams.push(searchPattern, searchPattern, searchPattern);
+      queryParams.push(
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+      );
     }
 
     // 2. Filter Start Date (Tanggal Mulai)
@@ -216,6 +245,7 @@ exports.getAllReturBeli = async (options = {}) => {
                 h.ret_gdg_kode AS Gudang,
                 h.ret_tanggal AS Tanggal,
                 h.ret_sup_kode AS SupplierKode,
+                IFNULL(s.sup_nama, '') AS SupplierNama,
                 h.ret_rec_nomor AS NoPenerimaan,
                 h.ret_memo AS Keterangan,
                 h.user_create AS UserCreate,
@@ -223,6 +253,7 @@ exports.getAllReturBeli = async (options = {}) => {
                 h.user_modified AS UserModified,
                 h.date_modified AS DateModified
             FROM tret_hdr_mmt h
+            LEFT JOIN tsupplier s ON s.sup_kode = h.ret_sup_kode
             ${whereSql}
             ORDER BY h.ret_tanggal DESC, h.date_create DESC
             LIMIT ? OFFSET ?;
@@ -245,18 +276,27 @@ exports.getReturBeliByNomor = async (nomor) => {
     // 1. Ambil Header Retur Beli
     const sqlHeader = `
             SELECT 
-                ret_nomor AS Nomor,
-                ret_gdg_kode AS Gudang,
-                ret_tanggal AS Tanggal,
-                ret_sup_kode AS SupplierKode,
-                ret_rec_nomor AS NoPenerimaan,
-                ret_memo AS Keterangan,
-                user_create AS UserCreate,
-                date_create AS DateCreate,
-                user_modified AS UserModified,
-                date_modified AS DateModified
-            FROM tret_hdr_mmt
-            WHERE ret_nomor = ?;
+                h.ret_nomor AS Nomor,
+                h.ret_gdg_kode AS Gudang,
+                IFNULL(g.gdg_nama, 'Gudang Bahan MMT') AS GudangNama,
+                h.ret_tanggal AS Tanggal,
+                h.ret_sup_kode AS SupplierKode,
+                IFNULL(s.sup_nama, '') AS SupplierNama,
+                h.ret_rec_nomor AS NoPenerimaan,
+                h.ret_memo AS Keterangan,
+                IFNULL(h.ret_istax, 1) AS IsPajak,
+                IFNULL(h.ret_disc_fakturpr, 0) AS DiscPrHeader,
+                IFNULL(h.ret_disc_faktur, 0) AS DiscRpHeader,
+                IFNULL(h.ret_amount, 0) AS TotalAmount,
+                IFNULL(h.ret_taxamount, 0) AS TaxAmount,
+                h.user_create AS UserCreate,
+                h.date_create AS DateCreate,
+                h.user_modified AS UserModified,
+                h.date_modified AS DateModified
+            FROM tret_hdr_mmt h
+            LEFT JOIN tsupplier s ON s.sup_kode = h.ret_sup_kode
+            LEFT JOIN tgudang g ON g.gdg_kode = h.ret_gdg_kode
+            WHERE h.ret_nomor = ?;
         `;
 
     const [headerRows] = await pool.query(sqlHeader, [nomor]);
@@ -268,17 +308,21 @@ exports.getReturBeliByNomor = async (nomor) => {
     // 2. Ambil Detail Retur Beli
     const sqlDetail = `
             SELECT 
-                retd_nourut AS noUrut,
-                retd_brg_kode AS sku,
-                retd_brg_satuan AS satuan,
-                retd_qty AS qty,
-                retd_harga AS harga,
-                retd_discpr AS diskon,
-                retd_expired AS expired,
-                retd_keterangan AS keterangan
-            FROM tret_dtl_mmt
-            WHERE retd_ret_nomor = ?
-            ORDER BY retd_nourut ASC;
+                d.retd_nourut AS noUrut,
+                d.retd_brg_kode AS sku,
+                COALESCE(b.brg_nama, d.retd_brg_kode) AS namaBarang,
+                IFNULL(b.brg_panjang, 0) AS panjang,
+                IFNULL(b.brg_lebar, 0) AS lebar,
+                d.retd_brg_satuan AS satuan,
+                d.retd_qty AS qty,
+                d.retd_harga AS harga,
+                d.retd_discpr AS diskon,
+                d.retd_expired AS expired,
+                d.retd_keterangan AS keterangan
+            FROM tret_dtl_mmt d
+            LEFT JOIN tbarang_mmt b ON b.brg_kode = d.retd_brg_kode
+            WHERE d.retd_ret_nomor = ?
+            ORDER BY d.retd_nourut ASC;
         `;
 
     const [detailRows] = await pool.query(sqlDetail, [nomor]);
@@ -290,5 +334,51 @@ exports.getReturBeliByNomor = async (nomor) => {
     };
   } catch (error) {
     throwDbError(`Gagal mengambil data retur beli untuk nomor ${nomor}`, error);
+  }
+};
+
+/**
+ * Scan Barcode Rol atau Cari SKU Barang MMT
+ */
+exports.scanBarcodeOrSku = async (code) => {
+  if (!code) return null;
+  const cleanCode = String(code).trim();
+  try {
+    // 1. Cek di tmasterstok_mmt by mst_barcode
+    const [stokRows] = await pool.query(
+      `SELECT 
+          m.mst_barcode AS barcode, 
+          m.mst_brg_kode AS sku, 
+          COALESCE(b.brg_nama, m.mst_brg_kode) AS namaBarang,
+          b.brg_satuan AS satuan, 
+          IFNULL(m.mst_panjang, b.brg_panjang) AS panjang,
+          IFNULL(m.mst_lebar, b.brg_lebar) AS lebar,
+          COALESCE(m.mst_hargabeli, b.brg_hrgbeli, 0) AS harga
+       FROM tmasterstok_mmt m
+       LEFT JOIN tbarang_mmt b ON b.brg_kode = m.mst_brg_kode
+       WHERE m.mst_barcode = ? LIMIT 1`,
+      [cleanCode]
+    );
+    if (stokRows.length > 0) return stokRows[0];
+
+    // 2. Cek di tbarang_mmt by brg_kode
+    const [brgRows] = await pool.query(
+      `SELECT 
+          '' AS barcode, 
+          brg_kode AS sku, 
+          brg_nama AS namaBarang,
+          brg_satuan AS satuan, 
+          IFNULL(brg_panjang, 0) AS panjang,
+          IFNULL(brg_lebar, 0) AS lebar,
+          IFNULL(brg_hrgbeli, 0) AS harga
+       FROM tbarang_mmt
+       WHERE brg_kode = ? LIMIT 1`,
+      [cleanCode]
+    );
+    if (brgRows.length > 0) return brgRows[0];
+
+    return null;
+  } catch (error) {
+    throwDbError(`Gagal scan barang untuk kode ${code}`, error);
   }
 };
