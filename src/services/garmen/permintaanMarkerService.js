@@ -45,6 +45,12 @@ const SELECT_HEADER = `
     IFNULL(x.totalJml, 0) AS totalJml,
     IFNULL(x.jmlSpk, 0) AS jmlSpk,
     x.spkNomor AS spkNomor,
+    (SELECT GROUP_CONCAT(DISTINCT IFNULL(s.spk_nama, m.mspk_nama)
+                         ORDER BY d.pm2_spk_nomor SEPARATOR ', ')
+       FROM tpermintaan_marker_detail d
+       LEFT JOIN tspk s ON s.spk_nomor = d.pm2_spk_nomor
+       LEFT JOIN tmemospk m ON m.mspk_nomor = d.pm2_spk_nomor
+      WHERE d.pm2_pm_nomor = h.pm_nomor) AS spkNama,
     (SELECT COUNT(DISTINCT d.pm2_spk_nomor)
        FROM tpermintaan_marker_detail d
       WHERE d.pm2_pm_nomor = h.pm_nomor
@@ -99,6 +105,80 @@ const getBrowse = async ({ startDate, endDate, status }) => {
   return status ? data.filter((r) => r.status === status) : data;
 };
 
+// Ready = stok kode bahan di tmasterstok_barcode > 0
+// (kode bahan = mst_brg_kode tanpa 7 karakter terakhir, sama dengan laporanStokBahanBarcodeService)
+const STOK_MIN_READY = 0;
+const CHUNK_KODE = 100;
+const kunciKode = (k) =>
+  String(k || "")
+    .trim()
+    .toUpperCase();
+
+const getStokBahan = async (executor, kodeList) => {
+  const kodes = [
+    ...new Set(
+      (kodeList || []).map((k) => String(k || "").trim()).filter(Boolean),
+    ),
+  ];
+  const peta = new Map(kodes.map((k) => [kunciKode(k), 0]));
+  for (let i = 0; i < kodes.length; i += CHUNK_KODE) {
+    const bagian = kodes.slice(i, i + CHUNK_KODE);
+    // 7 underscore = tepat 7 karakter barcode di belakang kode bahan
+    const pola = bagian.map((k) => `${k.replace(/[\\%_]/g, "\\$&")}_______`);
+    const [rows] = await executor.query(
+      `SELECT LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7) AS kode,
+              SUM(mst_stok_in - mst_stok_out) AS stok
+         FROM tmasterstok_barcode
+        WHERE mst_aktif = 'Y'
+          AND mst_tanggal <= CURDATE()
+          AND (${pola.map(() => "mst_brg_kode LIKE ?").join(" OR ")})
+        GROUP BY LEFT(mst_brg_kode, LENGTH(mst_brg_kode) - 7)`,
+      pola,
+    );
+    for (const r of rows) peta.set(kunciKode(r.kode), Number(r.stok));
+  }
+  return peta;
+};
+
+const statusBahanDari = (jmlBahan, belumReady) => {
+  if (jmlBahan === 0 || belumReady.length >= jmlBahan) return "BELUM";
+  return belumReady.length === 0 ? "READY" : "SEBAGIAN";
+};
+
+// Map pmNomor -> { jmlBahan, belumReady: [{ kode, nama, stok }], statusBahan }
+// jmlBahan = jumlah kode bahan berbeda di permintaan itu
+const getStatusBahan = async (executor, nomorList) => {
+  const hasil = new Map();
+  if (!nomorList.length) return hasil;
+  const [rows] = await executor.query(
+    `SELECT DISTINCT d.pm2_pm_nomor AS pm, d.pm2_bhn_kode AS kode,
+            IFNULL(b.Bhn_Name, '') AS nama
+       FROM tpermintaan_marker_detail d
+       LEFT JOIN tbahan b ON b.Bhn_kode = d.pm2_bhn_kode
+      WHERE d.pm2_pm_nomor IN (?)`,
+    [nomorList],
+  );
+  const stok = await getStokBahan(
+    executor,
+    rows.map((r) => r.kode),
+  );
+  for (const nomor of nomorList) {
+    hasil.set(nomor, { jmlBahan: 0, belumReady: [], statusBahan: "BELUM" });
+  }
+  for (const r of rows) {
+    const h = hasil.get(r.pm);
+    h.jmlBahan += 1;
+    const s = stok.get(kunciKode(r.kode)) ?? 0;
+    if (!(s > STOK_MIN_READY)) {
+      h.belumReady.push({ kode: r.kode, nama: r.nama, stok: s });
+    }
+  }
+  for (const h of hasil.values()) {
+    h.statusBahan = statusBahanDari(h.jmlBahan, h.belumReady);
+  }
+  return hasil;
+};
+
 // Antrean PIC: siap diambil (belum dipegang), dikerjakan saya, dikerjakan PIC lain
 const getAntrean = async (user) => {
   const kode = String(user?.kode || "").trim();
@@ -136,6 +216,7 @@ const getAntrean = async (user) => {
       byPm.set(s.pm, arr);
     }
   }
+  const statusBahan = await getStatusBahan(db, nomors);
 
   const siap = [];
   const saya = [];
@@ -143,6 +224,10 @@ const getAntrean = async (user) => {
   for (const r of rows) {
     if (r.status !== "OPEN" && r.status !== "PROSES") continue;
     r.spkList = byPm.get(r.nomor) || [];
+    const sb = statusBahan.get(r.nomor);
+    r.jmlBahan = sb ? sb.jmlBahan : 0;
+    r.bahanBelumReady = sb ? sb.belumReady : [];
+    r.statusBahan = sb ? sb.statusBahan : "BELUM";
     if (!r.pic) siap.push(r);
     else if (r.pic === kode) saya.push(r);
     else lain.push(r);
@@ -261,4 +346,5 @@ module.exports = {
   getDetail,
   deleteData,
   getMenungguValidasi,
+  getStatusBahan,
 };

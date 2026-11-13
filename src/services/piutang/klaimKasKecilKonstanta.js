@@ -16,9 +16,14 @@ const KAS_KLAIM = [
   { rek: "A-112421", cabang: "P01", sup: "S0000038", jenis: "ATM" }, // PAK JOKO
   { rek: "A-112422", cabang: "P01", sup: "S0000039", jenis: "ATM" }, // PAK RATNO
   { rek: "A-112423", cabang: "P01", sup: "S0000040", jenis: "ATM" }, // MAS ILHAM
+  // Laci Finance: tujuan klaim BKK Penyelesaian PD. Tanpa supplier (dibayar lewat BBK).
+  { rek: "A-111118", cabang: "P01", sup: "", jenis: "PC" },
 ];
 
-const JENIS_KLAIM = ["KAS_KECIL", "ATM"];
+const JENIS_KLAIM = ["KAS_KECIL", "ATM", "PC"];
+
+// Jenis yang boleh dipanggil di Pengajuan Transfer. Klaim pusat (ATM, PC) hanya lewat BBK.
+const JENIS_VIA_PJT = ["KAS_KECIL"];
 
 // Cabang pusat (token cabang bisa "HO-") diperlakukan sebagai P01.
 const CABANG_PUSAT = ["P01", "HO-"];
@@ -32,8 +37,11 @@ const kasPerCabang = (cabang) => KAS_KLAIM.filter((k) => k.cabang === cabang);
 const cabangTerdaftar = () => [...new Set(KAS_KLAIM.map((k) => k.cabang))];
 const rekPerJenis = (jenis) =>
   KAS_KLAIM.filter((k) => k.jenis === jenis).map((k) => k.rek);
-const semuaRekKlaim = () => KAS_KLAIM.map((k) => k.rek);
-const semuaSupKlaim = () => KAS_KLAIM.map((k) => k.sup);
+// Kas terkunci (tidak boleh jadi detail BKK/BBK manual). Laci PC dikecualikan:
+// pengisian laci Finance secara manual tetap sah (keputusan 12 Nov).
+const semuaRekKlaim = () =>
+  KAS_KLAIM.filter((k) => k.jenis !== "PC").map((k) => k.rek);
+const semuaSupKlaim = () => KAS_KLAIM.map((k) => k.sup).filter(Boolean);
 
 // Cabang klaim milik user untuk hak TULIS (buat, ubah, batal). "" bila cabang
 // user tidak terdaftar. Hak BACA (browse) diatur terpisah di controller.
@@ -57,6 +65,7 @@ module.exports = {
   TANGGAL_MULAI_KLAIM,
   KAS_KLAIM,
   JENIS_KLAIM,
+  JENIS_VIA_PJT,
   CABANG_PUSAT,
   BAGIAN_AKSES_PENUH,
   normCabang,

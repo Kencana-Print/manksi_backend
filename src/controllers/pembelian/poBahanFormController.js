@@ -1,4 +1,5 @@
 const poBahanFormService = require("../../services/pembelian/poBahanFormService");
+const rekapBelanjaFormService = require("../../services/pembelian/rekapBelanjaFormService");
 
 const validateField = async (req, res) => {
   try {
@@ -70,6 +71,31 @@ const getMbbOutstanding = async (req, res) => {
   }
 };
 
+const getRekap = async (req, res) => {
+  try {
+    const data = await rekapBelanjaFormService.getGrup(
+      req.params.nomor,
+      req.user,
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    res.status(404).json({ success: false, message: error.message });
+  }
+};
+
+const saveRekap = async (req, res) => {
+  try {
+    const result = await rekapBelanjaFormService.saveGrup(req.body, req.user);
+    res.status(200).json({
+      success: true,
+      message: "Rekap Belanja berhasil disimpan.",
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   validateField,
   getDetail,
@@ -77,4 +103,6 @@ module.exports = {
   getMkbDetail,
   getSupplierByKode,
   getMbbOutstanding,
+  getRekap,
+  saveRekap,
 };

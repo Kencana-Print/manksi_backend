@@ -1,14 +1,10 @@
 const db = require("../../config/database");
-const sharp = require("sharp");
-const fs = require("fs");
-const path = require("path");
 // Lookup SPK/MAP generik dipakai bareng dengan LHK Pola — reuse
 // supaya tidak duplikasi logic query yang sama persis.
 const {
   searchSpk,
   getSpkByNomor,
   getDivisiNama,
-  buildGambarFileName,
 } = require("../garmen/lhkPolaFormService");
 
 // --- GENERATE NOMOR (format: LHKM/0001/2026) ---
@@ -26,6 +22,129 @@ const generateNomor = async (tanggal) => {
 
 const galat = (pesan, statusCode = 400) =>
   Object.assign(new Error(pesan), { statusCode });
+
+// ============================================================
+// SIZE & RASIO
+// ============================================================
+const MAKS_RASIO = 7;
+// Urutan tampil size; size di luar daftar menyusul menurut abjad
+const URUTAN_SIZE = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+
+const bulat5 = (n) => Math.round(n * 1e5) / 1e5;
+
+const urutkanSize = (list) =>
+  [...list].sort((a, b) => {
+    const ia = URUTAN_SIZE.indexOf(a.size.toUpperCase());
+    const ib = URUTAN_SIZE.indexOf(b.size.toUpperCase());
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    if (ia !== -1) return -1;
+    if (ib !== -1) return 1;
+    return a.size.localeCompare(b.size);
+  });
+
+// Qty order per size dari SPK (tspk_size), bila kosong dari MAP (tmemospk_size)
+const getSizeSpk = async (spkNomor, executor = db) => {
+  let [rows] = await executor.query(
+    `SELECT TRIM(spks_size) AS size, SUM(spks_qty) AS qty
+       FROM tspk_size WHERE spks_nomor = ?
+      GROUP BY TRIM(spks_size)`,
+    [spkNomor],
+  );
+  if (rows.length === 0) {
+    [rows] = await executor.query(
+      `SELECT TRIM(mspks_size) AS size, SUM(mspks_qty) AS qty
+         FROM tmemospk_size WHERE mspks_nomor = ?
+        GROUP BY TRIM(mspks_size)`,
+      [spkNomor],
+    );
+  }
+  const list = urutkanSize(
+    rows
+      .filter((r) => r.size)
+      .map((r) => ({ size: r.size, qtyOrder: Number(r.qty) })),
+  );
+  return list.map((r, i) => ({ ...r, urut: i + 1 }));
+};
+
+// Validasi dan hitung rasio. Sisa per size = qty order dikurangi
+// jumlah (spreading x qty rasio) semua rasio dari atas sampai rasio ini.
+const hitungRasio = (noBlok, sizeList, rasioInput) => {
+  const label = `Blok ${noBlok}`;
+  const terisi = (Array.isArray(rasioInput) ? rasioInput : []).filter(
+    (r) =>
+      r &&
+      (Number(r.spreading) > 0 ||
+        Number(r.pMarkerCm) > 0 ||
+        Object.values(r.qty || {}).some((v) => Number(v) > 0)),
+  );
+  if (terisi.length === 0) {
+    throw new Error(`${label}: minimal 1 rasio harus diisi.`);
+  }
+
+  const sisaBerjalan = {};
+  for (const s of sizeList) sisaBerjalan[s.size] = s.qtyOrder;
+
+  const dipakai = new Set();
+  const hasil = [];
+  const urut = [...terisi].sort((a, b) => Number(a.rasio) - Number(b.rasio));
+
+  for (const r of urut) {
+    const no = Number(r.rasio);
+    if (!Number.isInteger(no) || no < 1 || no > MAKS_RASIO) {
+      throw new Error(`${label}: nomor rasio harus 1 sampai ${MAKS_RASIO}.`);
+    }
+    if (dipakai.has(no)) throw new Error(`${label}: rasio ${no} dobel.`);
+    dipakai.add(no);
+
+    const spreading = Number(r.spreading);
+    if (!Number.isInteger(spreading) || spreading < 1) {
+      throw new Error(
+        `${label} rasio ${no}: spreading harus bilangan bulat > 0.`,
+      );
+    }
+    const cm = Number(r.pMarkerCm);
+    if (!(cm > 0)) {
+      throw new Error(`${label} rasio ${no}: p.marker (cm) harus > 0.`);
+    }
+
+    const qtyIn = r.qty && typeof r.qty === "object" ? r.qty : {};
+    for (const k of Object.keys(qtyIn)) {
+      if (!sizeList.some((s) => s.size === k)) {
+        throw new Error(`${label} rasio ${no}: size ${k} tidak ada di SPK.`);
+      }
+    }
+
+    const qty = {};
+    let adaQty = false;
+    for (const s of sizeList) {
+      const q = Number(qtyIn[s.size] ?? 0);
+      if (!Number.isInteger(q) || q < 0) {
+        throw new Error(
+          `${label} rasio ${no}: qty size ${s.size} harus bilangan bulat >= 0.`,
+        );
+      }
+      qty[s.size] = q;
+      if (q > 0) adaQty = true;
+      sisaBerjalan[s.size] = bulat5(sisaBerjalan[s.size] - spreading * q);
+    }
+    if (!adaQty) {
+      throw new Error(`${label} rasio ${no}: isi qty minimal di satu size.`);
+    }
+
+    const cmBulat = Math.round(cm * 1000) / 1000;
+    const m = bulat5(cmBulat / 100);
+    hasil.push({
+      no,
+      spreading,
+      cm: cmBulat,
+      m,
+      total: bulat5(m * spreading),
+      qty,
+      sisa: { ...sisaBerjalan },
+    });
+  }
+  return hasil;
+};
 
 // Nomor tanda terima: TTM.yyyymm.nnnn
 const generateNomorTt = async (conn) => {
@@ -111,17 +230,27 @@ const bacaTandaTerima = async (executor, lhkNomor) => {
     const [baris] = await executor.query(
       `SELECT d.ldm_urut AS urut, d.ldm_spk_nomor AS spkNomor,
               IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
-              d.ldm_lebar_kain AS lebarKain, d.ldm_size AS size,
-              d.ldm_tujuan_proses AS tujuanProses,
-              d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar
+              d.ldm_bhn_kode AS kodeBahan, bh.Bhn_Name AS namaBahan,
+              d.ldm_setting AS setting,
+              d.ldm_lebar_kain AS lebarMarker,
+              d.ldm_tujuan_proses AS untuk,
+              d.ldm_keterangan AS keterangan,
+              d.ldm_size AS sizeLama,
+              (SELECT SUM(r.lmr_total_m) FROM tlhkpola_marker_rasio r
+                WHERE r.lmr_ldm_id = d.ldm_id) AS totalKebutuhan
          FROM tlhkpola_marker_dtl d
          LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
          LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
+         LEFT JOIN tbahan bh ON bh.Bhn_kode = d.ldm_bhn_kode
         WHERE d.ldm_nomor = ? AND d.ldm_pm_nomor = ?
         ORDER BY d.ldm_urut`,
       [lhkNomor, t.pmNomor],
     );
-    t.baris = baris;
+    t.baris = baris.map((b) => ({
+      ...b,
+      totalKebutuhan:
+        b.totalKebutuhan === null ? null : Number(b.totalKebutuhan),
+    }));
   }
   return { lhk: hdr, tandaTerima };
 };
@@ -131,7 +260,10 @@ const bacaTandaTerima = async (executor, lhkNomor) => {
 // ============================================================
 const getDetail = async (nomor) => {
   const [headerRows] = await db.query(
-    `SELECT * FROM tlhkpola_hdr WHERE lhkp_nomor = ?`,
+    `SELECT lhkp_nomor, DATE_FORMAT(lhkp_tanggal, '%Y-%m-%d') AS lhkp_tanggal,
+            lhkp_keterangan, lhkp_pembuat_pola, lhkp_pembuat_marker,
+            user_create, date_create, user_modified, date_modified
+       FROM tlhkpola_hdr WHERE lhkp_nomor = ?`,
     [nomor],
   );
   if (headerRows.length === 0)
@@ -140,54 +272,106 @@ const getDetail = async (nomor) => {
   const [marker] = await db.query(
     `SELECT d.ldm_id AS id, d.ldm_urut AS urut, d.ldm_spk_nomor AS spkNomor,
             IFNULL(s.spk_nama, m.mspk_nama) AS namaSpk,
-            d.ldm_lebar_kain AS lebarKain, d.ldm_size AS size,
-            d.ldm_tujuan_proses AS tujuanProses,
-            d.ldm_keterangan AS keterangan, d.ldm_gambar AS gambar,
-            d.ldm_pm_nomor AS pmNomor
-     FROM tlhkpola_marker_dtl d
-     LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
-     LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
-     WHERE d.ldm_nomor = ?
-     ORDER BY d.ldm_urut`,
+            d.ldm_pm_nomor AS pmNomor, d.ldm_bhn_kode AS kode,
+            bh.Bhn_Name AS namaBahan, bh.Bhn_satuan AS satuan,
+            d.ldm_setting AS setting, d.ldm_lebar_kain AS lebarMarker,
+            d.ldm_tujuan_proses AS untuk, d.ldm_keterangan AS keterangan,
+            d.ldm_size AS sizeLama
+       FROM tlhkpola_marker_dtl d
+       LEFT JOIN tspk s ON s.spk_nomor = d.ldm_spk_nomor
+       LEFT JOIN tmemospk m ON m.mspk_nomor = d.ldm_spk_nomor
+       LEFT JOIN tbahan bh ON bh.Bhn_kode = d.ldm_bhn_kode
+      WHERE d.ldm_nomor = ?
+      ORDER BY d.ldm_urut`,
     [nomor],
   );
+
+  const ids = marker.map((r) => r.id);
+  let sizeRows = [];
+  let rasioRows = [];
+  let rasioSizeRows = [];
+  if (ids.length > 0) {
+    [sizeRows] = await db.query(
+      `SELECT lms_ldm_id AS ldmId, lms_size AS size, lms_qty_order AS qtyOrder
+         FROM tlhkpola_marker_size WHERE lms_ldm_id IN (?)
+        ORDER BY lms_urut`,
+      [ids],
+    );
+    [rasioRows] = await db.query(
+      `SELECT lmr_ldm_id AS ldmId, lmr_rasio AS rasio, lmr_spreading AS spreading,
+              lmr_p_marker_cm AS pMarkerCm, lmr_p_marker_m AS pMarkerM,
+              lmr_total_m AS totalM
+         FROM tlhkpola_marker_rasio WHERE lmr_ldm_id IN (?)
+        ORDER BY lmr_rasio`,
+      [ids],
+    );
+    [rasioSizeRows] = await db.query(
+      `SELECT lmz_ldm_id AS ldmId, lmz_rasio AS rasio, lmz_size AS size,
+              lmz_qty AS qty, lmz_sisa AS sisa
+         FROM tlhkpola_marker_rasio_size WHERE lmz_ldm_id IN (?)`,
+      [ids],
+    );
+  }
+
+  const blok = marker.map((b) => ({
+    ...b,
+    formatLama: !b.kode,
+    size: sizeRows
+      .filter((x) => x.ldmId === b.id)
+      .map((x) => ({ size: x.size, qtyOrder: Number(x.qtyOrder) })),
+    rasio: rasioRows
+      .filter((x) => x.ldmId === b.id)
+      .map((x) => {
+        const qty = {};
+        const sisa = {};
+        for (const z of rasioSizeRows) {
+          if (z.ldmId === b.id && z.rasio === x.rasio) {
+            qty[z.size] = Number(z.qty);
+            sisa[z.size] = Number(z.sisa);
+          }
+        }
+        return {
+          rasio: x.rasio,
+          spreading: Number(x.spreading),
+          pMarkerCm: Number(x.pMarkerCm),
+          pMarkerM: Number(x.pMarkerM),
+          totalM: Number(x.totalM),
+          qty,
+          sisa,
+        };
+      }),
+  }));
 
   return {
     header: {
       ...headerRows[0],
       pembuatMarker: headerRows[0].lhkp_pembuat_marker || "",
     },
-    marker,
+    marker: blok,
   };
 };
 
 // ============================================================
 // SAVE DATA — create & edit (Marker saja)
+// Satu blok = satu pasangan (permintaan, bahan, setting).
+// Sisa, p.marker (m) dan total dihitung di sini; angka dari FE diabaikan.
 // ============================================================
 const saveData = async (payload, user, isEdit) => {
-  const {
-    nomor: existingNomor,
-    tanggal,
-    keterangan,
-    pembuatMarker,
-    marker,
-  } = payload;
+  const { nomor: existingNomor, tanggal, keterangan, marker } = payload;
 
   if (!tanggal) throw new Error("Tanggal wajib diisi.");
 
-  const markerFilled = (marker || []).filter(
-    (r) => r.spkNomor && r.spkNomor.trim(),
+  const blokInput = (marker || []).filter(
+    (r) => r && (String(r.pmNomor || "").trim() || String(r.kode || "").trim()),
   );
-  if (markerFilled.length === 0) {
-    throw new Error("Minimal harus ada 1 baris SPK terisi di Marker.");
+  if (blokInput.length === 0) {
+    throw new Error("Minimal harus ada 1 blok bahan di LHK Marker.");
   }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    // LHK terkunci bila menunjuk permintaan CLOSE (alur lama) atau bila salah
-    // satu tanda terimanya sudah divalidasi pembuat permintaan
     if (isEdit && existingNomor) {
       const [terkunci] = await conn.query(
         `SELECT p.pm_nomor
@@ -212,14 +396,46 @@ const saveData = async (payload, user, isEdit) => {
           `LHK ini sudah divalidasi pada tanda terima ${sudahTerima[0].tt_nomor} (Permintaan Marker ${sudahTerima[0].tt_pm_nomor}), tidak bisa diubah.`,
         );
       }
+      const [[lama]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM tlhkpola_marker_dtl
+          WHERE ldm_nomor = ? AND ldm_bhn_kode IS NULL`,
+        [existingNomor],
+      );
+      if (Number(lama.n) > 0) {
+        throw new Error(
+          "LHK ini memakai format lama (tanpa bahan dan rasio), tidak bisa diubah. Hanya bisa dilihat atau dihapus.",
+        );
+      }
     }
 
-    // Validasi sambungan ke Permintaan Marker (hanya baris yang mengirim pmNomor)
-    for (const r of markerFilled) {
+    // Validasi tiap blok terhadap Permintaan Marker, lalu hitung rasio
+    const sizeCache = new Map();
+    const kunciDipakai = new Set();
+    const rencana = [];
+
+    for (let i = 0; i < blokInput.length; i++) {
+      const r = blokInput[i];
+      const noBlok = i + 1;
       const pm = String(r.pmNomor || "").trim();
-      if (!pm) continue;
+      const kode = String(r.kode || "").trim();
+      const setting = String(r.setting || "").trim();
+      if (!pm || !kode || !setting) {
+        throw new Error(
+          `Blok ${noBlok}: permintaan, bahan dan setting wajib terisi.`,
+        );
+      }
+
+      const kunci = `${pm}|${kode}|${setting}`;
+      if (kunciDipakai.has(kunci)) {
+        throw new Error(
+          `Blok ${noBlok}: bahan ${kode} (${setting}) di ${pm} dobel.`,
+        );
+      }
+      kunciDipakai.add(kunci);
+
       const [[p]] = await conn.query(
-        `SELECT pm_status_manual AS manual, pm_date_close AS closed
+        `SELECT pm_status_manual AS manual, pm_date_close AS closed,
+                pm_user_create AS peminta, pm_pic AS pic
            FROM tpermintaan_marker WHERE pm_nomor = ?`,
         [pm],
       );
@@ -228,27 +444,71 @@ const saveData = async (payload, user, isEdit) => {
         throw new Error(`Permintaan Marker ${pm} berstatus ${p.manual}.`);
       }
       if (p.closed) throw new Error(`Permintaan Marker ${pm} sudah CLOSE.`);
-      const [[ada]] = await conn.query(
-        `SELECT COUNT(*) AS n FROM tpermintaan_marker_detail
-          WHERE pm2_pm_nomor = ? AND pm2_spk_nomor = ?`,
-        [pm, r.spkNomor],
-      );
-      if (!Number(ada.n)) {
+      if (!p.pic) {
         throw new Error(
-          `SPK ${r.spkNomor} tidak ada di Permintaan Marker ${pm}.`,
+          `Permintaan Marker ${pm} belum diambil. Ambil dulu dari Antrean Saya.`,
         );
       }
+      if (String(p.pic).toUpperCase() !== String(user.kode).toUpperCase()) {
+        throw new Error(
+          `Permintaan Marker ${pm} dipegang ${p.pic}, hanya PIC yang bisa menyimpan LHK.`,
+        );
+      }
+
+      const [[det]] = await conn.query(
+        `SELECT pm2_spk_nomor AS spk FROM tpermintaan_marker_detail
+          WHERE pm2_pm_nomor = ? AND pm2_bhn_kode = ? AND pm2_setting = ?
+          LIMIT 1`,
+        [pm, kode, setting],
+      );
+      if (!det) {
+        throw new Error(
+          `Blok ${noBlok}: bahan ${kode} (${setting}) tidak ada di Permintaan Marker ${pm}.`,
+        );
+      }
+
       const [dup] = await conn.query(
         `SELECT ldm_nomor FROM tlhkpola_marker_dtl
-          WHERE ldm_pm_nomor = ? AND ldm_spk_nomor = ? AND ldm_nomor <> ?
+          WHERE ldm_pm_nomor = ? AND ldm_bhn_kode = ? AND ldm_setting = ?
+            AND ldm_nomor <> ?
           LIMIT 1`,
-        [pm, r.spkNomor, existingNomor || ""],
+        [pm, kode, setting, existingNomor || ""],
       );
       if (dup.length > 0) {
         throw new Error(
-          `SPK ${r.spkNomor} di Permintaan Marker ${pm} sudah punya LHK ${dup[0].ldm_nomor}.`,
+          `Bahan ${kode} (${setting}) di Permintaan Marker ${pm} sudah punya LHK ${dup[0].ldm_nomor}.`,
         );
       }
+
+      if (!sizeCache.has(det.spk)) {
+        sizeCache.set(det.spk, await getSizeSpk(det.spk, conn));
+      }
+      const sizeList = sizeCache.get(det.spk);
+      if (sizeList.length === 0) {
+        throw new Error(`SPK ${det.spk} belum punya data size.`);
+      }
+
+      const lebar = String(r.lebarMarker || "").trim();
+      if (lebar.length > 50) {
+        throw new Error(`Blok ${noBlok}: lebar marker maksimal 50 karakter.`);
+      }
+      const ket = String(r.keterangan || "").trim();
+      if (ket.length > 200) {
+        throw new Error(`Blok ${noBlok}: keterangan maksimal 200 karakter.`);
+      }
+
+      rencana.push({
+        pm,
+        kode,
+        setting,
+        spk: det.spk,
+        untuk: p.peminta,
+        pic: p.pic,
+        lebar,
+        ket,
+        sizeList,
+        rasio: hitungRasio(noBlok, sizeList, r.rasio),
+      });
     }
 
     let nomor;
@@ -261,63 +521,77 @@ const saveData = async (payload, user, isEdit) => {
       if (exist.length === 0)
         throw new Error("Data LHK Marker tidak ditemukan.");
       nomor = existingNomor;
+      // Pembuat tidak diubah saat edit (tetap pembuat asli)
       await conn.query(
         `UPDATE tlhkpola_hdr
-         SET lhkp_tanggal = ?, lhkp_keterangan = ?, lhkp_pembuat_marker = ?,
+         SET lhkp_tanggal = ?, lhkp_keterangan = ?,
              user_modified = ?, date_modified = NOW()
          WHERE lhkp_nomor = ?`,
-        [tanggal, keterangan || "", pembuatMarker || "", user.kode, nomor],
+        [tanggal, keterangan || "", user.kode, nomor],
       );
     } else {
+      // Pembuat = nama PIC permintaan (PIC sudah dipastikan sama dengan user)
+      const [[u]] = await conn.query(
+        `SELECT user_nama FROM tuser WHERE user_kode = ?`,
+        [rencana[0].pic],
+      );
+      const namaPembuat = (u && u.user_nama) || rencana[0].pic;
+
       nomor = await generateNomor(tanggal);
       await conn.query(
         `INSERT INTO tlhkpola_hdr
            (lhkp_nomor, lhkp_tanggal, lhkp_keterangan, lhkp_pembuat_marker, user_create, date_create)
          VALUES (?, ?, ?, ?, ?, NOW())`,
-        [nomor, tanggal, keterangan || "", pembuatMarker || "", user.kode],
+        [nomor, tanggal, keterangan || "", namaPembuat, user.kode],
       );
     }
 
-    // Gambar dan link permintaan lama dipulihkan per SPK karena baris dihapus lalu disisipkan ulang
-    const [oldRows] = await conn.query(
-      `SELECT ldm_spk_nomor AS spkNomor, ldm_gambar AS gambar, ldm_pm_nomor AS pmNomor
-       FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`,
-      [nomor],
-    );
-    const markerGambarMap = new Map(
-      oldRows.filter((r) => r.gambar).map((r) => [r.spkNomor, r.gambar]),
-    );
-    const markerPmMap = new Map(
-      oldRows.filter((r) => r.pmNomor).map((r) => [r.spkNomor, r.pmNomor]),
-    );
-
+    // Anak (size, rasio, rasio_size) ikut terhapus lewat ON DELETE CASCADE
     await conn.query(`DELETE FROM tlhkpola_marker_dtl WHERE ldm_nomor = ?`, [
       nomor,
     ]);
-    const vals = markerFilled.map((r, i) => [
-      nomor,
-      i + 1,
-      r.spkNomor,
-      r.lebarKain || "",
-      r.size || "",
-      r.tujuanProses || "",
-      r.keterangan || "",
-      markerGambarMap.get(r.spkNomor) || null,
-      // pmNomor tidak dikirim (form lama): pertahankan link lama; dikirim kosong: lepas link
-      r.pmNomor === undefined
-        ? markerPmMap.get(r.spkNomor) || null
-        : String(r.pmNomor || "").trim() || null,
-    ]);
-    await conn.query(
-      `INSERT INTO tlhkpola_marker_dtl
-         (ldm_nomor, ldm_urut, ldm_spk_nomor, ldm_lebar_kain, ldm_size,
-          ldm_tujuan_proses, ldm_keterangan, ldm_gambar, ldm_pm_nomor)
-       VALUES ?`,
-      [vals],
-    );
+
+    for (let i = 0; i < rencana.length; i++) {
+      const b = rencana[i];
+      const [ins] = await conn.query(
+        `INSERT INTO tlhkpola_marker_dtl
+           (ldm_nomor, ldm_urut, ldm_spk_nomor, ldm_pm_nomor, ldm_bhn_kode,
+            ldm_setting, ldm_lebar_kain, ldm_tujuan_proses, ldm_keterangan)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [nomor, i + 1, b.spk, b.pm, b.kode, b.setting, b.lebar, b.untuk, b.ket],
+      );
+      const ldmId = ins.insertId;
+
+      await conn.query(
+        `INSERT INTO tlhkpola_marker_size
+           (lms_ldm_id, lms_size, lms_urut, lms_qty_order) VALUES ?`,
+        [b.sizeList.map((s) => [ldmId, s.size, s.urut, s.qtyOrder])],
+      );
+      await conn.query(
+        `INSERT INTO tlhkpola_marker_rasio
+           (lmr_ldm_id, lmr_rasio, lmr_spreading, lmr_p_marker_cm,
+            lmr_p_marker_m, lmr_total_m) VALUES ?`,
+        [b.rasio.map((r) => [ldmId, r.no, r.spreading, r.cm, r.m, r.total])],
+      );
+      await conn.query(
+        `INSERT INTO tlhkpola_marker_rasio_size
+           (lmz_ldm_id, lmz_rasio, lmz_size, lmz_qty, lmz_sisa) VALUES ?`,
+        [
+          b.rasio.flatMap((r) =>
+            b.sizeList.map((s) => [
+              ldmId,
+              r.no,
+              s.size,
+              r.qty[s.size],
+              r.sisa[s.size],
+            ]),
+          ),
+        ],
+      );
+    }
 
     // Tanda terima per LHK dan permintaan, ikut transaksi ini (idempoten)
-    const pmDipakai = [...new Set(vals.map((v) => v[8]).filter(Boolean))];
+    const pmDipakai = [...new Set(rencana.map((b) => b.pm))];
     await sinkronTandaTerima(conn, nomor, pmDipakai, user.kode);
 
     await conn.commit();
@@ -543,11 +817,11 @@ const validasiTandaTerima = async (ttNomor, user) => {
 module.exports = {
   getDetail,
   saveData,
-  uploadGambarDetail,
   deleteData,
   searchSpk,
   getSpkByNomor,
   getDivisiNama,
+  getSizeSpk,
   getTandaTerima,
   cetakTandaTerima,
   listTandaTerimaByPermintaan,

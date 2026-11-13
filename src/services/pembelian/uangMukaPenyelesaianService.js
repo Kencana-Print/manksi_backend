@@ -10,6 +10,7 @@ const supplierService = require("../master/supplierService");
 const TANGGAL_MULAI_SISA = "2026-10-22";
 const AMBANG_SISA = 100;
 const badRequest = (msg) => Object.assign(new Error(msg), { status: 400 });
+const fmtRp = (n) => Number(n || 0).toLocaleString("id-ID");
 
 // ── Batas waktu Penyelesaian: maks 3 hari kerja sejak bon dibuat ──
 // Hanya berlaku untuk bon yang date_create-nya >= TANGGAL_MULAI_BATAS.
@@ -76,7 +77,8 @@ const getFormData = async (nomor) => {
         DATE_FORMAT(k.bon_tanggal,'%Y-%m-%d') AS bon_tanggal_fmt,
         DATE_FORMAT(t.jur_tanggal, '%Y-%m-%d') AS jur_tanggal_fmt,
         h.pum_user_create AS pum_user_create,
-        h.pum_user_realisasi AS pum_user_realisasi
+        h.pum_user_realisasi AS pum_user_realisasi,
+        h.pum_jenis AS pum_jenis
       FROM finance.tkasbon k
       LEFT JOIN finance.tjurnal t ON t.jur_no = k.bon_jur_no
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
@@ -177,7 +179,7 @@ const getFormData = async (nomor) => {
     };
   });
 
-  // ── Detail GA dari ga2.tpermintaan_dtl (diisi otomatis oleh
+  // ── Detail GA dari ga2new.tpermintaan_dtl (diisi otomatis oleh
   // saveRealisasi PUM, atau via F1 manual di sini) ──
   const [gaRows] = await db.query(
     `
@@ -198,10 +200,10 @@ const getFormData = async (nomor) => {
       r.rek_nama, d.pmd_cc_kode, c.cc_nama, d.pmd_dcnama,
       j.pjh_cc_kode, j.pjh_cc_dcnama, pcc.cc_nama AS pjh_cc_nama
     FROM finance.tkasbon k
-    INNER JOIN ga2.tpermintaan_dtl d ON d.pmd_bon = k.bon_nomor
-    INNER JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
-    INNER JOIN ga2.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
-    INNER JOIN ga2.peminta p ON p.nik = j.pjh_nik
+    INNER JOIN ga2new.tpermintaan_dtl d ON d.pmd_bon = k.bon_nomor
+    INNER JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
+    INNER JOIN ga2new.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
+    INNER JOIN ga2new.peminta p ON p.nik = j.pjh_nik
     LEFT JOIN finance.trekening r ON r.rek_kode = d.pmd_rek_kode
     LEFT JOIN finance.tcostcenter c ON c.cc_kode = d.pmd_cc_kode
     LEFT JOIN finance.tcostcenter pcc ON pcc.cc_kode = j.pjh_cc_kode
@@ -370,9 +372,13 @@ const getFormData = async (nomor) => {
     pum_user_create: bon.pum_user_create || "",
     pum_user_realisasi: bon.pum_user_realisasi || "",
     mode_laci: !!bon.bon_transfer_jur_no,
+    mode_pd: bon.pum_jenis === "PD",
     laci_asal: bon.bon_transfer_asal || "",
     sisa: {
-      wajib: !!bon.tgl_buat && bon.tgl_buat >= TANGGAL_MULAI_SISA,
+      wajib:
+        bon.pum_jenis !== "PD" &&
+        !!bon.tgl_buat &&
+        bon.tgl_buat >= TANGGAL_MULAI_SISA,
       ambang: AMBANG_SISA,
       rek_kode: bon.bon_transfer_jur_no
         ? bon.bon_transfer_asal || ""
@@ -487,10 +493,13 @@ const saveData = async (payload, user) => {
 
   // Nilai krusial dibaca dari DB, bukan dari payload klien.
   const [[bonDb]] = await db.query(
-    `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang, bon_nominal,
-            bon_rek_kode, bon_transfer_jur_no, bon_transfer_asal, bon_sisa_jur_no,
-            DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_buat
-     FROM finance.tkasbon WHERE bon_nomor = ?`,
+    `SELECT k.bon_selesai, k.bon_jur_no, k.bon_tanggal, k.bon_jenis, k.bon_cabang, k.bon_nominal,
+            k.bon_rek_kode, k.bon_transfer_jur_no, k.bon_transfer_asal, k.bon_sisa_jur_no,
+            DATE_FORMAT(k.date_create, '%Y-%m-%d') AS tgl_buat,
+            h.pum_jenis
+     FROM finance.tkasbon k
+     LEFT JOIN tpengajuan_uang_muka_hdr h ON h.pum_bon_nomor = k.bon_nomor
+     WHERE k.bon_nomor = ?`,
     [nomor],
   );
   if (!bonDb) throw new Error("Nomor kasbon tidak ditemukan.");
@@ -536,6 +545,27 @@ const saveData = async (payload, user) => {
     throw badRequest(
       `Kas penyelesaian harus laci penerima kasbon (${bonDb.bon_rek_kode}).`,
     );
+  // Penyerahan Dana Belanja (PD): uang sudah ada di laci penyerah dan tidak pernah
+  // dipindah. Kas penyelesaian wajib laci itu, sisa tidak dibukukan (tetap di laci),
+  // dan hanya pemilik laci yang boleh menyelesaikan karena BKK-nya mengurangi laci itu.
+  const modePd = bonDb.pum_jenis === "PD";
+  if (modePd) {
+    if (rek_kode !== bonDb.bon_rek_kode)
+      throw badRequest(
+        `Kas penyelesaian harus laci penyerah dana (${bonDb.bon_rek_kode}).`,
+      );
+    const [[laci]] = await db.query(
+      `SELECT rek_pemilik FROM finance.trekening WHERE rek_kode = ?`,
+      [bonDb.bon_rek_kode],
+    );
+    if (
+      String(laci?.rek_pemilik || "").toUpperCase() !==
+      String(user.kode || "").toUpperCase()
+    )
+      throw badRequest(
+        `Penyelesaian Dana Belanja hanya dapat dilakukan oleh pemilik laci ${bonDb.bon_rek_kode}.`,
+      );
+  }
   await assertBolehPosting(
     [
       rek_kode,
@@ -549,7 +579,14 @@ const saveData = async (payload, user) => {
   );
   const sisa =
     Math.round((Number(bonDb.bon_nominal) - totalTerpakai) * 100) / 100;
+  // PD: belanja tidak boleh melebihi dana yang diserahkan. Kelebihan diproses
+  // lewat Penyerahan Dana Belanja baru, supaya laci tidak minus.
+  if (modePd && sisa < -0.005)
+    throw badRequest(
+      `Total terpakai ${fmtRp(totalTerpakai)} melebihi dana yang diserahkan ${fmtRp(bonDb.bon_nominal)}. Kelebihan diproses lewat Penyerahan Dana Belanja baru.`,
+    );
   const perluBukuSisa =
+    !modePd &&
     !!bonDb.tgl_buat &&
     bonDb.tgl_buat >= TANGGAL_MULAI_SISA &&
     sisa >= AMBANG_SISA;
@@ -569,6 +606,17 @@ const saveData = async (payload, user) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    // Kunci baris PUM (InnoDB) supaya Batal PD dan Penyelesaian tidak jalan bersamaan.
+    // Kunci di tkasbon tidak berarti karena tabelnya MyISAM.
+    const [[pumKunci]] = await conn.query(
+      `SELECT pum_status FROM tpengajuan_uang_muka_hdr
+       WHERE pum_bon_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (modePd && (!pumKunci || pumKunci.pum_status === "BATAL"))
+      throw badRequest(
+        "Penyerahan Dana Belanja sudah dibatalkan atau tidak ditemukan.",
+      );
 
     let noBkk = no_bkk_lama || "";
 
@@ -709,8 +757,8 @@ const saveData = async (payload, user) => {
       const [[maxPjh]] = await conn.query(
         `
         SELECT IFNULL(MAX(x.nomer),0) AS max_val FROM (
-          SELECT d.pmd_nourut AS nomer FROM ga2.tpermintaan_dtl d
-          LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor=d.pmd_pmt_nomor
+          SELECT d.pmd_nourut AS nomer FROM ga2new.tpermintaan_dtl d
+          LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor=d.pmd_pmt_nomor
           WHERE h.pmt_pjh_nomor=?
           UNION
           SELECT bond_nourut AS nomer FROM finance.tkasbonitem WHERE bond_nomor=?
@@ -736,7 +784,7 @@ const saveData = async (payload, user) => {
 
       if (d.pmt && d.pmt !== cpmt) {
         await conn.query(
-          `UPDATE ga2.tpermintaan_hdr SET pmt_approval=1, pmt_buyed=1 WHERE pmt_nomor=?`,
+          `UPDATE ga2new.tpermintaan_hdr SET pmt_approval=1, pmt_buyed=1 WHERE pmt_nomor=?`,
           [d.pmt],
         );
         cpmt = d.pmt;
@@ -754,7 +802,7 @@ const saveData = async (payload, user) => {
           // ⬅ DIUBAH: tambah pmd_status_finance = NULL — item ditolak/
           // tidak diverifikasi di Penyelesaian, bersihkan status yang
           // sebelumnya MENUNGGU_PEMBELIAN.
-          let sql = `UPDATE ga2.tpermintaan_dtl SET
+          let sql = `UPDATE ga2new.tpermintaan_dtl SET
             pmd_qty_buyed=0, pmd_nilai_buyed=0, pmd_verified_buyed=0, pmd_bon=?,
             pmd_status_finance=NULL`;
           if (d.gabrg === 0)
@@ -769,7 +817,7 @@ const saveData = async (payload, user) => {
           // frontend, supaya selalu konsisten dengan nilai qty minta asli
           // di database. qty_riil <= 0 dianggap belum dipenuhi (jaga-jaga
           // data korup/kosong, bukan dianggap "otomatis penuh").
-          let sql = `UPDATE ga2.tpermintaan_dtl SET
+          let sql = `UPDATE ga2new.tpermintaan_dtl SET
             pmd_qty_buyed=?, pmd_nilai_buyed=?, pmd_verified_buyed=?,
             pmd_rek_kode=?, pmd_cc_kode=?, pmd_dcnama=?, pmd_bon=?,
             pmd_tanggal_approved=CURDATE(), pmd_user_approved=?,
@@ -1173,13 +1221,13 @@ const saveData = async (payload, user) => {
     );
     for (const pmt of affectedPmt) {
       const [[sisa]] = await conn.query(
-        `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
+        `SELECT COUNT(*) AS cnt FROM ga2new.tpermintaan_dtl
      WHERE pmd_pmt_nomor = ? AND pmd_bon = '' AND pmd_tanggal_reject IS NULL`,
         [pmt],
       );
       if (Number(sisa.cnt) === 0) {
         await conn.query(
-          `UPDATE ga2.tpermintaan_hdr SET pmt_close = 1 WHERE pmt_nomor = ?`,
+          `UPDATE ga2new.tpermintaan_hdr SET pmt_close = 1 WHERE pmt_nomor = ?`,
           [pmt],
         );
       }
@@ -1210,8 +1258,8 @@ const getListPengajuanGA = async (cabang) => {
   let sql = `
     SELECT j.pjh_nomor AS nomor, DATE_FORMAT(j.pjh_tanggal,"%d-%m-%Y") AS tanggal,
       j.pjh_ke, j.pjh_user_kode AS nama, j.pjh_keterangan AS keterangan
-    FROM ga2.tpengajuan2_hdr j
-    LEFT JOIN ga2.tpermintaan_hdr h ON h.pmt_pjh_nomor = j.pjh_nomor
+    FROM ga2new.tpengajuan2_hdr j
+    LEFT JOIN ga2new.tpermintaan_hdr h ON h.pmt_pjh_nomor = j.pjh_nomor
     WHERE (
         j.pjh_nonga = 0
         OR UPPER(j.pjh_jenis_permintaan) = 'PERMINTAAN BARANG'
@@ -1221,7 +1269,7 @@ const getListPengajuanGA = async (cabang) => {
         OR (
           h.pmt_close = 0
           AND EXISTS (
-            SELECT 1 FROM ga2.tpermintaan_dtl d
+            SELECT 1 FROM ga2new.tpermintaan_dtl d
             WHERE d.pmd_pmt_nomor = h.pmt_nomor AND d.pmd_bon = ''
           )
         )
@@ -1249,9 +1297,9 @@ const getDetailPengajuanGA = async (pjhNomor) => {
       d.pmd_status_finance,
       j.pjh_jenis_permintaan, j.pjh_nonga,
       d.pmd_cc_kode, d.pmd_dcnama, cc.cc_nama
-    FROM ga2.tpermintaan_dtl d
-    INNER JOIN ga2.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
-    LEFT JOIN ga2.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
+    FROM ga2new.tpermintaan_dtl d
+    INNER JOIN ga2new.tpermintaan_hdr h ON h.pmt_nomor = d.pmd_pmt_nomor
+    LEFT JOIN ga2new.tpengajuan2_hdr j ON j.pjh_nomor = h.pmt_pjh_nomor
     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.pmd_cc_kode
     WHERE h.pmt_pjh_nomor = ?
       AND d.pmd_bon = ''
@@ -1309,7 +1357,7 @@ const updateStatusFinance = async (pmtNomor, nourut, status) => {
   if (!validStatus.includes(status)) throw new Error("Status tidak valid.");
 
   const [result] = await db.query(
-    `UPDATE ga2.tpermintaan_dtl SET pmd_status_finance = ?
+    `UPDATE ga2new.tpermintaan_dtl SET pmd_status_finance = ?
      WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
     [status, pmtNomor, nourut],
   );

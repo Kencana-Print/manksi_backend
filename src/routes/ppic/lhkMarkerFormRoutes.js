@@ -5,16 +5,8 @@ const {
   verifyToken,
   checkPermission,
 } = require("../../middleware/authMiddleware");
-const upload = require("../../middleware/uploadMiddleware");
 
 const MENU_ID = 179;
-
-router.post(
-  "/upload-gambar",
-  verifyToken,
-  upload.single("gambar"),
-  ctrl.uploadGambar,
-);
 
 router.get(
   "/lookup/search-spk",

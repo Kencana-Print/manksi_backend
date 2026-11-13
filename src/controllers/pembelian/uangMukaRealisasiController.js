@@ -1,5 +1,4 @@
 const svc = require("../../services/pembelian/uangMukaRealisasiService");
-const { getPrint } = require("../garmen/realisasiBarangFormController");
 
 const getAccountOptions = async (req, res) => {
   try {
@@ -64,6 +63,32 @@ const konfirmasiTerima = async (req, res) => {
   }
 };
 
+const getDetailPettyCash = async (req, res) => {
+  try {
+    res.json(await svc.getDetailPettyCash(req.params.nomor, req.user));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const saveRealisasiPettyCash = async (req, res) => {
+  try {
+    res.json(
+      await svc.saveRealisasiPettyCash(req.params.nomor, req.body, req.user),
+    );
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const konfirmasiTerimaPettyCash = async (req, res) => {
+  try {
+    res.json(await svc.konfirmasiTerimaPettyCash(req.params.nomor, req.user));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getSupplierOptions,
@@ -72,4 +97,7 @@ module.exports = {
   saveRealisasi,
   getPrintData,
   konfirmasiTerima,
+  getDetailPettyCash,
+  saveRealisasiPettyCash,
+  konfirmasiTerimaPettyCash,
 };

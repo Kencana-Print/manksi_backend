@@ -8,9 +8,15 @@ const PPN_EXPR = `IF(h.po_jenis = 4, d.pod_ppn, IF(h.po_status_ppn = 1, h.po_ppn
 
 const JENIS_PO_EXPR = `IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", IF(h.po_jenis = 5, "SPANDUK", "BAHAN"))))`;
 
+// Menu asal browse: mode=rekap → Rekap Belanja (hanya PO Lain-lain, jenis 4);
+// selain itu → PO Bahan (semua jenis kecuali Lain-lain).
+const adalahRekap = (query) =>
+  String(query?.mode || "").toLowerCase() === "rekap";
+
 // --- 1. GET BROWSE HEADER ---
 const getBrowse = async (query, canLihatSup = false) => {
   const { startDate, endDate, search } = query;
+  const rekap = adalahRekap(query);
 
   const dStart =
     startDate ||
@@ -34,6 +40,7 @@ const getBrowse = async (query, canLihatSup = false) => {
   let sql = `
     SELECT DISTINCT 
       h.po_nomor AS Nomor,
+      ${rekap ? "h.po_grup AS Grup," : ""}
       ${JENIS_PO_EXPR} AS JenisPO,
       h.po_greige AS PoGreige,
       IFNULL((SELECT CAST(GROUP_CONCAT(hh.po_nomor SEPARATOR ", ") AS CHAR) FROM tpo_hdr hh WHERE hh.po_greige = h.po_nomor), "") AS PoCelup,
@@ -91,14 +98,16 @@ const getBrowse = async (query, canLihatSup = false) => {
     LEFT JOIN tbahan b ON d.pod_bhn_kode = b.bhn_kode
     LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
     WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?
-      AND (h.po_jenis = 4 OR s.sup_kode IS NOT NULL)
+      AND ${rekap ? "h.po_jenis = 4" : "h.po_jenis <> 4 AND s.sup_kode IS NOT NULL"}
   `;
 
   const params = [dStart, dEnd];
 
   if (search) {
-    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    const like = `%${search}%`;
+    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?${rekap ? " OR h.po_grup LIKE ?" : ""})`;
+    params.push(like, like, like, like);
+    if (rekap) params.push(like);
   }
 
   sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC`;
@@ -354,6 +363,8 @@ const getAllDetail = async (
 ) => {
   const { startDate, endDate, search } = query;
 
+  const rekap = adalahRekap(query);
+
   const dStart = startDate || new Date().toISOString().substring(0, 10);
   const dEnd = endDate || new Date().toISOString().substring(0, 10);
 
@@ -368,6 +379,7 @@ const getAllDetail = async (
   let sql = `
     SELECT 
       h.po_nomor AS Nomor,
+      ${rekap ? "h.po_grup AS Grup," : ""}
       h.po_tanggal AS Tanggal,
       h.po_commitdate AS Comm_Delivery,
       h.po_mbb_nomor AS Permintaan,
@@ -398,13 +410,16 @@ const getAllDetail = async (
     LEFT JOIN tspk spk ON spk.spk_nomor = d.pod_spk_nomor
     LEFT JOIN tmemospk m ON m.MSPK_Nomor = d.pod_spk_nomor
     WHERE h.po_tanggal >= ? AND h.po_tanggal <= ?
+      AND ${rekap ? "h.po_jenis = 4" : "h.po_jenis <> 4"}
   `;
 
   const params = [dStart, dEnd];
 
   if (search) {
-    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    const like = `%${search}%`;
+    sql += ` AND (b.bhn_name LIKE ? OR h.po_keterangan LIKE ? OR h.po_mbb_nomor LIKE ? OR d.pod_mppb_nomor LIKE ?${rekap ? " OR h.po_grup LIKE ?" : ""})`;
+    params.push(like, like, like, like);
+    if (rekap) params.push(like);
   }
 
   sql += ` ORDER BY h.date_create DESC, h.po_nomor DESC, d.pod_nourut ASC`;

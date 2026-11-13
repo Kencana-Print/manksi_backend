@@ -5,6 +5,8 @@ const {
   TANGGAL_MULAI_KLAIM,
   kasByRek,
   semuaSupKlaim,
+  rekPerJenis,
+  JENIS_VIA_PJT,
 } = require("../piutang/klaimKasKecilKonstanta");
 
 // ── Account header (rekening bank — rek_rekening<>"" AND rek_jp=0) ────
@@ -687,9 +689,13 @@ const getRekapPanggilRows = async (rekapNomor) => {
 // Bila supplier punya lebih dari satu rekening, dipakai yang pertama
 // berdasarkan nama bank.
 const ambilSupplierKlaim = async (conn, rekKode) => {
-  const kode = kasByRek(rekKode)?.sup;
-  if (!kode)
+  const kas = kasByRek(rekKode);
+  if (!kas)
     throw new Error(`Supplier tujuan untuk kas ${rekKode} belum diatur.`);
+  // Klaim PC (laci Finance) tidak punya supplier; bentuk objek dijaga sama
+  // supaya konsumen (lookup BBK, validasiKlaimBbk) tidak perlu cabang khusus.
+  if (!kas.sup)
+    return { kode: "", nama: "", bank: "", rekening: "", atasnama: "" };
   const [rows] = await conn.query(
     `SELECT a.sup_kode AS kode, a.sup_nama AS nama,
             b.supd_bank AS bank, b.supd_rekening AS rekening,
@@ -699,10 +705,10 @@ const ambilSupplierKlaim = async (conn, rekKode) => {
      WHERE a.sup_aktif = 'Y' AND a.sup_kode = ?
      ORDER BY b.supd_bank
      LIMIT 1`,
-    [kode],
+    [kas.sup],
   );
   if (!rows.length)
-    throw new Error(`Supplier ${kode} tidak ditemukan atau tidak aktif.`);
+    throw new Error(`Supplier ${kas.sup} tidak ditemukan atau tidak aktif.`);
   const r = rows[0];
   return {
     kode: r.kode,
@@ -720,7 +726,19 @@ const getKlaimKasKecilOptions = async (
   search = "",
   excludeNomor = "",
   bbkNomor = "",
+  untuk = "PJT",
 ) => {
+  // PJT hanya boleh memanggil klaim jenis JENIS_VIA_PJT (P04); BBK memanggil semua.
+  const rekBoleh =
+    untuk === "BBK" ? null : JENIS_VIA_PJT.flatMap((j) => rekPerJenis(j));
+  const params = [bbkNomor || ""];
+  let filterRek = "";
+  if (rekBoleh) {
+    filterRek = "AND h.kkh_rek_tujuan IN (?)";
+    params.push(rekBoleh);
+  }
+  params.push(`%${search}%`, `%${search}%`);
+
   const [rows] = await db.query(
     `SELECT h.kkh_nomor AS nomor,
         DATE_FORMAT(h.kkh_tanggal,'%Y-%m-%d') AS tanggal,
@@ -733,10 +751,11 @@ const getKlaimKasKecilOptions = async (
      FROM tklaim_kaskecil_hdr h
      WHERE h.kkh_status = 'AKTIF'
        AND (h.kkh_bbk_nomor = '' OR h.kkh_bbk_nomor = ?)
+       ${filterRek}
        AND (h.kkh_nomor LIKE ? OR h.kkh_cabang LIKE ?)
      ORDER BY h.kkh_nomor DESC
      LIMIT 200`,
-    [bbkNomor || "", `%${search}%`, `%${search}%`],
+    params,
   );
   if (!rows.length) return [];
 
@@ -784,12 +803,21 @@ const pastikanNominalBkk = async (conn, klaim) => {
   // Klaim yang seluruhnya baris manual tidak punya BKK untuk dicocokkan
   if (!dtl.length) return;
 
+  // Klaim PC: kredit BKK ada di laci pemilik PD, bukan di kas tujuan klaim,
+  // jadi akun tidak ikut difilter (baris kredit nourut 0 hanya satu per BKK).
+  const kas = kasByRek(klaim.kkh_rek_tujuan);
+  const filterAkun = kas?.jenis === "PC" ? "" : "AND jurd_rek_kode = ?";
+  const params =
+    kas?.jenis === "PC"
+      ? [dtl.map((d) => d.kkd_jur_no)]
+      : [klaim.kkh_rek_tujuan, dtl.map((d) => d.kkd_jur_no)];
+
   const [jur] = await conn.query(
     `SELECT jurd_jur_no AS bkk, SUM(jurd_kredit) AS nominal
      FROM finance.tjurnalitem
-     WHERE jurd_nourut = 0 AND jurd_rek_kode = ? AND jurd_jur_no IN (?)
+     WHERE jurd_nourut = 0 ${filterAkun} AND jurd_jur_no IN (?)
      GROUP BY jurd_jur_no`,
-    [klaim.kkh_rek_tujuan, dtl.map((d) => d.kkd_jur_no)],
+    params,
   );
   const peta = new Map(jur.map((r) => [r.bkk, Number(r.nominal)]));
   const beda = dtl
@@ -845,6 +873,10 @@ const validasiKlaimKasKecil = async (conn, detail, rekKode, nomorPjt) => {
     if (k.kkh_bbk_nomor)
       throw new Error(
         `Klaim ${k.kkh_nomor} sudah dibayar lewat BBK ${k.kkh_bbk_nomor}.`,
+      );
+    if (!JENIS_VIA_PJT.includes(kasByRek(k.kkh_rek_tujuan)?.jenis))
+      throw new Error(
+        `Klaim ${k.kkh_nomor} (pusat) dibayar lewat BBK, tidak lewat Pengajuan Transfer.`,
       );
     if (dipakaiDiForm.has(k.kkh_nomor))
       throw new Error(`Klaim ${k.kkh_nomor} diinput lebih dari satu kali.`);

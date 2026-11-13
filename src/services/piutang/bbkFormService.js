@@ -327,7 +327,7 @@ const pasangTautanVoucher = async (
 
 // ── Klaim Kas Kecil dipanggil ke BBK ──────────────────────────────────
 const getKlaimBbkOptions = (search = "", bbkNomor = "") =>
-  getKlaimKasKecilOptions(search, "", bbkNomor);
+  getKlaimKasKecilOptions(search, "", bbkNomor, "BBK");
 
 // Dipanggil SEBELUM penulisan apa pun ke tabel Finance (MyISAM, tanpa rollback).
 // Mengunci baris klaim (InnoDB) sampai commit/rollback, memvalidasi, lalu

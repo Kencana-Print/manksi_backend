@@ -1,5 +1,5 @@
 const db = require("../../config/database");
-const { hitungStatus } = require("./permintaanMarkerService");
+const { hitungStatus, getStatusBahan } = require("./permintaanMarkerService");
 
 const bad = (message, statusCode = 400) =>
   Object.assign(new Error(message), { statusCode });
@@ -113,6 +113,26 @@ const statusSaatIni = async (
   };
 };
 
+const pesanBahanBelumReady = (belum) => {
+  const daftar = belum
+    .slice(0, 3)
+    .map((b) => `${b.kode}${b.nama ? ` (${b.nama})` : ""}`)
+    .join(", ");
+  const sisa = belum.length > 3 ? ` dan ${belum.length - 3} bahan lain` : "";
+  return `Semua bahan belum ready di gudang: ${daftar}${sisa}. Pekerjaan belum bisa diambil.`;
+};
+
+// Boleh diambil / diambil alih bila minimal satu bahan sudah ready
+const pastikanAdaBahanReady = async (conn, nomor) => {
+  const sb = (await getStatusBahan(conn, [nomor])).get(nomor);
+  if (!sb || sb.statusBahan !== "BELUM") return;
+  throw bad(
+    sb.jmlBahan === 0
+      ? "Permintaan tidak punya bahan."
+      : pesanBahanBelumReady(sb.belumReady),
+  );
+};
+
 const bahanDiMkb = async (conn, spk, kode) => {
   const nomor = await nomorMkbSpk(conn, spk);
   const [rows] = await conn.query(
@@ -140,11 +160,42 @@ const spkPunyaMkb = async (conn, spk) => {
 };
 
 // ─── Validasi + normalisasi detail ────────────────────────
+// Satu permintaan = satu SPK. Bila SPK sudah punya MKB, bahan wajib ada di MKB itu.
+// Mengembalikan [spk, kode, setting] per baris.
 const normalisasiDetail = async (conn, detail) => {
   const rows = (Array.isArray(detail) ? detail : []).filter(
-    (d) => d && (d.spkNomor || d.kode || Number(d.jml)),
+    (d) => d && (d.spkNomor || d.kode),
   );
   if (!rows.length) throw bad("Minimal satu baris detail.");
+
+  const spkSet = new Set(rows.map((d) => String(d.spkNomor || "").trim()));
+  if (spkSet.has("")) {
+    const no = rows.findIndex((d) => !String(d.spkNomor || "").trim()) + 1;
+    throw bad(`Baris ${no}: SPK wajib diisi.`);
+  }
+  if (spkSet.size > 1) {
+    throw bad("Satu permintaan hanya boleh untuk satu SPK.");
+  }
+  const spk = [...spkSet][0];
+
+  // Sama dengan lookup spk-map: SPK PPIC dan MAP, ber-CMO, divisi 3/4/6
+  const [spkRows] = await conn.query(
+    `SELECT 1 FROM tspk
+      WHERE spk_nomor = ? AND spk_aktif = 'Y' AND spk_cmo <> ''
+        AND spk_divisi IN (3,4,6)
+     UNION ALL
+     SELECT 1 FROM tmemospk
+      WHERE mspk_nomor = ? AND mspk_cmo <> ''
+        AND mspk_divisi IN (3,4,6)
+     LIMIT 1`,
+    [spk, spk],
+  );
+  if (!spkRows.length) {
+    throw bad(`SPK ${spk} tidak ditemukan atau bukan divisi 3, 4, 6.`);
+  }
+
+  // SPK tanpa MKB: bahan bebas dipilih manual
+  const punyaMkb = await spkPunyaMkb(conn, spk);
 
   const seen = new Set();
   const hasil = [];
@@ -152,52 +203,24 @@ const normalisasiDetail = async (conn, detail) => {
   for (let i = 0; i < rows.length; i++) {
     const d = rows[i];
     const no = i + 1;
-    const spk = String(d.spkNomor || "").trim();
     const kode = String(d.kode || "").trim();
     const setting = String(d.setting || "")
       .trim()
       .replace(/\s+/g, " ");
-    if (setting.length > 50) {
-      throw Object.assign(
-        new Error(`Setting baris ${i + 1} maksimal 50 karakter`),
-        { statusCode: 400 },
-      );
-    }
-    const alasan = String(d.alasan || "").trim();
-    const jml = Number(d.jml);
 
-    if (!spk) throw bad(`Baris ${no}: SPK wajib diisi.`);
+    if (setting.length > 50) {
+      throw bad(`Setting baris ${no} maksimal 50 karakter`);
+    }
     if (!kode) throw bad(`Baris ${no}: kode bahan wajib diisi.`);
     if (!setting) throw bad(`Baris ${no}: setting wajib diisi.`);
-    if (!Number.isInteger(jml) || jml <= 0) {
-      throw bad(`Baris ${no}: jumlah marker harus bilangan bulat di atas 0.`);
-    }
 
-    const key = `${spk}|${kode}|${setting}`;
+    const key = `${kode}|${setting}`;
     if (seen.has(key)) {
       throw bad(
-        `Baris ${no}: SPK, bahan, dan setting yang sama sudah ada di baris lain.`,
+        `Baris ${no}: bahan dan setting yang sama sudah ada di baris lain.`,
       );
     }
     seen.add(key);
-
-    // Sama dengan lookup spk-map: SPK PPIC dan MAP, ber-CMO, divisi 3/4/6
-    const [spkRows] = await conn.query(
-      `SELECT 1 FROM tspk
-        WHERE spk_nomor = ? AND spk_aktif = 'Y' AND spk_cmo <> ''
-          AND spk_divisi IN (3,4,6)
-       UNION ALL
-       SELECT 1 FROM tmemospk
-        WHERE mspk_nomor = ? AND mspk_cmo <> ''
-          AND mspk_divisi IN (3,4,6)
-       LIMIT 1`,
-      [spk, spk],
-    );
-    if (!spkRows.length) {
-      throw bad(
-        `Baris ${no}: SPK ${spk} tidak ditemukan atau bukan divisi 3, 4, 6.`,
-      );
-    }
 
     const [bhnRows] = await conn.query(
       `SELECT 1 FROM tbahan WHERE Bhn_kode = ?`,
@@ -205,23 +228,11 @@ const normalisasiDetail = async (conn, detail) => {
     );
     if (!bhnRows.length) throw bad(`Baris ${no}: bahan ${kode} tidak ada.`);
 
-    // Alasan wajib hanya bila SPK punya MKB tetapi bahan ini tidak ada di dalamnya.
-    // SPK tanpa MKB: bahan bebas dipilih manual, tanpa alasan.
-    const punyaMkb = await spkPunyaMkb(conn, spk);
-    const luarMkb = punyaMkb && !(await bahanDiMkb(conn, spk, kode));
-    if (luarMkb && !alasan) {
-      throw bad(
-        `Baris ${no}: bahan ${kode} tidak ada di MKB SPK ${spk}, alasan wajib diisi.`,
-      );
+    if (punyaMkb && !(await bahanDiMkb(conn, spk, kode))) {
+      throw bad(`Baris ${no}: bahan ${kode} tidak ada di MKB SPK ${spk}.`);
     }
 
-    hasil.push([
-      spk,
-      kode,
-      setting,
-      jml,
-      luarMkb ? alasan.slice(0, 255) : null,
-    ]);
+    hasil.push([spk, kode, setting]);
   }
   return hasil;
 };
@@ -311,7 +322,7 @@ const saveData = async (payload, user) => {
 
     await conn.query(
       `INSERT INTO tpermintaan_marker_detail
-         (pm2_pm_nomor, pm2_spk_nomor, pm2_bhn_kode, pm2_setting, pm2_jml, pm2_alasan)
+         (pm2_pm_nomor, pm2_spk_nomor, pm2_bhn_kode, pm2_setting)
        VALUES ?`,
       [detailRows.map((r) => [nomor, ...r])],
     );
@@ -511,6 +522,7 @@ const ambil = async (nomor, user) =>
     if (hdr.pm_pic) {
       throw bad(`Permintaan sudah dipegang ${hdr.pm_pic}.`);
     }
+    await pastikanAdaBahanReady(conn, nomor);
     await conn.query(
       `UPDATE tpermintaan_marker
           SET pm_pic = ?, pm_pic_asal = NULL, pm_tgl_ambil = NOW(),
@@ -537,6 +549,7 @@ const ambilAlih = async (nomor, user) =>
     if (hdr.pm_pic === kode) {
       throw bad("Permintaan ini sudah dipegang kamu.");
     }
+    await pastikanAdaBahanReady(conn, nomor);
     await conn.query(
       `UPDATE tpermintaan_marker
           SET pm_pic_asal = pm_pic, pm_pic = ?, pm_tgl_ambil = NOW(),

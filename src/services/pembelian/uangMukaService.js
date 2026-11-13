@@ -56,6 +56,13 @@ const sqlPumAktif = (sumber, kolomNomor, kolomItem = null) => `
     AND (ph.pum_status = 'DIAJUKAN'
          OR (ph.pum_status = 'REALISASI' AND pd.pumd_status_acc = 'ACC'))`;
 
+// PUM yang masih memegang ITEM: sedang diajukan, atau Penyerahan Dana Belanja (PD)
+// yang sudah diserahkan tetapi bon-nya belum diselesaikan.
+const SQL_PUM_PEGANG_ITEM = `(ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+  OR (ph.pum_jenis = 'PD' AND ph.pum_status = 'REALISASI'
+      AND EXISTS (SELECT 1 FROM finance.tkasbon kb
+                  WHERE kb.bon_nomor = ph.pum_bon_nomor AND kb.bon_selesai = 0)))`;
+
 // ── OUTSTANDING (browse) ──
 const getOutstanding = async ({
   search = "",
@@ -65,6 +72,7 @@ const getOutstanding = async ({
   limit = 25,
   cabang,
   semuaCabang = false,
+  tanpaBkkP04 = false,
 }) => {
   const searchParam = `%${search}%`;
 
@@ -118,7 +126,7 @@ const getOutstanding = async ({
               SELECT 1 FROM tpengajuan_uang_muka_dtl pd
               JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
               WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = a.pjh_nomor
-                AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+                AND pd.pumd_item_nourut = d.pjd_nourut AND ${SQL_PUM_PEGANG_ITEM}
             )
         ), 0) AS Nominal
       FROM ga2.tpengajuan2_hdr a
@@ -138,7 +146,7 @@ const getOutstanding = async ({
             SELECT 1 FROM tpengajuan_uang_muka_dtl pd
             JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
             WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = a.pjh_nomor
-              AND pd.pumd_item_nourut = d.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+              AND pd.pumd_item_nourut = d.pjd_nourut AND ${SQL_PUM_PEGANG_ITEM}
           )
       )
       ${startDate && endDate ? "AND a.pjh_tanggal BETWEEN ? AND ?" : ""}
@@ -189,7 +197,7 @@ const getOutstanding = async ({
               SELECT 1 FROM tpengajuan_uang_muka_dtl pd
               JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
               WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
-                AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+                AND pd.pumd_item_nourut = d.mbd_nourut AND ${SQL_PUM_PEGANG_ITEM}
             )
         ), 0) AS Nominal
       FROM tgarmenmintabeli_hdr h
@@ -216,7 +224,7 @@ const getOutstanding = async ({
             SELECT 1 FROM tpengajuan_uang_muka_dtl pd
             JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
             WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = h.mb_nomor
-              AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+              AND pd.pumd_item_nourut = d.mbd_nourut AND ${SQL_PUM_PEGANG_ITEM}
           )
       )
       ${startDate && endDate ? "AND h.mb_tanggal BETWEEN ? AND ?" : ""}
@@ -321,8 +329,9 @@ const getOutstanding = async ({
     sumber.push(
       { sql: sqlInsentif, params: paramsHeader },
       { sql: sqlPoLain, params: paramsHeader },
-      { sql: sqlBkkP04, params: paramsHeader },
     );
+    // Petty Cash (973) tidak memakai BKK kas kecil P04
+    if (!tanpaBkkP04) sumber.push({ sql: sqlBkkP04, params: paramsHeader });
   }
   const unionSql = sumber.map((s) => s.sql).join(" UNION ALL ");
   const baseParams = sumber.flatMap((s) => s.params);
@@ -370,7 +379,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            SELECT 1 FROM tpengajuan_uang_muka_dtl pd
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
            WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = ?
-           AND pd.pumd_item_nourut = a.pjd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+           AND pd.pumd_item_nourut = a.pjd_nourut AND ${SQL_PUM_PEGANG_ITEM}
          )
        ORDER BY a.pjd_nourut`,
       [nomorHeader, nomorHeader],
@@ -431,7 +440,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
            SELECT 1 FROM tpengajuan_uang_muka_dtl pd
            JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
            WHERE pd.pumd_sumber = 'PERMINTAAN_PEMBELIAN' AND pd.pumd_nomor_sumber = ?
-             AND pd.pumd_item_nourut = d.mbd_nourut AND ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI')
+             AND pd.pumd_item_nourut = d.mbd_nourut AND ${SQL_PUM_PEGANG_ITEM}
          )
        ORDER BY d.mbd_nourut`,
       [nomorHeader, nomorHeader],
@@ -501,10 +510,12 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
 };
 
 // ── HISTORY (browse) ──
-const getHistory = async ({ startDate, endDate, cabang }) => {
+const getHistory = async ({ startDate, endDate, cabang, jenisPd = false }) => {
   let sql = `
     SELECT
       b.bon_nomor        AS Nomor,
+      (SELECT ph.pum_nomor FROM tpengajuan_uang_muka_hdr ph
+        WHERE ph.pum_bon_nomor = b.bon_nomor LIMIT 1) AS PumNomor,
       DATE_FORMAT(b.bon_tanggal, '%Y-%m-%d') AS Tanggal,
       IF(b.bon_jenis=0,'KAS','BANK') AS Jenis,
       r.rek_nama         AS NamaAccount,
@@ -525,6 +536,9 @@ const getHistory = async ({ startDate, endDate, cabang }) => {
     FROM finance.tkasbon b
     LEFT JOIN finance.trekening r ON r.rek_kode = b.bon_rek_kode
     WHERE 1=1
+      AND ${jenisPd ? "" : "NOT "}EXISTS (
+        SELECT 1 FROM tpengajuan_uang_muka_hdr ph
+        WHERE ph.pum_bon_nomor = b.bon_nomor AND ph.pum_jenis = 'PD')
   `;
   const params = [];
 
@@ -550,6 +564,17 @@ const deleteHistory = async (nomor) => {
     [nomor],
   );
   if (!bon) throw new Error("Data tidak ditemukan.");
+  // Penyerahan Dana Belanja (PD) tidak boleh dihapus dari menu Uang Muka;
+  // pembatalannya lewat menu Petty Cash.
+  const [[pd]] = await db.query(
+    `SELECT pum_nomor FROM tpengajuan_uang_muka_hdr
+     WHERE pum_bon_nomor = ? AND pum_jenis = 'PD' LIMIT 1`,
+    [nomor],
+  );
+  if (pd)
+    throw new Error(
+      "Penyerahan Dana Belanja dibatalkan lewat menu Petty Cash.",
+    );
   if (Number(bon.bon_selesai) !== 0)
     throw new Error("Sudah ada penyelesaian. Tidak bisa dihapus.");
   if (bon.bon_transfer_jur_no && bon.bon_konfirmasi_tgl)

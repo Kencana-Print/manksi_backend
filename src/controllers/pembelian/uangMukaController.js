@@ -25,6 +25,27 @@ const getOutstanding = async (req, res) => {
   }
 };
 
+// Tab Outstanding Petty Cash (menu 973): hanya item HO-/P01, tanpa BKK kas kecil P04.
+// Mode ditentukan route (bukan parameter klien) supaya tidak bisa dilewati.
+const getOutstandingPetty = async (req, res) => {
+  try {
+    const { search = "", startDate, endDate, page = 1, limit = 25 } = req.query;
+    const result = await uangMukaService.getOutstanding({
+      search,
+      startDate,
+      endDate,
+      page: Number(page),
+      limit: Number(limit),
+      cabang: req.user?.cabang || "",
+      semuaCabang: false,
+      tanpaBkkP04: true,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 const getOutstandingDetail = async (req, res) => {
   try {
     const { sumber, nomor } = req.query;
@@ -49,6 +70,20 @@ const getHistory = async (req, res) => {
   }
 };
 
+const getHistoryPetty = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const rows = await uangMukaService.getHistory({
+      startDate,
+      endDate,
+      jenisPd: true,
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 const deleteHistory = async (req, res) => {
   try {
     await uangMukaService.deleteHistory(req.params.nomor);
@@ -60,7 +95,9 @@ const deleteHistory = async (req, res) => {
 
 module.exports = {
   getOutstanding,
+  getOutstandingPetty,
   getOutstandingDetail,
   getHistory,
+  getHistoryPetty,
   deleteHistory,
 };

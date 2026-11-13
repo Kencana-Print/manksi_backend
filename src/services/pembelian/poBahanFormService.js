@@ -378,6 +378,10 @@ const saveData = async (payload, userKode) => {
     const jpo = Number(header.po_jenis); // 0: PO Bahan lama, 1: Greige, 2: Celup, 3: Bahan, 4: Lain-lain, 5: Spanduk
     if (![0, 1, 2, 3, 4, JENIS_SPANDUK].includes(jpo))
       throw new Error("Jenis PO tidak valid.");
+    if (jpo === 4)
+      throw new Error(
+        "PO Lain-lain sekarang dibuat dan diubah lewat menu Rekap Belanja.",
+      );
     const isLainLain = jpo === 4;
     const isSpanduk = jpo === JENIS_SPANDUK;
     const bhnMap = new Map(); // master bahan hasil validasi (PO Spanduk)
@@ -1157,4 +1161,5 @@ module.exports = {
   getDetailMkbForPo,
   getSupplierByKode,
   getMbbOutstanding,
+  cekNomorSpk,
 };

@@ -47,7 +47,8 @@ const getSupplierOptions = async (search = "") => {
 const getPumOptions = async (cabang) => {
   let sql = `SELECT pum_nomor AS nomor, DATE_FORMAT(pum_tanggal,'%Y-%m-%d') AS tanggal,
                     pum_cabang AS cabang, pum_keterangan AS keterangan, pum_total_nominal AS totalNominal
-             FROM tpengajuan_uang_muka_hdr WHERE pum_status = 'DIAJUKAN'`;
+             FROM tpengajuan_uang_muka_hdr
+             WHERE pum_status = 'DIAJUKAN' AND pum_jenis = 'UM'`;
   const params = [];
   if (cabang && cabang !== "HO" && cabang !== "HO-") {
     sql += ` AND pum_cabang = ?`;
@@ -61,12 +62,16 @@ const getPumOptions = async (cabang) => {
 // ── Load detail PUM untuk form realisasi ──
 const getDetailForRealisasi = async (pumNomor) => {
   const [[hdr]] = await db.query(
-    `SELECT pum_nomor, pum_status, DATE_FORMAT(pum_tanggal,'%Y-%m-%d') AS pum_tanggal,
+    `SELECT pum_nomor, pum_status, pum_jenis, DATE_FORMAT(pum_tanggal,'%Y-%m-%d') AS pum_tanggal,
             pum_keterangan, pum_nota, pum_cabang, pum_total_nominal, pum_user_create
      FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ?`,
     [pumNomor],
   );
   if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
+  if (hdr.pum_jenis !== "UM")
+    throw new Error(
+      "Dokumen ini bukan Uang Muka. Realisasi lewat menu Petty Cash.",
+    );
   if (hdr.pum_status !== "DIAJUKAN")
     throw new Error(`Pengajuan ini sudah berstatus ${hdr.pum_status}.`);
 
@@ -163,6 +168,8 @@ const KODE_LACI_FINANCE = "A-111118";
 // Tolak realisasi bila saldo laci Finance kurang. Matikan (false) bila saldo
 // awal cut-off bermasalah dan memblokir operasional.
 const CEK_SALDO_LACI_SUMBER = true;
+// Batas saldo laci Purchasing untuk Petty Cash yang diajukan dan direalisasi sendiri
+const BATAS_SALDO_LACI_MANDIRI = 20000000;
 
 const fmtRupiah = (n) =>
   new Intl.NumberFormat("id-ID").format(Math.round(Number(n) || 0));
@@ -206,18 +213,30 @@ const getParentAccount = async (conn, kode) => {
 // terhapus oleh pembersihan jurnal otomatis di Penyelesaian.
 const buatTransferLaci = async (
   conn,
-  { tanggal, bonNomor, pumNomor, asal, tujuan, total, penerima, userKode },
+  {
+    tanggal,
+    bonNomor,
+    pumNomor,
+    asal,
+    tujuan,
+    total,
+    penerima,
+    userKode,
+    label = "UANG MUKA",
+  },
 ) => {
   if (CEK_SALDO_LACI_SUMBER) {
     const saldo = await hitungSaldoAkun(asal, conn);
     if (saldo + 0.005 < total)
       throw new Error(
-        `Saldo laci Finance (${asal}) tidak cukup: tersedia ${fmtRupiah(saldo)}, dibutuhkan ${fmtRupiah(total)}.`,
+        `Saldo account sumber (${asal}) tidak cukup: tersedia ${fmtRupiah(saldo)}, dibutuhkan ${fmtRupiah(total)}.`,
       );
   }
 
   const noBkk = await getMaxNomorBkk("P01", "BKK", conn);
-  const uraian = `TRANSFER KAS UANG MUKA ${pumNomor} (${bonNomor})`;
+  const uraian = bonNomor
+    ? `TRANSFER KAS ${label} ${pumNomor} (${bonNomor})`
+    : `TRANSFER KAS ${label} ${pumNomor}`;
 
   await conn.query(
     `INSERT INTO finance.tjurnal
@@ -225,7 +244,15 @@ const buatTransferLaci = async (
         jur_penerima, jur_keterangan, jur_rek_kode, jur_otomatis,
         date_create, user_create)
      VALUES (?, ?, 'BKK', 'P01', ?, ?, ?, ?, 0, NOW(), ?)`,
-    [noBkk, tanggal, bonNomor, penerima || "", uraian, asal, userKode],
+    [
+      noBkk,
+      tanggal,
+      bonNomor || pumNomor,
+      penerima || "",
+      uraian,
+      asal,
+      userKode,
+    ],
   );
   await conn.query(
     `INSERT INTO finance.tjurnalitem
@@ -285,20 +312,29 @@ const getMaxNomor = async (cabang, conn) => {
 
 // ── Simpan realisasi ──
 // payload.detail: [{ pumd_id, sumber, nomor_sumber, pmt_nomor, status_acc, nominal_acc, kdsup, supplier, bank, rekening, atasnama }]
-const saveRealisasi = async (pumNomor, payload, user) => {
+const saveRealisasi = async (pumNomor, payload, user, opsi = {}) => {
   const { jenis, rek_kode, tanggal, nota, penerima, keterangan, detail } =
     payload;
   if (!detail || !detail.length) throw new Error("Detail realisasi kosong.");
 
-  const conn = await db.getConnection();
+  const eksternal = !!opsi.conn;
+  const conn = opsi.conn || (await db.getConnection());
   try {
-    await conn.beginTransaction();
+    if (!eksternal) await conn.beginTransaction();
 
     const [[hdr]] = await conn.query(
-      `SELECT pum_status, pum_cabang, pum_user_create FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
+      `SELECT pum_status, pum_jenis, pum_cabang, pum_user_create, pum_laci_tujuan FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
       [pumNomor],
     );
     if (!hdr) throw new Error("Pengajuan Uang Muka tidak ditemukan.");
+    if (opsi.penyerahan) {
+      if (hdr.pum_jenis !== "PD")
+        throw new Error("Dokumen ini bukan Penyerahan Dana Belanja.");
+    } else if (hdr.pum_jenis !== "UM") {
+      throw new Error(
+        "Dokumen ini bukan Uang Muka. Realisasi lewat menu Petty Cash.",
+      );
+    }
     if (hdr.pum_status !== "DIAJUKAN")
       throw new Error(`Pengajuan ini sudah berstatus ${hdr.pum_status}.`);
 
@@ -306,6 +342,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
     const isFullTolak = accRows.length === 0;
 
     if (
+      !opsi.penyerahan &&
       !isFullTolak &&
       ["HO-", "P01"].includes(String(hdr.pum_cabang).trim().toUpperCase())
     ) {
@@ -336,10 +373,17 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       const jenisInt = jenis === "KAS" ? 0 : 1;
       const cabangDok = cabangDokumen(hdr.pum_cabang);
 
-      // Setelah cut-off: kas otomatis ke laci milik pembuat PUM (jika punya).
+      // Penyerahan: kas = laci pembuat, tanpa transfer (dana sudah di laci).
       const modeLaci =
-        jenis === "KAS" && cabangDok === "P01" && isSetelahCutoff(tanggal);
-      if (modeLaci) {
+        !opsi.penyerahan &&
+        jenis === "KAS" &&
+        cabangDok === "P01" &&
+        isSetelahCutoff(tanggal);
+      if (opsi.penyerahan) {
+        if (!hdr.pum_laci_tujuan)
+          throw new Error("Laci penyerah belum tercatat pada dokumen ini.");
+        rekFinal = hdr.pum_laci_tujuan;
+      } else if (modeLaci) {
         const laci = await cariLaciPemilik(conn, hdr.pum_user_create);
         if (laci) rekFinal = laci;
       }
@@ -400,11 +444,11 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       if (d.sumber === "PENGAJUAN_DANA" && d.pmt_nomor) {
         if (isAcc) {
           await conn.query(
-            `UPDATE ga2.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
+            `UPDATE ga2new.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
           await conn.query(
-            `UPDATE ga2.tpermintaan_dtl SET
+            `UPDATE ga2new.tpermintaan_dtl SET
                pmd_tanggal_approved = CURDATE(), pmd_user_approved = ?, pmd_dana_approved = ?,
                pmd_tanggal_reject = NULL, pmd_kode_reject = 0, pmd_user_reject = '', pmd_bon = ?,
                pmd_status_finance = 'MENUNGGU_PEMBELIAN'
@@ -419,7 +463,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
           );
         } else {
           await conn.query(
-            `UPDATE ga2.tpermintaan_dtl SET
+            `UPDATE ga2new.tpermintaan_dtl SET
                pmd_tanggal_reject = CURDATE(), pmd_kode_reject = 2, pmd_user_reject = ?,
                pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0, pmd_bon = ?,
                pmd_status_finance = NULL
@@ -429,13 +473,13 @@ const saveRealisasi = async (pumNomor, payload, user) => {
         }
 
         const [[remaining]] = await conn.query(
-          `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
+          `SELECT COUNT(*) AS cnt FROM ga2new.tpermintaan_dtl
            WHERE pmd_pmt_nomor = ? AND pmd_tanggal_approved IS NULL AND pmd_tanggal_reject IS NULL`,
           [d.pmt_nomor],
         );
         if (Number(remaining.cnt) === 0) {
           await conn.query(
-            `UPDATE ga2.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
+            `UPDATE ga2new.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
         }
@@ -576,7 +620,7 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       );
     }
 
-    await conn.commit();
+    if (!eksternal) await conn.commit();
     return {
       bonNomor,
       totalNominal,
@@ -585,10 +629,10 @@ const saveRealisasi = async (pumNomor, payload, user) => {
       transferJurNo,
     };
   } catch (e) {
-    await conn.rollback();
+    if (!eksternal) await conn.rollback();
     throw e;
   } finally {
-    conn.release();
+    if (!eksternal) conn.release();
   }
 };
 
@@ -701,6 +745,261 @@ const konfirmasiTerima = async (bonNomor, user) => {
   return { bonNomor };
 };
 
+// ═══════════════ PETTY CASH ═══════════════
+
+// Sumber dana yang boleh dipilih perealisasi: laci Finance, atau laci miliknya sendiri.
+const daftarSumberPettyCash = async (conn, userKode) => {
+  const [rows] = await conn.query(
+    `SELECT rek_kode AS kode, rek_nama AS nama
+     FROM finance.trekening
+     WHERE LEFT(rek_kode,5)='A-111' AND rek_cabang = 'P01' AND rek_isaktif = 0${sqlTanpaInduk()}
+       AND (rek_kode = ? OR (? <> '' AND rek_pemilik = ?))
+     ORDER BY rek_kode`,
+    [KODE_LACI_FINANCE, userKode || "", userKode || ""],
+  );
+  return rows;
+};
+
+const adalahPembuat = (hdr, user) =>
+  String(hdr.pum_user_create || "").toUpperCase() ===
+  String(user.kode || "").toUpperCase();
+
+const getDetailPettyCash = async (pumNomor, user) => {
+  const [[hdr]] = await db.query(
+    `SELECT pum_nomor, pum_status, pum_jenis, DATE_FORMAT(pum_tanggal,'%Y-%m-%d') AS pum_tanggal,
+            pum_keterangan, pum_cabang, pum_total_nominal, pum_user_create, pum_laci_tujuan
+     FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ?`,
+    [pumNomor],
+  );
+  if (!hdr) throw new Error("Petty Cash tidak ditemukan.");
+  if (hdr.pum_jenis !== "PC") throw new Error("Dokumen ini bukan Petty Cash.");
+  if (hdr.pum_status !== "DIAJUKAN")
+    throw new Error(`Pengajuan ini sudah berstatus ${hdr.pum_status}.`);
+
+  const [[laci]] = await db.query(
+    `SELECT rek_nama FROM finance.trekening WHERE rek_kode = ?`,
+    [hdr.pum_laci_tujuan],
+  );
+  const saldoLaci = hdr.pum_laci_tujuan
+    ? await hitungSaldoAkun(hdr.pum_laci_tujuan, db)
+    : 0;
+  const [[v]] = await db.query(
+    `SELECT val_aksi FROM tpengajuan_uang_muka_validasi
+     WHERE val_pum_nomor = ? ORDER BY val_id DESC LIMIT 1`,
+    [pumNomor],
+  );
+  const sumberOptions = await daftarSumberPettyCash(db, user.kode);
+
+  return {
+    pum_nomor: hdr.pum_nomor,
+    pum_tanggal: hdr.pum_tanggal,
+    pum_keterangan: hdr.pum_keterangan,
+    pum_cabang: hdr.pum_cabang,
+    pum_user_create: hdr.pum_user_create,
+    nominal: Number(hdr.pum_total_nominal) || 0,
+    mandiri: adalahPembuat(hdr, user),
+    boleh_realisasi:
+      adalahPembuat(hdr, user) ||
+      (await bolehRealisasiOrangLain(db, user.kode)),
+    validasi_ok: !!v && v.val_aksi === "VALIDASI",
+    laci_kode: hdr.pum_laci_tujuan || "",
+    laci_nama: laci?.rek_nama || "",
+    saldo_laci: saldoLaci,
+    batas: BATAS_SALDO_LACI_MANDIRI,
+    sumber_options: sumberOptions,
+    sumber_default: sumberOptions.some((o) => o.kode === KODE_LACI_FINANCE)
+      ? KODE_LACI_FINANCE
+      : sumberOptions[0]?.kode || "",
+    cutoff: TANGGAL_MULAI_BLOKIR_INDUK,
+  };
+};
+
+// Hanya bagian ini yang boleh memproses (realisasi/tolak) Petty Cash milik user lain.
+// Daftar ini meniru daftar validator; sesuaikan bila kebijakan berbeda.
+const BAGIAN_REALISASI_PC = ["FINANCE", "EDP", "AUDIT", "ADMIN", "DEVELOPER"];
+
+const bolehRealisasiOrangLain = async (conn, userKode) => {
+  const [[u]] = await conn.query(
+    `SELECT user_bagian FROM tuser WHERE user_kode = ?`,
+    [userKode],
+  );
+  return BAGIAN_REALISASI_PC.includes(
+    String(u?.user_bagian || "")
+      .trim()
+      .toUpperCase(),
+  );
+};
+
+// payload: { aksi: 'REALISASI' | 'TOLAK', sumber, tanggal, alasan }
+const saveRealisasiPettyCash = async (pumNomor, payload, user) => {
+  const { aksi, sumber, tanggal } = payload;
+  if (!["REALISASI", "TOLAK"].includes(aksi))
+    throw new Error("Aksi tidak valid.");
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[hdr]] = await conn.query(
+      `SELECT pum_status, pum_jenis, pum_user_create, pum_total_nominal, pum_laci_tujuan
+       FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
+      [pumNomor],
+    );
+    if (!hdr) throw new Error("Petty Cash tidak ditemukan.");
+    if (hdr.pum_jenis !== "PC")
+      throw new Error("Dokumen ini bukan Petty Cash.");
+    if (hdr.pum_status !== "DIAJUKAN")
+      throw new Error(`Pengajuan ini sudah berstatus ${hdr.pum_status}.`);
+
+    const mandiri = adalahPembuat(hdr, user);
+    if (!mandiri && !(await bolehRealisasiOrangLain(conn, user.kode)))
+      throw new Error(
+        "Hanya Finance/EDP/Audit yang dapat memproses Petty Cash milik user lain.",
+      );
+
+    if (aksi === "TOLAK") {
+      const alasan = String(payload.alasan || "").trim();
+      if (alasan.length < 3)
+        throw new Error("Alasan penolakan wajib diisi (min. 3 karakter).");
+      await conn.query(
+        `UPDATE tpengajuan_uang_muka_hdr SET
+           pum_status = 'DITOLAK', pum_alasan_tolak = ?,
+           pum_user_realisasi = ?, pum_date_realisasi = NOW()
+         WHERE pum_nomor = ?`,
+        [alasan.slice(0, 255), user.kode, pumNomor],
+      );
+      await conn.commit();
+      return {
+        nomor: pumNomor,
+        status: "DITOLAK",
+        totalNominal: 0,
+        transferJurNo: "",
+      };
+    }
+
+    if (!tanggal) throw new Error("Tanggal wajib diisi.");
+    if (!isSetelahCutoff(tanggal))
+      throw new Error(
+        "Petty Cash hanya dapat direalisasi pada tanggal setelah cut-off laci.",
+      );
+    const tujuan = hdr.pum_laci_tujuan;
+    if (!tujuan)
+      throw new Error("Laci tujuan belum tercatat pada pengajuan ini.");
+    if (!sumber) throw new Error("Account sumber dana wajib dipilih.");
+    if (sumber === tujuan)
+      throw new Error("Account sumber tidak boleh sama dengan laci tujuan.");
+
+    const opsi = await daftarSumberPettyCash(conn, user.kode);
+    if (!opsi.some((o) => o.kode === sumber))
+      throw new Error("Account sumber dana tidak diizinkan untuk Anda.");
+
+    const total = Number(hdr.pum_total_nominal) || 0;
+    if (total <= 0) throw new Error("Nominal pengajuan tidak valid.");
+
+    if (!mandiri) {
+      const [[v]] = await conn.query(
+        `SELECT val_aksi FROM tpengajuan_uang_muka_validasi
+         WHERE val_pum_nomor = ? AND val_jenis = 'PENGAJUAN'
+         ORDER BY val_id DESC LIMIT 1`,
+        [pumNomor],
+      );
+      if (!v || v.val_aksi !== "VALIDASI")
+        throw new Error(
+          "Petty Cash harus divalidasi dulu sebelum direalisasi oleh user lain.",
+        );
+    }
+
+    await assertBolehPosting([sumber, tujuan], tanggal, conn);
+
+    // Kunci kedua account (urut kode) supaya cek batas/saldo tidak balapan
+    await conn.query(
+      `SELECT rek_kode FROM finance.trekening
+       WHERE rek_kode IN (?, ?) ORDER BY rek_kode FOR UPDATE`,
+      [sumber, tujuan],
+    );
+
+    if (mandiri) {
+      const saldoTujuan = await hitungSaldoAkun(tujuan, conn);
+      if (saldoTujuan + total > BATAS_SALDO_LACI_MANDIRI + 0.005)
+        throw new Error(
+          `Saldo laci ${tujuan} (${fmtRupiah(saldoTujuan)}) + ${fmtRupiah(total)} melebihi batas realisasi mandiri ${fmtRupiah(BATAS_SALDO_LACI_MANDIRI)}. Realisasi harus oleh user lain setelah divalidasi.`,
+        );
+    }
+
+    const transferJurNo = await buatTransferLaci(conn, {
+      tanggal,
+      bonNomor: "",
+      pumNomor,
+      asal: sumber,
+      tujuan,
+      total,
+      penerima: hdr.pum_user_create,
+      userKode: user.kode,
+      label: "PETTY CASH",
+    });
+
+    await conn.query(
+      `UPDATE tpengajuan_uang_muka_hdr SET
+         pum_status = 'REALISASI', pum_laci_asal = ?, pum_transfer_jur_no = ?,
+         pum_user_realisasi = ?, pum_date_realisasi = NOW()
+       WHERE pum_nomor = ?`,
+      [sumber, transferJurNo, user.kode, pumNomor],
+    );
+
+    await conn.commit();
+    return {
+      nomor: pumNomor,
+      status: "REALISASI",
+      totalNominal: total,
+      transferJurNo,
+      laciTujuan: tujuan,
+      laciAsal: sumber,
+    };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
+// Pemilik laci tujuan mengonfirmasi dana Petty Cash sudah diterima.
+// Hanya berlaku bila perealisasi bukan pembuat; hanya pemilik laci.
+const konfirmasiTerimaPettyCash = async (pumNomor, user) => {
+  const [[h]] = await db.query(
+    `SELECT h.pum_jenis, h.pum_status, h.pum_transfer_jur_no, h.pum_konfirmasi_tgl,
+            h.pum_user_create, h.pum_user_realisasi, r.rek_pemilik
+     FROM tpengajuan_uang_muka_hdr h
+     LEFT JOIN finance.trekening r ON r.rek_kode = h.pum_laci_tujuan
+     WHERE h.pum_nomor = ?`,
+    [pumNomor],
+  );
+  if (!h || h.pum_jenis !== "PC")
+    throw new Error("Petty Cash tidak ditemukan.");
+  if (h.pum_status !== "REALISASI" || !h.pum_transfer_jur_no)
+    throw new Error("Petty Cash ini belum direalisasi.");
+  if (
+    String(h.pum_user_realisasi || "").toUpperCase() ===
+    String(h.pum_user_create || "").toUpperCase()
+  )
+    throw new Error("Realisasi mandiri tidak perlu konfirmasi terima.");
+  if (h.pum_konfirmasi_tgl) throw new Error("Sudah dikonfirmasi.");
+  if (
+    String(h.rek_pemilik || "").toUpperCase() !==
+    String(user.kode || "").toUpperCase()
+  )
+    throw new Error("Hanya pemilik laci penerima yang dapat mengonfirmasi.");
+
+  const [res] = await db.query(
+    `UPDATE tpengajuan_uang_muka_hdr
+     SET pum_konfirmasi_tgl = NOW(), pum_konfirmasi_user = ?
+     WHERE pum_nomor = ? AND pum_konfirmasi_tgl IS NULL`,
+    [user.kode, pumNomor],
+  );
+  if (res.affectedRows === 0) throw new Error("Sudah dikonfirmasi.");
+  return { nomor: pumNomor };
+};
+
 module.exports = {
   getAccountOptions,
   getSupplierOptions,
@@ -709,4 +1008,9 @@ module.exports = {
   saveRealisasi,
   getPrintData,
   konfirmasiTerima,
+  cariLaciPemilik,
+  BATAS_SALDO_LACI_MANDIRI,
+  getDetailPettyCash,
+  saveRealisasiPettyCash,
+  konfirmasiTerimaPettyCash,
 };
