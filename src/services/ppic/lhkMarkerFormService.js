@@ -75,7 +75,7 @@ const hitungRasio = (noBlok, sizeList, rasioInput) => {
       r &&
       (Number(r.spreading) > 0 ||
         Number(r.pMarkerCm) > 0 ||
-        Object.values(r.qty || {}).some((v) => Number(v) > 0)),
+        Object.values(r.qty || {}).some((v) => Number(v ?? 0) !== 0)),
   );
   if (terisi.length === 0) {
     throw new Error(`${label}: minimal 1 rasio harus diisi.`);
@@ -118,17 +118,19 @@ const hitungRasio = (noBlok, sizeList, rasioInput) => {
     let adaQty = false;
     for (const s of sizeList) {
       const q = Number(qtyIn[s.size] ?? 0);
-      if (!Number.isInteger(q) || q < 0) {
+      if (!Number.isInteger(q)) {
         throw new Error(
-          `${label} rasio ${no}: qty size ${s.size} harus bilangan bulat >= 0.`,
+          `${label} rasio ${no}: qty size ${s.size} harus bilangan bulat.`,
         );
       }
       qty[s.size] = q;
-      if (q > 0) adaQty = true;
+      if (q !== 0) adaQty = true;
       sisaBerjalan[s.size] = bulat5(sisaBerjalan[s.size] - spreading * q);
     }
     if (!adaQty) {
-      throw new Error(`${label} rasio ${no}: isi qty minimal di satu size.`);
+      throw new Error(
+        `${label} rasio ${no}: isi qty (selain 0) minimal di satu size.`,
+      );
     }
 
     const cmBulat = Math.round(cm * 1000) / 1000;
@@ -410,28 +412,29 @@ const saveData = async (payload, user, isEdit) => {
 
     // Validasi tiap blok terhadap Permintaan Marker, lalu hitung rasio
     const sizeCache = new Map();
-    const kunciDipakai = new Set();
+    const kunciDipakai = new Map(); // kunci -> nomor blok pertama
     const rencana = [];
 
     for (let i = 0; i < blokInput.length; i++) {
       const r = blokInput[i];
       const noBlok = i + 1;
       const pm = String(r.pmNomor || "").trim();
+      const spk = String(r.spkNomor || "").trim();
       const kode = String(r.kode || "").trim();
       const setting = String(r.setting || "").trim();
-      if (!pm || !kode || !setting) {
+      if (!pm || !spk || !kode || !setting) {
         throw new Error(
-          `Blok ${noBlok}: permintaan, bahan dan setting wajib terisi.`,
+          `Blok ${noBlok}: permintaan, SPK, bahan dan setting wajib terisi.`,
         );
       }
 
-      const kunci = `${pm}|${kode}|${setting}`;
+      const kunci = `${pm}|${spk}|${kode}|${setting}`;
       if (kunciDipakai.has(kunci)) {
         throw new Error(
-          `Blok ${noBlok}: bahan ${kode} (${setting}) di ${pm} dobel.`,
+          `Blok ${noBlok}: bahan ${kode} (${setting}) untuk SPK ${spk} di ${pm} sama dengan Blok ${kunciDipakai.get(kunci)}.`,
         );
       }
-      kunciDipakai.add(kunci);
+      kunciDipakai.set(kunci, noBlok);
 
       const [[p]] = await conn.query(
         `SELECT pm_status_manual AS manual, pm_date_close AS closed,
@@ -457,26 +460,28 @@ const saveData = async (payload, user, isEdit) => {
 
       const [[det]] = await conn.query(
         `SELECT pm2_spk_nomor AS spk FROM tpermintaan_marker_detail
-          WHERE pm2_pm_nomor = ? AND pm2_bhn_kode = ? AND pm2_setting = ?
+          WHERE pm2_pm_nomor = ? AND pm2_spk_nomor = ?
+            AND pm2_bhn_kode = ? AND pm2_setting = ?
           LIMIT 1`,
-        [pm, kode, setting],
+        [pm, spk, kode, setting],
       );
       if (!det) {
         throw new Error(
-          `Blok ${noBlok}: bahan ${kode} (${setting}) tidak ada di Permintaan Marker ${pm}.`,
+          `Blok ${noBlok}: bahan ${kode} (${setting}) untuk SPK ${spk} tidak ada di Permintaan Marker ${pm}.`,
         );
       }
 
       const [dup] = await conn.query(
         `SELECT ldm_nomor FROM tlhkpola_marker_dtl
-          WHERE ldm_pm_nomor = ? AND ldm_bhn_kode = ? AND ldm_setting = ?
+          WHERE ldm_pm_nomor = ? AND ldm_spk_nomor = ?
+            AND ldm_bhn_kode = ? AND ldm_setting = ?
             AND ldm_nomor <> ?
           LIMIT 1`,
-        [pm, kode, setting, existingNomor || ""],
+        [pm, det.spk, kode, setting, existingNomor || ""],
       );
       if (dup.length > 0) {
         throw new Error(
-          `Bahan ${kode} (${setting}) di Permintaan Marker ${pm} sudah punya LHK ${dup[0].ldm_nomor}.`,
+          `Bahan ${kode} (${setting}) untuk SPK ${det.spk} di Permintaan Marker ${pm} sudah punya LHK ${dup[0].ldm_nomor}.`,
         );
       }
 
@@ -602,58 +607,6 @@ const saveData = async (payload, user, isEdit) => {
   } finally {
     conn.release();
   }
-};
-
-// ============================================================
-// UPLOAD GAMBAR PER BARIS (khusus tab marker)
-// ============================================================
-const uploadGambarDetail = async (tempFilePath, lhkNomor, tab, spkNomor) => {
-  if (!fs.existsSync(tempFilePath))
-    throw new Error("File sumber sementara tidak ditemukan.");
-  if (tab !== "marker") throw new Error("Tab tidak valid.");
-  const [sudahTerima] = await db.query(
-    `SELECT tt_nomor FROM tpermintaan_marker_tt
-      WHERE tt_lhk_nomor = ? AND tt_date_terima IS NOT NULL LIMIT 1`,
-    [lhkNomor],
-  );
-  if (sudahTerima.length > 0) {
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    throw new Error(
-      `LHK Marker ${lhkNomor} sudah divalidasi, gambar tidak bisa diubah.`,
-    );
-  }
-
-  const finalFileName = buildGambarFileName(lhkNomor, tab, spkNomor);
-  const folderPath = path.join(process.cwd(), "public", "images", "lhkpola");
-  if (!fs.existsSync(folderPath)) {
-    fs.mkdirSync(folderPath, { recursive: true });
-  }
-  const finalPath = path.join(folderPath, finalFileName);
-
-  try {
-    await sharp(tempFilePath)
-      .flatten({ background: { r: 255, g: 255, b: 255 } })
-      .toFormat("jpeg")
-      .jpeg({ quality: 80 })
-      .toFile(finalPath);
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-  } catch (error) {
-    if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-    throw new Error("Gagal memproses gambar ke format JPG.");
-  }
-
-  const [result] = await db.query(
-    `UPDATE tlhkpola_marker_dtl SET ldm_gambar = ?
-     WHERE ldm_nomor = ? AND ldm_spk_nomor = ?`,
-    [finalFileName, lhkNomor, spkNomor],
-  );
-  if (result.affectedRows === 0) {
-    throw new Error(
-      `Baris SPK ${spkNomor} tidak ditemukan di marker untuk LHK Marker ${lhkNomor}.`,
-    );
-  }
-
-  return finalFileName;
 };
 
 // ============================================================
