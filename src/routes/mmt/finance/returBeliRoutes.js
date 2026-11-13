@@ -8,6 +8,9 @@ const returController = require('../../../controllers/mmt/finance/returBeliContr
 // Endpoint untuk mendapatkan nomor otomatis baru
 router.get('/generate-nomor', returController.getNewNomor);
 
+// Endpoint scan barcode / SKU bahan
+router.get('/scan/:barcode', returController.scanItem);
+
 // Endpoint untuk mengambil daftar semua retur beli
 router.get('/', returController.getAllRetur);
 
