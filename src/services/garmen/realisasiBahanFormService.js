@@ -103,7 +103,14 @@ const getPermintaanInfo = async (nomorMinta, currentRealisasi = "", user) => {
   const header = rows[0];
 
   // VALIDASI APPROVAL GUDANG
-  if (header.min_apv === "N")
+  const PERLU_APV_GUDANG = ["GANTI BS", "GANTI HILANG", "TAMBAHAN"];
+  const perluApv = PERLU_APV_GUDANG.includes(
+    String(header.min_ket || "")
+      .trim()
+      .toUpperCase(),
+  );
+
+  if (perluApv && header.min_apv === "N")
     throw new Error("No. Permintaan tsb belum di Approve oleh Divisi Gudang.");
   if (header.min_apv === "TOLAK")
     throw new Error("No. Permintaan tsb ditolak oleh Divisi Gudang.");
