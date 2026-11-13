@@ -366,6 +366,10 @@ const laporanSpandukRekapMonitoringBySpkRoutes = require("./routes/laporan/spand
 const laporanSpandukRekapMonitoringByGudangRoutes = require("./routes/laporan/spanduk/rekapMonitoringByGudangRoutes");
 const laporanSpandukPemakaianBahanRoutes = require("./routes/laporan/spanduk/pemakaianBahanRoutes");
 const laporanSpandukKetercapaianKomitmenKirimRoutes = require("./routes/laporan/spanduk/ketercapaianKomitmenKirimRoutes");
+const laporanPersediaanSpandukRoutes = require("./routes/laporan/spanduk/laporanPersediaanRoutes");
+const kartuStokKainSpandukRoutes = require("./routes/laporan/spanduk/kartuStokKainRoutes");
+const kartuStokBahanPenolongSpandukRoutes = require("./routes/laporan/spanduk/kartuStokBahanPenolongRoutes");
+const laporanLpkBulananRoutes = require("./routes/laporan/spanduk/laporanLpkBulananRoutes");
 
 // Laporan Penjualan
 const penawaranVsSpkRoutes = require("./routes/laporan/penjualan/penawaranVsSpkRoutes");
@@ -1125,6 +1129,16 @@ app.use(
   "/api/laporan/spanduk/ketercapaian-komitmen-kirim",
   laporanSpandukKetercapaianKomitmenKirimRoutes,
 );
+app.use(
+  "/api/laporan/spanduk/laporan-persediaan",
+  laporanPersediaanSpandukRoutes,
+);
+app.use("/api/laporan/spanduk/kartu-stok-kain", kartuStokKainSpandukRoutes);
+app.use(
+  "/api/laporan/spanduk/kartu-stok-bahan-penolong",
+  kartuStokBahanPenolongSpandukRoutes,
+);
+app.use("/api/laporan/spanduk/laporan-lpk-bulanan", laporanLpkBulananRoutes);
 
 app.use("/api/laporan/penjualan/penawaran-vs-spk", penawaranVsSpkRoutes);
 app.use("/api/laporan/penjualan/realisasi-penawaran", realisasiPenawaranRoutes);

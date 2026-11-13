@@ -352,11 +352,19 @@ const getDetail = async (nomor) => {
     [nomor],
   );
 
+  // Spanduk PO yard: jumlah barcode sudah meter, label satuan mengikuti stok (MTR)
+  const kodeYardMeter = new Set(
+    mappedItems.filter((i) => i.yardmeter).map((i) => i.kode),
+  );
+  const barcodesLabel = barcodes.map((b) =>
+    kodeYardMeter.has(b.kode) ? { ...b, satuan: "MTR" } : b,
+  );
+
   return {
     header,
     items: mappedItems,
     poItems,
-    barcodes,
+    barcodes: barcodesLabel,
     qcLots,
     dariQc: qcLots.length > 0,
     statusNgedit,
