@@ -444,11 +444,11 @@ const saveRealisasi = async (pumNomor, payload, user, opsi = {}) => {
       if (d.sumber === "PENGAJUAN_DANA" && d.pmt_nomor) {
         if (isAcc) {
           await conn.query(
-            `UPDATE ga2new.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
+            `UPDATE ga2.tpermintaan_hdr SET pmt_approval = 1 WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
           await conn.query(
-            `UPDATE ga2new.tpermintaan_dtl SET
+            `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_approved = CURDATE(), pmd_user_approved = ?, pmd_dana_approved = ?,
                pmd_tanggal_reject = NULL, pmd_kode_reject = 0, pmd_user_reject = '', pmd_bon = ?,
                pmd_status_finance = 'MENUNGGU_PEMBELIAN'
@@ -463,7 +463,7 @@ const saveRealisasi = async (pumNomor, payload, user, opsi = {}) => {
           );
         } else {
           await conn.query(
-            `UPDATE ga2new.tpermintaan_dtl SET
+            `UPDATE ga2.tpermintaan_dtl SET
                pmd_tanggal_reject = CURDATE(), pmd_kode_reject = 2, pmd_user_reject = ?,
                pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0, pmd_bon = ?,
                pmd_status_finance = NULL
@@ -473,13 +473,13 @@ const saveRealisasi = async (pumNomor, payload, user, opsi = {}) => {
         }
 
         const [[remaining]] = await conn.query(
-          `SELECT COUNT(*) AS cnt FROM ga2new.tpermintaan_dtl
+          `SELECT COUNT(*) AS cnt FROM ga2.tpermintaan_dtl
            WHERE pmd_pmt_nomor = ? AND pmd_tanggal_approved IS NULL AND pmd_tanggal_reject IS NULL`,
           [d.pmt_nomor],
         );
         if (Number(remaining.cnt) === 0) {
           await conn.query(
-            `UPDATE ga2new.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
+            `UPDATE ga2.tpermintaan_hdr SET pmt_close = 1, pmt_tglclose = NOW() WHERE pmt_nomor = ?`,
             [d.pmt_nomor],
           );
         }
