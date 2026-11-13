@@ -96,10 +96,10 @@ const hitungRasio = (noBlok, sizeList, rasioInput) => {
     if (dipakai.has(no)) throw new Error(`${label}: rasio ${no} dobel.`);
     dipakai.add(no);
 
-    const spreading = Number(r.spreading);
-    if (!Number.isInteger(spreading) || spreading < 1) {
+    const spreading = Number(r.spreading ?? 0);
+    if (!Number.isInteger(spreading) || spreading < 0) {
       throw new Error(
-        `${label} rasio ${no}: spreading harus bilangan bulat > 0.`,
+        `${label} rasio ${no}: spreading harus bilangan bulat >= 0 (isi 0 bila tinggi gelar belum diketahui).`,
       );
     }
     const cm = Number(r.pMarkerCm);
