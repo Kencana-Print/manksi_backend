@@ -658,9 +658,14 @@ const saveData = async (payload, userKode) => {
       // Jumlah dikunci: harus sama dengan total qty lot QC per kode dan per baris PO
       for (const item of validItemsToInsert) {
         const harus = bulat2(usulan.qtyPerKode.get(item.kode) || 0);
-        if (Math.abs(Number(item.jumlah || 0) - harus) > 0.005) {
+        // Spanduk PO yard: qty QC dalam yard, jadi dibandingkan dengan yard
+        // (jumlah stok = meter dihitung server).
+        const dikirim = infoPo.get(item.kode)?.yard
+          ? Number(item.jumlahyard || 0)
+          : Number(item.jumlah || 0);
+        if (Math.abs(dikirim - harus) > 0.005) {
           throw new Error(
-            `Jumlah ${item.kode} harus ${harus} (total lot QC), bukan ${Number(item.jumlah || 0)}.`,
+            `Jumlah ${item.kode} harus ${harus} (total lot QC), bukan ${dikirim}.`,
           );
         }
       }
@@ -1012,7 +1017,7 @@ const muatLotQc = async (executor, daftarQc) => {
 };
 
 // Daftar QC yang siap dibuatkan BPB (untuk modal pencarian)
-const getQcSiap = async (poNomor = "") => {
+const getQcSiap = async (poNomor = "", lingkup = "SEMUA") => {
   const [rows] = await db.query(
     `SELECT h.qc_nomor AS nomor,
             DATE_FORMAT(h.qc_tgl_datang, "%Y-%m-%d") AS tanggal,
@@ -1036,6 +1041,8 @@ const getQcSiap = async (poNomor = "") => {
                             AND x.bql_lot = d.qcd_lot
      WHERE x.bql_id IS NULL
        AND (? = '' OR h.qc_po_nomor = ?)
+       ${lingkup === "SPANDUK" ? "AND ph.po_jenis = 5" : ""}
+       ${lingkup === "NON_SPANDUK" ? "AND ph.po_jenis <> 5" : ""}  
      GROUP BY h.qc_nomor, h.qc_tgl_datang, h.qc_po_nomor, h.qc_jenis_kain,
               h.qc_vendor_greige, h.qc_status,
               COALESCE(NULLIF(p.pod_sup_kode, ''), ph.po_sup_kode), sp.sup_nama
@@ -1190,6 +1197,8 @@ const pilihSettingInci = (master, inci) => {
 const evaluasiLot = (lot, master) => {
   const kodePo = String(lot.pod_bhn_kode || "");
   const hasil = { kodePo, kode: kodePo, masalah: [] };
+  // Kode spanduk (SB) tidak berstruktur jenis-warna-gramasi-setting: tidak pernah diganti
+  if (Number(lot.po_jenis) === JENIS_PO_SPANDUK) return hasil;
   if (kodePo.length < 9) return hasil;
 
   const label = `QC ${lot.qc_nomor} lot ${lot.qcd_lot}`;
@@ -1484,12 +1493,15 @@ const tarikDariQc = async (value) => {
       .filter((d) => kodeTetap.has(d.kode))
       .map((d) => {
         const jumlah = bulat2(usulan.qtyPerKode.get(d.kode) || 0);
+        // Spanduk PO yard: qty QC = yard; stok (jumlah) = meter
+        const meter = bulat2(jumlah * YARD_TO_METER);
         return {
           ...d,
           ...(hasil.get(d.kode) || {}),
           ...(spk.get(d.kode) || {}),
-          jumlah,
-          ...hitungYard(d.satuan, jumlah),
+          ...(d.yardmeter
+            ? { jumlah: meter, jumlahmeter: meter, jumlahyard: jumlah }
+            : { jumlah, ...hitungYard(d.satuan, jumlah) }),
         };
       }),
     kodeBaru,

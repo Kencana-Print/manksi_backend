@@ -1,5 +1,5 @@
 const qcBahanService = require("../../services/garmen/qcBahanService");
-const { bolehGudang, tolakHak } = require("./qcAkses");
+const { bolehGudang, tolakHak, lingkupQc } = require("./qcAkses");
 
 const browseData = async (req, res) => {
   try {
@@ -12,7 +12,12 @@ const browseData = async (req, res) => {
       });
     }
 
-    const data = await qcBahanService.getBrowse(startDate, endDate, status);
+    const data = await qcBahanService.getBrowse(
+      startDate,
+      endDate,
+      status,
+      lingkupQc(req.user),
+    );
 
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -40,6 +45,7 @@ const getBrowseAllDetail = async (req, res) => {
       startDate,
       endDate,
       status || "ALL",
+      lingkupQc(req.user),
     );
     res.json({ success: true, data });
   } catch (error) {

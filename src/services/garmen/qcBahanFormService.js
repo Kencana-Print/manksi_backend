@@ -10,6 +10,19 @@ const num = (v) => {
 };
 const r2 = (n) => Math.round(n * 100) / 100;
 
+const JENIS_PO_SPANDUK = 5;
+const LOT_SPANDUK = "1"; // spanduk tanpa lot: satu lot internal
+
+const labelJenisPo = (j) =>
+  ({ 1: "GREIGE", 2: "CELUP", 4: "LAIN-LAIN", 5: "SPANDUK" })[Number(j)] ||
+  "BAHAN";
+
+// Spanduk: acuan konstruksi = nama bahan. Garmen: jenis bahan, lalu nama kain.
+const namaJenisKain = (line) =>
+  Number(line.po_jenis) === JENIS_PO_SPANDUK
+    ? line.nama_kain || line.nama_jenis || ""
+    : line.nama_jenis || line.nama_kain || "";
+
 // "165-170" -> {165,170}; "170" -> {170,170}; "-", kosong, teks tanpa angka -> {0,0}.
 // cmKeInci: angka ber-"CM" dikonversi ke inci (untuk setting).
 const parseSpec = (txt, { cmKeInci = false } = {}) => {
@@ -55,7 +68,7 @@ const bacaSpec = (line) => {
 const getParam = async (conn) => {
   const [rows] = await conn.query(
     `SELECT qcm_kode, qcm_nilai FROM tqc_bahan_param
-     WHERE qcm_kode IN ('TOLERANSI_GRAMASI','TOLERANSI_SETTING','PERSEN_CEK_KAOSAN','PERSEN_CEK_CORPORATE','PERSEN_CEK_KATUN','WARNA_BATAS_NILAI3','WARNA_BATAS_NILAI2')`,
+     WHERE qcm_kode IN ('TOLERANSI_GRAMASI','TOLERANSI_SETTING','PERSEN_CEK_KAOSAN','PERSEN_CEK_CORPORATE','PERSEN_CEK_KATUN','WARNA_BATAS_NILAI3','WARNA_BATAS_NILAI2','PERSEN_CEK_SPANDUK')`,
   );
   const m = {};
   rows.forEach((r) => {
@@ -67,6 +80,7 @@ const getParam = async (conn) => {
     persenKaosan: m.PERSEN_CEK_KAOSAN ?? 50,
     persenCorporate: m.PERSEN_CEK_CORPORATE ?? 20,
     persenKatun: m.PERSEN_CEK_KATUN ?? 30,
+    persenSpanduk: m.PERSEN_CEK_SPANDUK ?? 10,
     warnaBatas3: m.WARNA_BATAS_NILAI3 ?? 1.5,
     warnaBatas2: m.WARNA_BATAS_NILAI2 ?? 2,
   };
@@ -110,6 +124,12 @@ const getJenisCek = async (conn, bhnKode, p) => {
   }
   return { jenis: "CORPORATE", persen: p.persenCorporate };
 };
+
+// Spanduk (PO jenis 5): persen sampel dari tqc_bahan_param, bukan dari jenis bahan
+const tentukanJenisCek = (conn, line, p) =>
+  Number(line.po_jenis) === JENIS_PO_SPANDUK
+    ? { jenis: "SPANDUK", persen: p.persenSpanduk }
+    : getJenisCek(conn, line.pod_bhn_kode, p);
 
 // Dibulatkan ke atas, minimal 1 roll
 const hitungRollCek = (roll, persen) =>
@@ -224,6 +244,55 @@ const evalRoll = (rl, spec, p) => {
   };
 };
 
+// Roll spanduk: konstruksi, handfeel, kerataan, lebar (OK/NO) + panjang actual (yard).
+// Panjang actual wajib diisi tetapi belum dinilai (toleransi belum ditetapkan).
+const evalRollSpanduk = (rl) => {
+  const h = rl.hasil || {};
+  const ko = okNo(h.konstruksi);
+  const hf = okNo(h.handfeel);
+  const kr = okNo(h.kerataan);
+  const lb = okNo(h.lebar);
+  const panjang = num(rl.panjang_aktual);
+
+  const kurang = [];
+  if (!OK_NO.includes(ko)) kurang.push("konstruksi");
+  if (!OK_NO.includes(hf)) kurang.push("handfeel");
+  if (!OK_NO.includes(kr)) kurang.push("kerataan");
+  if (!OK_NO.includes(lb)) kurang.push("lebar");
+  if (!(panjang > 0)) kurang.push("panjang actual");
+  const terisi = kurang.length === 0;
+
+  const nilai = terisi
+    ? Math.min(
+        ko === "OK" ? 3 : 1,
+        hf === "OK" ? 3 : 2,
+        kr === "OK" ? 3 : 1,
+        lb === "OK" ? 3 : 1,
+      )
+    : 0;
+
+  return {
+    atas: 0,
+    bawah: 0,
+    st: 0,
+    terisi,
+    kurang,
+    nilai,
+    sesuai: nilai === 3,
+    hf,
+    bw: "",
+    sh: "",
+    kl: "",
+    ko,
+    kr,
+    lb,
+    panjang,
+    warnaTxt: "",
+    gramasiTxt: "-",
+    settingTxt: "-",
+  };
+};
+
 // Semua roll bernilai 3 -> 3; semua bernilai 1 -> 1; selain itu 2; belum ada roll lengkap -> 0
 const hitungNilaiLot = (rollsEval) => {
   const dicek = rollsEval.filter((x) => x.terisi);
@@ -292,6 +361,7 @@ const loadPoLine = async (conn, poNomor, nourut) => {
       IFNULL(NULLIF(d.pod_namaext, ''), b.Bhn_Name) AS nama_kain,
       IFNULL(j.bj_nama, '') AS nama_jenis,
       IFNULL(w.bw_nama, '') AS nama_warna,
+      IFNULL(b.bhn_konstruksi, '') AS konstruksi,
       d.pod_gramasia, d.pod_setting, d.pod_roll, d.pod_Jumlah, d.pod_status
     FROM tpo_hdr h
     INNER JOIN tpo_dtl d ON d.pod_po_nomor = h.po_nomor
@@ -326,7 +396,7 @@ const generateNomor = async (conn, tgl) => {
 };
 
 // --- LOOKUP PO (dipakai modal pilih PO saat membuat QC) ---
-const lookupPo = async (query) => {
+const lookupPo = async (query, lingkup = "SEMUA") => {
   const now = new Date();
   const dStart =
     query.startDate ||
@@ -347,7 +417,7 @@ const lookupPo = async (query) => {
     `
     SELECT
       h.po_nomor AS PO,
-      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", "BAHAN"))) AS JenisPO,
+      IF(h.po_jenis = 1, "GREIGE", IF(h.po_jenis = 2, "CELUP", IF(h.po_jenis = 4, "LAIN-LAIN", IF(h.po_jenis = 5, "SPANDUK", "BAHAN")))) AS JenisPO,
       DATE_FORMAT(h.po_tanggal, "%Y-%m-%d") AS TanggalPO,
       s.sup_nama AS Supplier,
       d.pod_nourut AS Nourut,
@@ -366,6 +436,8 @@ const lookupPo = async (query) => {
     WHERE h.po_tanggal >= ? AND h.po_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
       AND h.po_close <> 9
       AND d.pod_status <> 2
+      ${lingkup === "SPANDUK" ? "AND h.po_jenis = 5" : ""}
+      ${lingkup === "NON_SPANDUK" ? "AND h.po_jenis <> 5" : ""}
       ${searchSql}
     ORDER BY h.po_tanggal DESC, h.po_nomor DESC, d.pod_nourut ASC
     LIMIT 200
@@ -405,7 +477,7 @@ const getPoSource = async (poNomor, nourut) => {
     const vendor = await resolveVendor(conn, line);
     const p = await getParam(conn);
     const spec = bacaSpec(line);
-    const { jenis, persen } = await getJenisCek(conn, line.pod_bhn_kode, p);
+    const { jenis, persen } = await tentukanJenisCek(conn, line, p);
     const qtyPo = Number(line.pod_Jumlah) || 0;
     const sisa = await hitungSisaPo(
       conn,
@@ -421,17 +493,10 @@ const getPoSource = async (poNomor, nourut) => {
         qc_pod_nourut: line.pod_nourut,
         qc_vendor_greige: vendor.greige,
         qc_vendor_celup: vendor.celup,
-        qc_jenis_kain: line.nama_jenis || line.nama_kain || "",
+        qc_jenis_kain: namaJenisKain(line),
         qc_jenis_cek: jenis,
         qc_persen_cek: persen,
-        jenis_po:
-          Number(line.po_jenis) === 1
-            ? "GREIGE"
-            : Number(line.po_jenis) === 2
-              ? "CELUP"
-              : Number(line.po_jenis) === 4
-                ? "LAIN-LAIN"
-                : "BAHAN",
+        jenis_po: labelJenisPo(line.po_jenis),
       },
       po: {
         qty: qtyPo,
@@ -446,6 +511,7 @@ const getPoSource = async (poNomor, nourut) => {
         setting_max: spec.sMax,
         spec_terbaca: spec.terbaca,
         warna: line.nama_warna || line.nama_kain || "",
+        konstruksi: line.konstruksi || "",
       },
       toleransi: {
         gramasi: p.tolGramasi,
@@ -518,7 +584,11 @@ const getDetail = async (nomor) => {
         bowing: x.qcr_h_bowing,
         shrinkage: x.qcr_h_shrinkage,
         kelunturan: x.qcr_h_kelunturan,
+        konstruksi: x.qcr_h_konstruksi,
+        kerataan: x.qcr_h_kerataan,
+        lebar: x.qcr_h_lebar,
       },
+      panjang_aktual: Number(x.qcr_panjang_aktual) || 0,
     });
   });
 
@@ -537,8 +607,13 @@ const getDetail = async (nomor) => {
   const conn = await db.getConnection();
   try {
     const [po] = await conn.query(
-      `SELECT pod_Jumlah, pod_roll, pod_bhn_satuan, pod_gramasia, pod_setting
-       FROM tpo_dtl WHERE pod_po_nomor = ? AND pod_nourut = ?`,
+      `SELECT d.pod_Jumlah, d.pod_roll, d.pod_bhn_satuan, d.pod_gramasia,
+              d.pod_setting, h.po_jenis,
+              IFNULL(b.bhn_konstruksi, '') AS konstruksi
+       FROM tpo_dtl d
+       INNER JOIN tpo_hdr h ON h.po_nomor = d.pod_po_nomor
+       LEFT JOIN tbahan b ON b.bhn_kode = d.pod_bhn_kode
+       WHERE d.pod_po_nomor = ? AND d.pod_nourut = ?`,
       [hdr[0].qc_po_nomor, hdr[0].qc_pod_nourut],
     );
     const p = await getParam(conn);
@@ -558,6 +633,7 @@ const getDetail = async (nomor) => {
         qc_qty_datang: Number(hdr[0].qc_qty_datang),
         qc_jml_lot: Number(hdr[0].qc_jml_lot),
         qc_persen_cek: Number(hdr[0].qc_persen_cek),
+        jenis_po: po[0] ? labelJenisPo(po[0].po_jenis) : "",
       },
       dtl: dtl.map((d) => ({
         nourut: d.nourut,
@@ -590,6 +666,7 @@ const getDetail = async (nomor) => {
             setting_min: spec.sMin,
             setting_max: spec.sMax,
             spec_terbaca: spec.terbaca,
+            konstruksi: po[0].konstruksi || "",
           }
         : null,
       pengesah,
@@ -804,9 +881,13 @@ const saveData = async (payload, userKode) => {
     const line = await loadPoLine(conn, poNomor, podNourut);
     const p = await getParam(conn);
     const spec = bacaSpec(line);
-    let { jenis: jenisCek, persen: persenCek } = await getJenisCek(
+    const spanduk = Number(line.po_jenis) === JENIS_PO_SPANDUK;
+    if (spanduk && inputRows.length !== 1) {
+      throw new Error("QC Bahan Spanduk hanya memakai satu lot.");
+    }
+    let { jenis: jenisCek, persen: persenCek } = await tentukanJenisCek(
       conn,
-      line.pod_bhn_kode,
+      line,
       p,
     );
     if (isEdit && persenTersimpan > 0) {
@@ -836,7 +917,12 @@ const saveData = async (payload, userKode) => {
     }
     let totalKg = 0;
 
-    const rows = inputRows.map((r, i) => {
+    // Spanduk: satu lot internal, qty lot = qty kedatangan, tanpa nama warna
+    const lotRows = spanduk
+      ? [{ ...inputRows[0], lot: LOT_SPANDUK, qty_kg: qtyDatang, warna: "" }]
+      : inputRows;
+
+    const rows = lotRows.map((r, i) => {
       const lot = String(r.lot).trim();
       const kg = num(r.qty_kg);
       const roll = Math.floor(num(r.qty_roll));
@@ -850,7 +936,7 @@ const saveData = async (payload, userKode) => {
         nourut: j + 1,
         noRoll: String(x.no_roll || "").trim(),
         qty: num(x.qty),
-        ev: evalRoll(x, spec, p),
+        ev: spanduk ? evalRollSpanduk(x) : evalRoll(x, spec, p),
         catatan: String(x.catatan || "").trim(),
         hasil: x.hasil || {},
       }));
@@ -906,7 +992,9 @@ const saveData = async (payload, userKode) => {
       if (submit && nilai === 3) {
         keputusan = "LANJUT";
         tahapLog = "SISTEM";
-        catatanLog = "Otomatis: semua roll yang dicek sesuai spesifikasi PO.";
+        catatanLog = spanduk
+          ? "Otomatis: semua roll yang dicek OK."
+          : "Otomatis: semua roll yang dicek sesuai spesifikasi PO.";
       } else if (submit && alasanLanjut !== undefined) {
         if (nilai !== 2) {
           throw new Error(
@@ -990,7 +1078,7 @@ const saveData = async (payload, userKode) => {
           line.pod_bhn_kode,
           podNourut,
           vendor.greige,
-          line.nama_jenis || line.nama_kain || "",
+          namaJenisKain(line),
           vendor.celup,
           qtyDatang,
           rows.length,
@@ -1073,7 +1161,8 @@ const saveData = async (payload, userKode) => {
             qcr_qty, qcr_gramasi_atas, qcr_gramasi_bawah, qcr_setting_cek,
             qcr_sesuai, qcr_nilai, qcr_h_gramasi, qcr_h_setting, qcr_h_warna,
             qcr_h_handfeel, qcr_h_bowing, qcr_h_shrinkage, qcr_h_kelunturan,
-            qcr_catatan
+            qcr_catatan, qcr_h_konstruksi, qcr_h_kerataan, qcr_h_lebar,
+            qcr_panjang_aktual
           ) VALUES ?
           `,
           [
@@ -1097,6 +1186,10 @@ const saveData = async (payload, userKode) => {
               x.ev.sh,
               x.ev.kl,
               x.catatan,
+              x.ev.ko || "",
+              x.ev.kr || "",
+              x.ev.lb || "",
+              x.ev.panjang || 0,
             ]),
           ],
         );
