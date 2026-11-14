@@ -14,6 +14,14 @@ const adalahSpanduk = (cabang) =>
       .toUpperCase(),
   );
 
+const PERLU_APPROVAL = ["GANTI BS", "GANTI HILANG", "TAMBAHAN"];
+const perluApproval = (ket) =>
+  PERLU_APPROVAL.includes(
+    String(ket || "")
+      .trim()
+      .toUpperCase(),
+  );
+
 // --- HELPER: CEK STATUS PIN 5 ---
 const checkPinStatus = async (nomor, conn) => {
   const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
@@ -371,6 +379,12 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
     }
 
     if (isEdit) {
+      // Ambil keterangan LAMA sebelum di-UPDATE
+      const [[lama]] = await conn.query(
+        `SELECT min_ket FROM tmintabahan_hdr WHERE min_nomor = ?`,
+        [nomor],
+      );
+
       const qUpdate = `
         UPDATE tmintabahan_hdr SET 
           min_tanggal = ?, min_cab = ?, min_spk_nomor = ?, min_ket = ?, min_divisi = ?,
@@ -387,6 +401,24 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
         nomor,
       ]);
 
+      // Sesuaikan status approval bila jenis permintaan berubah
+      const dulu = perluApproval(lama?.min_ket);
+      const kini = perluApproval(payload.keterangan);
+      if (dulu && !kini) {
+        await conn.query(
+          `UPDATE tmintabahan_hdr SET min_apv = '', min_apvusr = '',
+             min_apvalasan = '', min_apvmgr = '', min_apvmgrusr = '',
+             min_apvalasanmgr = '' WHERE min_nomor = ?`,
+          [nomor],
+        );
+      } else if (!dulu && kini) {
+        await conn.query(
+          `UPDATE tmintabahan_hdr SET min_apv = 'N', min_apvmgr = 'N'
+           WHERE min_nomor = ?`,
+          [nomor],
+        );
+      }
+
       // Update tspk_pin5 jika status sebelumnya ACC
       if (payload.pin_acc === "Y" && !payload.pin_dipakai) {
         await conn.query(
@@ -401,15 +433,11 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
     } else {
       nomor = await generateNomor(payload.tanggal.substring(0, 4), conn);
 
-      // Default Approval Logic
-      let min_apv = payload.keterangan === "BARU" ? "" : "N";
-
-      let min_apvmgr = "";
-      if (
-        ["GANTI BS", "GANTI HILANG", "TAMBAHAN"].includes(payload.keterangan)
-      ) {
-        min_apvmgr = "N";
-      }
+      // Default Approval Logic: approval Gudang dan Manager hanya untuk
+      // jenis yang sama (sinkron dengan MintaBahanView & realisasi)
+      const perluApv = perluApproval(payload.keterangan);
+      const min_apv = perluApv ? "N" : "";
+      const min_apvmgr = perluApv ? "N" : "";
 
       const qInsert = `
         INSERT INTO tmintabahan_hdr 

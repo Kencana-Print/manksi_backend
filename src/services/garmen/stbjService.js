@@ -56,14 +56,16 @@ const getBrowseDetail = async (tglAwal, tglAkhir, gudang = "") => {
        d.stbjd_size        AS Size,
        d.stbjd_jumlah      AS Jumlah,
        d.stbjd_koli        AS Koli,
-       d.stbjd_keterangan  AS Keterangan
+       d.stbjd_keterangan  AS Keterangan,
+       sk.spk_panjang      AS Panjang,
+       sk.spk_lebar        AS Lebar
      FROM tstbj_hdr h
      INNER JOIN tstbj_dtl d  ON d.stbjd_stbj_nomor = h.stbj_nomor
      LEFT  JOIN tspk      sk ON sk.spk_nomor = d.stbjd_spk_nomor
      LEFT  JOIN tspk_gudangitem sgi ON sgi.spgi_spk = d.stbjd_spk_nomor
      WHERE h.stbj_tanggal >= ? AND h.stbj_tanggal <= ?
        AND h.stbj_gdg_kode LIKE ?
-     ORDER BY h.stbj_nomor`,
+     ORDER BY h.stbj_nomor, d.stbjd_spk_nomor`,
     [tglAwal, tglAkhir, `%${gudang}%`],
   );
   return rows;

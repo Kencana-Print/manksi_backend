@@ -196,21 +196,32 @@ const getDetailRealisasiDtl = async (nomor) => {
  * Validasi sebelum insert: Cek apakah ada realisasi lama yang belum diapprove
  */
 const checkPendingApproval = async (cabang) => {
-  let gdgFilter = "";
-  if (cabang === "P04") gdgFilter = 'AND h.promin_gdgp_kode="GP001"';
-  else if (cabang === "P01") gdgFilter = 'AND h.promin_gdgp_kode="GP015"';
+  const cab = String(cabang || "")
+    .trim()
+    .toUpperCase();
+
+  // P04/P01: perilaku garmen dipertahankan (filter gudang produksi).
+  // Cabang lain (P02 dst): filter per cabang permintaan, karena tanpa gudang produksi.
+  let cabFilter = "";
+  const params = [];
+  if (cab === "P04") cabFilter = 'AND h.promin_gdgp_kode="GP001"';
+  else if (cab === "P01") cabFilter = 'AND h.promin_gdgp_kode="GP015"';
+  else {
+    cabFilter = "AND m.min_cab = ?";
+    params.push(cab);
+  }
 
   const query = `
-    SELECT IFNULL(COUNT(*), 0) AS countPending
+    SELECT COUNT(DISTINCT h.promin_nomor) AS countPending
     FROM tproduksiminta_hdr h
-    INNER JOIN tproduksiminta_dtl d ON d.promind_promin_Nomor = h.promin_nomor
-    WHERE h.promin_minta <> "" 
-      AND h.promin_apv IS NULL 
+    INNER JOIN tmintabahan_hdr m ON m.min_nomor = h.promin_minta
+    WHERE h.promin_minta <> ""
+      AND h.promin_apv IS NULL
       AND h.promin_tanggal < DATE_ADD(CURDATE(), INTERVAL -1 DAY)
-      ${gdgFilter}
+      ${cabFilter}
   `;
-  const [rows] = await db.query(query);
-  return rows[0].countPending;
+  const [rows] = await db.query(query, params);
+  return Number(rows[0].countPending) || 0;
 };
 
 /**

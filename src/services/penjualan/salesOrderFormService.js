@@ -1150,6 +1150,10 @@ const saveData = async (payload, user) => {
         header.spk_jo_kode.includes(sub),
       )
     ) {
+      const isBawahan = ["CL"].includes(
+        String(header.spk_jo_kode).toUpperCase(),
+      );
+
       if (dtlSize && dtlSize.length > 0) {
         for (const item of dtlSize) {
           if (Number(item.qty) > 0) {
@@ -1169,8 +1173,8 @@ const saveData = async (payload, user) => {
                 item.size,
                 item.qty,
                 barcode,
-                item.ld || 0,
-                item.pb || 0,
+                isBawahan ? 0 : item.ld || 0,
+                isBawahan ? 0 : item.pb || 0,
                 item.pl_pendek || 0,
                 item.pl_panjang || 0,
                 item.p_bahu || 0,

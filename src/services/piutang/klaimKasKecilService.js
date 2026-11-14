@@ -1,5 +1,11 @@
 const db = require("../../config/database");
-const { JENIS_KLAIM, rekPerJenis } = require("./klaimKasKecilKonstanta");
+const {
+  JENIS_KLAIM,
+  JENIS_VIA_PJT,
+  rekPerJenis,
+  kasByRek,
+} = require("./klaimKasKecilKonstanta");
+const { bolehKlaimPc } = require("./klaimKasKecilFormService");
 
 const httpError = (msg, status) => Object.assign(new Error(msg), { status });
 
@@ -8,9 +14,12 @@ const httpError = (msg, status) => Object.assign(new Error(msg), { status });
 const filterCabang = (cabang) =>
   cabang && cabang !== "ALL" && cabang !== "HO-" ? cabang : null;
 
-// jenis: "KAS_KECIL" | "ATM" | kosong (semua). Dipakai untuk dua mode halaman.
-const filterRekJenis = (jenis) =>
-  JENIS_KLAIM.includes(jenis) ? rekPerJenis(jenis) : null;
+// jenis: "KAS_KECIL" | "ATM" | kosong (semua). "ATM" = halaman pusat:
+// memuat rekening ATM dan laci Finance (klaim PC dibuat dari form yang sama).
+const filterRekJenis = (jenis) => {
+  if (jenis === "ATM") return [...rekPerJenis("ATM"), ...rekPerJenis("PC")];
+  return JENIS_KLAIM.includes(jenis) ? rekPerJenis(jenis) : null;
+};
 
 // ── Browse (satu baris per klaim) ─────────────────────────────────────
 const getBrowse = async (startDate, endDate, cabang, jenis = "") => {
@@ -65,21 +74,32 @@ const getBrowse = async (startDate, endDate, cabang, jenis = "") => {
   const infoPjt = new Map(pjt.map((r) => [r.klaim, r]));
 
   return rows.map((r) => {
+    // P04 dibayar lewat Pengajuan Transfer; klaim pusat (ATM, PC) lewat BBK
+    const lewatPjt = JENIS_VIA_PJT.includes(kasByRek(r.RekTujuan)?.jenis);
     const p = infoPjt.get(r.Nomor);
     let statusTransfer = "-";
-    if (r.Status === "AKTIF") {
-      if (r.NomorBbk) statusTransfer = "Dibayar BBK";
-      else if (!p) statusTransfer = "Belum diajukan";
-      else if (Number(p.sudahRealisasi) === 1) statusTransfer = "Terealisasi";
-      else statusTransfer = "Diajukan";
+    let nomorBayar = "";
+    let tglRealisasi = "";
+    if (lewatPjt) {
+      nomorBayar = p ? p.pjt : "";
+      tglRealisasi = p ? p.tglRealisasi || "" : "";
+      if (r.Status === "AKTIF") {
+        if (!p) statusTransfer = "Belum diajukan";
+        else if (Number(p.sudahRealisasi) === 1) statusTransfer = "Terealisasi";
+        else statusTransfer = "Diajukan";
+      }
+    } else {
+      nomorBayar = r.NomorBbk || "";
+      if (r.Status === "AKTIF")
+        statusTransfer = nomorBayar ? "Dibayar" : "Belum dibayar";
     }
     return {
       ...r,
       Total: Number(r.Total),
       JumlahBkk: Number(r.JumlahBkk),
       NamaRekTujuan: namaRek.get(r.RekTujuan) || "",
-      NomorPjt: p ? p.pjt : "",
-      TglRealisasi: p ? p.tglRealisasi || "" : "",
+      NomorPjt: nomorBayar,
+      TglRealisasi: tglRealisasi,
       StatusTransfer: statusTransfer,
     };
   });
@@ -148,13 +168,18 @@ const getBrowseDetail = async (startDate, endDate, cabang, jenis = "") => {
 // cabangScope: cabang user bila bukan pusat, null bila pusat.
 const batalKlaim = async (nomor, user, cabangScope) => {
   const [[h]] = await db.query(
-    `SELECT kkh_status, kkh_cabang, kkh_bbk_nomor
+    `SELECT kkh_status, kkh_cabang, kkh_rek_tujuan, kkh_bbk_nomor
      FROM tklaim_kaskecil_hdr WHERE kkh_nomor = ?`,
     [nomor],
   );
   if (!h) throw httpError("Klaim tidak ditemukan.", 404);
   if (cabangScope && h.kkh_cabang !== cabangScope)
     throw httpError("Klaim ini bukan milik cabang Anda.", 403);
+  if (kasByRek(h.kkh_rek_tujuan)?.jenis === "PC" && !(await bolehKlaimPc(user)))
+    throw httpError(
+      "Klaim Petty Cash hanya dapat dibatalkan oleh Finance pemilik laci.",
+      403,
+    );
   if (h.kkh_status !== "AKTIF") throw httpError("Klaim sudah dibatalkan.", 400);
   if (h.kkh_bbk_nomor)
     throw httpError(

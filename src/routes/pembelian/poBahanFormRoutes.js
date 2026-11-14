@@ -7,6 +7,7 @@ const {
 } = require("../../middleware/authMiddleware");
 
 const MENU_ID = 52; // Sesuai dengan Browse
+const REKAP_MENU_ID = 972; // Rekap Belanja
 
 router.get("/validate", verifyToken, poBahanFormController.validateField);
 
@@ -44,6 +45,20 @@ router.get(
   verifyToken,
   checkPermission(MENU_ID, "view"),
   poBahanFormController.getMbbOutstanding,
+);
+
+router.get(
+  "/rekap/:nomor",
+  verifyToken,
+  checkPermission(REKAP_MENU_ID, "view"),
+  poBahanFormController.getRekap,
+);
+
+router.post(
+  "/rekap/save",
+  verifyToken,
+  checkPermission(REKAP_MENU_ID, "insert"),
+  poBahanFormController.saveRekap,
 );
 
 module.exports = router;

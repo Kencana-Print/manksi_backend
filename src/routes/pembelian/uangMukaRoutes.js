@@ -7,6 +7,7 @@ const {
 const uangMukaController = require("../../controllers/pembelian/uangMukaController");
 
 const MENU_ID = 315;
+const MENU_ID_PETTY = 973;
 
 router.use(verifyToken);
 
@@ -24,6 +25,21 @@ router.get(
   "/history",
   checkPermission(MENU_ID, "view"),
   uangMukaController.getHistory,
+);
+router.get(
+  "/outstanding-petty",
+  checkPermission(MENU_ID_PETTY, "view"),
+  uangMukaController.getOutstandingPetty,
+);
+router.get(
+  "/outstanding-petty/detail",
+  checkPermission(MENU_ID_PETTY, "view"),
+  uangMukaController.getOutstandingDetail,
+);
+router.get(
+  "/history-petty",
+  checkPermission(MENU_ID_PETTY, "view"),
+  uangMukaController.getHistoryPetty,
 );
 router.delete(
   "/history/:nomor",

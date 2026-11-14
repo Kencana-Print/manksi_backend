@@ -8,6 +8,7 @@ const {
   kasByRek,
   kasPerCabang,
   cabangTerdaftar,
+  rekPerJenis,
 } = require("./klaimKasKecilKonstanta");
 
 const httpError = (msg, status = 400) =>
@@ -125,6 +126,27 @@ const infoRekening = async (kode) => {
   return { kode, nama: r?.nama || "", rekening: r?.rekening || "" };
 };
 
+// Klaim PC (laci Finance): hanya pemilik laci Finance atau akses penuh.
+// Sengaja bukan `bagian = FINANCE`: ada user Purchasing yang masih berbagian FINANCE.
+const bolehKlaimPc = async (user) => {
+  if (aksesPenuh(user)) return true;
+  const rek = rekPerJenis("PC")[0];
+  const [[r]] = await db.query(
+    `SELECT rek_pemilik FROM finance.trekening WHERE rek_kode = ?`,
+    [rek],
+  );
+  const pemilik = String(r?.rek_pemilik || "")
+    .trim()
+    .toUpperCase();
+  return (
+    !!pemilik &&
+    pemilik ===
+      String(user?.kode || "")
+        .trim()
+        .toUpperCase()
+  );
+};
+
 // ── Info default form: kas tujuan + tanggal mulai ─────────────────────
 const getDefaults = async (cabang, penuh = false) => {
   const daftar = kasPerCabang(cabang);
@@ -136,7 +158,12 @@ const getDefaults = async (cabang, penuh = false) => {
   return {
     cabang,
     jenis: daftar[0].jenis,
-    kasOpsi: await Promise.all(daftar.map((k) => infoRekening(k.rek))),
+    kasOpsi: await Promise.all(
+      daftar.map(async (k) => ({
+        ...(await infoRekening(k.rek)),
+        jenis: k.jenis,
+      })),
+    ),
     tanggalMulai: TANGGAL_MULAI_KLAIM,
     // Daftar pilihan cabang hanya untuk akses penuh; user biasa kosong
     cabangOpsi: penuh ? cabangTerdaftar() : [],
@@ -159,7 +186,49 @@ const cariBkkEligible = async (
   const params = [];
   let sql;
 
-  if (kas.jenis === "ATM") {
+  if (kas.jenis === "PC") {
+    // BKK Penyelesaian PD. Dua langkah (bukan JOIN lintas schema): daftar bon PD
+    // dari PUM dulu. Akun kredit BKK = laci pemilik PD (beda per user), jadi
+    // TIDAK difilter ke satu akun; nominal dari baris kredit nourut 0.
+    const [pd] = await conn.query(
+      `SELECT pum_bon_nomor FROM tpengajuan_uang_muka_hdr
+       WHERE pum_jenis = 'PD' AND pum_status = 'REALISASI'
+         AND pum_bon_nomor IS NOT NULL AND pum_bon_nomor <> ''`,
+    );
+    if (!pd.length) return [];
+    const bonPd = pd.map((r) => r.pum_bon_nomor);
+    sql = `
+    SELECT b.bon_nomor AS bon,
+      b.bon_jur_no AS bkk,
+      DATE_FORMAT(j.jur_tanggal,'%Y-%m-%d') AS tanggal,
+      j.jur_penerima AS penerima,
+      j.jur_keterangan AS keterangan,
+      k.nominal AS nominal
+    FROM finance.tkasbon b
+    INNER JOIN finance.tjurnal j
+      ON j.jur_no = b.bon_jur_no
+     AND j.jur_tipetransaksi = 'BKK'
+     AND j.jur_otomatis = 0
+    INNER JOIN (
+      SELECT i.jurd_jur_no, SUM(i.jurd_kredit) AS nominal
+      FROM finance.tjurnalitem i
+      WHERE i.jurd_nourut = 0
+        AND i.jurd_jur_no IN (
+          SELECT b2.bon_jur_no FROM finance.tkasbon b2 WHERE b2.bon_nomor IN (?))
+      GROUP BY i.jurd_jur_no
+    ) k ON k.jurd_jur_no = j.jur_no
+    WHERE b.bon_nomor IN (?)
+      AND b.bon_cabang = ?
+      AND b.bon_selesai = 1
+      AND b.bon_jur_no <> ''
+      AND j.jur_tanggal >= ?
+      AND k.nominal > 0
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_trs = b.bon_jur_no AND d.ptd_batal = ''
+      )`;
+    params.push(bonPd, bonPd, kas.cabang, TANGGAL_MULAI_KLAIM);
+  } else if (kas.jenis === "ATM") {
     sql = `
     SELECT IFNULL(b.bon_nomor,'') AS bon,
       j.jur_no AS bkk,
@@ -372,6 +441,11 @@ const saveData = async (payload, user) => {
     kas = tentukanKas(cabang, payload.rekTujuan);
   }
   const rekTujuan = kas.rek;
+  if (kas.jenis === "PC" && !(await bolehKlaimPc(user)))
+    throw httpError(
+      "Klaim Petty Cash hanya dapat dibuat atau diubah oleh Finance pemilik laci.",
+      403,
+    );
 
   if (!TGL_RE.test(String(tanggal || "")))
     throw httpError("Tanggal klaim tidak valid.");
@@ -614,6 +688,7 @@ const getPrintData = async (nomor, cabangScope) => {
     nomor: h.nomor,
     tanggal: h.tanggal,
     cabang: h.cabang,
+    jenis: kasByRek(h.rekTujuan)?.jenis || "",
     rekTujuan: await infoRekening(h.rekTujuan),
     keterangan: h.keterangan || "",
     kasir: h.kasir || "",
@@ -642,4 +717,5 @@ module.exports = {
   getPrintData,
   saveData,
   cariBkkEligible,
+  bolehKlaimPc,
 };

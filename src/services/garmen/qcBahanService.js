@@ -12,7 +12,19 @@ const STATUS_VALID = [
   "TUNDA",
 ];
 
-const getBrowse = async (startDate, endDate, status = "ALL") => {
+// PO jenis 5 = Spanduk (P02). Alias tabel PO di query: ph
+const filterLingkup = (lingkup) => {
+  if (lingkup === "SPANDUK") return "AND ph.po_jenis = 5";
+  if (lingkup === "NON_SPANDUK") return "AND IFNULL(ph.po_jenis, 0) <> 5";
+  return "";
+};
+
+const getBrowse = async (
+  startDate,
+  endDate,
+  status = "ALL",
+  lingkup = "SEMUA",
+) => {
   const params = [startDate, endDate];
   let statusFilter = "";
   if (status && status !== "ALL" && STATUS_VALID.includes(status)) {
@@ -63,9 +75,11 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
     ) x ON x.qcd_qc_nomor = h.qc_nomor
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor
+    LEFT JOIN tpo_hdr ph ON ph.po_nomor = h.qc_po_nomor
     AND pd.pod_nourut = h.qc_pod_nourut
     WHERE h.qc_tgl_datang BETWEEN ? AND ?
       ${statusFilter}
+      ${filterLingkup(lingkup)}
     ORDER BY h.qc_nomor DESC
     `,
     params,
@@ -133,6 +147,8 @@ const getBrowseDetail = async (nomor) => {
             qcr_h_warna AS Warna, qcr_h_handfeel AS Handfeel,
             qcr_h_bowing AS Bowing, qcr_h_shrinkage AS Shrinkage,
             qcr_h_kelunturan AS Kelunturan,
+            qcr_h_konstruksi AS Konstruksi, qcr_h_kerataan AS Kerataan,
+            qcr_h_lebar AS Lebar, qcr_panjang_aktual AS PanjangAktual,
             qcr_nilai AS Nilai, qcr_catatan AS Catatan
      FROM tqc_bahan_roll
      WHERE qcr_qc_nomor = ?
@@ -148,7 +164,12 @@ const getBrowseDetail = async (nomor) => {
 };
 
 // Semua lot pada rentang tanggal (untuk Export Detail). Filter sama dengan getBrowse.
-const getBrowseAllDetail = async (startDate, endDate, status = "ALL") => {
+const getBrowseAllDetail = async (
+  startDate,
+  endDate,
+  status = "ALL",
+  lingkup = "SEMUA",
+) => {
   const params = [startDate, endDate];
   let statusFilter = "";
   if (status && status !== "ALL" && STATUS_VALID.includes(status)) {
@@ -190,6 +211,10 @@ const getBrowseAllDetail = async (startDate, endDate, status = "ALL") => {
       r.qcr_h_bowing AS Bowing,
       r.qcr_h_shrinkage AS Shrinkage,
       r.qcr_h_kelunturan AS Kelunturan,
+      r.qcr_h_konstruksi AS Konstruksi,
+      r.qcr_h_kerataan AS Kerataan,
+      r.qcr_h_lebar AS Lebar,
+      r.qcr_panjang_aktual AS PanjangAktual,
       r.qcr_nilai AS NilaiRoll,
       r.qcr_catatan AS CatatanRoll
     FROM tqc_bahan_hdr h
@@ -199,8 +224,10 @@ const getBrowseAllDetail = async (startDate, endDate, status = "ALL") => {
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor
      AND pd.pod_nourut = h.qc_pod_nourut
+    LEFT JOIN tpo_hdr ph ON ph.po_nomor = h.qc_po_nomor
     WHERE h.qc_tgl_datang BETWEEN ? AND ?
       ${statusFilter}
+      ${filterLingkup(lingkup)}
     ORDER BY h.qc_nomor DESC, d.qcd_nourut, r.qcr_nourut
     `,
     params,

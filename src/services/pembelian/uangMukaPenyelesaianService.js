@@ -10,6 +10,7 @@ const supplierService = require("../master/supplierService");
 const TANGGAL_MULAI_SISA = "2026-10-22";
 const AMBANG_SISA = 100;
 const badRequest = (msg) => Object.assign(new Error(msg), { status: 400 });
+const fmtRp = (n) => Number(n || 0).toLocaleString("id-ID");
 
 // ── Batas waktu Penyelesaian: maks 3 hari kerja sejak bon dibuat ──
 // Hanya berlaku untuk bon yang date_create-nya >= TANGGAL_MULAI_BATAS.
@@ -76,7 +77,8 @@ const getFormData = async (nomor) => {
         DATE_FORMAT(k.bon_tanggal,'%Y-%m-%d') AS bon_tanggal_fmt,
         DATE_FORMAT(t.jur_tanggal, '%Y-%m-%d') AS jur_tanggal_fmt,
         h.pum_user_create AS pum_user_create,
-        h.pum_user_realisasi AS pum_user_realisasi
+        h.pum_user_realisasi AS pum_user_realisasi,
+        h.pum_jenis AS pum_jenis
       FROM finance.tkasbon k
       LEFT JOIN finance.tjurnal t ON t.jur_no = k.bon_jur_no
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
@@ -370,9 +372,13 @@ const getFormData = async (nomor) => {
     pum_user_create: bon.pum_user_create || "",
     pum_user_realisasi: bon.pum_user_realisasi || "",
     mode_laci: !!bon.bon_transfer_jur_no,
+    mode_pd: bon.pum_jenis === "PD",
     laci_asal: bon.bon_transfer_asal || "",
     sisa: {
-      wajib: !!bon.tgl_buat && bon.tgl_buat >= TANGGAL_MULAI_SISA,
+      wajib:
+        bon.pum_jenis !== "PD" &&
+        !!bon.tgl_buat &&
+        bon.tgl_buat >= TANGGAL_MULAI_SISA,
       ambang: AMBANG_SISA,
       rek_kode: bon.bon_transfer_jur_no
         ? bon.bon_transfer_asal || ""
@@ -487,10 +493,13 @@ const saveData = async (payload, user) => {
 
   // Nilai krusial dibaca dari DB, bukan dari payload klien.
   const [[bonDb]] = await db.query(
-    `SELECT bon_selesai, bon_jur_no, bon_tanggal, bon_jenis, bon_cabang, bon_nominal,
-            bon_rek_kode, bon_transfer_jur_no, bon_transfer_asal, bon_sisa_jur_no,
-            DATE_FORMAT(date_create, '%Y-%m-%d') AS tgl_buat
-     FROM finance.tkasbon WHERE bon_nomor = ?`,
+    `SELECT k.bon_selesai, k.bon_jur_no, k.bon_tanggal, k.bon_jenis, k.bon_cabang, k.bon_nominal,
+            k.bon_rek_kode, k.bon_transfer_jur_no, k.bon_transfer_asal, k.bon_sisa_jur_no,
+            DATE_FORMAT(k.date_create, '%Y-%m-%d') AS tgl_buat,
+            h.pum_jenis
+     FROM finance.tkasbon k
+     LEFT JOIN tpengajuan_uang_muka_hdr h ON h.pum_bon_nomor = k.bon_nomor
+     WHERE k.bon_nomor = ?`,
     [nomor],
   );
   if (!bonDb) throw new Error("Nomor kasbon tidak ditemukan.");
@@ -536,6 +545,27 @@ const saveData = async (payload, user) => {
     throw badRequest(
       `Kas penyelesaian harus laci penerima kasbon (${bonDb.bon_rek_kode}).`,
     );
+  // Penyerahan Dana Belanja (PD): uang sudah ada di laci penyerah dan tidak pernah
+  // dipindah. Kas penyelesaian wajib laci itu, sisa tidak dibukukan (tetap di laci),
+  // dan hanya pemilik laci yang boleh menyelesaikan karena BKK-nya mengurangi laci itu.
+  const modePd = bonDb.pum_jenis === "PD";
+  if (modePd) {
+    if (rek_kode !== bonDb.bon_rek_kode)
+      throw badRequest(
+        `Kas penyelesaian harus laci penyerah dana (${bonDb.bon_rek_kode}).`,
+      );
+    const [[laci]] = await db.query(
+      `SELECT rek_pemilik FROM finance.trekening WHERE rek_kode = ?`,
+      [bonDb.bon_rek_kode],
+    );
+    if (
+      String(laci?.rek_pemilik || "").toUpperCase() !==
+      String(user.kode || "").toUpperCase()
+    )
+      throw badRequest(
+        `Penyelesaian Dana Belanja hanya dapat dilakukan oleh pemilik laci ${bonDb.bon_rek_kode}.`,
+      );
+  }
   await assertBolehPosting(
     [
       rek_kode,
@@ -549,7 +579,14 @@ const saveData = async (payload, user) => {
   );
   const sisa =
     Math.round((Number(bonDb.bon_nominal) - totalTerpakai) * 100) / 100;
+  // PD: belanja tidak boleh melebihi dana yang diserahkan. Kelebihan diproses
+  // lewat Penyerahan Dana Belanja baru, supaya laci tidak minus.
+  if (modePd && sisa < -0.005)
+    throw badRequest(
+      `Total terpakai ${fmtRp(totalTerpakai)} melebihi dana yang diserahkan ${fmtRp(bonDb.bon_nominal)}. Kelebihan diproses lewat Penyerahan Dana Belanja baru.`,
+    );
   const perluBukuSisa =
+    !modePd &&
     !!bonDb.tgl_buat &&
     bonDb.tgl_buat >= TANGGAL_MULAI_SISA &&
     sisa >= AMBANG_SISA;
@@ -569,6 +606,17 @@ const saveData = async (payload, user) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    // Kunci baris PUM (InnoDB) supaya Batal PD dan Penyelesaian tidak jalan bersamaan.
+    // Kunci di tkasbon tidak berarti karena tabelnya MyISAM.
+    const [[pumKunci]] = await conn.query(
+      `SELECT pum_status FROM tpengajuan_uang_muka_hdr
+       WHERE pum_bon_nomor = ? FOR UPDATE`,
+      [nomor],
+    );
+    if (modePd && (!pumKunci || pumKunci.pum_status === "BATAL"))
+      throw badRequest(
+        "Penyerahan Dana Belanja sudah dibatalkan atau tidak ditemukan.",
+      );
 
     let noBkk = no_bkk_lama || "";
 

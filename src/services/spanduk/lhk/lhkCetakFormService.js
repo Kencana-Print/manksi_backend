@@ -259,7 +259,7 @@ const siapkanData = (body = {}) => {
   const kain = daftarKain.map((k, i) => {
     const n = i + 1;
     const kode = teks(k?.Kode_Bahan).toUpperCase();
-    if (!/^SB\d{7}$/.test(kode)) {
+    if (!kode.startsWith("SB")) {
       throw galat(`Kain ${n}: kode bahan tidak valid`);
     }
     if (sudahKain.has(kode)) {

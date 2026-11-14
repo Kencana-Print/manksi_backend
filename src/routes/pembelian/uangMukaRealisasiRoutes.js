@@ -7,6 +7,7 @@ const {
 const ctrl = require("../../controllers/pembelian/uangMukaRealisasiController");
 
 const MENU_ID = 315;
+const MENU_ID_PETTY = 973;
 
 router.use(verifyToken);
 
@@ -30,6 +31,21 @@ router.post(
   "/:bonNomor/konfirmasi-terima",
   checkPermission(MENU_ID, "view"),
   ctrl.konfirmasiTerima,
+);
+router.get(
+  "/petty-cash/:nomor",
+  checkPermission(MENU_ID_PETTY, "view"),
+  ctrl.getDetailPettyCash,
+);
+router.post(
+  "/petty-cash/:nomor/realisasi",
+  checkPermission(MENU_ID_PETTY, "save"),
+  ctrl.saveRealisasiPettyCash,
+);
+router.post(
+  "/petty-cash/:nomor/konfirmasi-terima",
+  checkPermission(MENU_ID_PETTY, "view"),
+  ctrl.konfirmasiTerimaPettyCash,
 );
 router.get("/:nomor", checkPermission(MENU_ID, "view"), ctrl.getDetail);
 router.post(

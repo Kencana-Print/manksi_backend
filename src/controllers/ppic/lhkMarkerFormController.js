@@ -12,8 +12,12 @@ const getDetail = async (req, res) => {
 
 const save = async (req, res) => {
   try {
-    const userKode = req.user?.kode || "ADMIN";
-    const result = await svc.saveData(req.body, { kode: userKode }, false);
+    if (!req.user?.kode) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User tidak dikenali." });
+    }
+    const result = await svc.saveData(req.body, { kode: req.user.kode }, false);
     res.status(200).json({
       success: true,
       message: "LHK Marker berhasil disimpan.",
@@ -26,9 +30,13 @@ const save = async (req, res) => {
 
 const update = async (req, res) => {
   try {
-    const userKode = req.user?.kode || "ADMIN";
+    if (!req.user?.kode) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User tidak dikenali." });
+    }
     const payload = { ...req.body, nomor: req.params.nomor };
-    const result = await svc.saveData(payload, { kode: userKode }, true);
+    const result = await svc.saveData(payload, { kode: req.user.kode }, true);
     res.status(200).json({
       success: true,
       message: "LHK Marker berhasil diupdate.",
@@ -69,34 +77,12 @@ const getSpkByNomor = async (req, res) => {
         .json({ success: false, message: "SPK/MAP tidak ditemukan." });
     }
     const divisiNama = await svc.getDivisiNama(data.Divisi);
+    const size = await svc.getSizeSpk(req.params.nomor);
     res
       .status(200)
-      .json({ success: true, data: { ...data, DivisiNama: divisiNama } });
+      .json({ success: true, data: { ...data, DivisiNama: divisiNama, size } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const uploadGambar = async (req, res) => {
-  try {
-    if (!req.file) throw new Error("File gambar tidak ditemukan.");
-    const { lhkNomor, tab, spkNomor } = req.body;
-
-    if (!lhkNomor || !tab || !spkNomor) {
-      throw new Error("Nomor LHK Marker, Tab, dan No. SPK harus disertakan.");
-    }
-
-    const filename = await svc.uploadGambarDetail(
-      req.file.path,
-      lhkNomor,
-      tab,
-      spkNomor,
-    );
-    res
-      .status(200)
-      .json({ success: true, message: "Gambar berhasil diupload.", filename });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -163,7 +149,6 @@ module.exports = {
   remove,
   searchSpk,
   getSpkByNomor,
-  uploadGambar,
   ambilPermintaan,
   ambilAlihPermintaan,
   lepasPermintaan,

@@ -110,19 +110,38 @@ const getActualOutputHarianBySpkLine = async (spkList, tgl1, tgl2) => {
     `SELECT h.mph_spk_nomor AS spk, h.mph_kelompok AS line,
             h.mph_nomor AS nomor,
             DATE_FORMAT(h.mph_tanggal, '%Y-%m-%d') AS tgl,
-            IFNULL(SUM(h.mph_jumlah), 0) AS qty
+            d.mpd_nama AS komponen,
+            IFNULL(SUM(d.mpd_jumlah), 0) AS qty
      FROM tmutasiproduksi_hdr h
+     JOIN tmutasiproduksi_dtl d ON d.mpd_mph_nomor = h.mph_nomor
      WHERE h.mph_spk_nomor IN (?)
        AND h.mph_gdgasal = 'GP003'
        AND h.mph_gdgtujuan = 'GP004'
        AND h.mph_tanggal >= ? AND h.mph_tanggal < DATE_ADD(?, INTERVAL 1 DAY)
-     GROUP BY h.mph_spk_nomor, h.mph_kelompok, h.mph_nomor, DATE(h.mph_tanggal)
+     GROUP BY h.mph_spk_nomor, h.mph_kelompok, h.mph_nomor,
+              DATE(h.mph_tanggal), d.mpd_nama
      ORDER BY DATE(h.mph_tanggal), h.mph_nomor`,
     [spkList, tgl1, tgl2],
   );
+
+  // Komponen acuan per SPK = komponen dengan total terbesar
+  const totalKomp = {};
+  for (const r of rows) {
+    const k = String(r.spk).toUpperCase();
+    const t = (totalKomp[k] ??= {});
+    t[r.komponen] = (t[r.komponen] || 0) + (Number(r.qty) || 0);
+  }
+  const acuan = {};
+  for (const [k, t] of Object.entries(totalKomp)) {
+    acuan[k] = Object.entries(t).sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+    )[0][0];
+  }
+
   const total = {};
   const harian = {};
   for (const r of rows) {
+    if (r.komponen !== acuan[String(r.spk).toUpperCase()]) continue;
     const key = `${String(r.spk).toUpperCase()}|${r.line}`;
     const qty = Number(r.qty) || 0;
     total[key] = (total[key] || 0) + qty;

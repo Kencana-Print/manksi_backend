@@ -48,6 +48,11 @@ const getBrowse = async (
           WHERE i.bpbd_bpb_nomor = h.bpb_nomor
         )
       ) AS Ket_PO,
+      IFNULL((
+        SELECT GROUP_CONCAT(DISTINCT q.bql_qc_nomor ORDER BY q.bql_qc_nomor SEPARATOR ", ")
+        FROM tbpb_qc_lot q
+        WHERE q.bql_bpb_nomor = h.bpb_nomor
+      ), "") AS NomorQc,
       h.bpb_gdg_kode AS Gudang,
       IFNULL(p.po_jenis, 0) AS PoJenis,
       h.user_create AS Usr,
@@ -158,11 +163,17 @@ const deleteBpb = async (nomor) => {
       nomor,
     ]);
 
+    const [jns] = await conn.query(
+      `SELECT po_jenis FROM tpo_hdr WHERE po_nomor = ?`,
+      [hdr.bpb_po_nomor],
+    );
+    const spanduk = Number(jns[0]?.po_jenis) === 5;
+
     // 5. Update Status PO Induk Jika Ada
     if (
       hdr.bpb_po_nomor &&
       hdr.bpb_po_nomor.trim() !== "" &&
-      dariQc.length > 0
+      (dariQc.length > 0 || spanduk)
     ) {
       await syncStatusClosePo(conn, hdr.bpb_po_nomor);
     } else if (hdr.bpb_po_nomor && hdr.bpb_po_nomor.trim() !== "") {

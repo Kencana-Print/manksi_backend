@@ -2,6 +2,12 @@ const db = require("../../config/database");
 const {
   getTanggalTutupBukuUntukTanggal,
 } = require("../../services/tutupBukuService");
+const { hitungSaldoAkun } = require("../postingGuardService");
+const {
+  cariLaciPemilik,
+  BATAS_SALDO_LACI_MANDIRI,
+  saveRealisasi,
+} = require("./uangMukaRealisasiService");
 
 // ── Konstanta & fragmen SQL bersama (dipakai uangMukaService, Realisasi, dst.) ──
 const BKK_P04_MULAI = "2026-09-28";
@@ -51,9 +57,9 @@ const sumberSudahDipakai = async (conn, sumber, nomorSumber, itemNourut) => {
   return !!row;
 };
 
-const generateNomor = async (tanggal, conn) => {
+const generateNomor = async (tanggal, conn, kode = "PUM") => {
   const year = new Date(tanggal).getFullYear();
-  const prefix = `PUM.${year}.`;
+  const prefix = `${kode}.${year}.`;
   const [[row]] = await (conn || db).query(
     `SELECT IFNULL(MAX(CAST(RIGHT(pum_nomor,5) AS UNSIGNED)),0) AS maxVal
      FROM tpengajuan_uang_muka_hdr WHERE pum_nomor LIKE ?`,
@@ -138,8 +144,16 @@ const ensurePermintaanDana = async (pjhNomor, conn) => {
 // items: [{ sumber: 'PENGAJUAN_DANA'|'PERMINTAAN_PEMBELIAN', nomorSumber, keterangan? }]
 // Nominal dihitung ulang server-side dari tabel sumber — TIDAK percaya nominal dari frontend.
 const createPengajuan = async (
-  { tanggal, keterangan, nominalDiajukan, items },
+  {
+    tanggal,
+    keterangan,
+    nominalDiajukan,
+    items,
+    jenis = "UM",
+    laciTujuan = "",
+  },
   user,
+  extConn = null,
 ) => {
   if (!items || !items.length) throw new Error("Minimal pilih 1 transaksi.");
   const totalDiajukan = Number(nominalDiajukan);
@@ -157,11 +171,16 @@ const createPengajuan = async (
     return true;
   });
 
-  const conn = await db.getConnection();
+  const eksternal = !!extConn;
+  const conn = extConn || (await db.getConnection());
   try {
-    await conn.beginTransaction();
+    if (!eksternal) await conn.beginTransaction();
 
-    const nomor = await generateNomor(tanggal, conn);
+    const nomor = await generateNomor(
+      tanggal,
+      conn,
+      jenis === "PD" ? "PD" : "PUM",
+    );
     const rowsToInsert = [];
 
     for (const it of itemsFinal) {
@@ -338,9 +357,18 @@ const createPengajuan = async (
 
     await conn.query(
       `INSERT INTO tpengajuan_uang_muka_hdr
-        (pum_nomor, pum_tanggal, pum_keterangan, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_total_nominal)
-       VALUES (?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?)`,
-      [nomor, tanggal, keterangan || "", user.cabang, user.kode, totalDiajukan],
+        (pum_nomor, pum_tanggal, pum_keterangan, pum_cabang, pum_user_create, pum_date_create, pum_status, pum_jenis, pum_laci_tujuan, pum_total_nominal)
+       VALUES (?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', ?, ?, ?)`,
+      [
+        nomor,
+        tanggal,
+        keterangan || "",
+        user.cabang,
+        user.kode,
+        jenis,
+        laciTujuan,
+        totalDiajukan,
+      ],
     );
 
     for (const r of rowsToInsert) {
@@ -366,13 +394,13 @@ const createPengajuan = async (
       );
     }
 
-    await conn.commit();
+    if (!eksternal) await conn.commit();
     return { nomor, totalNominal: totalDiajukan };
   } catch (e) {
-    await conn.rollback();
+    if (!eksternal) await conn.rollback();
     throw e;
   } finally {
-    conn.release();
+    if (!eksternal) conn.release();
   }
 };
 
@@ -417,7 +445,7 @@ const getBrowse = async ({ startDate, endDate, cabang, status }) => {
       FROM tpengajuan_uang_muka_hdr h
       LEFT JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
       LEFT JOIN finance.trekening r ON r.rek_kode = k.bon_rek_kode
-      WHERE 1=1
+      WHERE h.pum_jenis = 'UM'
       ${startDate && endDate ? "AND h.pum_tanggal BETWEEN ? AND ?" : ""}
       ${filterCabang ? "AND h.pum_cabang = ?" : ""}
     )
@@ -629,6 +657,480 @@ const getPrintPenyerahan = async (nomor) => {
   };
 };
 
+// ── Petty Cash (HO-/P01) ──
+const CABANG_PETTY = ["HO-", "P01"];
+const LOCK_NOMOR_PC = "manksi_penomoran_pc";
+
+const generateNomorPettyCash = async (tanggal, conn) => {
+  const year = new Date(tanggal).getFullYear();
+  const prefix = `PC.${year}.`;
+  const [[row]] = await conn.query(
+    `SELECT IFNULL(MAX(CAST(RIGHT(pum_nomor,5) AS UNSIGNED)),0) AS maxVal
+     FROM tpengajuan_uang_muka_hdr WHERE pum_nomor LIKE ?`,
+    [`${prefix}%`],
+  );
+  return `${prefix}${String(Number(row.maxVal) + 1).padStart(5, "0")}`;
+};
+
+// Pengajuan Petty Cash: nominal saja, tanpa memilih transaksi outstanding.
+// Laci tujuan = laci milik pembuat (rek_pemilik), dikunci saat dibuat.
+const createPettyCash = async ({ tanggal, keterangan, nominal }, user) => {
+  const cabang = String(user?.cabang || "")
+    .trim()
+    .toUpperCase();
+  if (!CABANG_PETTY.includes(cabang))
+    throw new Error("Petty Cash hanya untuk cabang HO-/P01.");
+  if (!tanggal) throw new Error("Tanggal wajib diisi.");
+  const total = Math.round((Number(nominal) || 0) * 100) / 100;
+  if (total <= 0) throw new Error("Nominal pengajuan wajib diisi.");
+
+  const conn = await db.getConnection();
+  let locked = false;
+  try {
+    await conn.beginTransaction();
+
+    const laci = await cariLaciPemilik(conn, user.kode);
+    if (!laci)
+      throw new Error(
+        `User ${user.kode} belum punya laci kas. Hubungi Finance.`,
+      );
+
+    const [[lk]] = await conn.query(`SELECT GET_LOCK(?, 10) AS ok`, [
+      LOCK_NOMOR_PC,
+    ]);
+    if (!Number(lk.ok))
+      throw new Error("Penomoran sedang dipakai, coba lagi sebentar.");
+    locked = true;
+
+    const nomor = await generateNomorPettyCash(tanggal, conn);
+    await conn.query(
+      `INSERT INTO tpengajuan_uang_muka_hdr
+         (pum_nomor, pum_tanggal, pum_keterangan, pum_cabang, pum_user_create,
+          pum_date_create, pum_status, pum_jenis, pum_total_nominal, pum_laci_tujuan)
+       VALUES (?, ?, ?, ?, ?, NOW(), 'DIAJUKAN', 'PC', ?, ?)`,
+      [
+        nomor,
+        tanggal,
+        String(keterangan || "").slice(0, 255),
+        user.cabang,
+        user.kode,
+        total,
+        laci,
+      ],
+    );
+
+    await conn.commit();
+    return { nomor, totalNominal: total, laciTujuan: laci };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    if (locked) {
+      try {
+        await conn.query(`SELECT RELEASE_LOCK(?)`, [LOCK_NOMOR_PC]);
+      } catch (_) {
+        /* lock otomatis lepas saat koneksi ditutup */
+      }
+    }
+    conn.release();
+  }
+};
+
+// semua = true: lihat pengajuan semua user; selain itu hanya milik userKode.
+const getBrowsePettyCash = async ({
+  startDate,
+  endDate,
+  cabang,
+  status,
+  userKode,
+  semua,
+}) => {
+  const params = [];
+  let where = `WHERE h.pum_jenis = 'PC'`;
+  if (startDate && endDate) {
+    where += ` AND (h.pum_tanggal BETWEEN ? AND ? OR h.pum_status = 'DIAJUKAN')`;
+    params.push(startDate, endDate);
+  }
+  if (cabang) {
+    where += ` AND h.pum_cabang = ?`;
+    params.push(cabang);
+  }
+  if (!semua) {
+    where += ` AND h.pum_user_create = ?`;
+    params.push(userKode);
+  }
+  if (status === "OUTSTANDING") where += ` AND h.pum_status = 'DIAJUKAN'`;
+  else if (status === "HISTORY")
+    where += ` AND h.pum_status IN ('REALISASI','DITOLAK','BATAL')`;
+
+  const [rows] = await db.query(
+    `SELECT
+       h.pum_nomor AS Nomor,
+       DATE_FORMAT(h.pum_tanggal, '%Y-%m-%d') AS Tanggal,
+       h.pum_keterangan AS Keterangan,
+       h.pum_cabang AS Cabang,
+       h.pum_status AS Status,
+       h.pum_total_nominal AS Nominal,
+       h.pum_user_create AS UserCreate,
+       h.pum_user_realisasi AS UserRealisasi,
+       DATE_FORMAT(h.pum_date_realisasi, '%Y-%m-%d %H:%i') AS TglRealisasi,
+       h.pum_laci_tujuan AS LaciKode,
+       r.rek_nama AS LaciNama,
+       h.pum_laci_asal AS LaciAsal,
+       h.pum_alasan_tolak AS AlasanTolak,
+       h.pum_transfer_jur_no AS TransferJurNo,
+       h.pum_konfirmasi_tgl AS KonfirmasiTgl,
+       (SELECT v.val_aksi FROM tpengajuan_uang_muka_validasi v
+         WHERE v.val_pum_nomor = h.pum_nomor AND v.val_jenis = 'PENGAJUAN'
+         ORDER BY v.val_id DESC LIMIT 1) AS ValAksi
+     FROM tpengajuan_uang_muka_hdr h
+     LEFT JOIN finance.trekening r ON r.rek_kode = h.pum_laci_tujuan
+     ${where}
+     ORDER BY h.pum_tanggal DESC, h.pum_nomor DESC`,
+    params,
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    // "" = belum direalisasi atau realisasi mandiri (tidak perlu konfirmasi terima)
+    KonfirmasiStatus:
+      !row.TransferJurNo ||
+      String(row.UserRealisasi || "").toUpperCase() ===
+        String(row.UserCreate || "").toUpperCase()
+        ? ""
+        : row.KonfirmasiTgl
+          ? "SUDAH"
+          : "BELUM",
+  }));
+};
+
+// ── Penyerahan Dana Belanja (PD): dana sudah ada di laci pembuat ──
+const LOCK_NOMOR_PD = "manksi_penomoran_pd";
+const SUMBER_PD = [
+  "PERMINTAAN_PEMBELIAN",
+  "PO_LAIN_LAIN",
+  "INSENTIF",
+  "PENGAJUAN_DANA",
+];
+const fmtRp = (n) => Number(n || 0).toLocaleString("id-ID");
+
+// PD yang sudah diserahkan tetapi belum diselesaikan: uang sudah keluar secara
+// fisik, sedangkan saldo buku baru turun saat Penyelesaian.
+const hitungPdBelumSelesai = async (conn, laci) => {
+  const [[r]] = await conn.query(
+    `SELECT IFNULL(SUM(k.bon_nominal), 0) AS total
+     FROM tpengajuan_uang_muka_hdr h
+     JOIN finance.tkasbon k ON k.bon_nomor = h.pum_bon_nomor
+     WHERE h.pum_jenis = 'PD' AND h.pum_status = 'REALISASI'
+       AND h.pum_laci_tujuan = ? AND k.bon_selesai = 0`,
+    [laci],
+  );
+  return Number(r.total) || 0;
+};
+
+// Detail untuk saveRealisasi mode penyerahan: semua baris ACC, nominal
+// dana hanya pada baris KASBON (sama seperti form Realisasi Uang Muka).
+const bangunDetailPenyerahan = async (conn, pumNomor, total) => {
+  const [dtl] = await conn.query(
+    `SELECT pumd_id, pumd_sumber, pumd_nomor_sumber, pumd_item_nourut,
+            pumd_nama, pumd_satuan, pumd_qty, pumd_pmt_nomor
+     FROM tpengajuan_uang_muka_dtl WHERE pumd_pum_nomor = ? ORDER BY pumd_id`,
+    [pumNomor],
+  );
+  const itemRows = dtl.map((d) => ({
+    pumd_id: d.pumd_id,
+    sumber: d.pumd_sumber,
+    nomor_header: d.pumd_nomor_sumber,
+    item_nourut: d.pumd_item_nourut,
+    pmt_nomor: d.pumd_pmt_nomor,
+    nama: d.pumd_nama,
+    satuan: d.pumd_satuan,
+    qty: Number(d.pumd_qty),
+    status_acc: "ACC",
+    nominal_acc: 0,
+  }));
+  const kasbonRow = {
+    pumd_id: null,
+    sumber: "KASBON",
+    nomor_header: pumNomor,
+    item_nourut: null,
+    pmt_nomor: null,
+    nama: "KASBON",
+    satuan: "",
+    qty: 1,
+    status_acc: "ACC",
+    nominal_acc: total,
+  };
+  return [kasbonRow, ...itemRows];
+};
+
+// items: sama seperti dialog Ajukan Uang Muka
+// [{ sumber, nomorHeader, itemNourut, nama, satuan, qty, keterangan }]
+const createPenyerahan = async (
+  { tanggal, keterangan, nominal, items },
+  user,
+) => {
+  const cabang = String(user?.cabang || "")
+    .trim()
+    .toUpperCase();
+  if (!CABANG_PETTY.includes(cabang))
+    throw new Error("Penyerahan Dana Belanja hanya untuk cabang HO-/P01.");
+  if (!tanggal) throw new Error("Tanggal wajib diisi.");
+  if (!items || !items.length) throw new Error("Minimal pilih 1 transaksi.");
+  const tidakBoleh = items.find((it) => !SUMBER_PD.includes(it.sumber));
+  if (tidakBoleh)
+    throw new Error(
+      `Sumber ${tidakBoleh.sumber} tidak dapat diserahkan lewat Penyerahan Dana Belanja.`,
+    );
+  const total = Math.round((Number(nominal) || 0) * 100) / 100;
+  if (total <= 0) throw new Error("Nominal penyerahan wajib diisi.");
+
+  const conn = await db.getConnection();
+  let locked = false;
+  try {
+    // Kunci global PD diambil SEBELUM transaksi dimulai, supaya snapshot InnoDB
+    // baru dibuat sesudah kunci didapat dan cek dana/item melihat PD yang baru commit.
+    const [[lk]] = await conn.query(`SELECT GET_LOCK(?, 10) AS ok`, [
+      LOCK_NOMOR_PD,
+    ]);
+    if (!Number(lk.ok))
+      throw new Error("Penyerahan lain sedang diproses, coba lagi sebentar.");
+    locked = true;
+
+    await conn.beginTransaction();
+
+    const laci = await cariLaciPemilik(conn, user.kode);
+    if (!laci)
+      throw new Error(
+        `User ${user.kode} belum punya laci kas. Hubungi Finance.`,
+      );
+
+    const saldo = await hitungSaldoAkun(laci, conn);
+    const belumSelesai = await hitungPdBelumSelesai(conn, laci);
+    const tersedia = saldo - belumSelesai;
+    if (total > tersedia + 0.005)
+      throw new Error(
+        `Nominal ${fmtRp(total)} melebihi dana tersedia di laci ${laci}: saldo ${fmtRp(saldo)} − penyerahan belum selesai ${fmtRp(belumSelesai)} = ${fmtRp(tersedia)}.`,
+      );
+
+    for (const it of items) {
+      if (
+        await sumberSudahDipakai(conn, it.sumber, it.nomorHeader, it.itemNourut)
+      )
+        throw new Error(
+          `Item "${it.nama}" dari ${it.nomorHeader} sudah diserahkan atau sedang diajukan.`,
+        );
+    }
+
+    const { nomor } = await createPengajuan(
+      {
+        tanggal,
+        keterangan,
+        nominalDiajukan: total,
+        items,
+        jenis: "PD",
+        laciTujuan: laci,
+      },
+      user,
+      conn,
+    );
+
+    const detail = await bangunDetailPenyerahan(conn, nomor, total);
+    const hasil = await saveRealisasi(
+      nomor,
+      {
+        jenis: "KAS",
+        rek_kode: laci,
+        tanggal,
+        nota: "",
+        penerima: user.kode,
+        keterangan: String(keterangan || ""),
+        detail,
+      },
+      user,
+      { penyerahan: true, conn },
+    );
+
+    await conn.commit();
+    return {
+      nomor,
+      bonNomor: hasil.bonNomor,
+      totalNominal: total,
+      laciKode: laci,
+    };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    if (locked) {
+      try {
+        await conn.query(`SELECT RELEASE_LOCK(?)`, [LOCK_NOMOR_PD]);
+      } catch (_) {
+        /* lock otomatis lepas saat koneksi ditutup */
+      }
+    }
+    conn.release();
+  }
+};
+
+// Batalkan PD yang belum diselesaikan. Hanya pemilik laci. Baris PUM tetap ada
+// (status BATAL) sebagai jejak audit; bon dan penanda "sudah diserahkan" dibalik.
+// Tabel finance/ga2 berengine MyISAM: rollback tidak menjangkaunya, jadi urutan tulis
+// dan sifat idempotent di bawah yang menjaga konsistensi. Bon dihapus PALING AKHIR:
+// selama bon masih ada, PD tetap tampil di tab Penyerahan dan Batal bisa diulang.
+const batalPenyerahan = async (pumNomor, alasan, user) => {
+  const alasanBersih = String(alasan || "").trim();
+  if (alasanBersih.length < 3)
+    throw new Error("Alasan pembatalan wajib diisi (min. 3 karakter).");
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // Kunci baris PUM; saveData Penyelesaian mengambil kunci yang sama.
+    const [[hdr]] = await conn.query(
+      `SELECT pum_jenis, pum_status, pum_bon_nomor, pum_laci_tujuan
+       FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
+      [pumNomor],
+    );
+    if (!hdr) throw new Error("Penyerahan Dana Belanja tidak ditemukan.");
+    if (hdr.pum_jenis !== "PD")
+      throw new Error("Dokumen ini bukan Penyerahan Dana Belanja.");
+    if (hdr.pum_status === "BATAL")
+      throw new Error("Penyerahan ini sudah dibatalkan.");
+    if (hdr.pum_status !== "REALISASI" || !hdr.pum_bon_nomor)
+      throw new Error(
+        `Penyerahan ini berstatus ${hdr.pum_status}, tidak dapat dibatalkan.`,
+      );
+
+    const [[laci]] = await conn.query(
+      `SELECT rek_pemilik FROM finance.trekening WHERE rek_kode = ?`,
+      [hdr.pum_laci_tujuan],
+    );
+    if (
+      String(laci?.rek_pemilik || "").toUpperCase() !==
+      String(user.kode || "").toUpperCase()
+    )
+      throw new Error(
+        `Pembatalan hanya dapat dilakukan oleh pemilik laci ${hdr.pum_laci_tujuan}.`,
+      );
+
+    const bonNomor = hdr.pum_bon_nomor;
+    const [[bon]] = await conn.query(
+      `SELECT bon_selesai, bon_jur_no, bon_transfer_jur_no, bon_sisa_jur_no
+       FROM finance.tkasbon WHERE bon_nomor = ?`,
+      [bonNomor],
+    );
+    if (
+      bon &&
+      (Number(bon.bon_selesai) !== 0 ||
+        bon.bon_jur_no ||
+        bon.bon_transfer_jur_no ||
+        bon.bon_sisa_jur_no)
+    )
+      throw new Error(
+        "Penyerahan ini sudah diselesaikan. Koreksi dilakukan Finance, tidak lewat pembatalan.",
+      );
+
+    const [dtl] = await conn.query(
+      `SELECT pumd_sumber, pumd_nomor_sumber, pumd_item_nourut, pumd_pmt_nomor
+       FROM tpengajuan_uang_muka_dtl WHERE pumd_pum_nomor = ?`,
+      [pumNomor],
+    );
+
+    const pmtTerkena = new Set();
+    for (const d of dtl) {
+      if (d.pumd_sumber === "PENGAJUAN_DANA" && d.pumd_pmt_nomor) {
+        // Nilai "belum approved" sama dengan cabang reject di saveRealisasi.
+        await conn.query(
+          `UPDATE ga2.tpermintaan_dtl SET
+             pmd_tanggal_approved = NULL, pmd_user_approved = '', pmd_dana_approved = 0,
+             pmd_bon = '', pmd_status_finance = NULL
+           WHERE pmd_pmt_nomor = ? AND pmd_nourut = ? AND pmd_bon = ?`,
+          [d.pumd_pmt_nomor, d.pumd_item_nourut, bonNomor],
+        );
+        pmtTerkena.add(d.pumd_pmt_nomor);
+      } else if (d.pumd_sumber === "INSENTIF") {
+        await conn.query(
+          `UPDATE tpengajuan_fee SET fee_tgl_realisasi = NULL WHERE fee_nomor = ?`,
+          [d.pumd_nomor_sumber],
+        );
+      }
+    }
+
+    // Permintaan (MNT) dipakai bersama PD lain atas pengajuan yang sama: tidak
+    // dihapus. Item kita kembali belum approved, jadi permintaan pasti belum tutup;
+    // approval dihitung ulang dari item lain yang masih approved.
+    for (const pmt of pmtTerkena) {
+      await conn.query(
+        `UPDATE ga2.tpermintaan_hdr SET pmt_close = 0, pmt_tglclose = NULL
+         WHERE pmt_nomor = ?`,
+        [pmt],
+      );
+      await conn.query(
+        `UPDATE ga2.tpermintaan_hdr h SET h.pmt_approval = 0
+         WHERE h.pmt_nomor = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM ga2.tpermintaan_dtl d
+             WHERE d.pmd_pmt_nomor = h.pmt_nomor AND d.pmd_tanggal_approved IS NOT NULL)`,
+        [pmt],
+      );
+    }
+
+    // Hapus bon terakhir; trigger tkasbon_before_delete menghapus tkasbonitem/2.
+    if (bon) {
+      await conn.query(
+        `DELETE FROM finance.tkasbon WHERE bon_nomor = ? AND bon_selesai = 0`,
+        [bonNomor],
+      );
+    }
+
+    await conn.query(
+      `UPDATE tpengajuan_uang_muka_hdr SET
+         pum_status = 'BATAL', pum_alasan_batal = ?, pum_user_batal = ?,
+         pum_date_batal = NOW(), pum_bon_batal = ?, pum_bon_nomor = NULL
+       WHERE pum_nomor = ?`,
+      [alasanBersih.slice(0, 255), user.kode, bonNomor, pumNomor],
+    );
+
+    await conn.commit();
+    return { nomor: pumNomor, bonNomor };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
+  }
+};
+
+// Info laci milik user yang login (untuk header form: saldo, batas, dana tersedia)
+const getInfoLaci = async (user) => {
+  const kode = await cariLaciPemilik(db, user.kode);
+  if (!kode)
+    return {
+      kode: "",
+      nama: "",
+      saldo: 0,
+      batas: BATAS_SALDO_LACI_MANDIRI,
+      belumSelesai: 0,
+      tersedia: 0,
+    };
+  const [[r]] = await db.query(
+    `SELECT rek_nama FROM finance.trekening WHERE rek_kode = ?`,
+    [kode],
+  );
+  const saldo = await hitungSaldoAkun(kode);
+  const belumSelesai = await hitungPdBelumSelesai(db, kode);
+  return {
+    kode,
+    nama: r?.rek_nama || "",
+    saldo,
+    batas: BATAS_SALDO_LACI_MANDIRI,
+    belumSelesai,
+    tersedia: saldo - belumSelesai,
+  };
+};
+
 module.exports = {
   BKK_P04_MULAI,
   SQL_NOMINAL_BARIS_PO,
@@ -640,4 +1142,9 @@ module.exports = {
   ensurePermintaanDana,
   getPrintData,
   getPrintPenyerahan,
+  createPettyCash,
+  createPenyerahan,
+  batalPenyerahan,
+  getBrowsePettyCash,
+  getInfoLaci,
 };

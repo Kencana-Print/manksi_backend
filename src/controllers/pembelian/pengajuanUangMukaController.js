@@ -153,6 +153,75 @@ const postBatalValidasiPenyelesaian = async (req, res) => {
   }
 };
 
+const BAGIAN_LIHAT_SEMUA_PETTY = ["FINANCE", "AUDIT", "EDP", "DIREKSI"];
+
+const bolehLihatSemuaPetty = (u) =>
+  adalahAksesPenuh(u) ||
+  BAGIAN_LIHAT_SEMUA_PETTY.includes(String(u?.bagian || "").toUpperCase());
+
+const createPettyCash = async (req, res) => {
+  try {
+    const { tanggal, keterangan, nominal } = req.body;
+    const result = await pengajuanUangMukaService.createPettyCash(
+      { tanggal, keterangan, nominal },
+      req.user,
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const getBrowsePettyCash = async (req, res) => {
+  try {
+    const { startDate, endDate, status } = req.query;
+    const semua = bolehLihatSemuaPetty(req.user);
+    const rows = await pengajuanUangMukaService.getBrowsePettyCash({
+      startDate,
+      endDate,
+      status,
+      cabang: semua ? req.query.cabang || "" : "",
+      userKode: req.user?.kode,
+      semua,
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+const getInfoLaci = async (req, res) => {
+  try {
+    res.json(await pengajuanUangMukaService.getInfoLaci(req.user));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const createPenyerahan = async (req, res) => {
+  try {
+    res.json(
+      await pengajuanUangMukaService.createPenyerahan(req.body, req.user),
+    );
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+const batalPenyerahan = async (req, res) => {
+  try {
+    res.json(
+      await pengajuanUangMukaService.batalPenyerahan(
+        req.params.nomor,
+        req.body?.alasan,
+        req.user,
+      ),
+    );
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
 module.exports = {
   create,
   getBrowse,
@@ -165,4 +234,9 @@ module.exports = {
   getValidasiPenyelesaian,
   postValidasiPenyelesaian,
   postBatalValidasiPenyelesaian,
+  createPettyCash,
+  createPenyerahan,
+  batalPenyerahan,
+  getBrowsePettyCash,
+  getInfoLaci,
 };

@@ -1,9 +1,12 @@
 const qcBahanFormService = require("../../services/garmen/qcBahanFormService");
-const { bolehGudang, tolakHak } = require("./qcAkses");
+const { bolehGudang, tolakHak, lingkupQc } = require("./qcAkses");
 
 const lookupPo = async (req, res) => {
   try {
-    const data = await qcBahanFormService.lookupPo(req.query);
+    const data = await qcBahanFormService.lookupPo(
+      req.query,
+      lingkupQc(req.user),
+    );
     res.status(200).json({ success: true, data });
   } catch (error) {
     console.error("Error Lookup PO QC Bahan:", error);

@@ -748,18 +748,31 @@ const getBahanSpandukInfo = async (kode) => {
   return { kode, nama: b?.nama || "", stok: Number(st.stok) || 0 };
 };
 
+// Jenis order yang boleh tanpa bahan; selain ini bahan wajib untuk Spanduk
+const JO_TANPA_BAHAN = ["LN"];
+
 // Ganti bahan SPK (divisi Spanduk saja). Kode yang sama dengan di DB tidak
 // divalidasi ulang (bahan lama yang kini nonaktif tetap boleh dipertahankan).
 // Bahan berubah -> status stok ikut direset, karena status itu milik bahan lama.
 const simpanBahan = async (conn, nomor, kodeBaru) => {
   const [[spk]] = await conn.query(
-    `SELECT spk_divisi, spk_bhn_kode FROM tspk WHERE spk_nomor = ?`,
+    `SELECT spk_divisi, spk_jo_kode, spk_bhn_kode FROM tspk WHERE spk_nomor = ?`,
     [nomor],
   );
   if (!isDivisiSpanduk(spk?.spk_divisi)) return;
 
-  const kode = String(kodeBaru ?? "").trim();
-  if (kode === String(spk.spk_bhn_kode || "")) return;
+  const kodeLama = String(spk.spk_bhn_kode || "");
+  // undefined = payload tidak mengirim bahan: pakai bahan yang sudah tersimpan
+  const kode =
+    kodeBaru === undefined ? kodeLama : String(kodeBaru ?? "").trim();
+
+  const jo = String(spk.spk_jo_kode || "")
+    .trim()
+    .toUpperCase();
+  if (!kode && !JO_TANPA_BAHAN.includes(jo)) {
+    throw new Error("Bahan wajib diisi untuk jenis order selain LN.");
+  }
+  if (kode === kodeLama) return;
 
   if (kode) {
     const [bhn] = await conn.query(
@@ -782,8 +795,10 @@ const simpanBahan = async (conn, nomor, kodeBaru) => {
 
 const getBahanInfo = async (kode) => {
   const k = String(kode || "").trim();
-  if (!/^SB\d{7}$/.test(k)) throw new Error("Kode bahan tidak valid.");
-  return getBahanSpandukInfo(k);
+  if (!k.startsWith("SB")) throw new Error("Kode bahan tidak valid.");
+  const info = await getBahanSpandukInfo(k);
+  if (!info.nama) throw new Error("Bahan tidak ditemukan.");
+  return info;
 };
 
 // Daftar bahan Spanduk aktif untuk dropdown Bahan di SPK. Sengaja tidak memakai
@@ -961,9 +976,7 @@ const saveData = async (payload, user) => {
     }
 
     // Urutan penting: bahan dulu (reset status bila bahan berubah), baru status.
-    if (payload.bahanKode !== undefined) {
-      await simpanBahan(conn, nomor, payload.bahanKode);
-    }
+    await simpanBahan(conn, nomor, payload.bahanKode);
     if (payload.bahanStatus !== undefined) {
       await simpanStatusBahan(conn, nomor, payload.bahanStatus);
     }
