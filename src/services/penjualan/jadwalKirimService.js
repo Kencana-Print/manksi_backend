@@ -10,11 +10,13 @@ const jadwalKirimFormService = require("./jadwalKirimFormService");
  * Dipakai di browse maupun cetak/export agar konsisten dengan Delphi.
  */
 const SPK_UNION = `(
-  SELECT spk_nomor, spk_nama, spk_ukuran, spk_kain, spk_cus_kode
+  SELECT spk_nomor, spk_nama, spk_ukuran, spk_kain, spk_cus_kode,
+         spk_panjang, spk_lebar, spk_keterangan, spk_bhn_kode, spk_so_ref
   FROM tspk
   WHERE spk_aktif = 'Y'
   UNION ALL
-  SELECT mspk_nomor, mspk_nama, mspk_ukuran, mspk_kain, mspk_cus_kode
+  SELECT mspk_nomor, mspk_nama, mspk_ukuran, mspk_kain, mspk_cus_kode,
+         mspk_panjang, mspk_lebar, Mspk_keterangan, NULL, NULL
   FROM tmemospk
 )`;
 
@@ -41,6 +43,10 @@ const getBrowse = async ({ tglAwal, tglAkhir, gudang = "" }) => {
       b.spk_nama                                            AS Nama_Spk,
       b.spk_ukuran                                          AS Ukuran,
       b.spk_kain                                            AS Kain,
+      b.spk_panjang                                         AS Panjang,
+      b.spk_lebar                                           AS Lebar,
+      IFNULL(NULLIF(bh.Bhn_Name, ''), '-')                  AS Bahan,
+      COALESCE(NULLIF(so.so_keterangan, ''), NULLIF(b.spk_keterangan, '')) AS Keterangan,
       IFNULL(a.Jumlah, 0)                                  AS Jumlah,
       IFNULL(a.Koli, 0)                                    AS Koli,
       IFNULL(a.Realisasi, 0)                               AS Realisasi,
@@ -54,6 +60,8 @@ const getBrowse = async ({ tglAwal, tglAkhir, gudang = "" }) => {
       a.jk_tunda_ke_nomor
     FROM tjadwalkirim a
     LEFT JOIN ${SPK_UNION} b ON b.spk_nomor = a.spk_nomor
+    LEFT JOIN tbahan bh ON bh.Bhn_kode = b.spk_bhn_kode
+    LEFT JOIN tsalesorder so ON so.so_nomor = b.spk_so_ref
     LEFT JOIN tgudang g ON g.gdg_kode = a.Gudang
     WHERE a.Tanggal >= ?
       AND a.Tanggal <= ?
@@ -85,6 +93,8 @@ const getDetail = async (nomorKirim) => {
   const query = `
     SELECT
       a.nomor_kirim                                         AS Nomor,
+      b.spk_nomor                                           AS No_SPK,
+      s.spk_nama                                            AS Nama_Spk,
       a.No_urut,
       a.Kota,
       a.Uraian,
@@ -118,6 +128,7 @@ const getDetail = async (nomorKirim) => {
       a.Expedisi
     FROM tjadwalkirim_dtl a
     INNER JOIN tjadwalkirim b ON a.nomor_kirim = b.Nomor_Kirim
+    LEFT JOIN ${SPK_UNION} s ON s.spk_nomor = b.spk_nomor
     WHERE a.nomor_kirim IN (${placeholders})
     ORDER BY a.nomor_kirim, a.No_urut
   `;

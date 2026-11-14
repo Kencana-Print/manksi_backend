@@ -144,10 +144,10 @@ const getLookupBahan = async (search) => {
     params.push(like, like);
   }
   const [rows] = await db.query(
-    `SELECT b.brg_kode AS Kode, b.brg_nama AS Nama, b.brg_satuan AS Satuan
+    `SELECT b.brg_kode AS Kode, b.brg_nama AS Nama, b.brg_satuan AS Satuan, b.brg_lebar AS Lebar
        FROM ${T.barang} b
       WHERE ${where}
-      ORDER BY b.brg_nama`,
+      ORDER BY b.brg_nama, b.brg_lebar`,
     params,
   );
   return rows;
@@ -184,7 +184,7 @@ const getFormData = async (nomor, user) => {
   }
 
   const [bahan] = await db.query(
-    `SELECT k.kode AS Kode, b.brg_nama AS Nama, b.brg_satuan AS Satuan
+    `SELECT k.kode AS Kode, b.brg_nama AS Nama, b.brg_satuan AS Satuan, b.brg_lebar AS Lebar
        FROM ${T.bahan} k
        LEFT JOIN ${T.barang} b ON b.brg_kode = k.kode
       WHERE k.nomor = ? ORDER BY k.no_urut`,
