@@ -12,7 +12,8 @@ exports.getNextNumber = async (req, res) => {
 
 exports.saveBatch = async (req, res) => {
     try {
-        const result = await service.saveBatchBarcode(req.body.items, 'SYSTEM');
+        const user = req.user?.username || req.user?.kode || req.user?.nama || 'SYSTEM';
+        const result = await service.saveBatchBarcode(req.body.items, user);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -21,7 +22,8 @@ exports.saveBatch = async (req, res) => {
 
 exports.generate = async (req, res) => {
     try {
-        const result = await service.createManualBarcode(req.body, 'SYSTEM');
+        const user = req.user?.username || req.user?.kode || req.user?.nama || 'SYSTEM';
+        const result = await service.createManualBarcode(req.body, user);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });

@@ -457,21 +457,25 @@ exports.getPengajuanPermintaanForPrint = async (nomor) => {
     const [detailResults] = await pool.query(sqlDetail, [nomor]);
 
     // 3. Return gabungan data
+    const isApproved = header.Status_Acc === "Y";
+    const namaApprover = header.Diketahui || header.Acc_SPV || "";
+
     return {
       ...header,
       Details: detailResults,
       // Fallback tanda tangan jika data kosong
       Dibuat: header.Dibuat || "................",
-      Diketahui:
-        header.Status_Acc === "Y"
-          ? header.Diketahui || "EKAMMT"
-          : "................",
+      Diketahui: isApproved
+        ? (namaApprover || "................")
+        : "................",
     };
   } catch (error) {
     console.error("Error in getPengajuanPermintaanForPrint:", error);
     throw new Error(`Gagal mengambil data cetak pengajuan: ${error.message}`);
   }
 };
+
+exports.getPermintaanPembelianForPrint = exports.getPengajuanPermintaanForPrint;
 
 // Fungsi Approval oleh SPV (EKAMMT) untuk Pengajuan Permintaan
 exports.approveBySPV = async (nomor, userKD) => {

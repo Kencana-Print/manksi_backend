@@ -14,6 +14,9 @@ router.get("/", verifyToken, sjController.browseSJ);
 // Get Detail Surat Jalan berdasarkan Nomor SJ (Query: ?nomor=SJ-001)
 router.get("/detail", verifyToken, sjController.getDetailSJByNomor);
 
+// Get Detail Bulk Surat Jalan (Body: { nomorList: [...] })
+router.post("/detail-bulk", verifyToken, sjController.getDetailBulk);
+
 // Cek Urutan Pengajuan Edit Terakhir
 router.get(
   "/pengajuan/urut/:nomor",
