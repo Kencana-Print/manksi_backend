@@ -5,6 +5,7 @@ const getData = async (req, res) => {
     const data = await service.getData({
       tglAwal: req.query.tglAwal,
       tglAkhir: req.query.tglAkhir,
+      grain: req.query.grain,
     });
     res.json({ success: true, data });
   } catch (error) {
