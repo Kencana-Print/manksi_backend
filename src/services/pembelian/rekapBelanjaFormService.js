@@ -1,6 +1,6 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
-const { cekNomorSpk } = require("./poBahanFormService");
+const { cekNomorSpk, cariSpkDariMppb } = require("./poBahanFormService");
 
 // Rekap Belanja = PO Lain-lain (po_jenis 4, prefix PL). Satu form memuat banyak
 // supplier; saat simpan dipecah menjadi satu PO per supplier. Penanda kelompok:
@@ -251,16 +251,26 @@ const saveGrup = async (payload, user) => {
   const baris = (payload.items || []).filter((i) => str(i.kode) !== "");
   if (baris.length === 0) throw new Error("Minimal satu bahan harus diisi.");
 
+  // SPK kosong tapi MPPB terisi: cari SO/MAP yang sudah memanggil MPPB itu.
+  // Kalau belum ada, SPK dibiarkan kosong dan diisi otomatis saat SO/MAP disimpan.
+  for (const it of baris) {
+    if (!str(it.spk) && str(it.mppb))
+      it.spk = await cariSpkDariMppb(db, str(it.mppb));
+  }
+
   const kunciKirim = new Set();
   baris.forEach((it, idx) => {
     const no = `Baris ${idx + 1}`;
     const kode = str(it.kode);
     const sup = str(it.supKode);
     const spk = str(it.spk);
+    const mppb = str(it.mppb);
     if (!sup)
       throw new Error(`${no}: Supplier untuk bahan ${kode} wajib diisi.`);
-    if (!spk)
-      throw new Error(`${no}: Nomor SPK/MAP untuk bahan ${kode} wajib diisi.`);
+    if (!spk && !mppb)
+      throw new Error(
+        `${no}: Isi Nomor SPK/MAP, atau isi Nomor MPPB untuk bahan ${kode}.`,
+      );
     if (!(Number(it.jumlah) > 0))
       throw new Error(`${no}: Jumlah untuk bahan ${kode} harus lebih dari 0.`);
     if (!(Number(it.harga) > 0))
@@ -273,10 +283,12 @@ const saveGrup = async (payload, user) => {
     const ppn = Number(it.ppn) || 0;
     if (ppn < 0 || ppn > 100)
       throw new Error(`${no}: PPN untuk bahan ${kode} harus antara 0 dan 100.`);
-    const kunci = `${kode.toUpperCase()}|${sup}|${spk.toUpperCase()}`;
+    const kunci = `${kode.toUpperCase()}|${sup}|${
+      spk.toUpperCase() || `MPPB:${mppb.toUpperCase()}`
+    }`;
     if (kunciKirim.has(kunci))
       throw new Error(
-        `${no}: Bahan ${kode} dengan supplier ${sup} dan SPK/MAP ${spk} dobel.`,
+        `${no}: Bahan ${kode} dengan supplier ${sup} dan SPK/MAP ${spk || mppb} dobel.`,
       );
     kunciKirim.add(kunci);
   });
@@ -358,8 +370,9 @@ const saveGrup = async (payload, user) => {
     if (supHilang.length)
       throw new Error(`Supplier tidak ditemukan: ${supHilang.join(", ")}`);
 
-    const spkList = [...new Set(baris.map((i) => str(i.spk)))];
-    const spkAda = await cekNomorSpk(conn, spkList);
+    const spkList = [...new Set(baris.map((i) => str(i.spk)).filter(Boolean))];
+    const spkAda =
+      spkList.length > 0 ? await cekNomorSpk(conn, spkList) : new Set();
     const spkHilang = spkList.filter((s) => !spkAda.has(s.toUpperCase()));
     if (spkHilang.length)
       throw new Error(`Nomor SPK/MAP tidak ditemukan: ${spkHilang.join(", ")}`);
@@ -512,10 +525,12 @@ const saveGrup = async (payload, user) => {
     // 6. Cek lintas PO: baris dobel dan MPPB
     const kunciAkhir = new Set();
     for (const r of finalRows) {
-      const k = `${r.kode.toUpperCase()}|${r.supKode}|${r.spk.toUpperCase()}`;
+      const k = `${r.kode.toUpperCase()}|${r.supKode}|${
+        r.spk.toUpperCase() || `MPPB:${r.mppb.toUpperCase()}`
+      }`;
       if (kunciAkhir.has(k))
         throw new Error(
-          `Bahan ${r.kode} dengan supplier ${r.supKode} dan SPK/MAP ${r.spk} dobel (termasuk PO yang terkunci).`,
+          `Bahan ${r.kode} dengan supplier ${r.supKode} dan SPK/MAP ${r.spk || r.mppb} dobel (termasuk PO yang terkunci).`,
         );
       kunciAkhir.add(k);
     }

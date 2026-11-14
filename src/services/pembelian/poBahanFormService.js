@@ -1162,4 +1162,6 @@ module.exports = {
   getSupplierByKode,
   getMbbOutstanding,
   cekNomorSpk,
+  cariSpkDariMppb,
+  isiSpkPoDariMppb,
 };
