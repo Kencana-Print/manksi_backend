@@ -401,14 +401,13 @@ LEFT JOIN (
     GROUP BY mbd_mb_nomor
 ) a ON a.mbd_mb_nomor = h.mb_nomor
 
+WHERE h.mb_tanggal BETWEEN ? AND ?
 ORDER BY h.mb_tanggal DESC, h.mb_nomor DESC
 `;
 
-    const filterStatus = status === "OPEN" || status === "PENDING" ? "N" : "Y";
     const [masterResults] = await pool.query(sqlMaster, [
       startDate,
       endDate,
-      filterStatus,
     ]);
 
     // Jika tidak ada hasil header, segera kembalikan array kosong

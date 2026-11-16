@@ -15,6 +15,7 @@ router.get(
   bahanController.getBrowseBahan,
 );
 router.get("/lookups/:category", verifyToken, bahanController.getLookups);
+router.get("/check-kode/:kode", verifyToken, bahanController.checkKodeBahan);
 router.get(
   "/:kode",
   verifyToken,

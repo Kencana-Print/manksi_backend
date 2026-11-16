@@ -53,6 +53,23 @@ const getDetailSJByNomor = async (req, res) => {
 };
 
 /**
+ * Get Detail Bulk Surat Jalan Berdasarkan Daftar Nomor SJ (untuk Export dsb)
+ */
+const getDetailBulk = async (req, res) => {
+  try {
+    const { nomorList } = req.body;
+    if (!Array.isArray(nomorList) || nomorList.length === 0) {
+      return res.status(200).json({ data: [] });
+    }
+
+    const data = await sjService.getDetailSJ(nomorList);
+    res.status(200).json({ data });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
  * Delete Surat Jalan
  */
 const deleteSJ = async (req, res) => {
@@ -222,6 +239,7 @@ module.exports = {
   // Modul Utama Transaksi
   browseSJ,
   getDetailSJByNomor,
+  getDetailBulk,
   deleteSJ,
   getUrutPengajuan,
   submitPengajuan,

@@ -24,11 +24,11 @@ exports.generateMaxKode = async (perushKode, tanggalInput) => {
     const sql = `
         SELECT MAX(CAST(SUBSTRING_INDEX(invp_nomor, '.', -1) AS UNSIGNED)) AS max_num
         FROM tinvp_hdr
-        WHERE invp_nomor LIKE ?
+        WHERE invp_nomor LIKE ? OR invp_nomor LIKE ?
     `;
 
-    // Kita cari yang diawali 'INVP/KP/2602/%'
-    const [rows] = await pool.query(sql, [`${prefix}/%`]);
+    // Mendukung pemisah titik maupun garis miring
+    const [rows] = await pool.query(sql, [`${prefix}.%`, `${prefix}/%`]);
 
     const nextNum = (rows[0].max_num || 0) + 1;
     
