@@ -45,9 +45,10 @@ const removeLhk = async (req, res) => {
   try {
     const { nomor } = req.params;
     await lhkService.deleteLhk(nomor);
-    res.json({ message: "Berhasil dihapus." });
+    res.json({ success: true, message: "Berhasil dihapus." });
   } catch (error) {
-    res.status(500).json({ message: "Gagal Hapus." });
+    console.error("Error removeLhk:", error);
+    res.status(500).json({ success: false, message: error.message || "Gagal Hapus." });
   }
 };
 const handleSaveLhk = async (req, res) => {
@@ -73,7 +74,7 @@ const handleSaveLhk = async (req, res) => {
     console.error("Error Saving LHK:", error);
     res.status(500).json({
       success: false,
-      message: "Gagal menyimpan data LHK Tekstil.",
+      message: error.message || "Gagal menyimpan data LHK Tekstil.",
     });
   }
 };

@@ -67,6 +67,17 @@ const deleteBahan = async (req, res) => {
   }
 };
 
+const checkKodeBahan = async (req, res) => {
+  try {
+    const { kode } = req.params;
+    const { exclude } = req.query;
+    const data = await bahanService.checkKodeBahanExists(kode, exclude);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error);
+  }
+};
+
 const getLookups = async (req, res) => {
   try {
     const data = await bahanService.getLookups(
@@ -83,6 +94,7 @@ const getLookups = async (req, res) => {
 module.exports = {
   getBrowseBahan,
   getBahanById,
+  checkKodeBahan,
   createBahan,
   updateBahan,
   deleteBahan,

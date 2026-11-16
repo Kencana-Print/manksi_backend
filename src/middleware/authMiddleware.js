@@ -63,12 +63,16 @@ const verifyToken = (req, res, next) => {
 
 /**
  * Middleware untuk cek hak akses per Menu ID
- * @param {number} menuId - ID dari tabel tmenu
+ * @param {number|number[]} menuId - ID atau array ID dari tabel tmenu
  * @param {string} action - 'view', 'insert', 'edit', 'delete'
  */
 const checkPermission = (menuId, action) => {
+  const menuIds = Array.isArray(menuId) ? menuId : [menuId];
   return async (req, res, next) => {
-    const userKode = req.user.kode;
+    const userKode = req.user?.kode;
+    if (userKode && (userKode.toUpperCase() === "ADMIN" || userKode.toUpperCase() === "DEVELOPER")) {
+      return next();
+    }
     const actionColumnMap = {
       view: "hak_men_view",
       insert: "hak_men_insert",
@@ -84,17 +88,17 @@ const checkPermission = (menuId, action) => {
       const query = `
         SELECT ${column} AS permission 
         FROM thakuser 
-        WHERE hak_user_kode = ? AND hak_men_id = ?`;
+        WHERE hak_user_kode = ? AND hak_men_id IN (?)`;
 
-      const [rows] = await pool.query(query, [userKode, menuId]);
-      let diizinkan = rows.length > 0 && rows[0].permission === "Y";
+      const [rows] = await pool.query(query, [userKode, menuIds]);
+      let diizinkan = rows.some((r) => r.permission === "Y");
 
       // Hak tambahan dari role (HRD). Hanya dicek bila thakuser menolak;
       // galat di sini tidak boleh memblokir apa pun selain penambahan hak.
       if (!diizinkan) {
         try {
-          const izinRole = await getIzinRole(userKode, req.user.cabang);
-          diizinkan = izinRole.has(`${menuId}.${action}`);
+          const izinRole = await getIzinRole(userKode, req.user?.cabang);
+          diizinkan = menuIds.some((id) => izinRole.has(`${id}.${action}`));
         } catch (err) {
           console.error("[rbac] izin role gagal dibaca:", err.message);
         }
@@ -104,7 +108,7 @@ const checkPermission = (menuId, action) => {
         next();
       } else {
         res.status(403).json({
-          message: `Hak akses ditolak. Anda tidak memiliki izin [${action}] pada menu ID ${menuId}.`,
+          message: `Hak akses ditolak. Anda tidak memiliki izin [${action}] pada menu ID ${menuIds.join("/")}.`,
         });
       }
     } catch (error) {

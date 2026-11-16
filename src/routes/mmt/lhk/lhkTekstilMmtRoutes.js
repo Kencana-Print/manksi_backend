@@ -1,9 +1,11 @@
-const { verifyToken } = require("../../../middleware/authMiddleware");
+const { verifyToken, checkPermission } = require("../../../middleware/authMiddleware");
 // routes/lhkTekstilMmt.route.js
 const express = require('express');
 const router = express.Router();
 router.use(verifyToken);
 const lhkController = require('../../../controllers/mmt/lhk/lhkTekstilMmtController');
+
+const MENU_ID_TEKSTIL = [1292, 5509];
 
 // --- 1. Static & Lookup Routes (Dahulukan) ---
 router.get('/', lhkController.getLhkList);
@@ -16,7 +18,7 @@ router.get('/details', lhkController.getLhkDetails);
 // --- 2. Action Routes (POST/DELETE) ---
 router.post('/approve', lhkController.handleSaveApproval);
 router.post('/', lhkController.handleSaveLhk);
-router.delete('/:nomor', lhkController.removeLhk);
+router.delete('/:nomor', checkPermission(MENU_ID_TEKSTIL, 'delete'), lhkController.removeLhk);
 
 // --- 3. Parameter Routes (Letakkan di Paling Bawah) ---
 router.get('/approval/:nomor', lhkController.getApprovalFullData); // Ambil detail history approval
