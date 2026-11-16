@@ -75,6 +75,7 @@ const getBrowse = async (
     ) x ON x.qcd_qc_nomor = h.qc_nomor
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor
+     AND pd.pod_nourut = h.qc_pod_nourut
     LEFT JOIN tpo_hdr ph ON ph.po_nomor = h.qc_po_nomor
     AND pd.pod_nourut = h.qc_pod_nourut
     WHERE h.qc_tgl_datang BETWEEN ? AND ?
