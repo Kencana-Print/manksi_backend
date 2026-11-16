@@ -1572,8 +1572,10 @@ const searchBarangGarmen = async (
   // 2. Siapkan kondisi dasar
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
   let whereParams = [jenis];
-  // ASET terlihat di semua cabang, di luar aturan SPANDUK (sama dengan master)
-  if (jenis !== "ASET") {
+  // ASET terlihat di semua cabang; GUDANG juga bebas dari aturan SPANDUK
+  const bypassSpanduk =
+    jenis === "ASET" || String(bagian || "").toUpperCase() === "GUDANG";
+  if (!bypassSpanduk) {
     whereClause += kondisiSpanduk(cabang);
   }
 
