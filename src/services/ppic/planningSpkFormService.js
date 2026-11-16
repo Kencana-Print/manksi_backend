@@ -28,7 +28,7 @@ const generateNomor = async (tahun) => {
 // ═════════════════════════════════════════════
 // SEWING — referensi MP, SMV, actual output, actual jam kerja
 // ═════════════════════════════════════════════
-const SEWING_DEFAULT_HARI = 5;
+const SEWING_DEFAULT_HARI = 6;
 const SEWING_DEFAULT_JAM = 6.5;
 
 // 'LINE A' -> 'JAHIT A', 'LINE PREPARATION' -> 'PREPARATION'

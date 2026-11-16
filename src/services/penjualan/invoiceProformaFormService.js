@@ -14,10 +14,10 @@ const checkPinStatus = async (nomor, conn) => {
   // periode yang masih terbuka (belum benar-benar tutup buku).
   if (rows.length === 0) return { status: "", urut: 0 };
   const pin = rows[0];
-  if (pin.pin_acc === "" && pin.pin_dipakai === "")
-    return { status: "WAIT", urut: pin.pin_urut };
   if (pin.pin_acc === "Y" && pin.pin_dipakai === "")
     return { status: "ACC", urut: pin.pin_urut };
+  if (pin.pin_acc === "Y" && pin.pin_dipakai === "Y")
+    return { status: "PAKAI", urut: pin.pin_urut };
   if (pin.pin_acc === "N") return { status: "TOLAK", urut: pin.pin_urut };
   return { status: "MINTA", urut: pin.pin_urut };
 };
@@ -179,7 +179,10 @@ const getDetailForm = async (nomor) => {
 
   const uangMuka = await getUangMuka(nomor);
   const pinInfo = await checkPinStatus(nomor, db);
-  header.pin_status = pinInfo.status;
+  const zdtClose = await tutupBukuService.getTanggalTutupBuku();
+  const perluPin = !!zdtClose && new Date(header.inv_tanggal) < zdtClose;
+
+  header.pin_status = perluPin ? pinInfo.status : "";
   header.uang_muka = uangMuka;
 
   return { header, details };
