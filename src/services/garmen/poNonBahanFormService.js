@@ -397,8 +397,8 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
       ...r,
       sudah,
       belum,
-      jumlah: belum, // Default jumlah PO = sisa yang belum di-PO
-      harga: 0,
+      jumlah: belum,
+      harga: null, // sebelumnya 0; null = belum diisi
       total: 0,
       bpb: 0,
       kecab: resolveKecab(r.cab, r.jenis),
@@ -547,8 +547,17 @@ const saveData = async (payload, user) => {
         throw new Error(
           `Barang ${d.Kode} tidak punya No. Permintaan. Panggil ulang permintaannya.`,
         );
-      if (Number(d.harga || 0) === 0) throw new Error("harga harus di isi.");
-      const harga = Number(d.harga);
+      const hargaRaw = d.harga;
+      if (
+        hargaRaw === null ||
+        hargaRaw === undefined ||
+        hargaRaw === "" ||
+        !Number.isFinite(Number(hargaRaw)) ||
+        Number(hargaRaw) < 0
+      ) {
+        throw new Error("Harga harus di isi (isi 0 untuk barang gratis).");
+      }
+      const harga = Number(hargaRaw);
       if (
         hargaPerKode.has(d.Kode) &&
         Math.abs(hargaPerKode.get(d.Kode) - harga) > 0.0001

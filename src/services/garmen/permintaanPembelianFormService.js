@@ -122,8 +122,10 @@ const saveData = async (data, userKode, bagian, cabang) => {
     );
     const kodeUnik = [...new Set(itemTerisi.map((item) => item.kode))];
     if (kodeUnik.length > 0) {
-      const syaratCabang =
-        data.header.mb_jenis === "ASET" ? "" : kondisiSpanduk(cabang, "b");
+      const bypassSpanduk =
+        data.header.mb_jenis === "ASET" ||
+        String(bagian || "").toUpperCase() === "GUDANG";
+      const syaratCabang = bypassSpanduk ? "" : kondisiSpanduk(cabang, "b");
       const [kodeOk] = await conn.query(
         `SELECT b.brg_kode FROM tgarmen_brg b
          WHERE b.brg_jenis = ? AND b.brg_kode IN (?) ${syaratCabang}`,
@@ -319,7 +321,9 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
     }
   }
 
-  if (jenis !== "ASET") {
+  const bypassSpanduk =
+    jenis === "ASET" || String(bagian || "").toUpperCase() === "GUDANG";
+  if (!bypassSpanduk) {
     whereClause += kondisiSpanduk(cabang);
   }
 
