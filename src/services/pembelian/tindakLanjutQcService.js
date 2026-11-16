@@ -33,6 +33,7 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
       DATE_FORMAT(h.qc_tgl_datang, "%Y-%m-%d") AS TglDatang,
       h.qc_po_nomor AS Nomor_PO,
       pd.pod_spk_nomor AS Nomor_SPK,
+      COALESCE(sp.spk_nama, so.so_nama, mm.mspk_nama, '') AS Nama_SPK,
       h.qc_vendor_greige AS VendorGreige,
       h.qc_vendor_celup AS VendorCelup,
       h.qc_jenis_kain AS JenisKain,
@@ -75,6 +76,12 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
     LEFT JOIN tpo_dtl pd
       ON pd.pod_po_nomor = h.qc_po_nomor
      AND pd.pod_nourut = h.qc_pod_nourut
+    LEFT JOIN tspk sp
+      ON sp.spk_nomor = pd.pod_spk_nomor AND pd.pod_spk_nomor <> ''
+    LEFT JOIN tsalesorder so
+      ON so.so_nomor = pd.pod_spk_nomor AND so.so_aktif = 'Y' AND pd.pod_spk_nomor <> ''
+    LEFT JOIN tmemospk mm
+      ON mm.mspk_nomor = pd.pod_spk_nomor AND mm.mspk_aktif = 'Y' AND pd.pod_spk_nomor <> ''
     WHERE h.qc_status <> 'DRAFT'
       AND h.qc_tgl_datang BETWEEN ? AND ?
       ${statusFilter}
