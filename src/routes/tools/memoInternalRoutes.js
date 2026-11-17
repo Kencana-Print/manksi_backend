@@ -20,6 +20,8 @@ const unggahPdf = (req, res, next) => {
 
 router.get("/", verifyToken, ctrl.getList);
 router.get("/unread", verifyToken, ctrl.getUnread);
+router.get("/opsi", verifyToken, ctrl.hanyaBagianUpload, ctrl.getOpsi);
+router.put("/:id/target", verifyToken, ctrl.hanyaBagianUpload, ctrl.ubahTarget);
 router.get("/:id/file", verifyToken, ctrl.getFile);
 router.post("/", verifyToken, ctrl.hanyaBagianUpload, unggahPdf, ctrl.simpan);
 router.delete("/:id", verifyToken, ctrl.hanyaBagianUpload, ctrl.hapus);

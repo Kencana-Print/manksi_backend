@@ -717,10 +717,10 @@ const siapkanData = async (
     const adalahVoucher = tipe === TIPE_VOUCHER;
     const adalahPck = tipe === TIPE_PCK;
     const tanpaSupplier = adalahVoucher || adalahPck;
-    if (!tipe || !nota || (!adalahVoucher && !supKode)) {
+    if (!tipe || !nota || (!tanpaSupplier && !supKode)) {
       throw new Error(`Baris ${no}: supplier, tipe, dan nota harus diisi.`);
     }
-    if (!adalahVoucher && !supValid.has(supKode)) {
+    if (!tanpaSupplier && !supValid.has(supKode)) {
       try {
         await voucherForm.getSupplier(supKode);
       } catch (e) {
@@ -728,12 +728,12 @@ const siapkanData = async (
       }
       supValid.add(supKode);
     }
-    if (!adalahVoucher && !isBulan(d.bulanTagihan)) {
+    if (!tanpaSupplier && !isBulan(d.bulanTagihan)) {
       throw new Error(`Baris ${no}: bulan tagihan tidak valid (YYYY-MM).`);
     }
 
     const nominal = round2(Math.abs(Number(d.nominal)));
-    if (!adalahVoucher && !(nominal > 0)) {
+    if (!tanpaSupplier && !(nominal > 0)) {
       throw new Error(`Baris ${no}: nominal harus lebih dari 0.`);
     }
     const tglRencana = d.tglRencana ? String(d.tglRencana) : null;

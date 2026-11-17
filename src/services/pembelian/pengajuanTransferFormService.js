@@ -566,17 +566,60 @@ const selaraskanBatal = async (conn, nomorPjt, d, userKode) => {
 };
 
 // ── Panggil Rekap Pembayaran ──────────────────────────────────────────
-// Daftar rekap AKTIF yang masih punya voucher belum masuk pengajuan.
+// Rekap AKTIF yang masih punya transaksi belum masuk pengajuan: voucher
+// (belum ada di bayar_debet_detail) dan petty cash dari Rekap Pengajuan (PCK).
+
+// Petty cash di rekap yang masih boleh diajukan. Aturan sama dengan F4:
+// APPROVED, belum terikat PTH di retail, dan belum jadi No. Transaksi di
+// Pengajuan Transfer mana pun (kunci yang sama dipakai Rekap Pembayaran untuk
+// mengunci barisnya). Key Map = nomor huruf besar.
+const ambilPckSiap = async (nomors) => {
+  const daftar = [
+    ...new Set(nomors.map((n) => String(n || "").trim()).filter(Boolean)),
+  ];
+  if (!daftar.length) return new Map();
+
+  const [pck] = await db.query(
+    `SELECT h.pck_nomor AS nomor, h.pck_cab AS store,
+            g.gdg_nama AS namaStore, h.pck_total AS nominal
+     FROM retail.tpettycash_klaim_hdr h
+     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pck_cab
+     WHERE h.pck_nomor IN (?)
+       AND h.pck_status = 'APPROVED'
+       AND IFNULL(h.pck_pth_nomor, '') = ''`,
+    [daftar],
+  );
+  if (!pck.length) return new Map();
+
+  const [dipakai] = await db.query(
+    `SELECT DISTINCT ptd_trs FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_trs IN (?)`,
+    [pck.map((r) => r.nomor)],
+  );
+  const terpakai = new Set(dipakai.map((r) => String(r.ptd_trs).toUpperCase()));
+
+  return new Map(
+    pck
+      .filter((r) => !terpakai.has(r.nomor.toUpperCase()))
+      .map((r) => [
+        r.nomor.toUpperCase(),
+        { ...r, nominal: Number(r.nominal) },
+      ]),
+  );
+};
+
 const getRekapPanggilOptions = async (search = "") => {
   const kata = `%${String(search || "").trim()}%`;
   const [rows] = await db.query(
     `SELECT h.rkb_nomor AS nomor,
             DATE_FORMAT(h.rkb_tanggal,'%Y-%m-%d') AS tanggal,
             IFNULL(h.rkb_keterangan,'') AS keterangan,
-            d.rkbd_vou_nomor AS vou, d.rkbd_nominal AS nominal
+            d.rkbd_vou_nomor AS vou, d.rkbd_tipe AS tipe,
+            d.rkbd_nota AS nota, d.rkbd_nominal AS nominal
      FROM trekap_bayar_hdr h
      INNER JOIN trekap_bayar_dtl d
-       ON d.rkbd_nomor = h.rkb_nomor AND d.rkbd_vou_nomor <> ''
+       ON d.rkbd_nomor = h.rkb_nomor
+      AND (d.rkbd_vou_nomor <> '' OR d.rkbd_tipe = 'PCK')
      WHERE h.rkb_status = 'AKTIF'
        AND (h.rkb_nomor LIKE ? OR h.rkb_keterangan LIKE ?)
      ORDER BY h.rkb_nomor DESC`,
@@ -584,15 +627,31 @@ const getRekapPanggilOptions = async (search = "") => {
   );
   if (!rows.length) return [];
 
-  const [bayar] = await db.query(
-    `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
-    [[...new Set(rows.map((r) => r.vou))]],
-  );
+  const adalahPck = (r) => r.tipe === "PCK";
+
+  const daftarVou = [
+    ...new Set(rows.filter((r) => !adalahPck(r)).map((r) => r.vou)),
+  ];
+  const [bayar] = daftarVou.length
+    ? await db.query(
+        `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
+        [daftarVou],
+      )
+    : [[]];
   const terpakai = new Set(bayar.map((r) => r.vou_nomor));
+  const pckSiap = await ambilPckSiap(rows.filter(adalahPck).map((r) => r.nota));
 
   const peta = new Map();
+  const sudahDihitung = new Map(); // nomor rekap -> kunci transaksi unik
   for (const r of rows) {
-    if (terpakai.has(r.vou)) continue;
+    let kunci;
+    if (adalahPck(r)) {
+      if (!pckSiap.has(String(r.nota).toUpperCase())) continue;
+      kunci = `PCK|${String(r.nota).toUpperCase()}`;
+    } else {
+      if (terpakai.has(r.vou)) continue;
+      kunci = `VOU|${r.vou}`;
+    }
     const g = peta.get(r.nomor) || {
       nomor: r.nomor,
       tanggal: r.tanggal,
@@ -600,17 +659,25 @@ const getRekapPanggilOptions = async (search = "") => {
       jumlah: 0,
       total: 0,
     };
-    g.jumlah += 1;
+    // Satu voucher bisa tertaut ke beberapa baris rekap: dihitung sekali
+    const ada = sudahDihitung.get(r.nomor) || new Set();
+    if (!ada.has(kunci)) {
+      ada.add(kunci);
+      g.jumlah += 1;
+    }
+    sudahDihitung.set(r.nomor, ada);
     g.total += Number(r.nominal) || 0;
     peta.set(r.nomor, g);
   }
   return [...peta.values()].slice(0, 100);
 };
 
-// Baris siap pakai untuk grid PJT dari satu rekap. Nominal dihitung ulang
-// dari voucher. Rekening = rekening pertama di master supplier; bila
+// Baris siap pakai untuk grid PJT dari satu rekap. Voucher: nominal dihitung
+// ulang dari voucher; rekening = rekening pertama di master supplier, bila
 // supplier punya lebih dari satu rekening atau tidak punya, baris diberi
-// tanda supaya Finance memeriksa (ganti lewat pilihan rekening di grid).
+// tanda supaya Finance memeriksa. Petty cash (PCK): nominal = pck_total saat
+// ini, supplier/rekening sengaja kosong (sama seperti F4) dan diberi tanda
+// "ISI" supaya Finance mengisinya sebelum simpan.
 const getRekapPanggilRows = async (rekapNomor) => {
   const nomor = String(rekapNomor || "").trim();
   const [[hdr]] = await db.query(
@@ -622,67 +689,113 @@ const getRekapPanggilRows = async (rekapNomor) => {
     throw new Error("Rekap pembayaran sudah dibatalkan.");
 
   const [rekap] = await db.query(
-    `SELECT rkbd_vou_nomor AS vou FROM trekap_bayar_dtl
-     WHERE rkbd_nomor = ? AND rkbd_vou_nomor <> ''
+    `SELECT rkbd_vou_nomor AS vou, rkbd_tipe AS tipe, rkbd_nota AS nota
+     FROM trekap_bayar_dtl
+     WHERE rkbd_nomor = ? AND (rkbd_vou_nomor <> '' OR rkbd_tipe = 'PCK')
      ORDER BY rkbd_nourut`,
     [nomor],
   );
   if (!rekap.length) return [];
-  const urutan = rekap.map((r) => r.vou);
 
-  const [bayar] = await db.query(
-    `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
-    [urutan],
-  );
-  const terpakai = new Set(bayar.map((r) => r.vou_nomor));
-  const sisa = urutan.filter((v) => !terpakai.has(v));
-  if (!sisa.length) return [];
+  // Urutan rekap, tanpa duplikat (satu voucher bisa muncul di banyak baris)
+  const urutan = [];
+  const lihat = new Set();
+  for (const r of rekap) {
+    const pck = r.tipe === "PCK";
+    const no = pck ? r.nota : r.vou;
+    const kunci = `${pck ? "PCK" : "VOU"}|${String(no).toUpperCase()}`;
+    if (lihat.has(kunci)) continue;
+    lihat.add(kunci);
+    urutan.push({ pck, no });
+  }
+  const daftarVou = urutan.filter((u) => !u.pck).map((u) => u.no);
+  const daftarPck = urutan.filter((u) => u.pck).map((u) => u.no);
 
-  const [vou] = await db.query(
-    `SELECT h.vou_nomor AS nomor, h.vou_sup_kode AS supKode,
-            IFNULL(s.sup_nama, '') AS supNama,
-            ${SQL_NOMINAL_VOUCHER} AS nominal
-     FROM tvoucher_hdr h
-     LEFT JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
-     WHERE h.vou_nomor IN (?)`,
-    [sisa],
-  );
-  const petaVou = new Map(vou.map((v) => [v.nomor, v]));
+  // ── Voucher ──
+  const hasilVou = new Map();
+  if (daftarVou.length) {
+    const [bayar] = await db.query(
+      `SELECT DISTINCT vou_nomor FROM bayar_debet_detail WHERE vou_nomor IN (?)`,
+      [daftarVou],
+    );
+    const terpakai = new Set(bayar.map((r) => r.vou_nomor));
+    const sisa = daftarVou.filter((v) => !terpakai.has(v));
 
-  const [bank] = await db.query(
-    `SELECT supd_kode AS kode, supd_bank AS bank, supd_rekening AS rekening,
-            supd_atasnama AS atasnama
-     FROM tsupplieritem
-     WHERE supd_kode IN (?)
-     ORDER BY supd_kode, supd_bank`,
-    [[...new Set(vou.map((v) => v.supKode))].concat(["-"])],
-  );
-  const petaBank = new Map();
-  for (const b of bank) {
-    const arr = petaBank.get(b.kode) || [];
-    arr.push(b);
-    petaBank.set(b.kode, arr);
+    if (sisa.length) {
+      const [vou] = await db.query(
+        `SELECT h.vou_nomor AS nomor, h.vou_sup_kode AS supKode,
+                IFNULL(s.sup_nama, '') AS supNama,
+                ${SQL_NOMINAL_VOUCHER} AS nominal
+         FROM tvoucher_hdr h
+         LEFT JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
+         WHERE h.vou_nomor IN (?)`,
+        [sisa],
+      );
+      const petaVou = new Map(vou.map((v) => [v.nomor, v]));
+
+      const [bank] = await db.query(
+        `SELECT supd_kode AS kode, supd_bank AS bank, supd_rekening AS rekening,
+                supd_atasnama AS atasnama
+         FROM tsupplieritem
+         WHERE supd_kode IN (?)
+         ORDER BY supd_kode, supd_bank`,
+        [[...new Set(vou.map((v) => v.supKode))].concat(["-"])],
+      );
+      const petaBank = new Map();
+      for (const b of bank) {
+        const arr = petaBank.get(b.kode) || [];
+        arr.push(b);
+        petaBank.set(b.kode, arr);
+      }
+
+      for (const no of sisa) {
+        const v = petaVou.get(no);
+        if (!v || !(Number(v.nominal) > 0.005)) continue;
+        const daftar = petaBank.get(v.supKode) || [];
+        const b = daftar[0];
+        hasilVou.set(no, {
+          jenis: "VOU",
+          trs: v.nomor,
+          kode: v.supKode,
+          nama: v.supNama,
+          bank: b?.bank || "",
+          rekening: b?.rekening || "",
+          atasnama: b?.atasnama || "",
+          nominal: Number(v.nominal),
+          ket: "",
+          rekapNomor: nomor,
+          cekRekening:
+            daftar.length === 0 ? "KOSONG" : daftar.length > 1 ? "BANYAK" : "",
+        });
+      }
+    }
   }
 
-  return sisa
-    .map((no) => petaVou.get(no))
-    .filter((v) => v && Number(v.nominal) > 0.005)
-    .map((v) => {
-      const daftar = petaBank.get(v.supKode) || [];
-      const b = daftar[0];
+  // ── Petty cash (PCK) ──
+  const pckSiap = await ambilPckSiap(daftarPck);
+
+  return urutan
+    .map((u) => {
+      if (!u.pck) return hasilVou.get(u.no);
+      const p = pckSiap.get(String(u.no).toUpperCase());
+      if (!p) return null;
+      const store = p.namaStore || p.store;
       return {
-        trs: v.nomor,
-        kode: v.supKode,
-        nama: v.supNama,
-        bank: b?.bank || "",
-        rekening: b?.rekening || "",
-        atasnama: b?.atasnama || "",
-        nominal: Number(v.nominal),
+        jenis: "PCK",
+        trs: p.nomor,
+        kode: "",
+        nama: "",
+        bank: "",
+        rekening: "",
+        atasnama: "",
+        nominal: p.nominal,
+        ket: `Petty Cash ${store} (${p.nomor})`,
+        namaStore: store,
         rekapNomor: nomor,
-        cekRekening:
-          daftar.length === 0 ? "KOSONG" : daftar.length > 1 ? "BANYAK" : "",
+        cekRekening: "ISI",
       };
-    });
+    })
+    .filter(Boolean);
 };
 
 // Supplier tujuan klaim per kas (master tsupplier + rekening pertama).

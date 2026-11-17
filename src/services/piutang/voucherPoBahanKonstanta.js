@@ -19,7 +19,7 @@ const LABEL_JENIS_PO = {
 // (data PO 2019 dst. belum punya riwayat voucher di sistem ini).
 // Ditetapkan user 27 Okt 2026: mulai hari ini. Dipakai juga oleh Daftar Hutang
 // untuk baris PO Greige.
-const TANGGAL_MULAI_PO_BAHAN = "2026-10-27";
+const TANGGAL_MULAI_PO_BAHAN = "2026-01-01";
 
 // Syarat "BPB b milik PO p" untuk aturan anti-dobel bayar POB vs BPB.
 // - Umumnya BPB menunjuk PO lewat bpb_po_nomor.
