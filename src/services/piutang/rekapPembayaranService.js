@@ -3,6 +3,9 @@ const { kategoriDari, urutanKategori } = require("./rekapKategori");
 const {
   petaRekeningSupplier,
   infoRekening,
+  ambilPettyCashBanyak,
+  pckDiPjt,
+  TIPE_PCK,
 } = require("./rekapPembayaranFormService");
 
 const buildWhere = (startDate, endDate) => {
@@ -39,7 +42,7 @@ const getBrowse = async (startDate, endDate) => {
        SELECT rkbd_nomor,
               SUM(rkbd_nominal) AS total,
               COUNT(*) AS jml,
-              COUNT(DISTINCT rkbd_sup_kode) AS sup
+              COUNT(DISTINCT NULLIF(rkbd_sup_kode, '')) AS sup
        FROM trekap_bayar_dtl
        GROUP BY rkbd_nomor
      ) d ON d.rkbd_nomor = h.rkb_nomor
@@ -93,13 +96,31 @@ const getBrowseDetail = async (startDate, endDate, user) => {
     rows.map((r) => r.kodeSupplier),
     user,
   );
-  return rows.map((r) => ({
-    ...r,
-    ...infoRekening(petaRek, r.kodeSupplier),
-    kategori: kategoriDari(r.tipe),
-    kategoriUrut: urutanKategori(r.tipe),
-    pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
-  }));
+  // Baris petty cash (PCK) tidak punya supplier: tampilkan nama store, dan
+  // status PJT dibaca dari ptd_trs
+  const pckNota = [
+    ...new Set(rows.filter((r) => r.tipe === TIPE_PCK).map((r) => r.nota)),
+  ];
+  const [petaPck, petaPckPjt] = await Promise.all([
+    ambilPettyCashBanyak(pckNota),
+    pckDiPjt(pckNota),
+  ]);
+  return rows.map((r) => {
+    const pck =
+      r.tipe === TIPE_PCK ? petaPck.get(String(r.nota).toUpperCase()) : null;
+    return {
+      ...r,
+      namaSupplier: pck ? pck.namaStore || pck.store : r.namaSupplier,
+      ...infoRekening(petaRek, r.kodeSupplier),
+      kategori: kategoriDari(r.tipe),
+      kategoriUrut: urutanKategori(r.tipe),
+      pjtNomor: r.vouNomor
+        ? petaPjt.get(r.vouNomor) || ""
+        : pck
+          ? petaPckPjt.get(r.nota) || ""
+          : "",
+    };
+  });
 };
 
 // Rekap tidak boleh dibatalkan/dihapus bila ada baris transaksi yang sudah

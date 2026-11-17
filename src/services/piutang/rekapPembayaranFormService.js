@@ -78,6 +78,10 @@ const isBulan = (b) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(b || ""));
 // Baris Rekap yang langsung memilih voucher yang sudah ada (bukan nota).
 // rkbd_nota dan rkbd_vou_nomor sama-sama berisi nomor voucher.
 const TIPE_VOUCHER = "VOU";
+// Baris Rekap yang memanggil Petty Cash Kaosan (retail.tpettycash_klaim_hdr).
+// Tanpa supplier (rkbd_sup_kode = ''), rkbd_nota = nomor petty cash,
+// rkbd_vou_nomor tetap ''. Nominal selalu pck_total dari server.
+const TIPE_PCK = "PCK";
 // Nominal bersih voucher: sama dengan Pengajuan Transfer (F2)
 const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
   SELECT SUM(voud2_harga * voud2_jumlah)
@@ -434,6 +438,122 @@ const cekVoucherBebas = async (nomors, nomorEdit) => {
   }
 };
 
+// ── Petty Cash Kaosan (tipe PCK) ──────────────────────────────────────
+// Syarat sama dengan F4 Pengajuan Transfer: APPROVED dan belum ada pck_pth_nomor.
+const SQL_PCK_SIAP = `h.pck_status = 'APPROVED' AND IFNULL(h.pck_pth_nomor, '') = ''`;
+
+// Data petty cash dari server (sumber kebenaran). Kunci peta = nomor huruf besar.
+const ambilPettyCashBanyak = async (nomors) => {
+  if (!nomors.length) return new Map();
+  const [rows] = await db.query(
+    `SELECT h.pck_nomor AS nomor,
+            DATE_FORMAT(h.pck_tanggal, '%Y-%m-%d') AS tanggal,
+            IFNULL(h.pck_cab, '') AS store,
+            IFNULL(g.gdg_nama, '') AS namaStore,
+            IFNULL(h.pck_keterangan, '') AS keterangan,
+            h.pck_status AS status,
+            IFNULL(h.pck_pth_nomor, '') AS pthNomor,
+            IFNULL(h.pck_total, 0) AS nominal
+     FROM retail.tpettycash_klaim_hdr h
+     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pck_cab
+     WHERE h.pck_nomor IN (?)`,
+    [nomors],
+  );
+  return new Map(
+    rows.map((r) => [
+      r.nomor.toUpperCase(),
+      { ...r, tanggal: r.tanggal || "", nominal: round2(r.nominal) },
+    ]),
+  );
+};
+
+// Petty cash yang sudah dipanggil Pengajuan Transfer (cara baca sama dengan F4:
+// ptd_trs, tanpa kolom penghubung). Hasil: Map nomor petty cash -> nomor PJT.
+const pckDiPjt = async (nomors) => {
+  if (!nomors.length) return new Map();
+  const [rows] = await db.query(
+    `SELECT ptd_trs AS trs, MIN(ptd_nomor) AS pjt
+     FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_trs IN (?)
+     GROUP BY ptd_trs`,
+    [nomors],
+  );
+  return new Map(rows.map((r) => [r.trs, r.pjt]));
+};
+
+// Petty cash yang mau dimasukkan belum boleh ada di PJT atau di rekap AKTIF lain.
+const cekPettyCashBebas = async (nomors, nomorEdit) => {
+  if (!nomors.length) return;
+  const pjt = await pckDiPjt(nomors);
+  if (pjt.size) {
+    const [nomor, nomorPjt] = [...pjt][0];
+    throw new Error(
+      `Petty cash ${nomor} sudah diajukan di Pengajuan Transfer ${nomorPjt}.`,
+    );
+  }
+  const [rekap] = await db.query(
+    `SELECT d.rkbd_nota AS nota, d.rkbd_nomor AS rekap
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr h
+       ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+     WHERE d.rkbd_tipe = ? AND d.rkbd_nota IN (?) AND d.rkbd_nomor <> ?
+     LIMIT 1`,
+    [TIPE_PCK, nomors, nomorEdit || ""],
+  );
+  if (rekap.length) {
+    throw new Error(
+      `Petty cash ${rekap[0].nota} sudah ada di rekap ${rekap[0].rekap}.`,
+    );
+  }
+};
+
+// Untuk dipilih di form. Petty cash milik rekap yang sedang diedit tidak dihitung
+// terpakai (form sendiri yang mencegah duplikat di layar), sama seperti voucher.
+const getPettyCashOptions = async (search = "", excludeNomor = "") => {
+  const kata = `%${String(search || "").trim()}%`;
+  const [rows] = await db.query(
+    `SELECT h.pck_nomor AS nomor,
+            DATE_FORMAT(h.pck_tanggal, '%Y-%m-%d') AS tanggal,
+            IFNULL(h.pck_cab, '') AS store,
+            IFNULL(g.gdg_nama, '') AS namaStore,
+            IFNULL(h.pck_keterangan, '') AS keterangan,
+            h.pck_total AS nominal
+     FROM retail.tpettycash_klaim_hdr h
+     LEFT JOIN retail.tgudang g ON g.gdg_kode = h.pck_cab
+     WHERE ${SQL_PCK_SIAP}
+       AND IFNULL(h.pck_total, 0) > 0
+       AND (h.pck_nomor LIKE ? OR h.pck_cab LIKE ? OR g.gdg_nama LIKE ?)
+     ORDER BY h.pck_tanggal DESC, h.pck_nomor DESC
+     LIMIT 500`,
+    [kata, kata, kata],
+  );
+  if (!rows.length) return [];
+
+  const nomors = rows.map((r) => r.nomor);
+  const [pjt, [rekap]] = await Promise.all([
+    pckDiPjt(nomors),
+    db.query(
+      `SELECT DISTINCT d.rkbd_nota AS nota
+       FROM trekap_bayar_dtl d
+       INNER JOIN trekap_bayar_hdr h
+         ON h.rkb_nomor = d.rkbd_nomor AND h.rkb_status = 'AKTIF'
+       WHERE d.rkbd_tipe = ? AND d.rkbd_nota IN (?) AND d.rkbd_nomor <> ?`,
+      [TIPE_PCK, nomors, excludeNomor || ""],
+    ),
+  ]);
+  const dikecualikan = new Set(rekap.map((r) => r.nota));
+
+  return rows
+    .filter((r) => !pjt.has(r.nomor) && !dikecualikan.has(r.nomor))
+    .slice(0, 200)
+    .map((r) => ({
+      ...r,
+      nominal: round2(r.nominal),
+      kategori: kategoriDari(TIPE_PCK),
+      kategoriUrut: urutanKategori(TIPE_PCK),
+    }));
+};
+
 // ── Ambil satu (edit + print) ─────────────────────────────------
 const getById = async (nomor, user) => {
   const [[h]] = await db.query(
@@ -483,14 +603,23 @@ const getById = async (nomor, user) => {
     );
     for (const p of pj) petaPjt.set(p.vou_nomor, p.vou_link || "-");
   }
-  const petaRek = await petaRekeningSupplier(
-    rows.map((r) => r.supKode),
-    user,
-  );
+  const pckNota = rows.filter((r) => r.tipe === TIPE_PCK).map((r) => r.nota);
+  const [petaRek, petaPck, petaPckPjt] = await Promise.all([
+    petaRekeningSupplier(
+      rows.map((r) => r.supKode),
+      user,
+    ),
+    ambilPettyCashBanyak(pckNota),
+    pckDiPjt(pckNota),
+  ]);
   const detail = rows.map((r) => {
     const rek = infoRekening(petaRek, r.supKode);
+    const pck =
+      r.tipe === TIPE_PCK ? petaPck.get(String(r.nota).toUpperCase()) : null;
     return {
       ...r,
+      // Baris PCK tidak punya supplier: yang ditampilkan nama store
+      supNama: pck ? pck.namaStore || pck.store : r.supNama,
       supBank: rek.bank,
       supRekening: rek.rekening,
       supAtasnama: rek.atasnama,
@@ -499,14 +628,18 @@ const getById = async (nomor, user) => {
       nominal: Number(r.nominal),
       kategori: kategoriDari(r.tipe),
       kategoriUrut: urutanKategori(r.tipe),
-      pjtNomor: r.vouNomor ? petaPjt.get(r.vouNomor) || "" : "",
+      pjtNomor: r.vouNomor
+        ? petaPjt.get(r.vouNomor) || ""
+        : pck
+          ? petaPckPjt.get(r.nota) || ""
+          : "",
     };
   });
   return {
     ...h,
     bisaUbah: h.status === "AKTIF",
     total: round2(detail.reduce((s, d) => s + d.nominal, 0)),
-    jumlahSupplier: new Set(detail.map((d) => d.supKode)).size,
+    jumlahSupplier: new Set(detail.map((d) => d.supKode).filter(Boolean)).size,
     detail,
   };
 };
@@ -529,6 +662,7 @@ const siapkanData = async (
   nomorEdit,
   bolehKosong = false,
   kunciVou = new Set(),
+  kunciPck = new Set(),
 ) => {
   const { tanggal, keterangan, detail } = payload;
 
@@ -558,6 +692,17 @@ const siapkanData = async (
   ]);
   const vouDiForm = new Set();
 
+  // Petty cash Kaosan (tipe PCK): data juga dari server
+  const petaPck = await ambilPettyCashBanyak([
+    ...new Set(
+      detail
+        .filter((x) => String(x?.tipe || "").toUpperCase() === TIPE_PCK)
+        .map((x) => String(x.nota || "").trim())
+        .filter(Boolean),
+    ),
+  ]);
+  const pckDiForm = new Set();
+
   for (let i = 0; i < detail.length; i++) {
     const d = detail[i] || {};
     const no = i + 1;
@@ -570,6 +715,8 @@ const siapkanData = async (
       continue; // baris kosong dilewati
     }
     const adalahVoucher = tipe === TIPE_VOUCHER;
+    const adalahPck = tipe === TIPE_PCK;
+    const tanpaSupplier = adalahVoucher || adalahPck;
     if (!tipe || !nota || (!adalahVoucher && !supKode)) {
       throw new Error(`Baris ${no}: supplier, tipe, dan nota harus diisi.`);
     }
@@ -639,6 +786,44 @@ const siapkanData = async (
       continue;
     }
 
+    if (adalahPck) {
+      const p = petaPck.get(nota.toUpperCase());
+      if (!p) {
+        throw new Error(`Baris ${no}: petty cash ${nota} tidak ditemukan.`);
+      }
+      if (kunciPck.has(p.nomor)) {
+        continue; // sudah masuk Pengajuan Transfer: baris lama dipertahankan
+      }
+      if (pckDiForm.has(p.nomor)) {
+        throw new Error(`Baris ${no}: petty cash ${p.nomor} diinput dua kali.`);
+      }
+      pckDiForm.add(p.nomor);
+      if (p.status !== "APPROVED" || p.pthNomor) {
+        throw new Error(
+          `Baris ${no}: petty cash ${p.nomor} belum APPROVED atau sudah diproses.`,
+        );
+      }
+      if (!(p.nominal > 0.005)) {
+        throw new Error(`Baris ${no}: nominal petty cash ${p.nomor} nol.`);
+      }
+      // Tanpa supplier; nominal selalu pck_total, bukan dari payload
+      baris.push({
+        supKode: "",
+        bulanTagihan: isBulan(d.bulanTagihan)
+          ? String(d.bulanTagihan)
+          : (p.tanggal || tanggal).slice(0, 7),
+        tipe,
+        pck: true,
+        info: { nomor: p.nomor, tanggal: p.tanggal, sisaNota: p.nominal },
+        nominal: p.nominal,
+        tglRencana,
+        faktur,
+        invoice,
+        ketBaris,
+      });
+      continue;
+    }
+
     const cacheKey = `${tipe}|${nota.toUpperCase()}|${supKode}`;
     let info = infoCache.get(cacheKey);
     if (!info) {
@@ -670,7 +855,7 @@ const siapkanData = async (
   // Total per nota (nota yang sama boleh muncul lebih dari sekali, mis. cicilan)
   const totalPerNota = new Map();
   for (const b of baris) {
-    if (b.voucher) {
+    if (b.voucher || b.pck) {
       continue;
     }
     const key = `${b.tipe}|${b.info.nomor}`;
@@ -694,6 +879,10 @@ const siapkanData = async (
   await cekBentrokPobBpb(baris, nomorEdit);
   await cekVoucherBebas(
     baris.filter((b) => b.voucher).map((b) => b.info.nomor),
+    nomorEdit,
+  );
+  await cekPettyCashBebas(
+    baris.filter((b) => b.pck).map((b) => b.info.nomor),
     nomorEdit,
   );
 
@@ -837,6 +1026,7 @@ const save = async (payload, userKode, nomorEdit = "") => {
 
     let adaTerkunci = false;
     let kunciVou = new Set();
+    let kunciPck = new Set();
 
     if (nomorEdit) {
       const [[cur]] = await conn.query(
@@ -870,8 +1060,19 @@ const save = async (payload, userKode, nomorEdit = "") => {
           .filter((r) => r.tipe === TIPE_VOUCHER && terpakaiVou.has(r.vou))
           .map((r) => r.vou),
       );
+      // Petty cash yang sudah diambil Pengajuan Transfer terkunci
+      const [pckRows] = await conn.query(
+        `SELECT rkbd_nota AS nota FROM trekap_bayar_dtl
+         WHERE rkbd_nomor = ? AND rkbd_tipe = ?`,
+        [nomorEdit, TIPE_PCK],
+      );
+      kunciPck = new Set([
+        ...(await pckDiPjt(pckRows.map((r) => r.nota))).keys(),
+      ]);
       adaTerkunci =
-        terkait.some((r) => r.tipe !== TIPE_VOUCHER) || kunciVou.size > 0;
+        terkait.some((r) => r.tipe !== TIPE_VOUCHER) ||
+        kunciVou.size > 0 ||
+        kunciPck.size > 0;
     }
 
     const { ket, baris } = await siapkanData(
@@ -879,6 +1080,7 @@ const save = async (payload, userKode, nomorEdit = "") => {
       nomorEdit,
       adaTerkunci,
       kunciVou,
+      kunciPck,
     );
     const peringatan = await cariPeringatan(baris, nomorEdit);
 
@@ -895,8 +1097,9 @@ const save = async (payload, userKode, nomorEdit = "") => {
         [payload.tanggal, ket, userKode, nomorEdit],
       );
       await conn.query(
-        `DELETE FROM trekap_bayar_dtl WHERE rkbd_nomor = ? AND rkbd_vou_nomor = ''`,
-        [nomorEdit],
+        `DELETE FROM trekap_bayar_dtl
+         WHERE rkbd_nomor = ? AND rkbd_vou_nomor = ''${kunciPck.size ? " AND NOT (rkbd_tipe = ? AND rkbd_nota IN (?))" : ""}`,
+        kunciPck.size ? [nomorEdit, TIPE_PCK, [...kunciPck]] : [nomorEdit],
       );
       // Baris VOU yang belum dipakai ikut diganti isi form; yang sudah dipakai
       // Pengajuan Transfer tetap.
@@ -981,8 +1184,12 @@ module.exports = {
   getInfoNota,
   getTagihan,
   getVoucherOptions,
+  getPettyCashOptions,
   getById,
   save,
   petaRekeningSupplier,
   infoRekening,
+  ambilPettyCashBanyak,
+  pckDiPjt,
+  TIPE_PCK,
 };

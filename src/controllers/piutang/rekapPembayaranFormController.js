@@ -103,6 +103,18 @@ const getVoucherOptions = async (req, res) => {
   }
 };
 
+const getPettyCashOptions = async (req, res) => {
+  try {
+    const data = await svc.getPettyCashOptions(
+      req.query.search || "",
+      req.query.excludeNomor || "",
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   searchSupplier,
   getSupplier,
@@ -113,4 +125,5 @@ module.exports = {
   update,
   getTagihan,
   getVoucherOptions,
+  getPettyCashOptions,
 };

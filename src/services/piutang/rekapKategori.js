@@ -11,6 +11,7 @@ const KATEGORI_TIPE = {
   POE: "PO External",
   RET: "Retur Barang",
   PJG: "Potongan Jasa",
+  PCK: "Petty Cash Kaosan",
   VOU: "Voucher",
 };
 

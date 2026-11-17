@@ -46,6 +46,12 @@ router.get(
   ctrl.getVoucherOptions,
 );
 router.get(
+  "/lookups/petty-cash",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPettyCashOptions,
+);
+router.get(
   "/:nomor/print",
   verifyToken,
   checkPermission(MENU_ID, "view"),
