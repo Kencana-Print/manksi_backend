@@ -44,15 +44,36 @@ const getUnread = async (req, res) => {
   }
 };
 
+const getOpsi = async (req, res) => {
+  try {
+    const data = await svc.getOpsi();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    kirimError(res, error);
+  }
+};
+
+const ubahTarget = async (req, res) => {
+  try {
+    const data = await svc.ubahTarget(req.params.id, req.body, req.user);
+    siarkan(req, { aksi: "ubah", id: data.id });
+    res
+      .status(200)
+      .json({ success: true, message: "Target memo diperbarui.", data });
+  } catch (error) {
+    kirimError(res, error);
+  }
+};
+
 const simpan = async (req, res) => {
   try {
     const data = await svc.simpan(req.body, req.file, req.user);
     if (data.notif) {
+      // Tanpa judul: memo bisa dibatasi ke bagian tertentu, dan siaran ini
+      // sampai ke semua klien. Judul diambil klien lewat /unread yang sudah terfilter.
       siarkan(req, {
         aksi: "baru",
         id: data.id,
-        judul: data.judul,
-        tanggal: data.tanggal,
         userKode: req.user.kode,
         userNama: req.user.nama || req.user.kode,
       });
@@ -92,7 +113,9 @@ const hapus = async (req, res) => {
 module.exports = {
   hanyaBagianUpload,
   getList,
+  getOpsi,
   simpan,
+  ubahTarget,
   getUnread,
   getFile,
   hapus,
