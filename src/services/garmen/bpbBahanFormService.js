@@ -1240,12 +1240,15 @@ const evaluasiLot = (lot, master) => {
     inciPo !== null &&
     Math.abs(s - inciPo) > TOLERANSI_SETTING + 1e-9
   ) {
-    const pilih = pilihSettingInci(master, Math.round(s));
+    const inciBulat = Math.round(s);
+    const pilih = pilihSettingInci(master, inciBulat);
     if (pilih) sBaru = pilih.kode;
-    else
+    else {
+      const asli = Number(lot.qcd_setting_cek) || 0;
       hasil.masalah.push(
-        `${label}: setting ${s} inci tidak ada di master setting.`,
+        `${label}: setting QC ${asli}${asli > 100 ? " cm" : ""} = ${inciBulat} inci tidak ada di master setting (tbahan_setting).`,
       );
+    }
   }
 
   const wQc = master.normNama(lot.qcd_warna);
