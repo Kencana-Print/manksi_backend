@@ -80,13 +80,21 @@ const getOutstanding = async ({
   // plus sumber khusus HO (insentif, PO Lain-lain, BKK kas kecil P04).
   // semuaCabang: lihat seluruh cabang + semua sumber (termasuk sumber khusus HO)
   const isHO = semuaCabang || cabang === "HO-" || cabang === "P01";
-  const buildCabangClause = (kolom) => {
+  const buildCabangClause = (kolom, aliasHO = ["HO-", "P01"]) => {
     if (semuaCabang || !cabang) return "";
-    if (isHO) return ` AND (${kolom} = 'HO-' OR ${kolom} = 'P01')`;
+    if (isHO) {
+      const daftar = aliasHO.map((a) => `'${a}'`).join(", ");
+      return ` AND ${kolom} IN (${daftar})`;
+    }
     return ` AND ${kolom} = ?`;
   };
+  // Data lama menyimpan tujuan pusat sebagai 'HO' (tanpa strip) di mb_mintake
   const cabangClauseGA = buildCabangClause("a.pjh_ke");
-  const cabangClauseMB = buildCabangClause("h.mb_mintake");
+  const cabangClauseMB = buildCabangClause("h.mb_mintake", [
+    "HO-",
+    "HO",
+    "P01",
+  ]);
   const cabangParams = cabang && !isHO ? [cabang] : [];
   const tglSql = (kolom) =>
     startDate && endDate
