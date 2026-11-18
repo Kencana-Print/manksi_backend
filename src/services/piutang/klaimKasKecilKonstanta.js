@@ -23,7 +23,7 @@ const KAS_KLAIM = [
 const JENIS_KLAIM = ["KAS_KECIL", "ATM", "PC"];
 
 // Jenis yang boleh dipanggil di Pengajuan Transfer. Klaim pusat (ATM, PC) hanya lewat BBK.
-const JENIS_VIA_PJT = ["KAS_KECIL"];
+const JENIS_VIA_PJT = ["KAS_KECIL", "ATM"];
 
 // Cabang pusat (token cabang bisa "HO-") diperlakukan sebagai P01.
 const CABANG_PUSAT = ["P01", "HO-"];
