@@ -83,6 +83,37 @@ const petaNamaAkun = async (daftar) => {
   return new Map(rek.map((r) => [r.rek_kode, r.rek_nama]));
 };
 
+// Akun biaya + cost center sebuah BKK dari baris debet jurnalnya.
+// Hanya untuk tampilan, tidak disimpan ke klaim.
+const ambilInfoBiaya = async (daftarBkk) => {
+  const hasil = new Map();
+  if (!daftarBkk.length) return hasil;
+  const [items] = await db.query(
+    `SELECT jurd_jur_no AS bkk, jurd_rek_kode AS akun,
+            jurd_cc_kode AS cc, jurd_dcnama AS dc
+     FROM finance.tjurnalitem
+     WHERE jurd_jur_no IN (?) AND jurd_nourut <> 0 AND jurd_debet > 0
+     ORDER BY jurd_jur_no, jurd_nourut`,
+    [daftarBkk],
+  );
+  const namaAkun = await petaNamaAkun(items.map((i) => i.akun));
+  const namaCc = await petaNamaCc(items.map((i) => i.cc));
+  const kumpul = new Map();
+  for (const it of items) {
+    const e = kumpul.get(it.bkk) || { akun: new Set(), cc: new Set() };
+    e.akun.add(`${it.akun} - ${namaAkun.get(it.akun) || ""}`);
+    if (it.dc) e.cc.add(`${namaCc.get(String(it.cc)) || it.cc} - ${it.dc}`);
+    kumpul.set(it.bkk, e);
+  }
+  for (const [bkk, e] of kumpul) {
+    hasil.set(bkk, {
+      akunInfo: [...e.akun].join(", "),
+      ccInfo: [...e.cc].join(", "),
+    });
+  }
+  return hasil;
+};
+
 // Kas tujuan: satu cabang bisa punya lebih dari satu kas (pusat = beberapa ATM).
 // Bila cabang hanya punya satu kas, rek boleh kosong; bila lebih, wajib dipilih.
 // Cabang atau kas yang tidak terdaftar ditolak.
@@ -247,13 +278,8 @@ const cariBkkEligible = async (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
       )
-      AND NOT EXISTS (
-        SELECT 1 FROM finance.tjurnalitem x
-        JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
-        WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
-          AND (r.rek_kode = ? OR r.rek_parent = ?)
-      )`;
-    params.push(laci, TANGGAL_MULAI_KLAIM, KODE_INDUK_KAS, KODE_INDUK_KAS);
+    `;
+    params.push(bonPd, bonPd, kas.cabang, TANGGAL_MULAI_KLAIM);
   } else if (kas.jenis === "ATM") {
     // Klaim ATM: BKK dicek ke laci kas user yang menginput klaim, bukan ke rekening ATM.
     if (!laci)
@@ -283,13 +309,15 @@ const cariBkkEligible = async (
       AND (b.bon_nomor IS NULL OR b.bon_selesai = 1)
       AND NOT EXISTS (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
-        WHERE d.ptd_jur_no = j.jur_no
+        WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
       )
       AND NOT EXISTS (
-        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
-        WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
+        SELECT 1 FROM finance.tjurnalitem x
+        JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
+        WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
+          AND (r.rek_kode = ? OR r.rek_parent = ?)
       )`;
-    params.push(laci, TANGGAL_MULAI_KLAIM);
+    params.push(laci, TANGGAL_MULAI_KLAIM, KODE_INDUK_KAS, KODE_INDUK_KAS);
   } else {
     sql = `
     SELECT b.bon_nomor AS bon,
@@ -359,8 +387,15 @@ const getBkkOptions = async (
 ) => {
   const kas = tentukanKas(cabang, rekTujuan);
   const laci = kas.jenis === "ATM" ? await cariLaciUser(user) : "";
-  const rows = await cariBkkEligible({ kas, search, exceptNomor, laci });
-  return rows.slice(0, 300);
+  const rows = (
+    await cariBkkEligible({ kas, search, exceptNomor, laci })
+  ).slice(0, 300);
+  const info = await ambilInfoBiaya(rows.map((r) => r.bkk));
+  return rows.map((r) => ({
+    ...r,
+    akunInfo: info.get(r.bkk)?.akunInfo || "",
+    ccInfo: info.get(r.bkk)?.ccInfo || "",
+  }));
 };
 
 // ── Keterkaitan ke Pengajuan Transfer (baris aktif) ───────────────────
@@ -408,6 +443,9 @@ const getDetailForm = async (
   const nomorPjt = await cariPjtAktif(nomor);
   const namaAkun = await petaNamaAkun(dtl.map((d) => d.akun));
   const namaCc = await petaNamaCc(dtl.map((d) => d.cc));
+  const info = await ambilInfoBiaya(
+    dtl.filter((d) => d.tipe !== "MANUAL").map((d) => d.bkk),
+  );
   const bolehTulis = penuh || (!!cabangTulis && cabangTulis === h.kkh_cabang);
   return {
     nomor: h.kkh_nomor,
@@ -428,6 +466,8 @@ const getDetailForm = async (
       nominal: Number(d.nominal),
       akunNama: namaAkun.get(d.akun) || "",
       ccNama: namaCc.get(d.cc) || "",
+      akunInfo: info.get(d.bkk)?.akunInfo || "",
+      ccInfo: info.get(d.bkk)?.ccInfo || "",
     })),
   };
 };
