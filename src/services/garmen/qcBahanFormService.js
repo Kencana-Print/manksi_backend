@@ -734,7 +734,14 @@ const saveLampiran = async (nomor, jenis, file, userKode) => {
     fs.mkdirSync(folderAbs, { recursive: true });
 
     const namaFile = `${jenisUp.toLowerCase()}-${Date.now()}${extFile}`;
-    fs.renameSync(file.path, path.join(folderAbs, namaFile));
+    const tujuanQc = path.join(folderAbs, namaFile);
+    try {
+      fs.renameSync(file.path, tujuanQc);
+    } catch (e) {
+      if (e.code !== "EXDEV") throw e;
+      fs.copyFileSync(file.path, tujuanQc);
+      fs.unlinkSync(file.path);
+    }
     const fileRel = path.posix.join("qc-bahan", folderNomor(nomor), namaFile);
 
     const [lama] = await db.query(

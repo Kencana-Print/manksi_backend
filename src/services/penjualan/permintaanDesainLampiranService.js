@@ -21,7 +21,13 @@ const addLampiran = async (nomor, files, userKode) => {
   const inserted = [];
   for (const file of files) {
     const destPath = path.join(targetDir, file.filename);
-    fs.renameSync(file.path, destPath);
+    try {
+      fs.renameSync(file.path, destPath);
+    } catch (e) {
+      if (e.code !== "EXDEV") throw e;
+      fs.copyFileSync(file.path, destPath);
+      fs.unlinkSync(file.path);
+    }
     const [result] = await db.query(
       `INSERT INTO tpermintaan_desain_lampiran
         (pd3_pd_nomor, pd3_filename, pd3_original_name, pd3_user_upload, pd3_date_upload)

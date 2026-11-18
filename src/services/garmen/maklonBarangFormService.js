@@ -124,7 +124,13 @@ const assertStokCukup = async (conn, cabAsal, kodePolos, qtyKirim) => {
 const moveTempToPermanent = (tempFile) => {
   const finalName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(tempFile.originalname)}`;
   const finalPath = path.join(UPLOAD_DIR, finalName);
-  fs.renameSync(tempFile.path, finalPath);
+  try {
+    fs.renameSync(tempFile.path, finalPath);
+  } catch (e) {
+    if (e.code !== "EXDEV") throw e;
+    fs.copyFileSync(tempFile.path, finalPath);
+    fs.unlinkSync(tempFile.path);
+  }
   return `/uploads/maklon/${finalName}`;
 };
 
@@ -367,7 +373,13 @@ const uploadGambar = async (files) => {
   for (const file of files) {
     const finalName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
     const finalPath = path.join(UPLOAD_DIR, finalName);
-    fs.renameSync(file.path, finalPath);
+    try {
+      fs.renameSync(file.path, finalPath);
+    } catch (e) {
+      if (e.code !== "EXDEV") throw e;
+      fs.copyFileSync(file.path, finalPath);
+      fs.unlinkSync(file.path);
+    }
     results.push({
       file_path: `/uploads/maklon/${finalName}`,
       original_name: file.originalname,
