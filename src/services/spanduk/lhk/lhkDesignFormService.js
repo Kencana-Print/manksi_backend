@@ -23,7 +23,7 @@ const STATUS_MULAI = "ON PROGRESS";
 const STATUS_SELESAI = "DONE";
 
 // Pilihan tetap kolom Bahan (ldk_bahan). Tambah/ubah daftar di sini saja.
-const DAFTAR_BAHAN = ["SETTING", "KERTAS ROLL", "PROVE ULANG", "REVISI"];
+const DAFTAR_BAHAN = ["SETTING", "KERTAS ROLL", "PROVE ULANG", "REPEAT"];
 
 const TABEL = {
   userDesign: "tuserdesign",

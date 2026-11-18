@@ -6,8 +6,9 @@ const PREFIX = "MBB";
 const LOCK_NAME = "mbb_nomor";
 const BAGIAN_INPUT = "GUDANG";
 const BAGIAN_SUPER = ["EDP", "DIR", "DIREKSI", "AUDIT"];
-// Cabang spanduk hanya boleh bahan SB…, cabang lain hanya bahan non-SB
+// P02/P05 hanya bahan SB; HO- boleh SB dan non-SB; cabang lain hanya non-SB
 const CAB_SPANDUK = ["P02", "P05"];
+const CAB_SEMUA_JENIS = ["HO-"];
 const MAX_JUMLAH = 999999.99; // double(8,2)
 
 const bagianUser = (user) => String(user?.bagian || "").toUpperCase();
@@ -72,6 +73,7 @@ const siapkanDetail = async (conn, cab, items) => {
     master.map((m) => [String(m.Bhn_kode).toUpperCase(), m]),
   );
   const spandukCab = CAB_SPANDUK.includes(cab);
+  const semuaJenis = CAB_SEMUA_JENIS.includes(cab);
 
   return items.map((it, i) => {
     const m = peta.get(kodeList[i].toUpperCase());
@@ -79,7 +81,7 @@ const siapkanDetail = async (conn, cab, items) => {
       throw new Error(`Bahan ${kodeList[i]} tidak ditemukan atau tidak aktif.`);
 
     const isSB = String(m.Bhn_kode).startsWith("SB");
-    if (isSB !== spandukCab) {
+    if (!semuaJenis && isSB !== spandukCab) {
       throw new Error(
         `Bahan ${m.Bhn_kode} tidak sesuai jenis bahan cabang ${cab}.`,
       );
