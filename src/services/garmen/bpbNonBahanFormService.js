@@ -321,6 +321,19 @@ const saveData = async (payload, user) => {
           "BPB tsb sudah dibuatkan Voucher Pembelian. Tidak bisa disimpan.",
         );
       }
+      // BPB yang sudah dipakai Penyelesaian Uang Muka/Petty Cash tidak boleh diubah
+      const [pakai] = await conn.query(
+        `SELECT bond2_nomor AS bon FROM finance.tkasbonitem2 WHERE bond2_bpb_nomor = ?
+         UNION
+         SELECT bond_nomor AS bon FROM finance.tkasbonitem WHERE bond_bpb_nomor = ?
+         LIMIT 1`,
+        [bpb_nomor, bpb_nomor],
+      );
+      if (pakai.length > 0) {
+        throw new Error(
+          `BPB tsb sudah dipakai di Penyelesaian ${pakai[0].bon}. Tidak bisa disimpan.`,
+        );
+      }
 
       const [pinRows] = await conn.query(
         `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="BPB GARMEN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`,

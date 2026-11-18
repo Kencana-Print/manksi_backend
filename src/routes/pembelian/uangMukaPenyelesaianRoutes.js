@@ -10,6 +10,19 @@ const {
 const menuId = 315;
 const menuIdPetty = 973;
 
+// Status Finance menutup/mengubah item permintaan: hanya bagian ini
+const hanyaBagian =
+  (...daftar) =>
+  (req, res, next) => {
+    const b = String(req.user?.bagian || "").toUpperCase();
+    if (!daftar.includes(b))
+      return res.status(403).json({
+        message:
+          "Hanya bagian Pembelian dan Finance yang dapat mengubah status.",
+      });
+    next();
+  };
+
 // Mode ditentukan route, jenis bon dibaca dari DB (bukan dari klien):
 // /petty/... hanya untuk bon Penyerahan Dana Belanja (PD), route lama hanya
 // untuk bon non-PD. Nomor di URL harus sama dengan nomor di body karena
@@ -72,7 +85,12 @@ router.get(
   controller.getDetailInvoiceGarmen,
 );
 router.post("/supplier", verifyToken, controller.createSupplier);
-router.patch("/status-finance", verifyToken, controller.updateStatusFinance);
+router.patch(
+  "/status-finance",
+  verifyToken,
+  hanyaBagian("PEMBELIAN", "FINANCE"),
+  controller.updateStatusFinance,
+);
 
 // Penyelesaian Dana Belanja (PD): hak menu 973
 router.get(

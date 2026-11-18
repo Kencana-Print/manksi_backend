@@ -182,11 +182,10 @@ const cacheStats = () =>
 const RANGE_DAYS = 90;
 
 // ── Helper: apakah user ini "super viewer" (lihat semua) ──
-const isSuperViewer = (user) => {
-  const kode = (user.kode || "").toUpperCase();
-  const bagian = (user.bagian || "").toUpperCase();
-  return bagian === "DIREKSI" || bagian === "AUDIT";
-};
+// Harus sama dengan isSuperViewer di DashboardView.vue
+const SUPER_VIEWER_BAGIAN = ["EDP", "DIREKSI", "OWNER", "IT", "AUDIT"];
+const isSuperViewer = (user) =>
+  SUPER_VIEWER_BAGIAN.includes((user.bagian || "").toUpperCase().trim());
 
 // Akses dashboard Gudang Bahan: default PEMBELIAN/GUDANG/PPIC + super
 // viewer. NANDA (FINANCE) dapat pengecualian khusus atas permintaan —
@@ -196,11 +195,7 @@ const isGudangBahanViewer = (user) => {
   const bagian = (user.bagian || "").toUpperCase();
   const kode = (user.kode || "").toUpperCase();
   const allowed = ["PEMBELIAN", "GUDANG", "PPIC"];
-  return (
-    allowed.includes(bagian) ||
-    isSuperViewer(user) ||
-    GUDANG_BAHAN_USER_EXCEPTION.includes(kode)
-  );
+  return allowed.includes(bagian) || isOpsViewer(user) || exception;
 };
 
 // Dashboard Pembelian (Outstanding Beli): tim Pembelian/Gudang/PPIC + bagian FINANCE.
@@ -258,6 +253,10 @@ const KODE_LACI_FINANCE = "A-111118";
 
 // EDP boleh melihat semua untuk kartu ini (isSuperViewer global tidak diubah).
 const isKasSuper = (user) =>
+  isSuperViewer(user) || (user.bagian || "").toUpperCase() === "EDP";
+
+// EDP boleh melihat dashboard operasional (gudang / barang jadi), bukan kas
+const isOpsViewer = (user) =>
   isSuperViewer(user) || (user.bagian || "").toUpperCase() === "EDP";
 
 const bulat2 = (n) => Math.round(n * 100) / 100;
@@ -6407,6 +6406,7 @@ const buildOutstandingPP = (cabang) => {
         DATEDIFF(CURDATE(), IFNULL(h.date_create, h.mb_tanggal)) AS WaktuTunggu,
         h.user_create AS Peminta,
         d.mbd_nourut AS Nourut,
+        d.mbd_brg_kode AS Kode,
         IF(b.brg_note = '' OR b.brg_note IS NULL, b.brg_nama,
            CONCAT(b.brg_nama, ' - ', b.brg_note)) AS Item,
         b.brg_satuan AS Satuan,
@@ -6620,6 +6620,447 @@ const setCatatanOutstandingBeli = async (
   clearCache("getOutstandingBeliList|");
 };
 
+// ── Estimasi kedatangan (input manual) dan asumsi tren kedatangan ──
+// Tren = median selisih hari antara tgl PO dan BPB pertama dari PO itu, per supplier.
+// Hanya BPB lewat PO (BPB langsung tidak punya supplier). Tgl BPB diinput user,
+// jadi pakai median agar tidak terseret satu-dua PO yang tanggalnya terlambat diinput.
+const TREN_BULAN = 12;
+const TREN_MIN_PO = 3;
+const TREN_CACHE_TTL = 6 * 60 * 60 * 1000;
+let trenCache = null;
+
+const ymd = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+
+const median = (angka) => {
+  const a = [...angka].sort((x, y) => x - y);
+  const n = a.length;
+  if (!n) return null;
+  const m = Math.floor(n / 2);
+  return n % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+};
+
+const tambahHari = (tgl, hari) => {
+  const d = new Date(`${tgl}T00:00:00`);
+  d.setDate(d.getDate() + Math.round(hari));
+  return ymd(d);
+};
+
+const loadTrenSupplier = () => {
+  if (trenCache && Date.now() - trenCache.t < TREN_CACHE_TTL) {
+    return trenCache.p;
+  }
+  const p = (async () => {
+    const [rows] = await db.query(
+      `SELECT x.sup, x.hari
+       FROM (
+         SELECT p.po_sup_kode AS sup,
+                DATEDIFF(MIN(b.bpb_tanggal), p.po_tanggal) AS hari
+         FROM tgarmenpo_hdr p
+         JOIN tgarmenbpb_hdr b ON b.bpb_po_nomor = p.po_nomor
+         WHERE p.po_sup_kode <> ''
+           AND p.po_tanggal >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY p.po_nomor, p.po_sup_kode, p.po_tanggal
+       ) x
+       WHERE x.hari >= 0`,
+      [TREN_BULAN],
+    );
+    const perSupplier = new Map();
+    for (const r of rows) {
+      if (!perSupplier.has(r.sup)) perSupplier.set(r.sup, []);
+      perSupplier.get(r.sup).push(Number(r.hari));
+    }
+    const hasil = new Map();
+    for (const [sup, daftar] of perSupplier) {
+      if (daftar.length < TREN_MIN_PO) continue;
+      hasil.set(sup, { hari: median(daftar), sampel: daftar.length });
+    }
+    return hasil;
+  })();
+  trenCache = { t: Date.now(), p };
+  p.catch(() => {
+    trenCache = null; // jangan cache kegagalan
+  });
+  return p;
+};
+
+// Asumsi datang per baris Permintaan Pembelian: dari PO terbuka terbaru yang memuat
+// barang itu. Belum di-PO, atau supplier sampelnya kurang dari TREN_MIN_PO: kosong.
+const loadAsumsiDatang = async (rows) => {
+  const map = new Map();
+  const nomorList = [...new Set(rows.map((r) => r.Nomor))];
+  if (!nomorList.length) return map;
+
+  const [[po], tren] = await Promise.all([
+    db.query(
+      `SELECT d.pod_mb_nomor AS nomor, d.pod_brg_kode AS kode,
+              h.po_nomor, DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS po_tanggal,
+              h.po_sup_kode, IFNULL(s.sup_nama, '') AS sup_nama
+       FROM tgarmenpo_hdr h
+       JOIN tgarmenpo_dtl d ON d.pod_nomor = h.po_nomor
+       LEFT JOIN tsupplier s ON s.sup_kode = h.po_sup_kode
+       WHERE h.po_status NOT LIKE '%CLOSE%' AND d.pod_mb_nomor IN (?)
+       ORDER BY h.po_tanggal ASC, h.po_nomor ASC`,
+      [nomorList],
+    ),
+    loadTrenSupplier(),
+  ]);
+
+  // urut ASC: baris terakhir (PO terbaru) menimpa yang lama
+  for (const r of po) {
+    const t = tren.get(r.po_sup_kode);
+    map.set(`${r.nomor}|${r.kode}`, {
+      Po: r.po_nomor,
+      Supplier: r.sup_nama,
+      Hari: t ? t.hari : null,
+      Sampel: t ? t.sampel : null,
+      Tanggal: t ? tambahHari(r.po_tanggal, t.hari) : "",
+    });
+  }
+  return map;
+};
+
+const loadEstimasiBeli = async (tab, rows) => {
+  const map = new Map();
+  const unik = [...new Set(rows.map((r) => r.Nomor))];
+  if (!unik.length) return map;
+
+  const [hasil] =
+    tab === "PENGAJUAN_DANA"
+      ? await db.query(
+          `SELECT pjd_pjh_nomor AS nomor, pjd_nourut AS nourut,
+                  DATE_FORMAT(pjd_estimasi, '%Y-%m-%d') AS estimasi
+           FROM ga2.tpengajuan2_dtl
+           WHERE pjd_pjh_nomor IN (?) AND pjd_estimasi IS NOT NULL`,
+          [unik],
+        )
+      : await db.query(
+          `SELECT ob_nomor AS nomor, ob_nourut AS nourut,
+                  DATE_FORMAT(ob_estimasi, '%Y-%m-%d') AS estimasi
+           FROM tdashboard_ob_estimasi
+           WHERE ob_nomor IN (?) AND ob_estimasi IS NOT NULL`,
+          [unik],
+        );
+  for (const r of hasil) map.set(`${r.nomor}|${r.nourut}`, r.estimasi);
+  return map;
+};
+
+const setEstimasiOutstandingBeli = async (
+  { tab, nomor, nourut, estimasi },
+  user,
+) => {
+  if (!canEditCatatanBeli(user)) {
+    throw new Error(
+      "Hanya bagian Pembelian, Finance, EDP, Audit, dan Dir yang dapat mengisi estimasi kedatangan.",
+    );
+  }
+  const key = String(tab || "").toUpperCase();
+  if (!OUTSTANDING_BELI_TABS.includes(key))
+    throw new Error("Tab tidak dikenali.");
+  const no = String(nomor || "").trim();
+  const urut = Number(nourut);
+  if (!no || !Number.isInteger(urut))
+    throw new Error("Data baris tidak valid.");
+
+  const tgl = String(estimasi || "").trim();
+  if (tgl) {
+    const d = new Date(`${tgl}T00:00:00`);
+    if (Number.isNaN(d.getTime()) || ymd(d) !== tgl) {
+      throw new Error("Tanggal estimasi tidak valid (format YYYY-MM-DD).");
+    }
+  }
+
+  // Baris harus ada dan berada di cabang yang boleh dilihat user ini
+  const cabang = resolveCabangBeli(user);
+  if (key === "PENGAJUAN_DANA") {
+    const c = buildCabangBeli("a.pjh_ke", cabang);
+    const [[ada]] = await db.query(
+      `SELECT 1 AS ok
+       FROM ga2.tpengajuan2_hdr a
+       JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
+       WHERE a.pjh_nomor = ? AND d.pjd_nourut = ?${c.sql}`,
+      [no, urut, ...c.params],
+    );
+    if (!ada) throw new Error("Baris pengajuan tidak ditemukan.");
+
+    await db.query(
+      `UPDATE ga2.tpengajuan2_dtl
+       SET pjd_estimasi = ?, pjd_estimasi_user = ?, pjd_estimasi_tgl = NOW()
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
+      [tgl || null, tgl ? user.kode : null, no, urut],
+    );
+  } else {
+    const c = buildCabangBeli("h.mb_mintake", cabang);
+    const [[ada]] = await db.query(
+      `SELECT 1 AS ok
+       FROM tgarmenmintabeli_hdr h
+       JOIN tgarmenmintabeli_dtl d ON d.mbd_nomor = h.mb_nomor
+       WHERE h.mb_nomor = ? AND d.mbd_nourut = ?${c.sql}`,
+      [no, urut, ...c.params],
+    );
+    if (!ada) throw new Error("Baris permintaan tidak ditemukan.");
+
+    if (!tgl) {
+      await db.query(
+        `UPDATE tdashboard_ob_estimasi
+         SET ob_estimasi = NULL, user_modified = ?, date_modified = NOW()
+         WHERE ob_nomor = ? AND ob_nourut = ?`,
+        [user.kode, no, urut],
+      );
+      await bersihkanBarisOb(no, urut);
+    } else {
+      await db.query(
+        `INSERT INTO tdashboard_ob_estimasi
+           (ob_nomor, ob_nourut, ob_estimasi, user_modified, date_modified)
+         VALUES (?, ?, ?, ?, NOW())
+         ON DUPLICATE KEY UPDATE
+           ob_estimasi = VALUES(ob_estimasi),
+           user_modified = VALUES(user_modified),
+           date_modified = NOW()`,
+        [no, urut, tgl, user.kode],
+      );
+    }
+  }
+
+  clearCache("getOutstandingBeliList|");
+};
+
+// ── Outstanding Beli: Status Finance & Progress ──
+const STATUS_BELI_INPUT = ["PENDING", "PARTIAL", "CANCEL", "CLOSE"];
+const STATUS_BELI_MENUTUP = ["CANCEL", "CLOSE"];
+
+const canKelolaStatusBeli = (user) =>
+  ["PEMBELIAN", "FINANCE"].includes((user?.bagian || "").toUpperCase());
+
+const invalidasiOutstandingBeli = () => {
+  clearCache("getOutstandingBeliList|");
+  clearCache("getOutstandingBeliSummary|");
+  obCache.clear();
+};
+
+const parseBarisBeli = ({ tab, nomor, nourut }) => {
+  const key = String(tab || "").toUpperCase();
+  if (!OUTSTANDING_BELI_TABS.includes(key))
+    throw new Error("Tab tidak dikenali.");
+  const no = String(nomor || "").trim();
+  const urut = Number(nourut);
+  if (!no || !Number.isInteger(urut))
+    throw new Error("Data baris tidak valid.");
+  return { key, no, urut };
+};
+
+// Baris harus masih ada di Outstanding dan di cabang yang boleh dilihat user
+const cariBarisBeli = async (user, key, no, urut) => {
+  const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
+  return (
+    (all[key] || []).find(
+      (r) => String(r.Nomor) === no && Number(r.Nourut) === urut,
+    ) || null
+  );
+};
+
+const bersihkanBarisOb = (no, urut) =>
+  db.query(
+    `DELETE FROM tdashboard_ob_estimasi
+     WHERE ob_nomor = ? AND ob_nourut = ?
+       AND ob_estimasi IS NULL AND ob_status IS NULL AND ob_progress IS NULL`,
+    [no, urut],
+  );
+
+const loadTindakBeli = async (tab, rows) => {
+  const map = new Map();
+  const unik = [...new Set(rows.map((r) => r.Nomor))];
+  if (!unik.length) return map;
+
+  const [hasil] =
+    tab === "PENGAJUAN_DANA"
+      ? await db.query(
+          `SELECT pjd_pjh_nomor AS nomor, pjd_nourut AS nourut,
+                  pjd_progress AS progress, pjd_status_finance AS status
+           FROM ga2.tpengajuan2_dtl
+           WHERE pjd_pjh_nomor IN (?)`,
+          [unik],
+        )
+      : await db.query(
+          `SELECT ob_nomor AS nomor, ob_nourut AS nourut,
+                  ob_status AS status, ob_progress AS progress
+           FROM tdashboard_ob_estimasi
+           WHERE ob_nomor IN (?)
+             AND (ob_status IS NOT NULL OR ob_progress IS NOT NULL)`,
+          [unik],
+        );
+  for (const r of hasil) {
+    map.set(`${r.nomor}|${r.nourut}`, {
+      Status: r.status || null,
+      Progress: r.progress || null,
+    });
+  }
+  return map;
+};
+
+const setStatusPengajuanDana = async ({
+  nomor,
+  nourut,
+  status,
+  alasan,
+  user,
+}) => {
+  const rows = await db.query(
+    `SELECT pjd_closed_manual AS closed
+     FROM ga2.tpengajuan2_dtl
+     WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_nama <> ''`,
+    [nomor, nourut],
+  );
+  if (!rows.length) throw new Error("Item pengajuan tidak ditemukan.");
+  if (Number(rows[0].closed) === 1)
+    throw new Error("Item sudah ditutup manual dan tidak bisa diubah.");
+
+  if (status === "CANCEL" || status === "CLOSE") {
+    // satu statement: status dan penutupan berubah bersamaan (MyISAM tanpa transaksi)
+    await db.query(
+      `UPDATE ga2.tpengajuan2_dtl
+       SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW(),
+           pjd_closed_manual = 1, pjd_closed_manual_alasan = ?,
+           pjd_closed_manual_user = ?, pjd_closed_manual_tanggal = NOW()
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
+      [status, user.kode, alasan, user.kode, nomor, nourut],
+    );
+  } else {
+    // PENDING, atau kosong untuk menghapus status
+    await db.query(
+      `UPDATE ga2.tpengajuan2_dtl
+       SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW()
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
+      [status || null, user.kode, nomor, nourut],
+    );
+  }
+};
+
+const setStatusOutstandingBeli = async (payload, user) => {
+  if (!canKelolaStatusBeli(user)) {
+    throw new Error(
+      "Hanya bagian Pembelian dan Finance yang dapat mengubah status.",
+    );
+  }
+  const { key, no, urut } = parseBarisBeli(payload);
+  const status = String(payload.status || "")
+    .trim()
+    .toUpperCase();
+  const alasan = String(payload.alasan || "").trim();
+  if (status && !STATUS_BELI_INPUT.includes(status))
+    throw new Error("Status tidak dikenali.");
+  if (key === "PENGAJUAN_DANA" && status === "PARTIAL")
+    throw new Error(
+      "Untuk Pengajuan Dana, pembelian sebagian tercatat otomatis sebagai Belum Dipenuhi saat Penyelesaian.",
+    );
+
+  if (alasan.length > 255) throw new Error("Alasan maksimal 255 karakter.");
+  const menutup = STATUS_BELI_MENUTUP.includes(status);
+  if (menutup && !alasan)
+    throw new Error("Alasan wajib diisi untuk Cancel atau Close.");
+
+  const baris = await cariBarisBeli(user, key, no, urut);
+  if (!baris)
+    throw new Error(
+      "Baris tidak ada di Outstanding Beli (sudah terpenuhi atau ditutup).",
+    );
+
+  const qtyMinta = Number(baris.QtyMinta) || 0;
+  const qtyBeli = Number(baris.QtyBeli) || 0;
+  if (status === "CLOSE" && qtyBeli <= 0)
+    throw new Error("Belum ada qty terbeli. Gunakan Cancel, bukan Close.");
+  if (status === "PARTIAL" && (qtyBeli <= 0 || qtyBeli >= qtyMinta))
+    throw new Error("Partial hanya untuk item yang sudah terbeli sebagian.");
+
+  if (key === "PENGAJUAN_DANA") {
+    await setStatusPengajuanDana({
+      nomor: no,
+      nourut: urut,
+      status,
+      alasan,
+      user,
+    });
+  } else {
+    await db.query(
+      `INSERT INTO tdashboard_ob_estimasi
+         (ob_nomor, ob_nourut, ob_status, ob_status_alasan, ob_status_user,
+          ob_status_tgl, user_modified, date_modified)
+       VALUES (?, ?, ?, ?, ?, ${status ? "NOW()" : "NULL"}, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         ob_status = VALUES(ob_status),
+         ob_status_alasan = VALUES(ob_status_alasan),
+         ob_status_user = VALUES(ob_status_user),
+         ob_status_tgl = VALUES(ob_status_tgl),
+         user_modified = VALUES(user_modified),
+         date_modified = NOW()`,
+      [
+        no,
+        urut,
+        status || null,
+        status ? alasan || null : null,
+        status ? user.kode : null,
+        user.kode,
+      ],
+    );
+    if (!status) await bersihkanBarisOb(no, urut);
+    if (menutup) {
+      await db.query(
+        `UPDATE tgarmenmintabeli_dtl SET mbd_closed_manual = 1
+         WHERE mbd_nomor = ? AND mbd_nourut = ?`,
+        [no, urut],
+      );
+    }
+  }
+
+  invalidasiOutstandingBeli();
+};
+
+const setProgressOutstandingBeli = async (payload, user) => {
+  if (!canKelolaStatusBeli(user)) {
+    throw new Error(
+      "Hanya bagian Pembelian dan Finance yang dapat mengisi progress.",
+    );
+  }
+  const { key, no, urut } = parseBarisBeli(payload);
+  const teks = String(payload.progress || "").trim();
+  if (teks.length > 255) throw new Error("Progress maksimal 255 karakter.");
+
+  const baris = await cariBarisBeli(user, key, no, urut);
+  if (!baris) throw new Error("Baris tidak ada di Outstanding Beli.");
+
+  if (key === "PENGAJUAN_DANA") {
+    await db.query(
+      `UPDATE ga2.tpengajuan2_dtl
+       SET pjd_progress = ?, pjd_progress_user = ?, pjd_progress_tgl = NOW()
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ?`,
+      [teks || null, teks ? user.kode : null, no, urut],
+    );
+  } else if (teks) {
+    await db.query(
+      `INSERT INTO tdashboard_ob_estimasi
+         (ob_nomor, ob_nourut, ob_progress, user_modified, date_modified)
+       VALUES (?, ?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE
+         ob_progress = VALUES(ob_progress),
+         user_modified = VALUES(user_modified),
+         date_modified = NOW()`,
+      [no, urut, teks, user.kode],
+    );
+  } else {
+    await db.query(
+      `UPDATE tdashboard_ob_estimasi
+       SET ob_progress = NULL, user_modified = ?, date_modified = NOW()
+       WHERE ob_nomor = ? AND ob_nourut = ?`,
+      [user.kode, no, urut],
+    );
+    await bersihkanBarisOb(no, urut);
+  }
+
+  clearCache("getOutstandingBeliList|");
+};
+
 const getOutstandingBeliSummary = async (user) => {
   if (!isPembelianViewer(user)) return null;
   const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
@@ -6642,15 +7083,34 @@ const getOutstandingBeliList = async (
   const all = await loadOutstandingBeliAll(resolveCabangBeli(user));
   const rows = all[key];
   const page = rows.slice(Number(offset), Number(offset) + Number(limit));
-  const catatan = await loadCatatanBeli(
-    key,
-    page.map((r) => r.Nomor),
-  );
-  const items = page.map((r) => ({
-    ...r,
-    Kekurangan: Number(r.QtyMinta) - Number(r.QtyBeli),
-    Catatan: catatan.get(`${r.Nomor}|${r.Nourut}`) || "",
-  }));
+  const [catatan, estimasi, asumsi, tindak] = await Promise.all([
+    loadCatatanBeli(
+      key,
+      page.map((r) => r.Nomor),
+    ),
+    loadEstimasiBeli(key, page),
+    key === "PENGAJUAN_DANA"
+      ? Promise.resolve(new Map())
+      : loadAsumsiDatang(page),
+    loadTindakBeli(key, page),
+  ]);
+  const items = page.map((r) => {
+    const a = asumsi.get(`${r.Nomor}|${r.Kode}`);
+    const t = tindak.get(`${r.Nomor}|${r.Nourut}`);
+    return {
+      ...r,
+      Kekurangan: Number(r.QtyMinta) - Number(r.QtyBeli),
+      Catatan: catatan.get(`${r.Nomor}|${r.Nourut}`) || "",
+      Estimasi: estimasi.get(`${r.Nomor}|${r.Nourut}`) || "",
+      Status: t?.Status || null,
+      Progress: t?.Progress || null,
+      AsumsiTanggal: a?.Tanggal || "",
+      AsumsiHari: a?.Hari ?? null,
+      AsumsiSampel: a?.Sampel ?? null,
+      AsumsiPo: a?.Po || "",
+      AsumsiSupplier: a?.Supplier || "",
+    };
+  });
   return { tab: key, total: rows.length, items };
 };
 
@@ -6882,6 +7342,9 @@ module.exports = {
   getOutstandingBeliSummary,
   getOutstandingBeliList,
   setCatatanOutstandingBeli,
+  setEstimasiOutstandingBeli,
+  setStatusOutstandingBeli,
+  setProgressOutstandingBeli,
   getPpicOutstandingSpk,
 };
 

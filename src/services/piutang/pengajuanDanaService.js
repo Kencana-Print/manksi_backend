@@ -39,15 +39,52 @@ const getBrowse = async (startDate, endDate, userKode) => {
       (
         SELECT
           CASE
-            WHEN SUM(CASE WHEN d.pmd_status_finance = 'BELUM_DIPENUHI' THEN 1 ELSE 0 END) > 0 THEN 'BELUM_DIPENUHI'
-            WHEN SUM(CASE WHEN d.pmd_status_finance = 'PENDING' THEN 1 ELSE 0 END) > 0 THEN 'PENDING'
-            WHEN SUM(CASE WHEN d.pmd_status_finance = 'MENUNGGU_PEMBELIAN' THEN 1 ELSE 0 END) > 0 THEN 'MENUNGGU_PEMBELIAN'
-            WHEN SUM(CASE WHEN d.pmd_status_finance = 'SUDAH_DIPENUHI' THEN 1 ELSE 0 END) = COUNT(*) AND COUNT(*) > 0 THEN 'SUDAH_DIPENUHI'
+            WHEN SUM(d.pmd_status_finance = 'BELUM_DIPENUHI') > 0 THEN 'BELUM_DIPENUHI'
+            WHEN SUM(d.pmd_status_finance = 'PENDING') > 0
+              OR EXISTS (
+                SELECT 1 FROM ga2.tpengajuan2_dtl q
+                WHERE q.pjd_pjh_nomor = a.pjh_nomor
+                  AND q.pjd_status_finance = 'PENDING'
+                  AND q.pjd_closed_manual = 0
+              ) THEN 'PENDING'
+            WHEN SUM(d.pmd_status_finance = 'PARTIAL') > 0 THEN 'PARTIAL'
+            WHEN SUM(d.pmd_status_finance = 'MENUNGGU_PEMBELIAN') > 0 THEN 'MENUNGGU_PEMBELIAN'
+            WHEN EXISTS (
+                SELECT 1 FROM ga2.tpengajuan2_dtl q
+                WHERE q.pjd_pjh_nomor = a.pjh_nomor
+                  AND q.pjd_status_finance IN ('CLOSE', 'CANCEL')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM ga2.tpengajuan2_dtl q
+                WHERE q.pjd_pjh_nomor = a.pjh_nomor
+                  AND q.pjd_nama <> ''
+                  AND q.pjd_closed_manual = 0
+              ) THEN IF(
+                EXISTS (
+                  SELECT 1 FROM ga2.tpengajuan2_dtl q
+                  WHERE q.pjd_pjh_nomor = a.pjh_nomor
+                    AND q.pjd_status_finance = 'CLOSE'
+                ), 'CLOSE', 'CANCEL')
+            WHEN COUNT(*) > 0
+              AND SUM(d.pmd_status_finance IN ('SUDAH_DIPENUHI', 'CLOSE', 'CANCEL')) = COUNT(*) THEN
+              CASE
+                WHEN SUM(d.pmd_status_finance = 'SUDAH_DIPENUHI') = COUNT(*) THEN 'SUDAH_DIPENUHI'
+                WHEN SUM(d.pmd_status_finance = 'CANCEL') = COUNT(*) THEN 'CANCEL'
+                ELSE 'CLOSE'
+              END
             ELSE NULL
           END
         FROM ga2.tpermintaan_dtl d
         WHERE d.pmd_pmt_nomor = h.pmt_nomor
       ) AS StatusFinance,
+      (
+        SELECT GROUP_CONCAT(DISTINCT DATE_FORMAT(dd.pjd_estimasi, '%Y-%m-%d')
+                 ORDER BY DATE_FORMAT(dd.pjd_estimasi, '%Y-%m-%d') SEPARATOR ',')
+        FROM ga2.tpengajuan2_dtl dd
+        WHERE dd.pjd_pjh_nomor = a.pjh_nomor
+          AND dd.pjd_estimasi IS NOT NULL
+          AND dd.pjd_closed_manual = 0
+      ) AS Estimasi,
       a.pjh_user_kode AS UserKode
     FROM ga2.tpengajuan2_hdr a
     LEFT JOIN ga2.peminta b ON a.pjh_nik = b.nik

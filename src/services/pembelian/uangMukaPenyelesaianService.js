@@ -12,6 +12,75 @@ const AMBANG_SISA = 100;
 const badRequest = (msg) => Object.assign(new Error(msg), { status: 400 });
 const fmtRp = (n) => Number(n || 0).toLocaleString("id-ID");
 
+// Bon dengan date_create >= tanggal ini: item permintaan pembelian (MB...) wajib
+// punya BPB non bahan dari Gudang, dan stok TIDAK lagi ditulis ke
+// tmasterstok_finance. Bon sebelum tanggal ini berjalan seperti dulu.
+const TANGGAL_MULAI_BPB = "2026-11-22"; // ← GANTI sesuai tanggal go-live
+const PREFIX_MB = ["MBA", "MBO", "MBS", "MBK"];
+const adalahMB = (s) => PREFIX_MB.includes(String(s || "").substring(0, 3));
+
+// Nomor permintaan pembelian yang terkait satu baris detail:
+// ga=2 dari tkasbonitem (d.mb), ga=0 dari tkasbonitem2 (d.pjh berawalan MB*).
+const mbDariDetail = (d) =>
+  d.ga === 2 ? d.mb || "" : d.ga === 0 && adalahMB(d.pjh) ? d.pjh : "";
+
+// Dipanggil SEBELUM transaksi: tabel MyISAM tidak ikut rollback.
+const validasiBpbNonBahan = async (detail) => {
+  for (const d of detail) {
+    if (!d.uraian || !d.verified || Number(d.qty) === 0) continue;
+    const mb = mbDariDetail(d);
+    if (!mb) continue;
+
+    if (!d.bpb)
+      throw badRequest(
+        `"${d.uraian}": nomor BPB non bahan untuk ${mb} wajib diisi. Minta Gudang menyimpan BPB-nya terlebih dahulu.`,
+      );
+    const [[ada]] = await db.query(
+      `SELECT 1 AS ok
+       FROM tgarmenbpb_hdr h
+       INNER JOIN tgarmenbpb_dtl x ON x.bpbd_nomor = h.bpb_nomor
+       WHERE h.bpb_nomor = ? AND h.bpb_mb_nomor = ? AND x.bpbd_brg_kode = ?
+       LIMIT 1`,
+      [d.bpb, mb, d.kdbrg || ""],
+    );
+    if (!ada)
+      throw badRequest(
+        `"${d.uraian}": BPB ${d.bpb} tidak ditemukan atau bukan milik ${mb} / barang ${d.kdbrg || "-"}.`,
+      );
+  }
+};
+
+// Perilaku lama (bon sebelum TANGGAL_MULAI_BPB): stok Finance dicatat manual,
+// aturan sama dengan trigger lama (MB, qty<>0, verified=1).
+const catatStokFinanceLama = async (conn, d, v, nomor, bonDb, cabang) => {
+  const mb = mbDariDetail(d);
+  if (!mb || !d.kdbrg) return;
+  await conn.query(
+    `DELETE FROM finance.tmasterstok_finance
+     WHERE mst_noreferensi=? AND mst_mb_nomor=? AND mst_brg_kode=?`,
+    [nomor, mb, d.kdbrg],
+  );
+  if (v && Number(d.qty) !== 0) {
+    const mstCab = cabang === "P01" ? "HO-" : cabang;
+    await conn.query(
+      `INSERT INTO finance.tmasterstok_finance
+         (mst_jenis, mst_noreferensi, mst_mb_nomor, mst_brg_kode,
+          mst_tanggal, mst_stok_in, mst_harga, mst_cab)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        d.jenis_item || "",
+        nomor,
+        mb,
+        d.kdbrg,
+        bonDb.bon_tanggal,
+        d.qty,
+        d.harga,
+        mstCab,
+      ],
+    );
+  }
+};
+
 // ── Batas waktu Penyelesaian: maks 3 hari kerja sejak bon dibuat ──
 // Hanya berlaku untuk bon yang date_create-nya >= TANGGAL_MULAI_BATAS.
 const TANGGAL_MULAI_BATAS = "2026-10-22";
@@ -176,6 +245,7 @@ const getFormData = async (nomor) => {
       mb: r.bond_ref_tipe === "PERMINTAAN_PEMBELIAN" ? r.bond_ref_nomor : "",
       jenis_item: r.mb_jenis_item || "",
       cab_item: r.mb_cab_item || "",
+      bpb: r.bond_bpb_nomor || "",
     };
   });
 
@@ -291,6 +361,7 @@ const getFormData = async (nomor) => {
         mb: "",
         jenis_item: "",
         cab_item: "",
+        bpb: "",
       };
     });
 
@@ -347,6 +418,7 @@ const getFormData = async (nomor) => {
     mb: r.mb || "",
     jenis_item: r.jenis_item || "",
     cab_item: r.cab_item || "",
+    bpb: r.bond2_bpb_nomor || "",
   }));
 
   const detail = [...detailNonGA, ...detailGA, ...detailItem2];
@@ -367,6 +439,7 @@ const getFormData = async (nomor) => {
     keterangan: bon.bon_keterangan || "",
     cabang: bon.bon_cabang,
     is_edit: isEdit,
+    wajib_bpb: !!bon.tgl_buat && bon.tgl_buat >= TANGGAL_MULAI_BPB,
     info_permintaan: infoPermintaan,
     detail,
     pum_user_create: bon.pum_user_create || "",
@@ -603,6 +676,10 @@ const saveData = async (payload, user) => {
       throw badRequest("Account tujuan sisa harus akun Kas atau Bank.");
     await assertBolehPosting([sisaRekKode], tgl_bkk);
   }
+
+  const modeBpb = !!bonDb.tgl_buat && bonDb.tgl_buat >= TANGGAL_MULAI_BPB;
+  if (modeBpb) await validasiBpbNonBahan(detail);
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -804,7 +881,7 @@ const saveData = async (payload, user) => {
           // sebelumnya MENUNGGU_PEMBELIAN.
           let sql = `UPDATE ga2.tpermintaan_dtl SET
             pmd_qty_buyed=0, pmd_nilai_buyed=0, pmd_verified_buyed=0, pmd_bon=?,
-            pmd_status_finance=NULL`;
+            pmd_status_finance = IF(pmd_status_finance IN ('CLOSE', 'CANCEL'), pmd_status_finance, NULL)`;
           if (d.gabrg === 0)
             sql += `, pmd_tanggal_closed=CURDATE(), pmd_user_closed='${user.kode}'`;
           sql += ` WHERE pmd_pmt_nomor=? AND pmd_nourut=?`;
@@ -825,6 +902,7 @@ const saveData = async (payload, user) => {
             pmd_kode_reject=0, pmd_user_reject='',
             pmd_tanggal_buyed=CURDATE(), pmd_user_buyed=?,
             pmd_status_finance = CASE
+              WHEN pmd_status_finance IN ('CLOSE', 'CANCEL') THEN pmd_status_finance
               WHEN pmd_qty_riil > 0 AND ? >= pmd_qty_riil THEN 'SUDAH_DIPENUHI'
               ELSE 'BELUM_DIPENUHI'
             END`;
@@ -857,7 +935,8 @@ const saveData = async (payload, user) => {
             bond_rek_kode=?, bond_cc_kode=?, bond_dcnama=?,
             bond_verified=?,
             bond_sup_kode=?, bond_sup_nama=?,
-            bond_bank=?, bond_rekening=?, bond_atasnama=?
+            bond_bank=?, bond_rekening=?, bond_atasnama=?,
+            bond_bpb_nomor=?
           WHERE bond_nomor=? AND bond_nourut=?
         `,
           [
@@ -872,68 +951,38 @@ const saveData = async (payload, user) => {
             d.bank || "",
             d.rekening || "",
             d.atasnama || "",
+            d.bpb || "",
             nomor,
             d.no,
           ],
         );
-
-        // Item PERMINTAAN_PEMBELIAN di tkasbonitem tidak melewati trigger
-        // tkasbonitem2_after_insert, jadi stok Finance dicatat di sini
-        // dengan aturan yang sama (MB, qty<>0, verified=1).
-        if (d.mb && d.kdbrg) {
-          await conn.query(
-            `DELETE FROM finance.tmasterstok_finance
-             WHERE mst_noreferensi=? AND mst_mb_nomor=? AND mst_brg_kode=?`,
-            [nomor, d.mb, d.kdbrg],
-          );
-          if (v && Number(d.qty) !== 0) {
-            // Permintaan Garmen dari P01 secara bisnis diwakili sebagai HO-
-            const mstCab = cabang === "P01" ? "HO-" : cabang;
-            await conn.query(
-              `INSERT INTO finance.tmasterstok_finance
-                 (mst_jenis, mst_noreferensi, mst_mb_nomor, mst_brg_kode,
-                  mst_tanggal, mst_stok_in, mst_harga, mst_cab)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                d.jenis_item || "",
-                nomor,
-                d.mb,
-                d.kdbrg,
-                bonDb.bon_tanggal,
-                d.qty,
-                d.harga,
-                mstCab,
-              ],
-            );
-          }
-        }
+        if (!modeBpb)
+          await catatStokFinanceLama(conn, d, v, nomor, bonDb, cabang);
       }
 
       if (d.ga === 0) {
         const hasPjhLink =
           ["POE", "VOU"].includes((d.pjh || "").substring(0, 3)) ||
-          ["MBA", "MBO", "MBS", "MBK"].includes(
-            (d.pjh || "").substring(0, 3),
-          ) ||
+          adalahMB(d.pjh) ||
           (d.pjh || "").substring(0, 2) === "IV";
 
         await conn.query(
           `
             INSERT INTO finance.tkasbonitem2
               (bond2_nomor, bond2_nourut,
-              ${hasPjhLink ? "bond2_link, bond2_brg_kode," : ""}
+              ${hasPjhLink ? "bond2_link, bond2_brg_kode, bond2_bpb_nomor," : ""}
               bond2_nama, bond2_spesifikasi, bond2_satuan,
               bond2_qty_realisasi, bond2_nominal_realisasi,
               bond2_rek_kode, bond2_cc_kode, bond2_dcnama,
               bond2_sup_kode, bond2_sup_nama,
               bond2_bank, bond2_rekening, bond2_atasnama,
               bond2_verified)
-            VALUES (?, ?${hasPjhLink ? ", ?, ?" : ""}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?${hasPjhLink ? ", ?, ?, ?" : ""}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           [
             nomor,
             nourut,
-            ...(hasPjhLink ? [d.pjh || "", d.kdbrg || ""] : []),
+            ...(hasPjhLink ? [d.pjh || "", d.kdbrg || "", d.bpb || ""] : []),
             d.uraian,
             d.spesifikasi || "",
             d.satuan || "",
@@ -950,6 +999,8 @@ const saveData = async (payload, user) => {
             v,
           ],
         );
+        if (!modeBpb)
+          await catatStokFinanceLama(conn, d, v, nomor, bonDb, cabang);
         nourut++;
 
         const cpjh3 = (d.pjh || "").substring(0, 3);
@@ -1303,6 +1354,7 @@ const getDetailPengajuanGA = async (pjhNomor) => {
     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.pmd_cc_kode
     WHERE h.pmt_pjh_nomor = ?
       AND d.pmd_bon = ''
+      AND IFNULL(d.pmd_status_finance, '') NOT IN ('CANCEL', 'CLOSE')
     ORDER BY d.pmd_nourut`,
     [pjhNomor],
   );
@@ -1335,6 +1387,7 @@ const getDetailPengajuanGA = async (pjhNomor) => {
       mb: "",
       jenis_item: "",
       cab_item: "",
+      bpb: "",
       kdsup: "",
       supplier: "",
       bank: "",
@@ -1356,13 +1409,22 @@ const updateStatusFinance = async (pmtNomor, nourut, status) => {
   ];
   if (!validStatus.includes(status)) throw new Error("Status tidak valid.");
 
-  const [result] = await db.query(
+  const [[cur]] = await db.query(
+    `SELECT pmd_status_finance FROM ga2.tpermintaan_dtl
+     WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
+    [pmtNomor, nourut],
+  );
+  if (!cur) throw new Error("Item permintaan tidak ditemukan.");
+  if (["SUDAH_DIPENUHI", "CLOSE", "CANCEL"].includes(cur.pmd_status_finance))
+    throw new Error(
+      `Item sudah berstatus ${cur.pmd_status_finance}, tidak dapat diubah.`,
+    );
+
+  await db.query(
     `UPDATE ga2.tpermintaan_dtl SET pmd_status_finance = ?
      WHERE pmd_pmt_nomor = ? AND pmd_nourut = ?`,
     [status, pmtNomor, nourut],
   );
-  if (result.affectedRows === 0)
-    throw new Error("Item permintaan tidak ditemukan.");
 };
 
 const getListPoExternal = async () => {
@@ -1401,30 +1463,20 @@ const getListPermintaanGarmen = async (cabang) => {
       h.mb_ket AS keterangan, h.mb_priority AS priority, h.mb_cab AS cab,
       h.user_create AS usr, h.mb_bagian AS bagian
     FROM tgarmenmintabeli_hdr h
-    WHERE h.mb_status <> 'CLOSE' AND h.mb_status <> 'DICLOSE'
-      AND EXISTS (
+    WHERE EXISTS (
         SELECT 1
         FROM tgarmenmintabeli_dtl d
+        INNER JOIN tgarmenbpb_hdr p ON p.bpb_mb_nomor = d.mbd_nomor
+        INNER JOIN tgarmenbpb_dtl x
+          ON x.bpbd_nomor = p.bpb_nomor AND x.bpbd_brg_kode = d.mbd_brg_kode
         WHERE d.mbd_nomor = h.mb_nomor
-          AND d.mbd_jumlah > (
-            IFNULL((
-              SELECT SUM(dd.bpbd_jumlah)
-              FROM tgarmenbpb_hdr hh
-              INNER JOIN tgarmenbpb_dtl dd ON dd.bpbd_nomor = hh.bpb_nomor
-              WHERE hh.bpb_mb_nomor = d.mbd_nomor AND dd.bpbd_brg_kode = d.mbd_brg_kode
-            ), 0)
-            +
-            IFNULL((
-              SELECT SUM(msod_jumlah)
-              FROM tgarmenmso_dtl
-              WHERE msod_msi_nomor <> ''
-                AND msod_mb_nomor = d.mbd_nomor
-                AND msod_brg_kode = d.mbd_brg_kode
-            ), 0)
-          )
           AND NOT EXISTS (
             SELECT 1 FROM tgarmenmintabeli_dtl2 c
             WHERE c.mbd2_nomor = d.mbd_nomor AND c.mbd2_brg_kode = d.mbd_brg_kode
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM finance.tkasbonitem2 k
+            WHERE k.bond2_bpb_nomor = p.bpb_nomor AND k.bond2_brg_kode = d.mbd_brg_kode
           )
       )
   `;
@@ -1443,77 +1495,66 @@ const getListPermintaanGarmen = async (cabang) => {
 
 const getDetailPermintaanGarmen = async (mbNomor) => {
   const [rows] = await db.query(
-    `SELECT h.*, d.*, b.brg_satuan,
+    `SELECT h.mb_nomor, h.mb_jenis, h.mb_cab,
+      d.mbd_nourut, d.mbd_brg_kode, d.mbd_ket, d.mbd_kegunaan,
+      b.brg_satuan,
       IF(IFNULL(b.brg_note,'') = '',
         CONCAT(IFNULL(b.brg_nama,''), ' ', IFNULL(d.mbd_ket,'')),
         CONCAT(IFNULL(b.brg_nama,''), ' - ', b.brg_note, ' ', IFNULL(d.mbd_ket,''))
       ) AS nama,
-      (
-        IFNULL((
-          SELECT SUM(dd.bpbd_jumlah)
-          FROM tgarmenbpb_hdr hh
-          INNER JOIN tgarmenbpb_dtl dd ON dd.bpbd_nomor = hh.bpb_nomor
-          WHERE hh.bpb_mb_nomor = d.mbd_nomor AND dd.bpbd_brg_kode = d.mbd_brg_kode
-        ), 0)
-        +
-        IFNULL((
-          SELECT SUM(msod_jumlah)
-          FROM tgarmenmso_dtl
-          WHERE msod_msi_nomor <> ''
-            AND msod_mb_nomor = d.mbd_nomor
-            AND msod_brg_kode = d.mbd_brg_kode
-        ), 0)
-      ) AS sudahTerima,
-      IF(EXISTS (
-        SELECT 1 FROM tgarmenmintabeli_dtl2 c
-        WHERE c.mbd2_nomor = d.mbd_nomor AND c.mbd2_brg_kode = d.mbd_brg_kode
-      ), 1, 0) AS sudahProsesBeli
+      p.bpb_nomor, x.bpbd_jumlah
     FROM tgarmenmintabeli_dtl d
-    LEFT JOIN tgarmenmintabeli_hdr h ON h.mb_nomor = d.mbd_nomor
+    INNER JOIN tgarmenmintabeli_hdr h ON h.mb_nomor = d.mbd_nomor
+    INNER JOIN tgarmenbpb_hdr p ON p.bpb_mb_nomor = d.mbd_nomor
+    INNER JOIN tgarmenbpb_dtl x
+      ON x.bpbd_nomor = p.bpb_nomor AND x.bpbd_brg_kode = d.mbd_brg_kode
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
     WHERE d.mbd_nomor = ?
-    ORDER BY d.mbd_nourut`,
+      AND NOT EXISTS (
+        SELECT 1 FROM tgarmenmintabeli_dtl2 c
+        WHERE c.mbd2_nomor = d.mbd_nomor AND c.mbd2_brg_kode = d.mbd_brg_kode
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tkasbonitem2 k
+        WHERE k.bond2_bpb_nomor = p.bpb_nomor AND k.bond2_brg_kode = d.mbd_brg_kode
+      )
+    ORDER BY d.mbd_nourut, p.bpb_nomor`,
     [mbNomor],
   );
 
-  return rows
-    .filter(
-      (r) =>
-        Number(r.mbd_jumlah) > Number(r.sudahTerima || 0) &&
-        Number(r.sudahProsesBeli) === 0,
-    )
-    .map((r) => ({
-      pmt: "",
-      no: r.mbd_nourut,
-      pjh: r.mbd_nomor,
-      mb: r.mbd_nomor,
-      uraian: r.nama,
-      spesifikasi: r.mbd_ket || "",
-      satuan: r.brg_satuan || "",
-      qty: Number(r.mbd_jumlah) - Number(r.sudahTerima || 0),
-      harga: 0,
-      total: 0,
-      guna: r.mbd_kegunaan || "",
-      verified: true,
-      ga: 0,
-      gabrg: 1,
-      kdbrg: r.mbd_brg_kode,
-      jenis_item: r.mb_jenis,
-      cab_item: r.mb_cab,
-      rekkode: "",
-      reknama: "",
-      cckode: 0,
-      ccnama: "",
-      dcnama: "",
-      kdsup: "",
-      supplier: "",
-      bank: "",
-      rekening: "",
-      atasnama: "",
-      edit: 0,
-      pjh_link: r.mbd_nomor,
-      dckode: 0,
-    }));
+  return rows.map((r) => ({
+    pmt: "",
+    no: r.mbd_nourut,
+    pjh: r.mb_nomor,
+    mb: r.mb_nomor,
+    bpb: r.bpb_nomor,
+    uraian: r.nama,
+    spesifikasi: r.mbd_ket || "",
+    satuan: r.brg_satuan || "",
+    qty: Number(r.bpbd_jumlah),
+    harga: 0,
+    total: 0,
+    guna: r.mbd_kegunaan || "",
+    verified: true,
+    ga: 0,
+    gabrg: 1,
+    kdbrg: r.mbd_brg_kode,
+    jenis_item: r.mb_jenis,
+    cab_item: r.mb_cab,
+    rekkode: "",
+    reknama: "",
+    cckode: 0,
+    ccnama: "",
+    dcnama: "",
+    kdsup: "",
+    supplier: "",
+    bank: "",
+    rekening: "",
+    atasnama: "",
+    edit: 0,
+    pjh_link: r.mb_nomor,
+    dckode: 0,
+  }));
 };
 
 const getListInvoiceGarmen = async () => {
@@ -1565,6 +1606,7 @@ const getDetailInvoiceGarmen = async (ivNomor) => {
       gabrg: 1,
       jenis_item: r.iv_jenis,
       cab_item: r.cab,
+      bpb: "",
       kdsup: r.iv_sup_kode,
       supplier: r.sup_nama,
       rekkode: "",

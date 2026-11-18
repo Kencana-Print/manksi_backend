@@ -27,7 +27,45 @@ const getBrowse = async (startDate, endDate, jenis, cabang, userBagian) => {
         FROM tspk_pin5 
         WHERE pin_trs="MINTA BELI GARMEN" AND pin_nomor=h.mb_nomor 
         ORDER BY pin_urut DESC LIMIT 1
-      ), "") AS Ngedit
+      ), "") AS Ngedit,
+      (
+        SELECT GROUP_CONCAT(DISTINCT DATE_FORMAT(e.ob_estimasi, "%Y-%m-%d")
+                 ORDER BY DATE_FORMAT(e.ob_estimasi, "%Y-%m-%d") SEPARATOR ",")
+        FROM tdashboard_ob_estimasi e
+        JOIN tgarmenmintabeli_dtl d
+          ON d.mbd_nomor = e.ob_nomor AND d.mbd_nourut = e.ob_nourut
+        WHERE e.ob_nomor = h.mb_nomor
+          AND h.mb_status NOT IN ("CLOSE", "DICLOSE")
+          AND d.mbd_closed_manual = 0
+          AND d.mbd_jumlah > (
+            IFNULL((
+              SELECT SUM(dd.bpbd_jumlah)
+              FROM tgarmenbpb_hdr hh
+              INNER JOIN tgarmenbpb_dtl dd ON dd.bpbd_nomor = hh.bpb_nomor
+              WHERE hh.bpb_mb_nomor = d.mbd_nomor AND dd.bpbd_brg_kode = d.mbd_brg_kode
+            ), 0)
+            +
+            IFNULL((
+              SELECT SUM(msod_jumlah)
+              FROM tgarmenmso_dtl
+              WHERE msod_msi_nomor <> ''
+                AND msod_mb_nomor = d.mbd_nomor
+                AND msod_brg_kode = d.mbd_brg_kode
+            ), 0)
+          )
+      ) AS Estimasi,
+      (
+        SELECT CASE
+          WHEN SUM(e2.ob_status = 'PENDING') > 0 THEN 'PENDING'
+          WHEN SUM(e2.ob_status = 'PARTIAL') > 0 THEN 'PARTIAL'
+          WHEN SUM(e2.ob_status IN ('CLOSE', 'CANCEL')) = (
+            SELECT COUNT(*) FROM tgarmenmintabeli_dtl x WHERE x.mbd_nomor = h.mb_nomor
+          ) THEN IF(SUM(e2.ob_status = 'CLOSE') > 0, 'CLOSE', 'CANCEL')
+          ELSE NULL
+        END
+        FROM tdashboard_ob_estimasi e2
+        WHERE e2.ob_nomor = h.mb_nomor AND e2.ob_status IS NOT NULL
+      ) AS StatusBeli
     FROM tgarmenmintabeli_hdr h
     WHERE h.mb_tanggal BETWEEN ? AND ?
   `;

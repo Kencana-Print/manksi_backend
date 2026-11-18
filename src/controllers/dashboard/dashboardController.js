@@ -1273,6 +1273,45 @@ const setCatatanOutstandingBeli = async (req, res) => {
   }
 };
 
+const setEstimasiOutstandingBeli = async (req, res) => {
+  try {
+    const { tab, nomor, nourut, estimasi } = req.body;
+    await service.setEstimasiOutstandingBeli(
+      { tab, nomor, nourut, estimasi },
+      req.user,
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const setStatusOutstandingBeli = async (req, res) => {
+  try {
+    const { tab, nomor, nourut, status, alasan } = req.body;
+    await service.setStatusOutstandingBeli(
+      { tab, nomor, nourut, status, alasan },
+      req.user,
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const setProgressOutstandingBeli = async (req, res) => {
+  try {
+    const { tab, nomor, nourut, progress } = req.body;
+    await service.setProgressOutstandingBeli(
+      { tab, nomor, nourut, progress },
+      req.user,
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
 const getPpicOutstandingSpk = async (req, res) => {
   try {
     const { jenis = "CORPORATE" } = req.query;
@@ -1381,5 +1420,8 @@ module.exports = {
   getOutstandingBeliSummary,
   getOutstandingBeliList,
   setCatatanOutstandingBeli,
+  setEstimasiOutstandingBeli,
+  setStatusOutstandingBeli,
+  setProgressOutstandingBeli,
   getPpicOutstandingSpk,
 };

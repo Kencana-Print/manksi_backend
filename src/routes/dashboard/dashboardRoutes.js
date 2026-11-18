@@ -228,6 +228,21 @@ router.post(
   verifyToken,
   controller.setCatatanOutstandingBeli,
 );
+router.post(
+  "/outstanding-beli/estimasi",
+  verifyToken,
+  controller.setEstimasiOutstandingBeli,
+);
+router.post(
+  "/outstanding-beli/status",
+  verifyToken,
+  controller.setStatusOutstandingBeli,
+);
+router.post(
+  "/outstanding-beli/progress",
+  verifyToken,
+  controller.setProgressOutstandingBeli,
+);
 router.get(
   "/ppic-outstanding-spk",
   verifyToken,
