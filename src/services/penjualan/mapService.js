@@ -114,7 +114,11 @@ const getBrowseList = async (
     LEFT JOIN (
       SELECT ldk_spk,
              SUBSTRING_INDEX(
-               GROUP_CONCAT(NULLIF(TRIM(ldk_keterangan), '') SEPARATOR '\u0001'),
+               GROUP_CONCAT(
+                 IF(UPPER(TRIM(ldk_keterangan)) IN ('REPEAT', 'PROVE ULANG'),
+                    UPPER(TRIM(ldk_keterangan)), NULL)
+                 SEPARATOR '\u0001'
+               ),
                '\u0001', -1
              ) AS ket
       FROM tlhkdesign_komponen
