@@ -511,24 +511,24 @@ const mmtSuratJalanMapRoutes = require("./routes/mmt/transaksi-khusus/pengiriman
 const mmtJadwalKirimRoutes = require("./routes/mmt/transaksi-khusus/pengiriman/jadwalKirimRoutes");
 
 // 6. Laporan MMT
-const mmtLapSpkRoutes = require("./routes/mmt/laporan/lapSpkMmtRoutes");
-const mmtLapLmkpRoutes = require("./routes/mmt/laporan/lapLmkpMmtRoutes");
-const mmtLapMonFinishingRoutes = require("./routes/mmt/laporan/lapMonFinishingRoutes");
-const mmtLapMonBsRoutes = require("./routes/mmt/laporan/lapMonBsRoutes");
-const mmtLapMonCetakRoutes = require("./routes/mmt/laporan/lapMonCetakRoutes");
-const mmtLapMonTekstilRoutes = require("./routes/mmt/laporan/lapMonTekstilRoutes");
-const mmtLapMonProofRoutes = require("./routes/mmt/laporan/lapMonProofRoutes");
-const mmtLapMonSublimRoutes = require("./routes/mmt/laporan/lapMonSublimRoutes");
-const mmtLapMonPaperprintRoutes = require("./routes/mmt/laporan/lapMonPaperprintRoutes");
-const mmtLapMonJadwalKirimRoutes = require("./routes/mmt/laporan/lapMonJadwalKirimRoutes");
-const mmtLapLsTintaRoutes = require("./routes/mmt/laporan/lapLsTintaRoutes");
-const mmtLapLsBahanUtamaRoutes = require("./routes/mmt/laporan/lapLsBahanUtamaRoutes");
-const mmtLapLsBahanPenolongRoutes = require("./routes/mmt/laporan/lapLsBahanPenolongRoutes");
-const mmtLapBarangJadiRoutes = require("./routes/mmt/laporan/lapBarangJadiRoutes");
-const mmtLapPlanVsLhkRoutes = require("./routes/mmt/laporan/lapPlanVsLhkRoutes");
-const mmtLapLhkRoutes = require("./routes/mmt/laporan/lapLhkRoutes");
-const mmtLapKirimanRoutes = require("./routes/mmt/laporan/lapKirimanRoutes");
-const mmtLapPemakaianBahanRoutes = require("./routes/mmt/laporan/lapPemakaianBahanRoutes");
+const mmtLaporanSpkRoutes = require("./routes/mmt/laporan/laporanSpkRoutes");
+const mmtLaporanLmkpRoutes = require("./routes/mmt/laporan/laporanLmkpRoutes");
+const mmtMonitoringFinishingRoutes = require("./routes/mmt/laporan/monitoringFinishingRoutes");
+const mmtMonitoringBsRoutes = require("./routes/mmt/laporan/monitoringBsRoutes");
+const mmtMonitoringCetakRoutes = require("./routes/mmt/laporan/monitoringCetakRoutes");
+const mmtMonitoringTekstilRoutes = require("./routes/mmt/laporan/monitoringTekstilRoutes");
+const mmtMonitoringProofRoutes = require("./routes/mmt/laporan/monitoringProofRoutes");
+const mmtMonitoringSublimRoutes = require("./routes/mmt/laporan/monitoringSublimRoutes");
+const mmtMonitoringPaperprintRoutes = require("./routes/mmt/laporan/monitoringPaperprintRoutes");
+const mmtMonitoringJadwalKirimRoutes = require("./routes/mmt/laporan/monitoringJadwalKirimRoutes");
+const mmtLsTintaRoutes = require("./routes/mmt/laporan/lsTintaRoutes");
+const mmtLsBahanUtamaRoutes = require("./routes/mmt/laporan/lsBahanUtamaRoutes");
+const mmtLsBahanPenolongRoutes = require("./routes/mmt/laporan/lsBahanPenolongRoutes");
+const mmtBarangJadiRoutes = require("./routes/mmt/laporan/barangJadiRoutes");
+const mmtPlanVsLhkRoutes = require("./routes/mmt/laporan/planVsLhkRoutes");
+const mmtLaporanLhkRoutes = require("./routes/mmt/laporan/laporanLhkRoutes");
+const mmtKirimanRoutes = require("./routes/mmt/laporan/kirimanRoutes");
+const mmtPemakaianBahanRoutes = require("./routes/mmt/laporan/pemakaianBahanRoutes");
 
 const app = express();
 // KONFIGURASI CORS SUPER AMAN & ANTI WILDCARD
@@ -1446,59 +1446,59 @@ app.use(
 app.use("/api/mmt/jadwal-kirim", mmtJadwalKirimRoutes);
 
 // 5. Laporan MMT
-app.use("/api/mmt/laporan/spk-mmt", mmtLapSpkRoutes);
-app.use("/api/mmt/laporan-spk-mmt", mmtLapSpkRoutes);
+app.use("/api/mmt/laporan/spk-mmt", mmtLaporanSpkRoutes);
+app.use("/api/mmt/laporan-spk-mmt", mmtLaporanSpkRoutes);
 
-app.use("/api/mmt/laporan/lmkp-mmt", mmtLapLmkpRoutes);
-app.use("/api/mmt/monitoring/laporan-lmkp", mmtLapLmkpRoutes);
+app.use("/api/mmt/laporan/lmkp-mmt", mmtLaporanLmkpRoutes);
+app.use("/api/mmt/monitoring/laporan-lmkp", mmtLaporanLmkpRoutes);
 
-app.use("/api/mmt/laporan/monitoring-finishing", mmtLapMonFinishingRoutes);
-app.use("/api/mmt/monitoring-finishing", mmtLapMonFinishingRoutes);
+app.use("/api/mmt/laporan/monitoring-finishing", mmtMonitoringFinishingRoutes);
+app.use("/api/mmt/monitoring-finishing", mmtMonitoringFinishingRoutes);
 
-app.use("/api/mmt/laporan/monitoring-bs", mmtLapMonBsRoutes);
-app.use("/api/mmt/laporan-bs", mmtLapMonBsRoutes);
+app.use("/api/mmt/laporan/monitoring-bs", mmtMonitoringBsRoutes);
+app.use("/api/mmt/laporan-bs", mmtMonitoringBsRoutes);
 
-app.use("/api/mmt/laporan/monitoring-cetak", mmtLapMonCetakRoutes);
-app.use("/api/mmt/monitoring-cetak", mmtLapMonCetakRoutes);
+app.use("/api/mmt/laporan/monitoring-cetak", mmtMonitoringCetakRoutes);
+app.use("/api/mmt/monitoring-cetak", mmtMonitoringCetakRoutes);
 
-app.use("/api/mmt/laporan/monitoring-tekstil", mmtLapMonTekstilRoutes);
-app.use("/api/mmt/monitoring-tekstil", mmtLapMonTekstilRoutes);
+app.use("/api/mmt/laporan/monitoring-tekstil", mmtMonitoringTekstilRoutes);
+app.use("/api/mmt/monitoring-tekstil", mmtMonitoringTekstilRoutes);
 
-app.use("/api/mmt/laporan/monitoring-proof", mmtLapMonProofRoutes);
-app.use("/api/mmt/monitoring-proof", mmtLapMonProofRoutes);
+app.use("/api/mmt/laporan/monitoring-proof", mmtMonitoringProofRoutes);
+app.use("/api/mmt/monitoring-proof", mmtMonitoringProofRoutes);
 
-app.use("/api/mmt/laporan/monitoring-sublim", mmtLapMonSublimRoutes);
-app.use("/api/mmt/monitoring-sublim", mmtLapMonSublimRoutes);
+app.use("/api/mmt/laporan/monitoring-sublim", mmtMonitoringSublimRoutes);
+app.use("/api/mmt/monitoring-sublim", mmtMonitoringSublimRoutes);
 
-app.use("/api/mmt/laporan/monitoring-paperprint", mmtLapMonPaperprintRoutes);
-app.use("/api/mmt/monitoring-paperprint", mmtLapMonPaperprintRoutes);
+app.use("/api/mmt/laporan/monitoring-paperprint", mmtMonitoringPaperprintRoutes);
+app.use("/api/mmt/monitoring-paperprint", mmtMonitoringPaperprintRoutes);
 
-app.use("/api/mmt/laporan/monitoring-jadwal-kirim", mmtLapMonJadwalKirimRoutes);
-app.use("/api/mmt/monitoring-jadwal-kirim", mmtLapMonJadwalKirimRoutes);
+app.use("/api/mmt/laporan/monitoring-jadwal-kirim", mmtMonitoringJadwalKirimRoutes);
+app.use("/api/mmt/monitoring-jadwal-kirim", mmtMonitoringJadwalKirimRoutes);
 
-app.use("/api/mmt/laporan/ls-tinta", mmtLapLsTintaRoutes);
-app.use("/api/mmt/laporan-ls-tinta", mmtLapLsTintaRoutes);
+app.use("/api/mmt/laporan/ls-tinta", mmtLsTintaRoutes);
+app.use("/api/mmt/laporan-ls-tinta", mmtLsTintaRoutes);
 
-app.use("/api/mmt/laporan/ls-bahan-utama", mmtLapLsBahanUtamaRoutes);
-app.use("/api/mmt/laporan-ls-bahan-utama", mmtLapLsBahanUtamaRoutes);
+app.use("/api/mmt/laporan/ls-bahan-utama", mmtLsBahanUtamaRoutes);
+app.use("/api/mmt/laporan-ls-bahan-utama", mmtLsBahanUtamaRoutes);
 
-app.use("/api/mmt/laporan/ls-bahan-penolong", mmtLapLsBahanPenolongRoutes);
-app.use("/api/mmt/laporan-ls-bahan-penolong", mmtLapLsBahanPenolongRoutes);
+app.use("/api/mmt/laporan/ls-bahan-penolong", mmtLsBahanPenolongRoutes);
+app.use("/api/mmt/laporan-ls-bahan-penolong", mmtLsBahanPenolongRoutes);
 
-app.use("/api/mmt/laporan/barang-jadi", mmtLapBarangJadiRoutes);
-app.use("/api/mmt/laporan-barang-jadi", mmtLapBarangJadiRoutes);
+app.use("/api/mmt/laporan/barang-jadi", mmtBarangJadiRoutes);
+app.use("/api/mmt/laporan-barang-jadi", mmtBarangJadiRoutes);
 
-app.use("/api/mmt/laporan/plan-vs-lhk", mmtLapPlanVsLhkRoutes);
-app.use("/api/mmt/laporan-plan-vs-lhk", mmtLapPlanVsLhkRoutes);
+app.use("/api/mmt/laporan/plan-vs-lhk", mmtPlanVsLhkRoutes);
+app.use("/api/mmt/laporan-plan-vs-lhk", mmtPlanVsLhkRoutes);
 
-app.use("/api/mmt/laporan/lhk", mmtLapLhkRoutes);
-app.use("/api/mmt/laporan-lhk", mmtLapLhkRoutes);
+app.use("/api/mmt/laporan/lhk", mmtLaporanLhkRoutes);
+app.use("/api/mmt/laporan-lhk", mmtLaporanLhkRoutes);
 
-app.use("/api/mmt/laporan/kirim", mmtLapKirimanRoutes);
-app.use("/api/mmt/laporan-kirim", mmtLapKirimanRoutes);
+app.use("/api/mmt/laporan/kirim", mmtKirimanRoutes);
+app.use("/api/mmt/laporan-kirim", mmtKirimanRoutes);
 
-app.use("/api/mmt/laporan/pemakaian-bahan", mmtLapPemakaianBahanRoutes);
-app.use("/api/mmt/lap-pemakaian-bahan", mmtLapPemakaianBahanRoutes);
+app.use("/api/mmt/laporan/pemakaian-bahan", mmtPemakaianBahanRoutes);
+app.use("/api/mmt/lap-pemakaian-bahan", mmtPemakaianBahanRoutes);
 
 // 6. Shared ERP Aliases for MMT compatibility
 app.use("/api/mmt/customer", customerRoutes);
