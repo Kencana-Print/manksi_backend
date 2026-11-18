@@ -41,6 +41,7 @@ const getBkkOptions = async (req, res) => {
       req.query.rekTujuan || "",
       req.query.search || "",
       req.query.exceptNomor || "",
+      req.user,
     );
     res.json({ success: true, data });
   } catch (err) {

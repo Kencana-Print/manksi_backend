@@ -147,6 +147,26 @@ const bolehKlaimPc = async (user) => {
   );
 };
 
+const KODE_INDUK_KAS = "A-111101";
+
+// Laci kas milik user (anak A-111101). Sama dengan cariLaciPemilik di
+// uangMukaRealisasiService; tidak diimpor dari sana supaya tidak menambah ketergantungan.
+const cariLaciUser = async (user) => {
+  const kode = String(user?.kode || "").trim();
+  if (!kode) return "";
+  const [rows] = await db.query(
+    `SELECT rek_kode FROM finance.trekening
+     WHERE rek_parent = ? AND rek_pemilik = ? AND rek_isaktif = 0`,
+    [KODE_INDUK_KAS, kode],
+  );
+  if (rows.length > 1)
+    throw httpError(
+      `User ${kode} memiliki lebih dari satu laci kas. Rapikan data account.`,
+      409,
+    );
+  return rows[0]?.rek_kode || "";
+};
+
 // ── Info default form: kas tujuan + tanggal mulai ─────────────────────
 const getDefaults = async (cabang, penuh = false) => {
   const daftar = kasPerCabang(cabang);
@@ -180,7 +200,7 @@ const getDefaults = async (cabang, penuh = false) => {
 // daftarBkk: batasi ke nomor tertentu (dipakai validasi saat simpan).
 // exceptNomor: kunci milik klaim ini dianggap bebas (saat ubah).
 const cariBkkEligible = async (
-  { kas, search = "", daftarBkk = null, exceptNomor = "" },
+  { kas, search = "", daftarBkk = null, exceptNomor = "", laci = "" },
   conn = db,
 ) => {
   const params = [];
@@ -225,10 +245,22 @@ const cariBkkEligible = async (
       AND k.nominal > 0
       AND NOT EXISTS (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
-        WHERE d.ptd_trs = b.bon_jur_no AND d.ptd_batal = ''
+        WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tjurnalitem x
+        JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
+        WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
+          AND (r.rek_kode = ? OR r.rek_parent = ?)
       )`;
-    params.push(bonPd, bonPd, kas.cabang, TANGGAL_MULAI_KLAIM);
+    params.push(laci, TANGGAL_MULAI_KLAIM, KODE_INDUK_KAS, KODE_INDUK_KAS);
   } else if (kas.jenis === "ATM") {
+    // Klaim ATM: BKK dicek ke laci kas user yang menginput klaim, bukan ke rekening ATM.
+    if (!laci)
+      throw httpError(
+        "User belum punya laci kas, klaim ATM tidak dapat memilih BKK. Hubungi Finance.",
+        403,
+      );
     sql = `
     SELECT IFNULL(b.bon_nomor,'') AS bon,
       j.jur_no AS bkk,
@@ -257,7 +289,7 @@ const cariBkkEligible = async (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
       )`;
-    params.push(kas.rek, TANGGAL_MULAI_KLAIM);
+    params.push(laci, TANGGAL_MULAI_KLAIM);
   } else {
     sql = `
     SELECT b.bon_nomor AS bon,
@@ -323,9 +355,11 @@ const getBkkOptions = async (
   rekTujuan = "",
   search = "",
   exceptNomor = "",
+  user = null,
 ) => {
   const kas = tentukanKas(cabang, rekTujuan);
-  const rows = await cariBkkEligible({ kas, search, exceptNomor });
+  const laci = kas.jenis === "ATM" ? await cariLaciUser(user) : "";
+  const rows = await cariBkkEligible({ kas, search, exceptNomor, laci });
   return rows.slice(0, 300);
 };
 
@@ -465,6 +499,7 @@ const saveData = async (payload, user) => {
   await assertBolehPosting([rekTujuan, ...manual.map((m) => m.akun)], tanggal);
 
   const conn = await db.getConnection();
+  const laci = kas.jenis === "ATM" ? await cariLaciUser(user) : "";
   let lockName = null;
   try {
     await conn.beginTransaction();
@@ -508,13 +543,15 @@ const saveData = async (payload, user) => {
     // Validasi ulang di server — daftar BKK dari klien tidak dipercaya
     // Daftar kosong (klaim hanya baris manual) → hindari "IN ()"
     const eligible = daftar.length
-      ? await cariBkkEligible({ kas, daftarBkk: daftar }, conn)
+      ? await cariBkkEligible({ kas, daftarBkk: daftar, laci }, conn)
       : [];
     const peta = new Map(eligible.map((e) => [e.bkk, e]));
     const tidakValid = daftar.filter((b) => !peta.has(b));
+    const sumberTeks =
+      kas.jenis === "ATM" ? `laci kas ${laci}` : `kas ${rekTujuan}`;
     if (tidakValid.length > 0)
       throw httpError(
-        `BKK berikut tidak memenuhi syarat klaim (sudah diklaim atau diajukan, sebelum tanggal mulai, atau bukan kas ${rekTujuan}): ${tidakValid.join(", ")}`,
+        `BKK berikut tidak memenuhi syarat klaim (sudah diklaim atau diajukan, sebelum tanggal mulai, atau bukan ${sumberTeks}): ${tidakValid.join(", ")}`,
       );
 
     // Akun biaya baris manual: semua akun boleh, kecuali kas klaim, nonaktif, atau induk
