@@ -261,6 +261,27 @@ const isOpsViewer = (user) =>
 
 const bulat2 = (n) => Math.round(n * 100) / 100;
 
+// Harus sama dengan filter duplikat jurnal otomatis kasbon di bukuBesarService.getBukuBesar,
+// supaya saldo dashboard = saldo Buku Besar. Alias wajib: a = tjurnal, b = tjurnalitem.
+const SQL_BUKAN_DUPLIKAT_OTOMATIS = `
+  NOT (
+    IFNULL(a.jur_otomatis, 0) = 1
+    AND EXISTS (
+      SELECT 1
+      FROM finance.tkasbon k
+      INNER JOIN finance.tjurnal t2
+        ON t2.jur_otomatis = 1
+       AND MID(t2.jur_no, 3, 18) = k.bon_nomor
+      INNER JOIN finance.tjurnalitem i2
+        ON i2.jurd_jur_no = t2.jur_no
+       AND i2.jurd_nourut = 0
+      WHERE k.bon_jur_no = MID(a.jur_no, 3, 18)
+        AND i2.jurd_rek_kode = b.jurd_rek_kode
+        AND i2.jurd_debet = b.jurd_debet
+        AND i2.jurd_kredit = b.jurd_kredit
+    )
+  )`;
+
 // Saldo induk + semua laci. Tidak bergantung user → aman di-cache bersama.
 const getSaldoLaciPusat = () =>
   memo(
@@ -285,6 +306,7 @@ const getSaldoLaciPusat = () =>
          WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
            AND b.jurd_rek_kode IN (?)
            AND a.jur_tanggal <= CURDATE()
+           AND ${SQL_BUKAN_DUPLIKAT_OTOMATIS}
          GROUP BY b.jurd_rek_kode`,
         [akun.map((a) => a.Kode)],
       );
@@ -321,7 +343,8 @@ const getSaldoKasCabang = (cabang) =>
          LEFT JOIN finance.tjurnal a ON a.jur_no = b.jurd_jur_no
          WHERE (b.jurd_nourut = 0 OR a.jur_tipetransaksi = 'JUR')
            AND b.jurd_rek_kode IN (?)
-           AND a.jur_tanggal <= CURDATE()`,
+           AND a.jur_tanggal <= CURDATE()
+           AND ${SQL_BUKAN_DUPLIKAT_OTOMATIS}`,
         [rekKodes],
       );
       return {
