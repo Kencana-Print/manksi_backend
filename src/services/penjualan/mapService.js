@@ -74,10 +74,10 @@ const getBrowseList = async (
       IF(x.mspk_divisi=5, m.lpr_tanggal, z.lds_tgl) AS Design_Tanggal,
       z.lds_user AS Design_User,
       CASE
+        WHEN zk.ket IS NOT NULL THEN zk.ket
         WHEN zs.kunci IS NULL THEN ''
         WHEN SUBSTRING(zs.kunci, 15, 1) = '1' THEN 'DONE'
-        WHEN TRIM(SUBSTRING(zs.kunci, 16)) = '' THEN 'ON PROGRESS'
-        ELSE TRIM(SUBSTRING(zs.kunci, 16))
+        ELSE 'ON PROGRESS'
       END AS Design_Note,
       IFNULL((
         SELECT IFNULL(IF(pin_acc="" AND pin_dipakai="","WAIT",IF(pin_acc="Y" AND pin_dipakai="","ACC",IF(pin_acc="Y" AND pin_dipakai="Y","",IF(pin_acc="N","TOLAK","")))), "")
@@ -103,15 +103,15 @@ const getBrowseList = async (
       GROUP BY lds_spk
     ) z ON z.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
     LEFT JOIN (
-      SELECT lds_spk,
-             MAX(CONCAT(
-               DATE_FORMAT(lds_tgl, '%Y%m%d%H%i%s'),
-               IF(UPPER(lds_status) = 'DONE', '1', '0'),
-               IFNULL(lds_note, '')
-             )) AS kunci
-      FROM tlhkdesign_status
-      GROUP BY lds_spk
-    ) zs ON zs.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
+      SELECT ldk_spk,
+             SUBSTRING_INDEX(
+               GROUP_CONCAT(NULLIF(TRIM(ldk_keterangan), '') SEPARATOR CHAR(1)),
+               CHAR(1), -1
+             ) AS ket
+      FROM tlhkdesign_komponen
+      WHERE ldk_tipe = 'P'
+      GROUP BY ldk_spk
+    ) zk ON zk.ldk_spk = CONVERT(x.mspk_nomor USING utf8mb4)
     LEFT JOIN tdivisi d ON d.kode = x.mspk_divisi
     LEFT JOIN (
       SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal
