@@ -15,7 +15,7 @@ const fmtRp = (n) => Number(n || 0).toLocaleString("id-ID");
 // Bon dengan date_create >= tanggal ini: item permintaan pembelian (MB...) wajib
 // punya BPB non bahan dari Gudang, dan stok TIDAK lagi ditulis ke
 // tmasterstok_finance. Bon sebelum tanggal ini berjalan seperti dulu.
-const TANGGAL_MULAI_BPB = "2026-11-22"; // ← GANTI sesuai tanggal go-live
+const TANGGAL_MULAI_BPB = "2026-11-18"; // ← GANTI sesuai tanggal go-live
 const PREFIX_MB = ["MBA", "MBO", "MBS", "MBK"];
 const adalahMB = (s) => PREFIX_MB.includes(String(s || "").substring(0, 3));
 
