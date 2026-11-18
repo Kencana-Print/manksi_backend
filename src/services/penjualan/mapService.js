@@ -103,6 +103,15 @@ const getBrowseList = async (
       GROUP BY lds_spk
     ) z ON z.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
     LEFT JOIN (
+      SELECT lds_spk,
+             MAX(CONCAT(
+               DATE_FORMAT(lds_tgl, '%Y%m%d%H%i%s'),
+               IF(UPPER(lds_status) = 'DONE', '1', '0')
+             )) AS kunci
+      FROM tlhkdesign_status
+      GROUP BY lds_spk
+    ) zs ON zs.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
+    LEFT JOIN (
       SELECT ldk_spk,
              SUBSTRING_INDEX(
                GROUP_CONCAT(NULLIF(TRIM(ldk_keterangan), '') SEPARATOR '\u0001'),
