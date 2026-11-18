@@ -25,6 +25,65 @@ const buildWhere = (startDate, endDate) => {
   };
 };
 
+// Status tampil untuk browse (turunan, tidak disimpan):
+// BATAL | AKTIF (belum ada yang diajukan) | SEBAGIAN | DIAJUKAN (semua baris).
+// Baris dianggap terpakai bila: voucher-nya sudah ada di bayar_debet_detail
+// (PJT, atau realisasi voucher bila vou_link kosong, sama seperti kolom
+// Status Bayar di detail), atau petty cash-nya sudah jadi ptd_trs di PJT.
+// Baris tagihan yang belum jadi voucher dihitung belum terpakai.
+const tambahStatusTampil = async (rows) => {
+  const aktif = rows.filter((r) => r.status === "AKTIF").map((r) => r.nomor);
+  if (!aktif.length) {
+    return rows.map((r) => ({ ...r, statusTampil: r.status }));
+  }
+
+  const [dtl] = await db.query(
+    `SELECT rkbd_nomor AS nomor, rkbd_tipe AS tipe, rkbd_nota AS nota,
+            IFNULL(rkbd_vou_nomor, '') AS vou
+     FROM trekap_bayar_dtl
+     WHERE rkbd_nomor IN (?)`,
+    [aktif],
+  );
+
+  const daftarVou = [...new Set(dtl.map((d) => d.vou).filter(Boolean))];
+  const daftarPck = [
+    ...new Set(dtl.filter((d) => d.tipe === TIPE_PCK).map((d) => d.nota)),
+  ];
+  const [bayar] = daftarVou.length
+    ? await db.query(
+        `SELECT DISTINCT vou_nomor FROM bayar_debet_detail
+         WHERE vou_nomor IN (?)`,
+        [daftarVou],
+      )
+    : [[]];
+  const vouTerpakai = new Set(bayar.map((b) => b.vou_nomor));
+  const pckTerpakai = daftarPck.length ? await pckDiPjt(daftarPck) : new Map();
+
+  const hitung = new Map();
+  for (const d of dtl) {
+    const h = hitung.get(d.nomor) || { total: 0, pakai: 0 };
+    h.total += 1;
+    const pakai =
+      d.tipe === TIPE_PCK
+        ? pckTerpakai.has(d.nota)
+        : d.vou !== "" && vouTerpakai.has(d.vou);
+    if (pakai) h.pakai += 1;
+    hitung.set(d.nomor, h);
+  }
+
+  return rows.map((r) => {
+    if (r.status !== "AKTIF") return { ...r, statusTampil: r.status };
+    const h = hitung.get(r.nomor);
+    const statusTampil =
+      !h || h.pakai === 0
+        ? "AKTIF"
+        : h.pakai === h.total
+          ? "DIAJUKAN"
+          : "SEBAGIAN";
+    return { ...r, statusTampil };
+  });
+};
+
 const getBrowse = async (startDate, endDate) => {
   const { sql, params } = buildWhere(startDate, endDate);
   const [rows] = await db.query(
@@ -50,7 +109,7 @@ const getBrowse = async (startDate, endDate) => {
      ORDER BY h.rkb_tanggal DESC, h.rkb_nomor DESC`,
     params,
   );
-  return rows;
+  return tambahStatusTampil(rows);
 };
 
 const getBrowseDetail = async (startDate, endDate, user) => {

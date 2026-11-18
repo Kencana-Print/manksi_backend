@@ -72,7 +72,13 @@ const getBrowseList = async (
         (SELECT spk_nomor FROM tspk WHERE spk_memo = x.mspk_nomor ORDER BY spk_tanggal DESC LIMIT 1)
       ) AS SPK, 
       IF(x.mspk_divisi=5, m.lpr_tanggal, z.lds_tgl) AS Design_Tanggal,
-      z.lds_user AS Design_User, z.lds_note AS Design_Note, 
+      z.lds_user AS Design_User,
+      CASE
+        WHEN zs.kunci IS NULL THEN ''
+        WHEN SUBSTRING(zs.kunci, 15, 1) = '1' THEN 'DONE'
+        WHEN TRIM(SUBSTRING(zs.kunci, 16)) = '' THEN 'ON PROGRESS'
+        ELSE TRIM(SUBSTRING(zs.kunci, 16))
+      END AS Design_Note,
       IFNULL((
         SELECT IFNULL(IF(pin_acc="" AND pin_dipakai="","WAIT",IF(pin_acc="Y" AND pin_dipakai="","ACC",IF(pin_acc="Y" AND pin_dipakai="Y","",IF(pin_acc="N","TOLAK","")))), "")
         FROM tspk_pin5 WHERE pin_trs="MAP" AND pin_nomor=x.mspk_nomor ORDER BY pin_urut DESC LIMIT 1
@@ -96,6 +102,16 @@ const getBrowseList = async (
       WHERE UPPER(lds_status)="DONE"
       GROUP BY lds_spk
     ) z ON z.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
+    LEFT JOIN (
+      SELECT lds_spk,
+             MAX(CONCAT(
+               DATE_FORMAT(lds_tgl, '%Y%m%d%H%i%s'),
+               IF(UPPER(lds_status) = 'DONE', '1', '0'),
+               IFNULL(lds_note, '')
+             )) AS kunci
+      FROM tlhkdesign_status
+      GROUP BY lds_spk
+    ) zs ON zs.lds_spk = CONVERT(x.mspk_nomor USING utf8mb4)
     LEFT JOIN tdivisi d ON d.kode = x.mspk_divisi
     LEFT JOIN (
       SELECT lprd_spk_nomor, MIN(lpr_tanggal) AS lpr_tanggal

@@ -23,7 +23,7 @@ const STATUS_MULAI = "ON PROGRESS";
 const STATUS_SELESAI = "DONE";
 
 // Pilihan tetap kolom Bahan (ldk_bahan). Tambah/ubah daftar di sini saja.
-const DAFTAR_BAHAN = ["SETTING", "KERTAS ROLL", "PROVE ULANG"];
+const DAFTAR_BAHAN = ["SETTING", "KERTAS ROLL", "PROVE ULANG", "REVISI"];
 
 const TABEL = {
   userDesign: "tuserdesign",
@@ -621,15 +621,15 @@ const getSesi = async (id, user) => {
   return bacaSesi(db, Number(teks(id)));
 };
 
-// Sesi aktif milik user yang login (untuk memulihkan timer setelah reload)
+// Semua sesi aktif milik user yang login (untuk memulihkan timer setelah reload)
 const getSesiAktif = async (user) => {
   const [rows] = await db.query(
     `SELECT sesi_id FROM ${TABEL.sesi}
      WHERE sesi_login = ? AND sesi_status IN (?)
-     ORDER BY sesi_id DESC LIMIT 1`,
+     ORDER BY sesi_id`,
     [teks(user?.kode), SESI_AKTIF],
   );
-  return rows.length ? bacaSesi(db, rows[0].sesi_id) : null;
+  return Promise.all(rows.map((r) => bacaSesi(db, r.sesi_id)));
 };
 
 // Mulai: satu timer untuk beberapa SPK/MAP. Tiap MAP dibuatkan header dan
@@ -657,17 +657,6 @@ const mulaiSesi = async (body = {}, user) => {
 
     await conn.beginTransaction();
     const pelaku = await siapkanPelaku(conn, body);
-
-    const [aktif] = await conn.query(
-      `SELECT sesi_id FROM ${TABEL.sesi}
-       WHERE sesi_cabang = ? AND sesi_user = ? AND sesi_status IN (?) LIMIT 1`,
-      [pelaku.cabang, pelaku.designer, SESI_AKTIF],
-    );
-    if (aktif.length > 0) {
-      throw galat(
-        `Designer ${pelaku.designer} masih punya timer yang berjalan atau di-pause. Selesaikan atau batalkan dulu.`,
-      );
-    }
 
     const [dipakai] = await conn.query(
       `SELECT m.sm_spk AS spk FROM ${TABEL.sesiMap} m
@@ -829,8 +818,8 @@ const resumeSesi = async (id, user) => {
 
 // Porsi per tab dalam persen (total 100); satu MAP otomatis 100
 const siapkanPorsi = (daftar, maps) => {
-  if (maps.length === 1 && (!Array.isArray(daftar) || daftar.length === 0)) {
-    return [100];
+  if (!Array.isArray(daftar) || daftar.length === 0) {
+    return maps.map(() => round2(100 / maps.length));
   }
   const list = Array.isArray(daftar) ? daftar : [];
   const peta = new Map();
