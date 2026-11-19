@@ -659,14 +659,15 @@ const mulaiSesi = async (body = {}, user) => {
     const pelaku = await siapkanPelaku(conn, body);
 
     const [dipakai] = await conn.query(
-      `SELECT m.sm_spk AS spk FROM ${TABEL.sesiMap} m
+      `SELECT m.sm_spk AS spk, s.sesi_id AS id, s.sesi_user AS designer
+       FROM ${TABEL.sesiMap} m
        JOIN ${TABEL.sesi} s ON s.sesi_id = m.sm_sesi
        WHERE m.sm_spk IN (?) AND s.sesi_status IN (?) LIMIT 1`,
       [daftar, SESI_AKTIF],
     );
     if (dipakai.length > 0) {
       throw galat(
-        `SPK/MAP ${dipakai[0].spk} sedang dipakai timer lain. Selesaikan atau batalkan dulu.`,
+        `SPK/MAP ${dipakai[0].spk} sedang dipakai timer #${dipakai[0].id} (${dipakai[0].designer}). Selesaikan atau batalkan dulu.`,
       );
     }
 
