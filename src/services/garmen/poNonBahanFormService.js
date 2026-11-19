@@ -25,8 +25,8 @@ const BAGIAN_PO_ASET_LIHAT = [
   "PEMBELIAN",
   "PURCHASING",
 ];
-// Boleh membuat/mengubah PO Aset. [KONFIRMASI] EDP belum kamu sebut, jadi tidak saya masukkan
-const BAGIAN_PO_ASET_PROSES = ["PEMBELIAN", "PURCHASING", "GA"];
+// Boleh membuat/mengubah PO Aset.
+const BAGIAN_PO_ASET_PROSES = ["PEMBELIAN", "FINANCE", "GA"];
 
 // --- HELPER UNTUK MENGHITUNG QTY BPB & QTY SUDAH PO (1:1 Logic Delphi) ---
 const getQtyBpb = async (poNomor, brgKode, conn) => {
@@ -465,13 +465,6 @@ const saveData = async (payload, user) => {
       }
     }
 
-    if (
-      po_jenis === "ASET" &&
-      !BAGIAN_PO_ASET_PROSES.includes(String(user.bagian || "").toUpperCase())
-    ) {
-      throw new Error("PO Aset hanya untuk bagian Pembelian atau GA.");
-    }
-
     if (zdtClose && tglPO < zdtClose && pinStatus !== "ACC") {
       throw new Error(
         "Anda tidak boleh input di tanggal periode yg sudah diclose.",
@@ -517,6 +510,14 @@ const saveData = async (payload, user) => {
         [po_nomor],
       );
       mbLama = new Set(lama.map((r) => r.pod_mb_nomor).filter(Boolean));
+    }
+
+    // Dicek SETELAH po_jenis diambil dari database (mode edit), bukan dari payload
+    if (
+      po_jenis === "ASET" &&
+      !BAGIAN_PO_ASET_PROSES.includes(String(user.bagian || "").toUpperCase())
+    ) {
+      throw new Error("PO Aset hanya untuk bagian Pembelian atau GA.");
     }
 
     // 2. Tarik / Ganti Nomor Baru Jika Mode Create
