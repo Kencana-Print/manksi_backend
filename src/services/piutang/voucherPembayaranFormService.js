@@ -804,7 +804,8 @@ const searchNota = async (type, supKode, search = "") => {
     params.push(JENIS_PO_BAHAN, supKode, TANGGAL_MULAI_PO_BAHAN);
     if (search) params.push(like);
   } else if (type === "BPG") {
-    const hasSupKode = supKode && supKode.trim() !== "";
+    // BPB Non Bahan: umumnya tanpa supplier & tanpa harga → filter supplier dilepas.
+    // Total = 0 hanya boleh masuk SATU voucher (kecuali voucher yang sedang diedit).
     sql = `
     SELECT h.bpb_nomor AS Nomor,
            DATE_FORMAT(h.bpb_tanggal, '%Y-%m-%d') AS Tanggal,
@@ -819,16 +820,19 @@ const searchNota = async (type, supKode, search = "") => {
            ), 0) AS Total,
            IFNULL((
              SELECT SUM(voud_total) FROM tvoucher_dtl
-             WHERE voud_nota = h.bpb_nomor
-           ), 0) AS SudahDibayar
+             WHERE voud_nota = h.bpb_nomor AND voud_type = 'BPG'
+           ), 0) AS SudahDibayar,
+           (
+             SELECT COUNT(*) FROM tvoucher_dtl
+             WHERE voud_nota = h.bpb_nomor AND voud_type = 'BPG'
+           ) AS JumlahVoucher
     FROM tgarmenbpb_hdr h
     LEFT JOIN tsupplier s ON s.sup_kode = h.bpb_sup_kode
     WHERE 1=1
-      ${hasSupKode ? "AND h.bpb_sup_kode = ?" : ""}
       ${search ? "AND (h.bpb_nomor LIKE ? OR h.bpb_ket LIKE ? OR s.sup_nama LIKE ?)" : ""}
-    HAVING Total > SudahDibayar OR Total = 0
+    HAVING (Total > 0 AND Total > SudahDibayar)
+        OR (Total = 0 AND JumlahVoucher = 0)
     ORDER BY h.bpb_tanggal DESC LIMIT 100`;
-    if (hasSupKode) params.push(supKode);
     if (search) params.push(like, like, like);
   } else {
     throw new Error("Tipe tidak dikenali.");
@@ -1304,6 +1308,43 @@ const save = async (payload, userKode) => {
     if (Number(d.nilai) > sisa + 0.005) {
       throw new Error(
         `Nilai PO ${info.nomor} melebihi sisa. Sisa: ${sisa.toLocaleString("id-ID")}.`,
+      );
+    }
+  }
+
+  // Validasi BPB Non Bahan (BPG): nilai manual harus > 0 dan tidak boleh dobel voucher
+  for (const d of detail.filter((x) => x.tipe === "BPG" && x.nomor)) {
+    const nilaiBpg = Number(d.nilai);
+    if (!(nilaiBpg > 0)) {
+      throw new Error(`Nilai BPB Non Bahan ${d.nomor} harus lebih dari 0.`);
+    }
+    const [[bpg]] = await db.query(
+      `SELECT h.bpb_nomor,
+              IFNULL((SELECT SUM(x.bpbd_jumlah * x.bpbd_harga)
+                      FROM tgarmenbpb_dtl x
+                      WHERE x.bpbd_nomor = h.bpb_nomor), 0) AS Total
+       FROM tgarmenbpb_hdr h
+       WHERE h.bpb_nomor = ?`,
+      [d.nomor],
+    );
+    if (!bpg) throw new Error(`BPB Non Bahan ${d.nomor} tidak ditemukan.`);
+
+    const [[lain]] = await db.query(
+      `SELECT COUNT(*) AS n, IFNULL(SUM(voud_total), 0) AS sudah
+       FROM tvoucher_dtl
+       WHERE voud_nota = ? AND voud_type = 'BPG'
+         AND voud_vou_nomor <> ?`,
+      [d.nomor, isEdit ? nomor : ""],
+    );
+    if (Number(bpg.Total) === 0) {
+      if (Number(lain.n) > 0) {
+        throw new Error(`BPB Non Bahan ${d.nomor} sudah pernah divoucherkan.`);
+      }
+    } else if (nilaiBpg > Number(bpg.Total) - Number(lain.sudah) + 0.005) {
+      throw new Error(
+        `Nilai BPB Non Bahan ${d.nomor} melebihi sisa. Sisa: ${(
+          Number(bpg.Total) - Number(lain.sudah)
+        ).toLocaleString("id-ID")}.`,
       );
     }
   }
