@@ -399,11 +399,14 @@ const validasiPoLain = async (conn, detail) => {
 // voucher, dan voucher belum dipakai Pengajuan Transfer lain. Dipanggil di
 // dalam transaksi (mode baru/edit); link milik pengajuan ini sendiri tidak
 // dihitung. `<=>` karena vou_link data lama bisa NULL.
-const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
-  SELECT SUM(voud2_harga * voud2_jumlah)
+
+// Net voucher = Total - Bahan Tambahan (bertanda) - Disc; sama dengan kolom Net
+// di browse Voucher dan Grand Total di form/print.
+const SQL_NOMINAL_VOUCHER = `(h.vou_total - IFNULL((
+  SELECT SUM(IF(voud2_tambah = 1, -1, 1) * voud2_harga * voud2_jumlah)
   FROM tvoucher_dtl2
   WHERE voud2_vou_nomor = h.vou_nomor
-), 0)`;
+), 0) - IFNULL(h.vou_disc, 0))`;
 
 const validasiVoucher = async (conn, detail, nomorPjt) => {
   const baris = detail.filter(
