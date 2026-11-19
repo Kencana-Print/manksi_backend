@@ -436,7 +436,7 @@ const getBrowsePendingAll = async () => {
          SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
-       ), 0)                                              AS Net,
+       ), 0) - IFNULL(a.vou_disc, 0)                      AS Net,
        IFNULL(a.vou_disc, 0)                             AS Disc,
        IFNULL(a.vou_status_realisasi, '')                AS Status,
        ''                                                 AS NomorRealisasi,
