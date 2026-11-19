@@ -11,6 +11,16 @@ const SQL_LABEL_POB = `CASE po.po_jenis
          WHEN 0 THEN 'PO Bahan' WHEN 3 THEN 'PO Bahan'
          WHEN 1 THEN 'PO Greige' WHEN 2 THEN 'PO Celup'
          ELSE '' END`;
+// Baris tipe PON (PO Non Bahan) dan BPG (BPB Non Bahan): keterangan untuk browse detail dan cetak.
+// Alias yang dipakai: d = tvoucher_dtl.
+const SQL_JOIN_NONBAHAN = `LEFT JOIN tgarmenpo_hdr pon
+            ON pon.po_nomor = d.voud_nota AND d.voud_type = 'PON'
+     LEFT JOIN tgarmenbpb_hdr gb
+            ON gb.bpb_nomor = d.voud_nota AND d.voud_type = 'BPG'`;
+const SQL_LABEL_NONBAHAN = `CASE d.voud_type
+         WHEN 'PON' THEN CONCAT('PO Non Bahan ', CONVERT(IFNULL(pon.po_jenis, '') USING utf8mb4) COLLATE utf8mb4_general_ci)
+         WHEN 'BPG' THEN CONVERT(IFNULL(gb.bpb_ket, '') USING utf8mb4) COLLATE utf8mb4_general_ci
+         ELSE '' END`;
 
 // ── Browse Master ─────────────────────────────────────────────────────
 // Delphi btnRefreshClick SQLMaster
@@ -92,7 +102,7 @@ const getBrowseDetail = async (startDate, endDate) => {
        IFNULL(p.pojh_nomor, '')                          AS NomorPO,
        DATE_FORMAT(d.voud_tgl_nota, '%Y-%m-%d')          AS Tanggal,
        IFNULL(d.voud_type, '')                           AS Type,
-       IFNULL(NULLIF(p.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS Keterangan,
+       COALESCE(NULLIF(p.pojh_keterangan, ''), NULLIF(${SQL_LABEL_POB}, ''), ${SQL_LABEL_NONBAHAN}) AS Keterangan,
        IFNULL(d.voud_total, 0)                           AS Total,
        IFNULL(s.spk_nomor, '')                           AS SpkNomor,
        IFNULL(s.spk_nama, '')                            AS SpkNama,
@@ -109,6 +119,7 @@ const getBrowseDetail = async (startDate, endDate) => {
      LEFT JOIN tspk s
             ON s.spk_nomor = p.pojh_spk_nomor
      ${SQL_JOIN_POB}
+     ${SQL_JOIN_NONBAHAN}
      WHERE h.vou_tanggal >= ? AND h.vou_tanggal <= ?
      ORDER BY d.voud_vou_nomor`,
     [startDate, endDate],
@@ -355,7 +366,7 @@ const getPrintData = async (nomor) => {
        IFNULL(s.sup_bank, '')                         AS sup_bank,
        IFNULL(s.sup_cabang, '')                       AS sup_cabang,
        IFNULL(s.sup_atasnama, '')                     AS sup_atasnama,
-       IFNULL(NULLIF(e.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS pojh_keterangan,
+       COALESCE(NULLIF(e.pojh_keterangan, ''), NULLIF(${SQL_LABEL_POB}, ''), ${SQL_LABEL_NONBAHAN}) AS pojh_keterangan,
        IFNULL((
          SELECT bpj_po_nomor FROM tbpj_hdr
          WHERE bpj_nomor = d.voud_nota
@@ -371,6 +382,7 @@ const getPrintData = async (nomor) => {
      LEFT JOIN tbpj_hdr bpj ON bpj.bpj_nomor = d.voud_nota
      LEFT JOIN tpojasa_hdr e ON e.pojh_nomor = bpj.bpj_po_nomor
      ${SQL_JOIN_POB}
+     ${SQL_JOIN_NONBAHAN}
      WHERE h.vou_nomor = ?`,
     [nomor],
   );

@@ -483,6 +483,19 @@ const saveData = async (payload, user) => {
       }
     }
 
+    if (isEdit) {
+      const [[cekVoucher]] = await conn.query(
+        `SELECT COUNT(*) AS total FROM tvoucher_dtl
+         WHERE voud_nota = ? AND voud_type = 'PON'`,
+        [po_nomor],
+      );
+      if (Number(cekVoucher.total) > 0) {
+        throw new Error(
+          "PO tsb sudah dibuatkan Voucher Pembayaran. Tidak bisa disimpan.",
+        );
+      }
+    }
+
     let mbLama = new Set(); // permintaan yang sudah ada di PO ini (mode edit)
     if (isEdit) {
       const [[cur]] = await conn.query(
