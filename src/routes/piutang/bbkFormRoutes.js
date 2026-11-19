@@ -86,6 +86,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getKlaimOptions,
 );
+router.get(
+  "/voucher-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getVoucherOptions,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.put("/", verifyToken, checkPermission(MENU_ID, "edit"), ctrl.update);

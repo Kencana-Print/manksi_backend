@@ -40,7 +40,10 @@ const getBrowse = async (startDate, endDate) => {
        ), 0)                                              AS Net,
        IFNULL(a.vou_disc, 0)                             AS Disc,
        IFNULL(a.vou_status_realisasi, '')                AS Status,
-       IFNULL(pt.ptd_nomor, '')                          AS NomorRealisasi,
+       IFNULL(pt.ptd_nomor, IFNULL((
+         SELECT MAX(bd.vou_link) FROM bayar_debet_detail bd
+         WHERE bd.vou_nomor = a.vou_nomor
+       ), ''))                                           AS NomorRealisasi,
        DATE_FORMAT(pt.ptd_realisasi, '%Y-%m-%d')         AS TanggalRealisasi,
        IFNULL(pt.ptd_akun, '')                           AS AccountBayar,
        IFNULL(rek.rek_nama, '')                          AS NamaAccount,
@@ -148,6 +151,17 @@ const deleteData = async (nomor) => {
     throw new Error("Voucher sudah direalisasi. Tidak bisa dihapus.");
   }
   await assertVoucherTidakDiRekap(nomor);
+
+  const [[bayar]] = await db.query(
+    `SELECT nomor, vou_link FROM bayar_debet_detail
+     WHERE vou_nomor = ? LIMIT 1`,
+    [nomor],
+  );
+  if (bayar) {
+    throw new Error(
+      `Voucher sudah dibayar/diajukan di ${bayar.vou_link || bayar.nomor}. Tidak bisa dihapus.`,
+    );
+  }
 
   // Cek tutup buku — pola sama dengan modul-modul jurnal sebelumnya:
   // getTanggalTutupBukuUntukTanggal dibanding hari ini, manual override
@@ -452,6 +466,9 @@ const getBrowsePendingAll = async () => {
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = a.vou_nomor AND pt.ptd_batal = ''
      )
+     AND NOT EXISTS (
+       SELECT 1 FROM bayar_debet_detail bd WHERE bd.vou_nomor = a.vou_nomor
+     )
      ORDER BY a.vou_tanggal`,
   );
   return rows;
@@ -485,6 +502,9 @@ const getBrowseDetailPendingAll = async () => {
      WHERE NOT EXISTS (
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = h.vou_nomor AND pt.ptd_batal = ''
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM bayar_debet_detail bd WHERE bd.vou_nomor = h.vou_nomor
      )
      ORDER BY d.voud_vou_nomor`,
   );

@@ -1105,6 +1105,15 @@ const save = async (payload, userKode) => {
     if (sudahRealisasi)
       throw new Error("Voucher ini sudah di realisasi, tidak bisa di edit.");
     await assertVoucherTidakDiRekap(nomor);
+    const [[dibayar]] = await db.query(
+      `SELECT nomor, vou_link FROM bayar_debet_detail
+       WHERE vou_nomor = ? LIMIT 1`,
+      [nomor],
+    );
+    if (dibayar)
+      throw new Error(
+        `Voucher ini sudah dibayar/diajukan di ${dibayar.vou_link || dibayar.nomor}, tidak bisa di edit.`,
+      );
   }
 
   if (!supKode) throw new Error("Supplier belum diisi.");

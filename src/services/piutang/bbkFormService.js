@@ -329,6 +329,90 @@ const pasangTautanVoucher = async (
 const getKlaimBbkOptions = (search = "", bbkNomor = "") =>
   getKlaimKasKecilOptions(search, "", bbkNomor, "BBK");
 
+// Voucher yang boleh dipanggil langsung ke BBK: semua yang belum dibayar,
+// bertanggal sebelum batas ini (sampai Oktober 2026).
+const BATAS_VOUCHER_BBK_SEBELUM = "2026-11-01";
+
+// Definisi "belum dibayar" sama dengan F2 Pengajuan Transfer: belum ada di
+// bayar_debet_detail. Voucher yang tautannya milik BBK yang sedang diedit
+// tetap muncul. Rekap dicari terpisah (hindari collation mismatch lintas tabel).
+const getVoucherBbkOptions = async (search = "", bbkNomor = "") => {
+  const kata = `%${String(search || "").trim()}%`;
+  const sendiri = String(bbkNomor || "");
+  const [rows] = await db.query(
+    `SELECT h.vou_nomor AS nomor,
+            DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
+            h.vou_sup_kode AS supKode,
+            IFNULL(s.sup_nama,'') AS supplier,
+            ${SQL_NOMINAL_VOUCHER} AS nominal,
+            h.vou_status_realisasi AS statusReal
+     FROM tvoucher_hdr h
+     INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
+     WHERE h.vou_tanggal < ?
+       AND NOT EXISTS (
+         SELECT 1 FROM bayar_debet_detail b
+         WHERE b.vou_nomor = h.vou_nomor
+           AND (? = '' OR IFNULL(b.vou_link, '') <> ?)
+       )
+       AND (h.vou_nomor LIKE ? OR s.sup_nama LIKE ? OR h.vou_sup_kode LIKE ?)
+     HAVING nominal > 0.005
+     ORDER BY h.vou_tanggal DESC, h.vou_nomor DESC
+     LIMIT 200`,
+    [BATAS_VOUCHER_BBK_SEBELUM, sendiri, sendiri, kata, kata, kata],
+  );
+  if (!rows.length) return [];
+
+  const [rekap] = await db.query(
+    `SELECT d.rkbd_vou_nomor AS vou,
+            GROUP_CONCAT(DISTINCT d.rkbd_nomor ORDER BY d.rkbd_nomor
+                         SEPARATOR ', ') AS rekapNomor
+     FROM trekap_bayar_dtl d
+     INNER JOIN trekap_bayar_hdr rh
+       ON rh.rkb_nomor = d.rkbd_nomor AND rh.rkb_status = 'AKTIF'
+     WHERE d.rkbd_vou_nomor IN (?)
+     GROUP BY d.rkbd_vou_nomor`,
+    [rows.map((r) => r.nomor)],
+  );
+  const petaRekap = new Map(rekap.map((r) => [r.vou, r.rekapNomor]));
+
+  const [bank] = await db.query(
+    `SELECT supd_kode AS kode, supd_bank AS bank, supd_rekening AS rekening,
+            supd_atasnama AS atasnama
+     FROM tsupplieritem
+     WHERE supd_kode IN (?)
+     ORDER BY supd_kode, supd_bank`,
+    [[...new Set(rows.map((r) => r.supKode))].concat(["-"])],
+  );
+  const petaBank = new Map();
+  for (const b of bank) {
+    const arr = petaBank.get(b.kode) || [];
+    arr.push(b);
+    petaBank.set(b.kode, arr);
+  }
+
+  return rows.map((r) => {
+    const daftar = petaBank.get(r.supKode) || [];
+    const b = daftar[0];
+    return {
+      trs: r.nomor,
+      tanggal: r.tanggal,
+      kode: r.supKode,
+      nama: r.supplier,
+      bank: b?.bank || "",
+      rekening: b?.rekening || "",
+      atasnama: b?.atasnama || "",
+      nominal: Number(r.nominal),
+      rekapNomor: petaRekap.get(r.nomor) || "",
+      sudahRealisasi:
+        r.statusReal !== null &&
+        r.statusReal !== "0" &&
+        Number(r.statusReal) !== 0,
+      cekRekening:
+        daftar.length === 0 ? "KOSONG" : daftar.length > 1 ? "BANYAK" : "",
+    };
+  });
+};
+
 // Dipanggil SEBELUM penulisan apa pun ke tabel Finance (MyISAM, tanpa rollback).
 // Mengunci baris klaim (InnoDB) sampai commit/rollback, memvalidasi, lalu
 // menormalkan baris dari data server (akun, nominal, supplier tidak dipercaya
@@ -901,5 +985,6 @@ module.exports = {
   pasangTautanVoucher,
   periodeTertutup,
   getKlaimBbkOptions,
+  getVoucherBbkOptions,
   lepasKlaimBbk,
 };

@@ -195,6 +195,9 @@ const poDtfFormRoutes = require("./routes/garmen/poDtfFormRoutes");
 const lhkPolaRoutes = require("./routes/garmen/lhkPolaRoutes");
 const lhkPolaFormRoutes = require("./routes/garmen/lhkPolaFormRoutes");
 
+// Gudang Routes
+const validasiTerimaStbjRoutes = require("./routes/gudang/validasiTerimaStbjRoutes");
+
 // Pembelian Routes
 const mkbRoutes = require("./routes/pembelian/mkbRoutes");
 const mkbFormRoutes = require("./routes/pembelian/mkbFormRoutes");
@@ -856,9 +859,10 @@ app.use("/api/garmen/po-paperprint", poPaperprintRoutes);
 app.use("/api/garmen/po-paperprint/form", poPaperprintFormRoutes);
 app.use("/api/garmen/po-dtf", poDtfRoutes);
 app.use("/api/garmen/po-dtf/form", poDtfFormRoutes);
-
 app.use("/api/garmen/lhk-pola", lhkPolaRoutes);
 app.use("/api/garmen/lhk-pola-form", lhkPolaFormRoutes);
+
+app.use("/api/gudang/validasi-terima-stbj", validasiTerimaStbjRoutes);
 
 app.use("/api/penjualan/mppb", mppbRoutes);
 app.use("/api/penjualan/mppb/form", mppbFormRoutes);
@@ -1470,10 +1474,16 @@ app.use("/api/mmt/monitoring-proof", mmtMonitoringProofRoutes);
 app.use("/api/mmt/laporan/monitoring-sublim", mmtMonitoringSublimRoutes);
 app.use("/api/mmt/monitoring-sublim", mmtMonitoringSublimRoutes);
 
-app.use("/api/mmt/laporan/monitoring-paperprint", mmtMonitoringPaperprintRoutes);
+app.use(
+  "/api/mmt/laporan/monitoring-paperprint",
+  mmtMonitoringPaperprintRoutes,
+);
 app.use("/api/mmt/monitoring-paperprint", mmtMonitoringPaperprintRoutes);
 
-app.use("/api/mmt/laporan/monitoring-jadwal-kirim", mmtMonitoringJadwalKirimRoutes);
+app.use(
+  "/api/mmt/laporan/monitoring-jadwal-kirim",
+  mmtMonitoringJadwalKirimRoutes,
+);
 app.use("/api/mmt/monitoring-jadwal-kirim", mmtMonitoringJadwalKirimRoutes);
 
 app.use("/api/mmt/laporan/ls-tinta", mmtLsTintaRoutes);
