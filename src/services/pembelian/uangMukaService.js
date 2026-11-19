@@ -63,6 +63,31 @@ const SQL_PUM_PEGANG_ITEM = `(ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI
       AND EXISTS (SELECT 1 FROM finance.tkasbon kb
                   WHERE kb.bon_nomor = ph.pum_bon_nomor AND kb.bon_selesai = 0)))`;
 
+// Item Pengajuan Dana yang sudah dibayar BBK: Map "nomor|nourut" -> "nomor BBK".
+// Satu query, tanpa subquery berkorelasi (jurd_ref belum berindeks).
+const getRefPgjBbk = async (kecualiBbk = "") => {
+  const [rows] = await db.query(
+    `SELECT SUBSTRING(jurd_ref, 5) AS k,
+            GROUP_CONCAT(DISTINCT jurd_jur_no ORDER BY jurd_jur_no SEPARATOR ', ') AS bbk
+     FROM finance.tjurnalitem
+     WHERE jurd_trs = 'BBK' AND jurd_ref LIKE 'PGJ|%' AND jurd_jur_no <> ?
+     GROUP BY jurd_ref`,
+    [String(kecualiBbk || "")],
+  );
+  return new Map(rows.map((r) => [r.k, r.bbk]));
+};
+
+// Kunci disaring regex sebelum di-inline, jadi aman dari injeksi.
+const sqlBukanBbk = (peta, nomorExpr, nourutExpr) => {
+  const daftar = [...peta.keys()].filter((k) =>
+    /^[A-Za-z0-9._-]+\|\d+$/.test(k),
+  );
+  if (!daftar.length) return "";
+  return `AND CONCAT(${nomorExpr}, '|', ${nourutExpr}) NOT IN (${daftar
+    .map((k) => `'${k}'`)
+    .join(",")})`;
+};
+
 // ── OUTSTANDING (browse) ──
 const getOutstanding = async ({
   search = "",
@@ -75,6 +100,9 @@ const getOutstanding = async ({
   tanpaBkkP04 = false,
 }) => {
   const searchParam = `%${search}%`;
+
+  const pgjBbk = await getRefPgjBbk();
+  const kecualiBbk = sqlBukanBbk(pgjBbk, "a.pjh_nomor", "d.pjd_nourut");
 
   // P01 dan HO- setara Head Office: lihat yang ditujukan ke HO- maupun P01,
   // plus sumber khusus HO (insentif, PO Lain-lain, BKK kas kecil P04).
@@ -123,6 +151,7 @@ const getOutstanding = async ({
           FROM ga2.tpengajuan2_dtl d
           WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
             AND d.pjd_closed_manual = 0
+            ${kecualiBbk}
             AND (d.pjd_qty - IFNULL((
               SELECT SUM(td.pmd_qty_buyed)
               FROM ga2.tpermintaan_dtl td
@@ -143,6 +172,7 @@ const getOutstanding = async ({
         SELECT 1 FROM ga2.tpengajuan2_dtl d
         WHERE d.pjd_pjh_nomor = a.pjh_nomor AND d.pjd_nama <> ''
           AND d.pjd_closed_manual = 0
+            ${kecualiBbk}
           AND (d.pjd_qty - IFNULL((
             SELECT SUM(td.pmd_qty_buyed)
             FROM ga2.tpermintaan_dtl td
@@ -365,6 +395,7 @@ const getOutstanding = async ({
 // ── OUTSTANDING DETAIL (per sumber) ──
 const getOutstandingDetail = async (sumber, nomorHeader) => {
   if (sumber === "PENGAJUAN_DANA") {
+    const pgjBbk = await getRefPgjBbk();
     const [rows] = await db.query(
       `SELECT
          a.pjd_nourut AS ItemNourut,
@@ -382,6 +413,7 @@ const getOutstandingDetail = async (sumber, nomorHeader) => {
        JOIN ga2.tpengajuan2_dtl pd2 ON pd2.pjd_pjh_nomor = a.pjh_nomor AND pd2.pjd_nourut = a.pjd_nourut
        WHERE a.pjh_nomor = ?
          AND pd2.pjd_closed_manual = 0
+          ${sqlBukanBbk(pgjBbk, "a.pjh_nomor", "a.pjd_nourut")}
          AND (a.pjd_qty - IFNULL((
            SELECT SUM(td.pmd_qty_buyed)
            FROM ga2.tpermintaan_dtl td
@@ -666,9 +698,172 @@ const deleteHistory = async (nomor) => {
   }
 };
 
+// Alias wajib: a = ga2.tpengajuan2_hdr, d = ga2.tpengajuan2_dtl.
+const SQL_QTY_BUYED_ITEM = `IFNULL((
+  SELECT SUM(td.pmd_qty_buyed)
+  FROM ga2.tpermintaan_dtl td
+  JOIN ga2.tpermintaan_hdr th ON th.pmt_nomor = td.pmd_pmt_nomor
+  WHERE th.pmt_pjh_nomor = a.pjh_nomor AND td.pmd_nourut = d.pjd_nourut
+    AND td.pmd_verified_buyed <> 0), 0)`;
+
+const SQL_ITEM_BELUM_DIDANAI = `NOT EXISTS (
+  SELECT 1 FROM ga2.tpermintaan_dtl td2
+  JOIN ga2.tpermintaan_hdr th2 ON th2.pmt_nomor = td2.pmd_pmt_nomor
+  WHERE th2.pmt_pjh_nomor = a.pjh_nomor AND td2.pmd_nourut = d.pjd_nourut
+    AND (td2.pmd_tanggal_approved IS NOT NULL
+         OR td2.pmd_dana_approved > 0
+         OR IFNULL(td2.pmd_bon, '') <> ''))`;
+
+const SQL_SYARAT_ITEM_BBK = `
+      a.pjh_ke IN ('HO-', 'P01')
+  AND d.pjd_nama <> '' AND d.pjd_closed_manual = 0
+  AND IFNULL(d.pjd_status_finance, '') NOT IN ('CLOSE', 'CANCEL')
+  AND (d.pjd_qty - ${SQL_QTY_BUYED_ITEM}) > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM tpengajuan_uang_muka_dtl pd
+    JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+    WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = a.pjh_nomor
+      AND pd.pumd_item_nourut = d.pjd_nourut AND ${SQL_PUM_PEGANG_ITEM})
+  AND ${SQL_ITEM_BELUM_DIDANAI}`;
+
+const getItemPengajuanDanaBbk = async ({
+  search = "",
+  sebelum,
+  bbkNomor = "",
+}) => {
+  const kata = `%${String(search || "").trim()}%`;
+  const [rows] = await db.query(
+    `SELECT a.pjh_nomor AS pjhNomor,
+            DATE_FORMAT(a.pjh_tanggal, '%Y-%m-%d') AS tanggal,
+            IFNULL(c.nama, a.pjh_user_kode) AS pemohon,
+            a.pjh_keterangan AS keterangan,
+            d.pjd_nourut AS itemNourut, d.pjd_nama AS nama,
+            d.pjd_spesifikasi AS spesifikasi,
+            d.pjd_satuan AS satuan, d.pjd_nilai AS harga,
+            d.pjd_cc_kode AS ccKode, d.pjd_cc_dcnama AS dcNama,
+            (d.pjd_qty - ${SQL_QTY_BUYED_ITEM}) AS qtySisa
+     FROM ga2.tpengajuan2_hdr a
+     JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
+     LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
+     WHERE a.pjh_tanggal < ? AND ${SQL_SYARAT_ITEM_BBK}
+       AND (a.pjh_nomor LIKE ? OR d.pjd_nama LIKE ?)
+     ORDER BY a.pjh_tanggal DESC, a.pjh_nomor DESC, d.pjd_nourut
+     LIMIT 600`,
+    [sebelum, kata, kata],
+  );
+  if (!rows.length) return [];
+
+  // Item yang sudah dibayar BBK lain disaring di JS (nomor BBK sendiri
+  // dikecualikan, jadi saat edit item miliknya tetap tampil).
+  const terpakai = await getRefPgjBbk(bbkNomor);
+  const sisa = rows
+    .filter((r) => !terpakai.has(`${r.pjhNomor}|${r.itemNourut}`))
+    .slice(0, 200);
+
+  // Nama cost center dicari terpisah (hindari join lintas schema/collation).
+  const kodeCc = [...new Set(sisa.map((r) => Number(r.ccKode) || 0))].filter(
+    Boolean,
+  );
+  const petaCc = new Map();
+  if (kodeCc.length) {
+    const [cc] = await db.query(
+      `SELECT cc_kode AS kode, cc_nama AS nama
+       FROM finance.tcostcenter WHERE cc_kode IN (?)`,
+      [kodeCc],
+    );
+    cc.forEach((x) => petaCc.set(Number(x.kode), x.nama));
+  }
+
+  return sisa.map((r) => {
+    const qtySisa = Number(r.qtySisa) || 0;
+    const harga = Number(r.harga) || 0;
+    const ccKode = Number(r.ccKode) || 0;
+    return {
+      pgj: `${r.pjhNomor}|${r.itemNourut}`,
+      pjhNomor: r.pjhNomor,
+      tanggal: r.tanggal,
+      pemohon: r.pemohon || "",
+      keterangan: r.keterangan || "",
+      itemNourut: Number(r.itemNourut),
+      nama: r.nama,
+      spesifikasi: r.spesifikasi || "",
+      satuan: r.satuan || "",
+      qtySisa,
+      harga,
+      nominal: Math.round(qtySisa * harga * 100) / 100,
+      ccKode,
+      ccNama: petaCc.get(ccKode) || "",
+      dcNama: ccKode ? r.dcNama || "" : "",
+    };
+  });
+};
+
+// Dipanggil di dalam transaksi BBK (conn InnoDB).
+const kunciItemPengajuanDanaBbk = async (
+  conn,
+  items,
+  { sebelum, bbkNomor = "" },
+) => {
+  const hasil = new Map();
+  for (const it of items) {
+    const nomor = String(it.nomor).trim();
+    const nourut = Number(it.nourut);
+    const label = `${nomor} item ${nourut}`;
+
+    const [kunci] = await conn.query(
+      `SELECT pjd_nama FROM ga2.tpengajuan2_dtl
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? FOR UPDATE`,
+      [nomor, nourut],
+    );
+    if (!kunci.length)
+      throw new Error(`Item Pengajuan Dana ${label} tidak ditemukan.`);
+
+    const [ok] = await conn.query(
+      `SELECT d.pjd_nama AS nama
+       FROM ga2.tpengajuan2_hdr a
+       JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
+       WHERE a.pjh_nomor = ? AND d.pjd_nourut = ? AND a.pjh_tanggal < ?
+         AND ${SQL_SYARAT_ITEM_BBK}`,
+      [nomor, nourut, sebelum],
+    );
+    if (!ok.length)
+      throw new Error(
+        `Item ${label} tidak lagi memenuhi syarat (sudah dipanggil Petty Cash/Uang Muka, didanai, terpenuhi, ditutup, di luar batas tanggal, atau bukan tujuan pusat).`,
+      );
+
+    const [pum] = await conn.query(
+      `SELECT 1 FROM tpengajuan_uang_muka_dtl pd
+       JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
+       WHERE pd.pumd_sumber = 'PENGAJUAN_DANA' AND pd.pumd_nomor_sumber = ?
+         AND pd.pumd_item_nourut = ? AND ${SQL_PUM_PEGANG_ITEM}
+       LIMIT 1 LOCK IN SHARE MODE`,
+      [nomor, nourut],
+    );
+    if (pum.length)
+      throw new Error(`Item ${label} sudah dipanggil ke Petty Cash/Uang Muka.`);
+
+    const [lain] = await conn.query(
+      `SELECT jurd_jur_no AS nomor FROM finance.tjurnalitem
+       WHERE jurd_trs = 'BBK' AND jurd_ref = ? AND jurd_jur_no <> ? LIMIT 1`,
+      [`PGJ|${nomor}|${nourut}`, String(bbkNomor || "")],
+    );
+    if (lain.length)
+      throw new Error(
+        `Item ${label} sudah dibayar lewat BBK ${lain[0].nomor}.`,
+      );
+
+    hasil.set(`${nomor}|${nourut}`, { nama: String(ok[0].nama).trim() });
+  }
+  return hasil;
+};
+
 module.exports = {
   getOutstanding,
   getOutstandingDetail,
   getHistory,
   deleteHistory,
+  getItemPengajuanDanaBbk,
+  kunciItemPengajuanDanaBbk,
+  SQL_SYARAT_ITEM_BBK,
+  getRefPgjBbk,
 };

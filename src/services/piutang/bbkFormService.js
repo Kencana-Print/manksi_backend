@@ -15,6 +15,10 @@ const {
   pastikanNominalBkk,
   postingBiayaManual,
 } = require("../pembelian/pengajuanTransferFormService");
+const {
+  kunciItemPengajuanDanaBbk,
+  getItemPengajuanDanaBbk,
+} = require("../pembelian/uangMukaService");
 
 // ── Account header BBK (A-112 atau rek_kol_id=12) ─────────────────────
 const getAccountOptions = async (cabang) => {
@@ -163,6 +167,9 @@ const getDetailForm = async (nomor) => {
         ? String(r.jurd_ref).slice(4)
         : "",
       klaim: (r.jurd_ref || "").startsWith("KLM|") ? r.jurd_ref.slice(4) : "",
+      pgj: String(r.jurd_ref || "").startsWith("PGJ|")
+        ? String(r.jurd_ref).slice(4)
+        : "",
       satuan: r.jurd_satuan || "",
       qty: Number(r.jurd_qty),
       harga: Number(r.jurd_harga),
@@ -500,6 +507,64 @@ const validasiKlaimBbk = async (
   }
 };
 
+const BATAS_PGJ_BBK_SEBELUM = "2026-11-01";
+const CABANG_PGJ_BBK = ["P01"];
+
+const validasiPengajuanDanaBbk = async (
+  conn,
+  baris,
+  { cabang, nomorSendiri },
+) => {
+  if (!baris.length) return;
+  if (!CABANG_PGJ_BBK.includes(cabang))
+    throw new Error("Pengajuan Dana hanya bisa dibayar dari BBK cabang P01.");
+
+  const sudah = new Set();
+  const daftar = [];
+  for (const d of baris) {
+    const [nomor, nourut, ...lebih] = String(d.pgj || "").split("|");
+    if (!nomor || !/^\d+$/.test(nourut || "") || lebih.length)
+      throw new Error("Referensi Pengajuan Dana pada baris tidak valid.");
+    if (d.vou || d.klaim || d.mb)
+      throw new Error(
+        `Baris Pengajuan Dana ${nomor} tidak boleh digabung dengan voucher/klaim/Minta Beli.`,
+      );
+    const kunci = `${nomor}|${Number(nourut)}`;
+    if (sudah.has(kunci))
+      throw new Error(
+        `Item ${nomor} no. ${Number(nourut)} diinput lebih dari satu kali.`,
+      );
+    sudah.add(kunci);
+    daftar.push({ nomor, nourut: Number(nourut), kunci, baris: d });
+  }
+
+  await kunciItemPengajuanDanaBbk(
+    conn,
+    daftar.map((x) => ({ nomor: x.nomor, nourut: x.nourut })),
+    { sebelum: BATAS_PGJ_BBK_SEBELUM, bbkNomor: nomorSendiri },
+  );
+
+  // Nominal boleh diubah (keputusan user). jurd_mb harus kosong (trigger stok).
+  for (const x of daftar) {
+    const d = x.baris;
+    d.pgj = x.kunci;
+    d.qty = 1;
+    d.harga = Number(d.total) || 0;
+    d.satuan = "";
+    d.mb = "";
+    d.kdbrg = "";
+    d.cckode = Number(d.cckode) || 0;
+    d.dcnama = d.cckode ? String(d.dcnama || "") : "";
+  }
+};
+
+const getPengajuanDanaBbkOptions = (search, nomor) =>
+  getItemPengajuanDanaBbk({
+    search,
+    sebelum: BATAS_PGJ_BBK_SEBELUM,
+    bbkNomor: nomor,
+  });
+
 const lepasKlaimBbk = async (conn, nomorBbk) => {
   if (!nomorBbk) return;
   await conn.query(
@@ -557,6 +622,8 @@ const saveData = async (payload, user) => {
     // yang menentukan nominal).
     for (const d of detail) {
       if (d.vou && !d.uraian) d.uraian = `Pembayaran voucher ${d.vou}`;
+      if (d.pgj && !d.uraian)
+        d.uraian = `Pembayaran Pengajuan Dana ${String(d.pgj).split("|")[0]}`;
     }
     const barisAktif = detail.filter((d) => d.uraian);
     const barisVou = barisAktif.filter((d) => d.vou);
@@ -583,6 +650,14 @@ const saveData = async (payload, user) => {
     if (barisKlaim.length) {
       await validasiKlaimBbk(conn, barisKlaim, {
         rekHeader: rek_kode,
+        cabang,
+        nomorSendiri: isEdit ? nomor : "",
+      });
+    }
+
+    const barisPgj = detail.filter((d) => d.uraian && d.pgj);
+    if (barisPgj.length) {
+      await validasiPengajuanDanaBbk(conn, barisPgj, {
         cabang,
         nomorSendiri: isEdit ? nomor : "",
       });
@@ -720,7 +795,13 @@ const saveData = async (payload, user) => {
           Number(d.harga),
           d.mb,
           d.kdbrg,
-          d.vou ? `VOU|${d.vou}` : d.klaim ? `KLM|${d.klaim}` : "",
+          d.vou
+            ? `VOU|${d.vou}`
+            : d.klaim
+              ? `KLM|${d.klaim}`
+              : d.pgj
+                ? `PGJ|${d.pgj}`
+                : "",
           Number(d.total),
           d.rekkode || "",
           d.cckode || 0,
@@ -986,5 +1067,6 @@ module.exports = {
   periodeTertutup,
   getKlaimBbkOptions,
   getVoucherBbkOptions,
+  getPengajuanDanaBbkOptions,
   lepasKlaimBbk,
 };

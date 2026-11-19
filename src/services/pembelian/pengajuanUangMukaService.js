@@ -203,6 +203,24 @@ const createPengajuan = async (
       }
 
       if (it.sumber === "PENGAJUAN_DANA") {
+        const [[kunciDana]] = await conn.query(
+          `SELECT pjd_nama FROM ga2.tpengajuan2_dtl
+           WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? FOR UPDATE`,
+          [nomorSumber, it.itemNourut],
+        );
+        if (!kunciDana)
+          throw new Error(
+            `Item ${it.itemNourut} pada pengajuan ${nomorSumber} tidak ditemukan.`,
+          );
+        const [[bbkDana]] = await conn.query(
+          `SELECT jurd_jur_no AS nomor FROM finance.tjurnalitem
+           WHERE jurd_trs = 'BBK' AND jurd_ref = ? LIMIT 1`,
+          [`PGJ|${nomorSumber}|${it.itemNourut}`],
+        );
+        if (bbkDana)
+          throw new Error(
+            `Item ${it.itemNourut} pada ${nomorSumber} sudah dibayar lewat BBK ${bbkDana.nomor}.`,
+          );
         pmtNomor = await ensurePermintaanDana(nomorSumber, conn);
         const [[jml]] = await conn.query(
           `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total

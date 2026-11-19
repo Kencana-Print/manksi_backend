@@ -163,6 +163,16 @@ const getVoucherOptions = async (req, res) => {
   }
 };
 
+const getPengajuanDanaOptions = async (req, res) => {
+  try {
+    const { search, nomor } = req.query;
+    const data = await svc.getPengajuanDanaBbkOptions(search, nomor);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getAccountAll,
@@ -180,4 +190,5 @@ module.exports = {
   getRekapRows,
   getKlaimOptions,
   getVoucherOptions,
+  getPengajuanDanaOptions,
 };

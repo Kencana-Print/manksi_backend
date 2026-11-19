@@ -92,6 +92,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getVoucherOptions,
 );
+router.get(
+  "/pengajuan-dana-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPengajuanDanaOptions,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.put("/", verifyToken, checkPermission(MENU_ID, "edit"), ctrl.update);
