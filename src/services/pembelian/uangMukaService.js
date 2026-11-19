@@ -319,6 +319,12 @@ const getOutstanding = async ({
         AND NOT EXISTS (
           SELECT 1 FROM finance.tkasbon k WHERE k.bon_jur_no = h.jur_no
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM finance.tjurnalitem x
+          JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
+          WHERE x.jurd_jur_no = h.jur_no AND x.jurd_nourut <> 0
+            AND r.rek_parent = h.jur_rek_kode
+        )
         AND NOT EXISTS (${sqlPumAktif("BKK_P04", "h.jur_no")})
         ${tglSql("h.jur_tanggal")}
         AND (h.jur_no LIKE ? OR h.jur_keterangan LIKE ?)

@@ -255,6 +255,11 @@ const createPengajuan = async (
           `SELECT h.jur_cabang, h.jur_otomatis, h.jur_tanggal >= ? AS sesudahMulai,
                   LEFT(h.jur_rek_kode, 5) AS pref,
                   EXISTS(SELECT 1 FROM finance.tkasbon k WHERE k.bon_jur_no = h.jur_no) AS dariKasbon,
+                  EXISTS(
+                    SELECT 1 FROM finance.tjurnalitem x
+                    WHERE x.jurd_jur_no = h.jur_no AND x.jurd_nourut <> 0
+                      AND LEFT(x.jurd_rek_kode, 5) = 'A-111'
+                  ) AS antarKas,
                   IFNULL((
                     SELECT SUM(i.jurd_debet) FROM finance.tjurnalitem i
                     WHERE i.jurd_jur_no = h.jur_no AND i.jurd_trs = 'BKK'
@@ -269,7 +274,8 @@ const createPengajuan = async (
           Number(bkk.jur_otomatis) !== 0 ||
           bkk.pref !== "A-111" ||
           !Number(bkk.sesudahMulai) ||
-          Number(bkk.dariKasbon)
+          Number(bkk.dariKasbon) ||
+          Number(bkk.antarKas)
         ) {
           throw new Error(
             `BKK ${nomorSumber} tidak memenuhi syarat penggantian kas kecil P04.`,
@@ -658,7 +664,7 @@ const getPrintPenyerahan = async (nomor) => {
 };
 
 // ── Petty Cash (HO-/P01) ──
-const CABANG_PETTY = ["HO-", "P01"];
+const CABANG_PETTY = ["HO-", "P01", "P04"];
 const LOCK_NOMOR_PC = "manksi_penomoran_pc";
 
 const generateNomorPettyCash = async (tanggal, conn) => {

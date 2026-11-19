@@ -159,12 +159,12 @@ const infoRekening = async (kode) => {
 
 // Klaim PC (laci Finance): hanya pemilik laci Finance atau akses penuh.
 // Sengaja bukan `bagian = FINANCE`: ada user Purchasing yang masih berbagian FINANCE.
-const bolehKlaimPc = async (user) => {
+const bolehKlaimPc = async (user, rek = "") => {
   if (aksesPenuh(user)) return true;
-  const rek = rekPerJenis("PC")[0];
+  const kode = rek || rekPerJenis("PC")[0];
   const [[r]] = await db.query(
     `SELECT rek_pemilik FROM finance.trekening WHERE rek_kode = ?`,
-    [rek],
+    [kode],
   );
   const pemilik = String(r?.rek_pemilik || "")
     .trim()

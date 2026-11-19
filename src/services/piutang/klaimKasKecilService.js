@@ -175,7 +175,10 @@ const batalKlaim = async (nomor, user, cabangScope) => {
   if (!h) throw httpError("Klaim tidak ditemukan.", 404);
   if (cabangScope && h.kkh_cabang !== cabangScope)
     throw httpError("Klaim ini bukan milik cabang Anda.", 403);
-  if (kasByRek(h.kkh_rek_tujuan)?.jenis === "PC" && !(await bolehKlaimPc(user)))
+  if (
+    kasByRek(h.kkh_rek_tujuan)?.jenis === "PC" &&
+    !(await bolehKlaimPc(user, h.kkh_rek_tujuan))
+  )
     throw httpError(
       "Klaim Petty Cash hanya dapat dibatalkan oleh Finance pemilik laci.",
       403,

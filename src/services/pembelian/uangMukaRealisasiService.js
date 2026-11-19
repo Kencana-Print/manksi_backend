@@ -165,6 +165,12 @@ const cabangDokumen = (cabang) => (cabang === "HO-" ? "P01" : cabang);
 // ── Transfer kas Finance -> laci penerima (sub-account A-111101) ──
 const KODE_INDUK_KAS = "A-111101";
 const KODE_LACI_FINANCE = "A-111118";
+// Induk laci per cabang. P04: laci di bawah Kas Operasional Jeron (A-111103).
+const INDUK_LACI = ["A-111101", "A-111103"];
+// Laci Finance per cabang dokumen = sumber dana Petty Cash.
+const LACI_FINANCE_CABANG = { P01: "A-111118", P04: "A-111123" };
+const laciFinanceCabang = (cabang) =>
+  LACI_FINANCE_CABANG[cabangDokumen(cabang)] || "";
 // Tolak realisasi bila saldo laci Finance kurang. Matikan (false) bila saldo
 // awal cut-off bermasalah dan memblokir operasional.
 const CEK_SALDO_LACI_SUMBER = true;
@@ -189,8 +195,8 @@ const cariLaciPemilik = async (conn, userKode) => {
   if (!userKode) return "";
   const [rows] = await conn.query(
     `SELECT rek_kode FROM finance.trekening
-     WHERE rek_parent = ? AND rek_pemilik = ? AND rek_isaktif = 0`,
-    [KODE_INDUK_KAS, userKode],
+     WHERE rek_parent IN (?) AND rek_pemilik = ? AND rek_isaktif = 0`,
+    [INDUK_LACI, userKode],
   );
   if (rows.length > 1)
     throw new Error(
@@ -223,6 +229,7 @@ const buatTransferLaci = async (
     penerima,
     userKode,
     label = "UANG MUKA",
+    cabang = "P01",
   },
 ) => {
   if (CEK_SALDO_LACI_SUMBER) {
@@ -233,7 +240,7 @@ const buatTransferLaci = async (
       );
   }
 
-  const noBkk = await getMaxNomorBkk("P01", "BKK", conn);
+  const noBkk = await getMaxNomorBkk(cabang, "BKK", conn);
   const uraian = bonNomor
     ? `TRANSFER KAS ${label} ${pumNomor} (${bonNomor})`
     : `TRANSFER KAS ${label} ${pumNomor}`;
@@ -243,10 +250,11 @@ const buatTransferLaci = async (
        (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_nota,
         jur_penerima, jur_keterangan, jur_rek_kode, jur_otomatis,
         date_create, user_create)
-     VALUES (?, ?, 'BKK', 'P01', ?, ?, ?, ?, 0, NOW(), ?)`,
+     VALUES (?, ?, 'BKK', ?, ?, ?, ?, ?, 0, NOW(), ?)`,
     [
       noBkk,
       tanggal,
+      cabang,
       bonNomor || pumNomor,
       penerima || "",
       uraian,
@@ -273,10 +281,11 @@ const buatTransferLaci = async (
     `INSERT INTO finance.tjurnal
        (jur_no, jur_tanggal, jur_tipetransaksi, jur_cabang, jur_penerima,
         jur_keterangan, jur_rek_kode, jur_otomatis, date_create, user_create)
-     VALUES (?, ?, 'BKM', 'P01', ?, ?, ?, 1, NOW(), ?)`,
+     VALUES (?, ?, 'BKM', ?, ?, ?, ?, 1, NOW(), ?)`,
     [
       noBkm,
       tanggal,
+      cabang,
       penerima || "",
       `BKM OTOMATIS: ${uraian}`,
       tujuan,
@@ -748,14 +757,15 @@ const konfirmasiTerima = async (bonNomor, user) => {
 // ═══════════════ PETTY CASH ═══════════════
 
 // Sumber dana yang boleh dipilih perealisasi: laci Finance, atau laci miliknya sendiri.
-const daftarSumberPettyCash = async (conn, userKode) => {
+const daftarSumberPettyCash = async (conn, userKode, cabang) => {
+  const cabDok = cabangDokumen(cabang);
   const [rows] = await conn.query(
     `SELECT rek_kode AS kode, rek_nama AS nama
      FROM finance.trekening
-     WHERE LEFT(rek_kode,5)='A-111' AND rek_cabang = 'P01' AND rek_isaktif = 0${sqlTanpaInduk()}
+     WHERE LEFT(rek_kode,5)='A-111' AND rek_cabang = ? AND rek_isaktif = 0${sqlTanpaInduk()}
        AND (rek_kode = ? OR (? <> '' AND rek_pemilik = ?))
      ORDER BY rek_kode`,
-    [KODE_LACI_FINANCE, userKode || "", userKode || ""],
+    [cabDok, laciFinanceCabang(cabDok), userKode || "", userKode || ""],
   );
   return rows;
 };
@@ -788,7 +798,12 @@ const getDetailPettyCash = async (pumNomor, user) => {
      WHERE val_pum_nomor = ? ORDER BY val_id DESC LIMIT 1`,
     [pumNomor],
   );
-  const sumberOptions = await daftarSumberPettyCash(db, user.kode);
+  const laciFin = laciFinanceCabang(hdr.pum_cabang);
+  const sumberOptions = await daftarSumberPettyCash(
+    db,
+    user.kode,
+    hdr.pum_cabang,
+  );
 
   return {
     pum_nomor: hdr.pum_nomor,
@@ -807,8 +822,8 @@ const getDetailPettyCash = async (pumNomor, user) => {
     saldo_laci: saldoLaci,
     batas: BATAS_SALDO_LACI_MANDIRI,
     sumber_options: sumberOptions,
-    sumber_default: sumberOptions.some((o) => o.kode === KODE_LACI_FINANCE)
-      ? KODE_LACI_FINANCE
+    sumber_default: sumberOptions.some((o) => o.kode === laciFin)
+      ? laciFin
       : sumberOptions[0]?.kode || "",
     cutoff: TANGGAL_MULAI_BLOKIR_INDUK,
   };
@@ -841,7 +856,7 @@ const saveRealisasiPettyCash = async (pumNomor, payload, user) => {
     await conn.beginTransaction();
 
     const [[hdr]] = await conn.query(
-      `SELECT pum_status, pum_jenis, pum_user_create, pum_total_nominal, pum_laci_tujuan
+      `SELECT pum_status, pum_jenis, pum_cabang, pum_user_create, pum_total_nominal, pum_laci_tujuan
        FROM tpengajuan_uang_muka_hdr WHERE pum_nomor = ? FOR UPDATE`,
       [pumNomor],
     );
@@ -889,7 +904,7 @@ const saveRealisasiPettyCash = async (pumNomor, payload, user) => {
     if (sumber === tujuan)
       throw new Error("Account sumber tidak boleh sama dengan laci tujuan.");
 
-    const opsi = await daftarSumberPettyCash(conn, user.kode);
+    const opsi = await daftarSumberPettyCash(conn, user.kode, hdr.pum_cabang);
     if (!opsi.some((o) => o.kode === sumber))
       throw new Error("Account sumber dana tidak diizinkan untuk Anda.");
 
@@ -936,6 +951,7 @@ const saveRealisasiPettyCash = async (pumNomor, payload, user) => {
       penerima: hdr.pum_user_create,
       userKode: user.kode,
       label: "PETTY CASH",
+      cabang: cabangDokumen(hdr.pum_cabang),
     });
 
     await conn.query(

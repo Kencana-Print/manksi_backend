@@ -18,6 +18,8 @@ const KAS_KLAIM = [
   { rek: "A-112423", cabang: "P01", sup: "S0000040", jenis: "ATM" }, // MAS ILHAM
   // Laci Finance: tujuan klaim BKK Penyelesaian PD. Tanpa supplier (dibayar lewat BBK).
   { rek: "A-111118", cabang: "P01", sup: "", jenis: "PC" },
+  // Laci Finance P04 (CACA): tujuan klaim BKK Penyelesaian PD cabang P04.
+  { rek: "A-111123", cabang: "P04", sup: "", jenis: "PC" },
 ];
 
 const JENIS_KLAIM = ["KAS_KECIL", "ATM", "PC"];
