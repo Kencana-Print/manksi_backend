@@ -14,8 +14,19 @@ const SQL_DIPESAN = `
    WHERE h.po_mbb_nomor <> ''
    GROUP BY h.po_mbb_nomor, d.pod_bhn_kode`;
 
-// Sisa per baris
-const SQL_SISA = `GREATEST(ROUND(d.mbbd_jumlah - IFNULL(p.dipesan, 0), 2), 0)`;
+// Satu bahan boleh punya beberapa baris (SPK berbeda), sedangkan PO tidak terikat SPK:
+// pesanan per bahan dibagi FIFO menurut urutan baris; baris terakhir menampung kelebihan.
+const SQL_PREV = `IFNULL((SELECT SUM(x.mbbd_jumlah) FROM tmintabelibahan_dtl x
+                           WHERE x.mbbd_nomor = d.mbbd_nomor
+                             AND x.mbbd_bhn_kode = d.mbbd_bhn_kode
+                             AND x.mbbd_nourut < d.mbbd_nourut), 0)`;
+const SQL_ALOK = `GREATEST(IF(
+    d.mbbd_nourut = (SELECT MAX(y.mbbd_nourut) FROM tmintabelibahan_dtl y
+                      WHERE y.mbbd_nomor = d.mbbd_nomor
+                        AND y.mbbd_bhn_kode = d.mbbd_bhn_kode),
+    IFNULL(p.dipesan, 0) - ${SQL_PREV},
+    LEAST(d.mbbd_jumlah, IFNULL(p.dipesan, 0) - ${SQL_PREV})), 0)`;
+const SQL_SISA = `GREATEST(ROUND(d.mbbd_jumlah - ${SQL_ALOK}, 2), 0)`;
 
 const getBrowse = async (startDate, endDate, cabang) => {
   const params = [startDate, endDate];
@@ -41,10 +52,14 @@ const getBrowse = async (startDate, endDate, cabang) => {
     FROM tmintabelibahan_hdr h
     LEFT JOIN (
       SELECT d.mbbd_nomor,
-             COUNT(*) AS jml_item,
+             SUM(d.baris) AS jml_item,
              SUM(IFNULL(p.dipesan, 0) > 0) AS jml_dipakai,
-             SUM(ROUND(IFNULL(p.dipesan, 0), 2) < ROUND(d.mbbd_jumlah, 2)) AS jml_kurang
-        FROM tmintabelibahan_dtl d
+             SUM(ROUND(IFNULL(p.dipesan, 0), 2) < ROUND(d.minta, 2)) AS jml_kurang
+        FROM (
+          SELECT mbbd_nomor, mbbd_bhn_kode, COUNT(*) AS baris, SUM(mbbd_jumlah) AS minta
+            FROM tmintabelibahan_dtl
+           GROUP BY mbbd_nomor, mbbd_bhn_kode
+        ) d
         LEFT JOIN (${SQL_DIPESAN}) p
                ON p.pod_mbb_nomor = d.mbbd_nomor AND p.pod_bhn_kode = d.mbbd_bhn_kode
        GROUP BY d.mbbd_nomor
@@ -68,16 +83,19 @@ const getBrowseDetail = async (nomor) => {
     `SELECT
        d.mbbd_nomor AS Nomor,
        d.mbbd_bhn_kode AS Kode,
+       d.mbbd_spk_nomor AS Spk,
+       IFNULL(sp.spk_nama, "") AS SpkNama,
        IFNULL(b.Bhn_Name, "") AS Nama,
        IF(LEFT(d.mbbd_bhn_kode, 2) = "SB", "", IFNULL(s.bs_nama, "")) AS Setting,
        d.mbbd_satuan AS Satuan,
        d.mbbd_jumlah AS Jumlah,
        d.mbbd_ket AS Keterangan,
-       IFNULL(p.dipesan, 0) AS Dipesan,
+       ROUND(${SQL_ALOK}, 2) AS Dipesan,
        ${SQL_SISA} AS Sisa,
        IFNULL(p.po, "") AS PO
      FROM tmintabelibahan_dtl d
      LEFT JOIN tbahan b ON b.Bhn_kode = d.mbbd_bhn_kode
+     LEFT JOIN tspk sp ON sp.spk_nomor = d.mbbd_spk_nomor
      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mbbd_bhn_kode, 2)
                                AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
      LEFT JOIN (${SQL_DIPESAN}) p
@@ -98,17 +116,20 @@ const getBrowseDetailRange = async (startDate, endDate, cabang) => {
       h.mbb_cab AS Cab,
       h.mbb_status AS Status,
       d.mbbd_bhn_kode AS Kode,
+      d.mbbd_spk_nomor AS Spk,
+      IFNULL(sp.spk_nama, "") AS SpkNama,      
       IFNULL(b.Bhn_Name, "") AS Nama,
       IF(LEFT(d.mbbd_bhn_kode, 2) = "SB", "", IFNULL(s.bs_nama, "")) AS Setting,
       d.mbbd_satuan AS Satuan,
       d.mbbd_jumlah AS Jumlah,
       d.mbbd_ket AS Keterangan,
-      IFNULL(p.dipesan, 0) AS Dipesan,
+      ROUND(${SQL_ALOK}, 2) AS Dipesan,
       ${SQL_SISA} AS Sisa,
       IFNULL(p.po, "") AS PO
     FROM tmintabelibahan_dtl d
     JOIN tmintabelibahan_hdr h ON h.mbb_nomor = d.mbbd_nomor
     LEFT JOIN tbahan b ON b.Bhn_kode = d.mbbd_bhn_kode
+    LEFT JOIN tspk sp ON sp.spk_nomor = d.mbbd_spk_nomor
     LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mbbd_bhn_kode, 2)
                               AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
     LEFT JOIN (${SQL_DIPESAN}) p
@@ -135,6 +156,7 @@ const getPrintData = async (nomor) => {
        h.mbb_cab AS Cabang,
        h.mbb_bagian AS Bagian,
        h.mbb_status AS Status,
+       h.mbb_buffer AS Buffer,
        IFNULL(h.user_create, "") AS Pembuat
      FROM tmintabelibahan_hdr h
      WHERE h.mbb_nomor = ?`,
@@ -145,6 +167,8 @@ const getPrintData = async (nomor) => {
   const [details] = await db.query(
     `SELECT
        d.mbbd_bhn_kode AS Kode,
+       d.mbbd_spk_nomor AS Spk,
+       IFNULL(sp.spk_nama, "") AS SpkNama,
        IFNULL(b.Bhn_Name, "") AS Nama,
        IF(LEFT(d.mbbd_bhn_kode, 2) = "SB", "", IFNULL(s.bs_nama, "")) AS Setting,
        IFNULL(b.bhn_konstruksi, "") AS Konstruksi,
@@ -155,6 +179,7 @@ const getPrintData = async (nomor) => {
        d.mbbd_ket AS Keterangan
      FROM tmintabelibahan_dtl d
      LEFT JOIN tbahan b ON b.Bhn_kode = d.mbbd_bhn_kode
+     LEFT JOIN tspk sp ON sp.spk_nomor = d.mbbd_spk_nomor
      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mbbd_bhn_kode, 2)
                                AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
      WHERE d.mbbd_nomor = ?
@@ -245,7 +270,7 @@ const closeData = async (nomor, alasan, user) => {
 
   // Sudah CLOSE hasil hitungan (semua baris terpesan penuh) → tidak perlu ditutup manual
   const [dtl] = await db.query(
-    `SELECT d.mbbd_jumlah AS jumlah, IFNULL(p.dipesan, 0) AS dipesan
+    `SELECT SUM(d.mbbd_jumlah) AS jumlah, IFNULL(MAX(p.dipesan), 0) AS dipesan
        FROM tmintabelibahan_dtl d
        LEFT JOIN (
          SELECT pd.pod_bhn_kode, SUM(pd.pod_jumlah) AS dipesan
@@ -254,7 +279,8 @@ const closeData = async (nomor, alasan, user) => {
           WHERE ph.po_mbb_nomor = ?
           GROUP BY pd.pod_bhn_kode
        ) p ON p.pod_bhn_kode = d.mbbd_bhn_kode
-      WHERE d.mbbd_nomor = ?`,
+      WHERE d.mbbd_nomor = ?
+      GROUP BY d.mbbd_bhn_kode`,
     [nomor, nomor],
   );
   const semuaTerpenuhi =

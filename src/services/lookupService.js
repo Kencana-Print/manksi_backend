@@ -2608,7 +2608,16 @@ const searchAccount = async (
   const params = [];
   let whereClause = `WHERE 1=1`;
 
-  if (jenis === "KAS") {
+  if (filterMode === "pajak") {
+    // Akun potongan voucher: kelompok UM PAJAK / HUTANG PAJAK. Tidak pakai
+    // rek_rekening/rek_jp: akun pajak umumnya tanpa nomor rekening dan rek_jp
+    // tidak konsisten. Aturan sama dengan validasi server di voucher save.
+    whereClause += ` AND rek_isaktif = 0
+      AND rek_kol_id IN (
+        SELECT kol_id FROM finance.tkelompok
+        WHERE kol_nama IN ('UM PAJAK', 'HUTANG PAJAK')
+      )`;
+  } else if (jenis === "KAS") {
     whereClause += ` AND LEFT(rek_kode,5) = 'A-111'${sqlTanpaInduk()}`;
   } else if (jenis === "BANK") {
     whereClause += ` AND (LEFT(rek_kode,5) = 'A-112' OR LEFT(rek_kode,5) = 'B-211')`;
@@ -2639,7 +2648,7 @@ const searchAccount = async (
       rek_rekening AS Rekening
     FROM finance.trekening
     ${whereClause}
-    ORDER BY rek_rekening ASC
+    ORDER BY ${filterMode === "pajak" ? "rek_kode" : "rek_rekening"} ASC
     LIMIT ? OFFSET ?
   `;
   const [rows] = await db.query(query, [...params, limitNum, offset]);

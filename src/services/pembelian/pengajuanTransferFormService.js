@@ -8,6 +8,10 @@ const {
   rekPerJenis,
   JENIS_VIA_PJT,
 } = require("../piutang/klaimKasKecilKonstanta");
+const {
+  getItemPengajuanDanaBbk,
+  kunciItemPengajuanDanaBbk,
+} = require("./uangMukaService");
 
 // ── Account header (rekening bank — rek_rekening<>"" AND rek_jp=0) ────
 const getAccountOptions = async () => {
@@ -75,11 +79,7 @@ const getRekapVoucherOptions = async (search = "") => {
         DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
         h.vou_sup_kode AS supKode,
         s.sup_nama AS supplier,
-        h.vou_total - IFNULL((
-          SELECT SUM(voud2_harga * voud2_jumlah)
-          FROM tvoucher_dtl2
-          WHERE voud2_vou_nomor = h.vou_nomor
-        ), 0) AS nominal
+        ${SQL_NOMINAL_VOUCHER} AS nominal
      FROM tvoucher_hdr h
      INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
      WHERE h.vou_nomor IN (?)
@@ -125,11 +125,7 @@ const getVoucherOptions = async (search = "") => {
       DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS tanggal,
       h.vou_sup_kode AS supKode,
       s.sup_nama AS supplier,
-      h.vou_total - IFNULL((
-        SELECT SUM(voud2_harga * voud2_jumlah)
-        FROM tvoucher_dtl2
-        WHERE voud2_vou_nomor = h.vou_nomor
-      ), 0) AS nominal
+      ${SQL_NOMINAL_VOUCHER} AS nominal
     FROM tvoucher_hdr h
     INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
     WHERE h.vou_nomor NOT IN (
@@ -400,13 +396,19 @@ const validasiPoLain = async (conn, detail) => {
 // dalam transaksi (mode baru/edit); link milik pengajuan ini sendiri tidak
 // dihitung. `<=>` karena vou_link data lama bisa NULL.
 
-// Net voucher = Total - Bahan Tambahan (bertanda) - Disc; sama dengan kolom Net
-// di browse Voucher dan Grand Total di form/print.
-const SQL_NOMINAL_VOUCHER = `(h.vou_total - IFNULL((
+// Net voucher = Total - Bahan Tambahan (bertanda) - Disc - Potongan.
+// SATU-SATUNYA definisi net; semua modul memakai ini (Browse, Realisasi,
+// Rekap, Pengajuan Transfer, BBK) supaya angkanya tidak pernah beda.
+const sqlNominalVoucher = (a = "h") => `(${a}.vou_total - IFNULL((
   SELECT SUM(IF(voud2_tambah = 1, -1, 1) * voud2_harga * voud2_jumlah)
   FROM tvoucher_dtl2
-  WHERE voud2_vou_nomor = h.vou_nomor
-), 0) - IFNULL(h.vou_disc, 0))`;
+  WHERE voud2_vou_nomor = ${a}.vou_nomor
+), 0) - IFNULL(${a}.vou_disc, 0) - IFNULL((
+  SELECT SUM(voud3_nilai)
+  FROM tvoucher_dtl3
+  WHERE voud3_vou_nomor = ${a}.vou_nomor
+), 0))`;
+const SQL_NOMINAL_VOUCHER = sqlNominalVoucher("h");
 
 const validasiVoucher = async (conn, detail, nomorPjt) => {
   const baris = detail.filter(
@@ -1215,7 +1217,8 @@ const getDetailForm = async (nomor) => {
       DATE_FORMAT(d.ptd_realisasi,'%Y-%m-%d') AS ptd_realisasi,
       d.ptd_akun, k.rek_nama AS akunnama,
       d.ptd_cc_kode, c.cc_nama,
-      d.ptd_dc_nama, d.ptd_jur_no, d.ptd_batal
+      d.ptd_dc_nama, d.ptd_jur_no, d.ptd_batal,
+      d.ptd_diajukan, d.ptd_asal_nomor, d.ptd_pgj
     FROM finance.tpengajuan_transfer_hdr h
     INNER JOIN finance.tpengajuan_transfer_dtl d ON d.ptd_nomor = h.pth_nomor
     LEFT JOIN finance.trekening r ON r.rek_kode = h.pth_rek_kode
@@ -1254,6 +1257,9 @@ const getDetailForm = async (nomor) => {
       jurnal: r.ptd_jur_no || "",
       batal: r.ptd_batal || "",
       klaim: false,
+      diajukan: Number(r.ptd_diajukan) !== 0,
+      asalNomor: r.ptd_asal_nomor || "",
+      pgj: r.ptd_pgj || "",
     }));
 
   // Tandai baris Klaim Kas Kecil dan isi akun tujuan untuk realisasi
@@ -1296,8 +1302,155 @@ const getDetailForm = async (nomor) => {
   };
 };
 
-// ── Generate nomor — hardcode P01, sesuai referensi (lihat catatan
-// di bawah module.exports) ──
+// ── Sisa pengajuan yang belum diceklis (carry-over) ───────────────────
+// Baris dokumen lama yang ditunda (ptd_diajukan = 0), belum direalisasi dan
+// tidak batal. Dipanggil form Tambah supaya sisa otomatis ikut ke pengajuan
+// berikutnya; barisnya baru dipindah saat dokumen baru disimpan.
+const getSisaCarryOver = async () => {
+  const [rows] = await db.query(
+    `SELECT d.ptd_nomor AS asalNomor, d.ptd_nourut AS asalNourut,
+            d.ptd_sup_kode AS kode,
+            COALESCE(NULLIF(s.sup_nama, ''), d.ptd_atasnama) AS nama,
+            d.ptd_bank AS bank, d.ptd_rekening AS rekening,
+            d.ptd_atasnama AS atasnama, d.ptd_trs AS trs,
+            d.ptd_nominal AS nominal, d.ptd_ket AS ket
+     FROM finance.tpengajuan_transfer_dtl d
+     LEFT JOIN tsupplier s ON s.sup_kode = d.ptd_sup_kode
+     WHERE d.ptd_diajukan = 0 AND d.ptd_jur_no = '' AND d.ptd_batal = ''
+     ORDER BY d.ptd_nomor, d.ptd_nourut`,
+  );
+  if (!rows.length) return [];
+
+  // Tandai baris Klaim Kas Kecil (nominal dikunci di form, sama seperti getDetailForm)
+  const daftarTrs = [...new Set(rows.map((r) => r.trs).filter(Boolean))];
+  let klaimAda = new Set();
+  if (daftarTrs.length) {
+    const [klaim] = await db.query(
+      `SELECT kkh_nomor FROM tklaim_kaskecil_hdr WHERE kkh_nomor IN (?)`,
+      [daftarTrs],
+    );
+    klaimAda = new Set(klaim.map((k) => k.kkh_nomor.toUpperCase()));
+  }
+
+  return rows.map((r) => ({
+    nourut: 0,
+    kode: r.kode || "",
+    nama: r.nama || "",
+    bank: r.bank || "",
+    rekening: r.rekening || "",
+    atasnama: r.atasnama || "",
+    trs: r.trs || "",
+    sumber: "",
+    nominal: Number(r.nominal) || 0,
+    ket: r.ket || "",
+    tglRealisasi: "",
+    rekkode: "",
+    reknama: "",
+    cckode: 0,
+    ccnama: "",
+    dcnama: "",
+    dckode: 0,
+    jurnal: "",
+    batal: "",
+    klaim: klaimAda.has(String(r.trs || "").toUpperCase()),
+    diajukan: true,
+    asalNomor: r.asalNomor,
+    asalNourut: Number(r.asalNourut),
+  }));
+};
+
+// ── Pengajuan Dana (F5) ───────────────────────────────────────────────
+// Syarat item = syarat BBK (SQL_SYARAT_ITEM_BBK di uangMukaService). Item yang
+// sudah dibayar BBK atau ditahan PJT lain disaring di getItemPengajuanDanaBbk.
+const BATAS_PGJ_PJT_SEBELUM = "2999-12-31";
+
+const getPengajuanDanaOptions = async (search = "") =>
+  getItemPengajuanDanaBbk({ search, sebelum: BATAS_PGJ_PJT_SEBELUM });
+
+// Mode baru/edit: kunci + cek item, lalu normalkan baris dari data server.
+// Dipanggil SETELAH baris belum-realisasi milik PJT ini dihapus.
+const validasiPengajuanDana = async (conn, detail) => {
+  const baris = detail.filter((d) => d.nama && d.pgj && !d.jurnal && !d.batal);
+  if (!baris.length) return;
+
+  const sudah = new Set();
+  const daftar = [];
+  for (const d of baris) {
+    const [nomor, nourut, ...lebih] = String(d.pgj).split("|");
+    if (!nomor || !/^\d+$/.test(nourut || "") || lebih.length)
+      throw new Error("Referensi Pengajuan Dana pada baris tidak valid.");
+    const kunci = `${nomor}|${Number(nourut)}`;
+    if (sudah.has(kunci))
+      throw new Error(
+        `Item ${nomor} no. ${Number(nourut)} diinput lebih dari satu kali.`,
+      );
+    sudah.add(kunci);
+    if (String(d.trs || "").trim() !== nomor)
+      throw new Error(
+        `No. Transaksi baris Pengajuan Dana ${nomor} tidak boleh diubah.`,
+      );
+    daftar.push({ nomor, nourut: Number(nourut), kunci, baris: d });
+  }
+
+  await kunciItemPengajuanDanaBbk(
+    conn,
+    daftar.map((x) => ({ nomor: x.nomor, nourut: x.nourut })),
+    { sebelum: BATAS_PGJ_PJT_SEBELUM },
+  );
+
+  for (const x of daftar) {
+    if (!(Number(x.baris.nominal) > 0))
+      throw new Error(
+        `Nominal item ${x.nomor} no. ${x.nourut} harus lebih dari 0.`,
+      );
+    x.baris.pgj = x.kunci;
+  }
+};
+
+// Mode realisasi: item harus masih sah SEBELUM jurnal ditulis (tabel Finance
+// tidak bisa rollback). Baris tunda dan baris yang sudah berjurnal dilewati.
+const validasiPengajuanDanaRealisasi = async (conn, nomorPjt, detail) => {
+  const items = [];
+  for (const d of detail) {
+    if (!d.nama || d.jurnal || d.batal || !d.tglRealisasi) continue;
+    const [[row]] = await conn.query(
+      `SELECT ptd_pgj, ptd_diajukan FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+      [nomorPjt, d.nourut],
+    );
+    if (!row || !row.ptd_pgj || Number(row.ptd_diajukan) === 0) continue;
+    const [nomor, nourut] = String(row.ptd_pgj).split("|");
+    items.push({ nomor, nourut: Number(nourut) });
+  }
+  if (!items.length) return;
+  await kunciItemPengajuanDanaBbk(conn, items, {
+    sebelum: BATAS_PGJ_PJT_SEBELUM,
+    pjtNomor: nomorPjt,
+  });
+};
+
+// Beri penanda 'PGJ|nomor|nourut' pada baris debet jurnal BBK hasil realisasi,
+// supaya Pengajuan Dana, Petty Cash, dan BBK membacanya sebagai "sudah dibayar".
+const tandaiJurnalPengajuanDana = async (
+  conn,
+  nomorPjt,
+  nourut,
+  jurnalNomor,
+) => {
+  const [[row]] = await conn.query(
+    `SELECT ptd_pgj FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+    [nomorPjt, nourut],
+  );
+  if (!row || !row.ptd_pgj) return;
+  await conn.query(
+    `UPDATE finance.tjurnalitem SET jurd_ref = ?
+     WHERE jurd_jur_no = ? AND jurd_trs = 'BBK' AND jurd_nourut = 1`,
+    [`PGJ|${row.ptd_pgj}`, jurnalNomor],
+  );
+};
+
+// ── Generate nomor — hardcode P01, sesuai referensi ──
 const getMaxNomor = async (conn) => {
   const prefix = `P01-PJT.${new Date().getFullYear()}.`;
   const [[row]] = await (conn || db).query(
@@ -1357,6 +1510,42 @@ const cekIsTutupBuku = async (tanggal) => {
   return limitDate < today;
 };
 
+// ── Pindahkan baris sisa dari dokumen lama ke dokumen yang sedang disimpan ──
+// Dipanggil di dalam transaksi SEBELUM validasi, supaya validator (voucher,
+// PO Lain, klaim) tidak melihat baris lama sebagai "sudah dipakai". Yang
+// dipakai untuk melepas link adalah data baris lama di database, bukan
+// payload klien. Baris baru dibuat oleh alur simpan biasa dengan
+// ptd_asal_nomor = dokumen lama.
+const pindahBarisSisa = async (conn, d) => {
+  const asal = String(d.asalNomor || "").trim();
+  const nourut = Number(d.asalNourut);
+
+  const [[lama]] = await conn.query(
+    `SELECT ptd_trs AS trs FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_nomor = ? AND ptd_nourut = ?
+       AND ptd_diajukan = 0 AND ptd_jur_no = '' AND ptd_batal = ''
+     FOR UPDATE`,
+    [asal, nourut],
+  );
+  if (!lama)
+    throw new Error(
+      `Sisa ${asal} (baris ${nourut}) sudah dipindah, direalisasi, atau diubah pengguna lain. Tutup form ini lalu klik Tambah lagi.`,
+    );
+
+  await lepasVoucherBaris(conn, asal, nourut);
+  if (String(lama.trs || "").startsWith("POE")) {
+    await conn.query(
+      `DELETE FROM tpoexternal_dtl2 WHERE poed2_nomor = ? AND poed2_link = ?`,
+      [lama.trs, asal],
+    );
+  }
+  await conn.query(
+    `DELETE FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_nomor = ? AND ptd_nourut = ?`,
+    [asal, nourut],
+  );
+};
+
 // ── Simpan (mode baru/edit — bukan realisasi) ─────────────────────────
 const saveData = async (payload, user) => {
   const { isEdit, isRealisasi, nomor, tanggal, rek_kode, detail } = payload;
@@ -1375,14 +1564,25 @@ const saveData = async (payload, user) => {
     // MODE REALISASI
     // ════════════════════════════════════════════════════════════════════
     if (isRealisasi) {
+      await validasiPengajuanDanaRealisasi(conn, nomor, detail);
       // Delphi: delete semua jurnal otomatis realisasi lama
       await conn.query(
         `DELETE FROM finance.tjurnal WHERE jur_otomatis=1 AND MID(jur_no,3,18)=?`,
         [nomor],
       );
 
+      // Baris yang tidak diceklis tidak boleh direalisasi (dibaca dari database,
+      // bukan dari payload klien)
+      const [tunda] = await conn.query(
+        `SELECT ptd_nourut FROM finance.tpengajuan_transfer_dtl
+         WHERE ptd_nomor = ? AND ptd_diajukan = 0`,
+        [nomor],
+      );
+      const nourutTunda = new Set(tunda.map((r) => Number(r.ptd_nourut)));
+
       for (const d of detail) {
         if (!d.nama) continue;
+        if (nourutTunda.has(Number(d.nourut))) continue;
 
         // Baris Klaim Kas Kecil: akun dan nominal dipaksa dari data server
         const klaimInfo = d.batal
@@ -1498,6 +1698,8 @@ const saveData = async (payload, user) => {
                 sup.atasnama,
               ],
             );
+
+            await tandaiJurnalPengajuanDana(conn, nomor, d.nourut, d.jurnal);
 
             // ── FIX: regenerate BKM/BBM otomatis (kena hapus oleh delete blanket di atas) ──
             nn++;
@@ -1654,6 +1856,8 @@ const saveData = async (payload, user) => {
               ],
             );
 
+            await tandaiJurnalPengajuanDana(conn, nomor, d.nourut, jurnalNomor);
+
             // ── BKM/BBM otomatis berdasarkan account ──
             // Delphi: getnomasuk pakai jur_no = cno (bukan MID)
             nn++;
@@ -1742,6 +1946,10 @@ const saveData = async (payload, user) => {
     // ════════════════════════════════════════════════════════════════════
     let actualNomor = nomor;
 
+    if (!detail.some((d) => d.nama && d.diajukan !== false)) {
+      throw new Error("Minimal satu baris harus diceklis untuk diajukan.");
+    }
+
     if (isEdit) {
       await conn.query(
         `
@@ -1775,8 +1983,22 @@ const saveData = async (payload, user) => {
       [actualNomor],
     );
 
+    // Sisa dokumen lama (carry-over) dipindah ke dokumen ini
+    for (const d of detail) {
+      if (
+        d.nama &&
+        !d.jurnal &&
+        d.asalNomor &&
+        Number(d.asalNourut) > 0 &&
+        d.asalNomor !== actualNomor
+      ) {
+        await pindahBarisSisa(conn, d);
+      }
+    }
+
     await validasiPoLain(conn, detail);
     await validasiKlaimKasKecil(conn, detail, rek_kode, actualNomor);
+    await validasiPengajuanDana(conn, detail);
     // await assertSupplierKlaimHanyaLewatKlaim(conn, detail, tanggal);
     await validasiVoucher(conn, detail, actualNomor);
 
@@ -1831,8 +2053,9 @@ const saveData = async (payload, user) => {
         INSERT INTO finance.tpengajuan_transfer_dtl
           (ptd_nomor, ptd_nourut, ptd_sup_kode, ptd_bank,
            ptd_rekening, ptd_atasnama, ptd_trs,
-           ptd_nominal, ptd_ket, ptd_batal)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ptd_nominal, ptd_ket, ptd_batal,
+           ptd_diajukan, ptd_asal_nomor, ptd_pgj)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
         [
           actualNomor,
@@ -1845,6 +2068,9 @@ const saveData = async (payload, user) => {
           Number(d.nominal) || 0,
           d.ket || "",
           d.batal || "",
+          d.batal ? 1 : d.diajukan === false ? 0 : 1,
+          String(d.asalNomor || "").slice(0, 20),
+          String(d.pgj || "").slice(0, 40),
         ],
       );
 
@@ -1934,7 +2160,7 @@ const getPrintData = async (nomor) => {
       DATE_FORMAT(d.ptd_realisasi,'%d %b %Y') AS tglRealisasi
     FROM finance.tpengajuan_transfer_dtl d
     LEFT JOIN tsupplier s ON s.sup_kode = d.ptd_sup_kode
-    WHERE d.ptd_nomor = ? AND d.ptd_batal = ''
+    WHERE d.ptd_nomor = ? AND d.ptd_batal = '' AND d.ptd_diajukan = 1
     ORDER BY d.ptd_nourut
   `,
     [nomor],
@@ -1953,6 +2179,7 @@ module.exports = {
   getRekapPanggilOptions,
   getRekapPanggilRows,
   SQL_NOMINAL_VOUCHER,
+  sqlNominalVoucher,
   getVoucherNomor,
   getVoucherOptions,
   getPoExternalOptions,
@@ -1960,10 +2187,12 @@ module.exports = {
   getBkkOptions,
   getPoLainOptions,
   getKlaimKasKecilOptions,
+  getPengajuanDanaOptions,
   ambilSupplierKlaim,
   pastikanNominalBkk,
   postingBiayaManual,
   getDetailForm,
+  getSisaCarryOver,
   saveData,
   getPrintData,
 };

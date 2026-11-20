@@ -87,16 +87,22 @@ router.get(
   ctrl.getKlaimKasKecilOptions,
 );
 router.get(
+  "/pengajuan-dana-options",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPengajuanDanaOptions,
+);
+router.get(
+  "/sisa-carryover",
+  verifyToken,
+  checkPermission(MENU_ID, "insert"),
+  ctrl.getSisaCarryOver,
+);
+router.get(
   "/detail",
   verifyToken,
   checkPermission(MENU_ID, "view"),
   ctrl.getDetailForm,
-);
-router.get(
-  "/print",
-  verifyToken,
-  checkPermission(MENU_ID, "view"),
-  ctrl.getPrintData,
 );
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);

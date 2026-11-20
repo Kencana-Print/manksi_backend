@@ -82,12 +82,10 @@ const TIPE_VOUCHER = "VOU";
 // Tanpa supplier (rkbd_sup_kode = ''), rkbd_nota = nomor petty cash,
 // rkbd_vou_nomor tetap ''. Nominal selalu pck_total dari server.
 const TIPE_PCK = "PCK";
-// Nominal bersih voucher: sama dengan Pengajuan Transfer (F2)
-const SQL_NOMINAL_VOUCHER = `h.vou_total - IFNULL((
-  SELECT SUM(voud2_harga * voud2_jumlah)
-  FROM tvoucher_dtl2
-  WHERE voud2_vou_nomor = h.vou_nomor
-), 0)`;
+// Nominal bersih voucher: satu definisi bersama (lihat pengajuanTransferFormService)
+const {
+  SQL_NOMINAL_VOUCHER,
+} = require("../pembelian/pengajuanTransferFormService");
 
 // ── Rekening supplier (master tsupplieritem) ──────────────────────────
 // Hanya untuk bagian berhak (BAGIAN_LIHAT_REKENING); selain itu peta kosong

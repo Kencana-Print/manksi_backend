@@ -6930,34 +6930,73 @@ const setStatusPengajuanDana = async ({
   alasan,
   user,
 }) => {
-  const rows = await db.query(
-    `SELECT pjd_closed_manual AS closed
-     FROM ga2.tpengajuan2_dtl
-     WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_nama <> ''`,
-    [nomor, nourut],
-  );
-  if (!rows.length) throw new Error("Item pengajuan tidak ditemukan.");
-  if (Number(rows[0].closed) === 1)
-    throw new Error("Item sudah ditutup manual dan tidak bisa diubah.");
+  const conn = await db.getConnection();
+  await conn.beginTransaction();
+  try {
+    // Kunci baris item. Pengajuan Transfer/BBK memakai kunci yang sama saat
+    // memanggil item, jadi proses yang bersamaan saling menunggu.
+    const [rows] = await conn.query(
+      `SELECT pjd_closed_manual AS closed
+       FROM ga2.tpengajuan2_dtl
+       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_nama <> ''
+       FOR UPDATE`,
+      [nomor, nourut],
+    );
+    if (!rows.length) throw new Error("Item pengajuan tidak ditemukan.");
+    if (Number(rows[0].closed) === 1)
+      throw new Error("Item sudah ditutup manual dan tidak bisa diubah.");
 
-  if (status === "CANCEL" || status === "CLOSE") {
-    // satu statement: status dan penutupan berubah bersamaan (MyISAM tanpa transaksi)
-    await db.query(
-      `UPDATE ga2.tpengajuan2_dtl
-       SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW(),
-           pjd_closed_manual = 1, pjd_closed_manual_alasan = ?,
-           pjd_closed_manual_user = ?, pjd_closed_manual_tanggal = NOW()
-       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
-      [status, user.kode, alasan, user.kode, nomor, nourut],
-    );
-  } else {
-    // PENDING, atau kosong untuk menghapus status
-    await db.query(
-      `UPDATE ga2.tpengajuan2_dtl
-       SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW()
-       WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
-      [status || null, user.kode, nomor, nourut],
-    );
+    if (status === "CANCEL" || status === "CLOSE") {
+      const kunci = `${nomor}|${nourut}`;
+
+      // Sedang diajukan di Pengajuan Transfer (belum direalisasi, tidak batal)
+      const [ditahan] = await conn.query(
+        `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl
+         WHERE ptd_pgj = ? AND ptd_batal = '' AND ptd_jur_no = '' LIMIT 1`,
+        [kunci],
+      );
+      if (ditahan.length)
+        throw new Error(
+          `Item sedang diajukan di Pengajuan Transfer ${ditahan[0].ptd_nomor}. Hapus atau batalkan barisnya dulu.`,
+        );
+
+      // Sudah dibayar (BBK manual atau jurnal realisasi Pengajuan Transfer)
+      if (status === "CANCEL") {
+        const [dibayar] = await conn.query(
+          `SELECT jurd_jur_no FROM finance.tjurnalitem
+           WHERE jurd_trs = 'BBK' AND jurd_ref = ? LIMIT 1`,
+          [`PGJ|${kunci}`],
+        );
+        if (dibayar.length)
+          throw new Error(
+            `Item sudah dibayar lewat ${dibayar[0].jurd_jur_no}, tidak bisa di-CANCEL.`,
+          );
+      }
+
+      await conn.query(
+        `UPDATE ga2.tpengajuan2_dtl
+         SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW(),
+             pjd_closed_manual = 1, pjd_closed_manual_alasan = ?,
+             pjd_closed_manual_user = ?, pjd_closed_manual_tanggal = NOW()
+         WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
+        [status, user.kode, alasan, user.kode, nomor, nourut],
+      );
+    } else {
+      // PENDING, atau kosong untuk menghapus status
+      await conn.query(
+        `UPDATE ga2.tpengajuan2_dtl
+         SET pjd_status_finance = ?, pjd_status_user = ?, pjd_status_tgl = NOW()
+         WHERE pjd_pjh_nomor = ? AND pjd_nourut = ? AND pjd_closed_manual = 0`,
+        [status || null, user.kode, nomor, nourut],
+      );
+    }
+
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
   }
 };
 

@@ -1101,6 +1101,9 @@ const getSupplierByKode = async (kode) => {
 };
 
 // --- 5. LOOKUP: baris Permintaan Pembelian Bahan yang masih punya sisa ---
+// Satu baris per (permintaan, bahan, SPK). Pesanan PO tidak terikat SPK, jadi
+// pesanan per bahan dialokasikan FIFO ke baris-baris bahan itu menurut mbbd_nourut.
+// Total sisa per bahan tetap benar; pembagian per SPK hanya perkiraan.
 // exclude = nomor PO yang sedang diedit (pesanan miliknya tidak mengurangi sisa)
 const getMbbOutstanding = async (jenis, exclude = "") => {
   const jpo = Number(jenis);
@@ -1112,6 +1115,9 @@ const getMbbOutstanding = async (jenis, exclude = "") => {
     jpo === JENIS_SPANDUK
       ? `AND LEFT(d.mbbd_bhn_kode, 2) = 'SB'`
       : `AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'`;
+
+  // Bagian pesanan yang jatuh ke baris ini (FIFO); d.prev = jumlah baris sebelumnya
+  const pakai = `LEAST(d.mbbd_jumlah, GREATEST(IFNULL(p.dipesan, 0) - d.prev, 0))`;
 
   const [rows] = await db.query(
     `SELECT
@@ -1127,10 +1133,21 @@ const getMbbOutstanding = async (jenis, exclude = "") => {
        IFNULL(g.bg_nama, "") AS gramasi,
        IFNULL(b.bhn_hargabeli, 0) AS harga,
        d.mbbd_jumlah AS jumlah,
-       IFNULL(p.dipesan, 0) AS dipesan,
-       ROUND(d.mbbd_jumlah - IFNULL(p.dipesan, 0), 2) AS sisa,
-       d.mbbd_ket AS keterangan
-     FROM tmintabelibahan_dtl d
+       ROUND(${pakai}, 2) AS dipesan,
+       ROUND(d.mbbd_jumlah - ${pakai}, 2) AS sisa,
+       d.mbbd_ket AS keterangan,
+       d.mbbd_spk_nomor AS spk,
+       IFNULL(sp.spk_nama, "") AS spkNama
+     FROM (
+       SELECT x.mbbd_nomor, x.mbbd_bhn_kode, x.mbbd_nourut, x.mbbd_satuan,
+              x.mbbd_jumlah, x.mbbd_ket, x.mbbd_spk_nomor,
+              (SELECT IFNULL(SUM(y.mbbd_jumlah), 0)
+                 FROM tmintabelibahan_dtl y
+                WHERE y.mbbd_nomor = x.mbbd_nomor
+                  AND y.mbbd_bhn_kode = x.mbbd_bhn_kode
+                  AND y.mbbd_nourut < x.mbbd_nourut) AS prev
+         FROM tmintabelibahan_dtl x
+     ) d
      JOIN tmintabelibahan_hdr h ON h.mbb_nomor = d.mbbd_nomor
      LEFT JOIN tbahan b ON b.bhn_kode = d.mbbd_bhn_kode
      LEFT JOIN tbahan_jenis j ON j.bj_kode = LEFT(d.mbbd_bhn_kode, 2)
@@ -1138,6 +1155,7 @@ const getMbbOutstanding = async (jenis, exclude = "") => {
                                AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
      LEFT JOIN tbahan_setting s ON s.bs_kode = RIGHT(d.mbbd_bhn_kode, 2)
                                AND LEFT(d.mbbd_bhn_kode, 2) <> 'SB'
+     LEFT JOIN tspk sp ON sp.spk_nomor = d.mbbd_spk_nomor
      LEFT JOIN (
        SELECT ph.po_mbb_nomor, pd.pod_bhn_kode, SUM(pd.pod_jumlah) AS dipesan
          FROM tpo_hdr ph
@@ -1147,7 +1165,7 @@ const getMbbOutstanding = async (jenis, exclude = "") => {
      ) p ON p.po_mbb_nomor = d.mbbd_nomor AND p.pod_bhn_kode = d.mbbd_bhn_kode
      WHERE h.mbb_status = ''
        ${filterJenis}
-       AND ROUND(d.mbbd_jumlah - IFNULL(p.dipesan, 0), 2) > 0
+       AND ROUND(d.mbbd_jumlah - ${pakai}, 2) > 0
      ORDER BY h.mbb_tanggal, d.mbbd_nomor, d.mbbd_nourut`,
     [exclude || ""],
   );

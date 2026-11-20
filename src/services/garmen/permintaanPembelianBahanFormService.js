@@ -43,6 +43,11 @@ const normalTeks = (v, maks, label) => {
   return s;
 };
 
+const normalBuffer = (v) => {
+  if (typeof v !== "boolean") throw new Error("Status buffer tidak valid.");
+  return v;
+};
+
 const cekTutupBuku = async (tanggal) => {
   const zdtClose = await tutupBukuService.getTanggalTutupBuku();
   if (zdtClose && new Date(tanggal) < zdtClose) {
@@ -50,8 +55,9 @@ const cekTutupBuku = async (tanggal) => {
   }
 };
 
-// Validasi dan lengkapi detail dari master bahan (satuan dari master, bukan dari klien)
-const siapkanDetail = async (conn, cab, items) => {
+// Validasi dan lengkapi detail dari master bahan (satuan dari master, bukan dari klien).
+// buffer = true: SPK dikosongkan; buffer = false: tiap baris wajib SPK yang ada di tspk.
+const siapkanDetail = async (conn, cab, items, buffer) => {
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("Detail bahan wajib diisi minimal 1 baris.");
   }
@@ -59,9 +65,39 @@ const siapkanDetail = async (conn, cab, items) => {
   const kodeList = items.map((it) => String(it?.kode ?? "").trim());
   if (kodeList.some((k) => !k)) throw new Error("Kode bahan wajib diisi.");
 
-  const unik = new Set(kodeList.map((k) => k.toUpperCase()));
+  const spkList = items.map((it) =>
+    buffer ? "" : String(it?.spk ?? "").trim(),
+  );
+  if (!buffer) {
+    const kosong = spkList.findIndex((s) => !s);
+    if (kosong >= 0) {
+      throw new Error(
+        `Bahan ${kodeList[kosong]} wajib memilih nomor SPK (Buffer tidak diceklis).`,
+      );
+    }
+    const [spkRows] = await conn.query(
+      `SELECT spk_nomor FROM tspk WHERE spk_nomor IN (?)`,
+      [[...new Set(spkList)]],
+    );
+    const petaSpk = new Map(
+      spkRows.map((r) => [String(r.spk_nomor).toUpperCase(), r.spk_nomor]),
+    );
+    spkList.forEach((s, i) => {
+      const asli = petaSpk.get(s.toUpperCase());
+      if (!asli) throw new Error(`SPK ${s} tidak ditemukan.`);
+      spkList[i] = asli;
+    });
+  }
+
+  const unik = new Set(
+    kodeList.map((k, i) => `${k.toUpperCase()}|${spkList[i].toUpperCase()}`),
+  );
   if (unik.size !== kodeList.length) {
-    throw new Error("Ada bahan yang dobel dalam satu dokumen.");
+    throw new Error(
+      buffer
+        ? "Ada bahan yang dobel dalam satu dokumen."
+        : "Ada pasangan bahan dan SPK yang dobel dalam satu dokumen.",
+    );
   }
 
   const [master] = await conn.query(
@@ -97,6 +133,7 @@ const siapkanDetail = async (conn, cab, items) => {
 
     return {
       kode: m.Bhn_kode,
+      spk: spkList[i],
       nourut: i + 1,
       satuan: m.Bhn_satuan || "",
       jumlah,
@@ -109,6 +146,7 @@ const insertDetail = async (conn, nomor, rows) => {
   const values = rows.map((r) => [
     nomor,
     r.kode,
+    r.spk,
     r.nourut,
     r.satuan,
     r.jumlah,
@@ -116,7 +154,7 @@ const insertDetail = async (conn, nomor, rows) => {
   ]);
   await conn.query(
     `INSERT INTO tmintabelibahan_dtl
-       (mbbd_nomor, mbbd_bhn_kode, mbbd_nourut, mbbd_satuan, mbbd_jumlah, mbbd_ket)
+       (mbbd_nomor, mbbd_bhn_kode, mbbd_spk_nomor, mbbd_nourut, mbbd_satuan, mbbd_jumlah, mbbd_ket)
      VALUES ?`,
     [values],
   );
@@ -139,7 +177,7 @@ const getForEdit = async (nomor, user) => {
   const [hdr] = await db.query(
     `SELECT mbb_nomor AS Nomor, DATE_FORMAT(mbb_tanggal, "%Y-%m-%d") AS Tanggal,
             mbb_ket AS Keterangan, mbb_cab AS Cab, mbb_bagian AS Bagian,
-            mbb_status AS Status
+            mbb_status AS Status, mbb_buffer AS Buffer
        FROM tmintabelibahan_hdr WHERE mbb_nomor = ?`,
     [nomor],
   );
@@ -154,6 +192,7 @@ const create = async (payload, user) => {
   assertBolehInput(user);
   const tanggal = normalTanggal(payload?.tanggal);
   const ket = normalTeks(payload?.keterangan, 200, "Keterangan");
+  const buffer = normalBuffer(payload?.buffer);
   const cab = cabangUser(user);
 
   const conn = await db.getConnection();
@@ -171,15 +210,23 @@ const create = async (payload, user) => {
 
     await conn.beginTransaction();
 
-    const rows = await siapkanDetail(conn, cab, payload?.items);
+    const rows = await siapkanDetail(conn, cab, payload?.items, buffer);
     const nomor = await buatNomor(conn, tanggal);
 
     await conn.query(
       `INSERT INTO tmintabelibahan_hdr
-         (mbb_nomor, mbb_tanggal, mbb_ket, mbb_cab, mbb_bagian, mbb_status,
+         (mbb_nomor, mbb_tanggal, mbb_ket, mbb_buffer, mbb_cab, mbb_bagian, mbb_status,
           date_create, user_create)
-       VALUES (?, ?, ?, ?, ?, '', NOW(), ?)`,
-      [nomor, tanggal, ket, cab, bagianUser(user).substring(0, 15), user.kode],
+       VALUES (?, ?, ?, ?, ?, ?, '', NOW(), ?)`,
+      [
+        nomor,
+        tanggal,
+        ket,
+        buffer ? "Y" : "",
+        cab,
+        bagianUser(user).substring(0, 15),
+        user.kode,
+      ],
     );
     await insertDetail(conn, nomor, rows);
 
@@ -204,6 +251,7 @@ const update = async (nomor, payload, user) => {
   assertBolehInput(user);
   const tanggal = normalTanggal(payload?.tanggal);
   const ket = normalTeks(payload?.keterangan, 200, "Keterangan");
+  const buffer = normalBuffer(payload?.buffer);
 
   const conn = await db.getConnection();
   try {
@@ -235,13 +283,18 @@ const update = async (nomor, payload, user) => {
       );
     }
 
-    const rows = await siapkanDetail(conn, hdr[0].mbb_cab, payload?.items);
+    const rows = await siapkanDetail(
+      conn,
+      hdr[0].mbb_cab,
+      payload?.items,
+      buffer,
+    );
 
     await conn.query(
       `UPDATE tmintabelibahan_hdr
-          SET mbb_tanggal = ?, mbb_ket = ?, date_modified = NOW(), user_modified = ?
+          SET mbb_tanggal = ?, mbb_ket = ?, mbb_buffer = ?, date_modified = NOW(), user_modified = ?
         WHERE mbb_nomor = ?`,
-      [tanggal, ket, user.kode, nomor],
+      [tanggal, ket, buffer ? "Y" : "", user.kode, nomor],
     );
     await conn.query(`DELETE FROM tmintabelibahan_dtl WHERE mbbd_nomor = ?`, [
       nomor,

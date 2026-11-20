@@ -331,6 +331,7 @@ const getDetailForm = async (nomor, user) => {
         b.brg_satuan AS Satuan,
         d.pod_ket AS ket,
         d.pod_kegunaan AS kegunaan,
+        d.pod_namaext AS namaExt,
         IFNULL(m.mbd_jumlah, 0) AS minta,
         d.pod_jumlah AS jumlah,
         d.pod_harga AS harga
@@ -395,6 +396,7 @@ const getPermintaanDetail = async (mbNomor, poNomor = "") => {
     if (belum <= 0) continue;
     hasil.push({
       ...r,
+      namaExt: r.Nama, // default dari master, boleh diedit di form
       sudah,
       belum,
       jumlah: belum,
@@ -680,11 +682,14 @@ const saveData = async (payload, user) => {
     for (const d of baris) {
       nourut++;
       await conn.query(
-        `INSERT INTO tgarmenpo_dtl (pod_nomor, pod_mb_nomor, pod_brg_kode, pod_jumlah, pod_harga, pod_ppn, pod_ket, pod_kegunaan, pod_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tgarmenpo_dtl (pod_nomor, pod_mb_nomor, pod_brg_kode, pod_namaext, pod_jumlah, pod_harga, pod_ppn, pod_ket, pod_kegunaan, pod_nourut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           po_nomor,
           d.mbNomor,
           d.Kode,
+          String(d.namaExt || "")
+            .trim()
+            .slice(0, 100),
           Number(d.jumlah),
           Number(d.harga),
           ppnHeader,

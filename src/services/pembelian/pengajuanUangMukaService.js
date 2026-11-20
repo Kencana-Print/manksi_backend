@@ -221,6 +221,18 @@ const createPengajuan = async (
           throw new Error(
             `Item ${it.itemNourut} pada ${nomorSumber} sudah dibayar lewat BBK ${bbkDana.nomor}.`,
           );
+        // Item ditahan Pengajuan Transfer (belum atau sudah direalisasi).
+        // Locking read supaya melihat PJT yang baru commit (snapshot transaksi ini
+        // sudah dibuat sebelum kunci item didapat).
+        const [[pjtDana]] = await conn.query(
+          `SELECT ptd_nomor AS nomor FROM finance.tpengajuan_transfer_dtl
+           WHERE ptd_pgj = ? AND ptd_batal = '' LIMIT 1 LOCK IN SHARE MODE`,
+          [`${nomorSumber}|${it.itemNourut}`],
+        );
+        if (pjtDana)
+          throw new Error(
+            `Item ${it.itemNourut} pada ${nomorSumber} sudah diajukan di Pengajuan Transfer ${pjtDana.nomor}.`,
+          );
         pmtNomor = await ensurePermintaanDana(nomorSumber, conn);
         const [[jml]] = await conn.query(
           `SELECT IFNULL(pjd_qty * pjd_nilai, 0) AS total

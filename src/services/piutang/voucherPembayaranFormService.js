@@ -9,6 +9,9 @@ const {
   SQL_BPB_MILIK_PO,
   perluBreakdownCelup,
 } = require("./voucherPoBahanKonstanta");
+const {
+  sqlNominalVoucher,
+} = require("../pembelian/pengajuanTransferFormService");
 
 // ── PO Lain-lain (tipe nota POL) ──────────────────────────────────────
 // PPN per baris (tpo_dtl.pod_ppn), bukan header: beda supplier beda ketentuan.
@@ -302,6 +305,56 @@ const cekModeCelup = async (po, vouIni = "") => {
   };
 };
 
+// ── Resi Surat Jalan (tipe nota RES) ──────────────────────────────────
+// Satu nota = satu nomor resi di tsj_hdr. Nilai = jumlah biaya_kirim semua SJ
+// ber-resi itu. Resi yang tercatat di lebih dari satu ekspedisi ditolak (gagal
+// aman) sampai nama ekspedisinya disamakan di Update Status SJ.
+// excludeVou = voucher yang sedang diedit.
+const getInfoResiSj = async (resi, excludeVou = "") => {
+  const nomorResi = String(resi || "").trim();
+  if (!nomorResi) return null;
+
+  const [grup] = await db.query(
+    `SELECT IFNULL(h.expedisi, '') AS expedisi,
+            COUNT(*) AS jmlSj,
+            ROUND(SUM(IFNULL(h.biaya_kirim, 0)), 2) AS total,
+            IFNULL(DATE_FORMAT(MIN(h.tanggal_kirim), '%Y-%m-%d'),
+                   DATE_FORMAT(CURDATE(), '%Y-%m-%d')) AS tanggal
+     FROM tsj_hdr h
+     WHERE h.nomor_resi = ? AND h.sj_status_otomatis <> 1
+     GROUP BY IFNULL(h.expedisi, '')`,
+    [nomorResi],
+  );
+  if (!grup.length) return null;
+  if (grup.length > 1) {
+    throw new Error(
+      `Resi ${nomorResi} tercatat di lebih dari satu ekspedisi (${grup
+        .map((g) => g.expedisi || "kosong")
+        .join(", ")}). Samakan nama ekspedisinya di Update Status SJ dahulu.`,
+    );
+  }
+  const g = grup[0];
+  if (!(Number(g.total) > 0)) {
+    throw new Error(`Biaya kirim resi ${nomorResi} masih 0.`);
+  }
+
+  const [[v]] = await db.query(
+    `SELECT COUNT(*) AS n, IFNULL(MAX(voud_vou_nomor), '') AS vou
+     FROM tvoucher_dtl
+     WHERE voud_nota = ? AND voud_type = 'RES' AND voud_vou_nomor <> ?`,
+    [nomorResi, excludeVou],
+  );
+
+  return {
+    nomor: nomorResi,
+    expedisi: g.expedisi,
+    jmlSj: Number(g.jmlSj),
+    total: Number(g.total),
+    tanggal: g.tanggal,
+    vouLain: Number(v.n) > 0 ? v.vou : "",
+  };
+};
+
 // ── Cek tutup buku — sama pola dengan voucherPembayaranService.js ────
 const cekIsTutupBuku = async (tanggal) => {
   const today = new Date();
@@ -386,7 +439,33 @@ const getNotaDetail = async (
   supKode = "",
 ) => {
   const prefix = kode.substring(0, 3).toUpperCase();
+
   const resolvedType = type || prefix;
+
+  if (type === "RES") {
+    const info = await getInfoResiSj(kode);
+    if (!info) {
+      throw new Error(`Resi ${kode} tidak ditemukan di Update Status SJ.`);
+    }
+    if (info.vouLain) {
+      throw new Error(
+        `Resi ${info.nomor} sudah ada di voucher ${info.vouLain}.`,
+      );
+    }
+    return {
+      tipe: "RES",
+      nomor: info.nomor,
+      tanggal: info.tanggal,
+      keterangan: `${info.expedisi || "-"} | ${info.jmlSj} SJ`,
+      jenis: "",
+      nilai: info.total,
+      nilaiMax: info.total,
+      bs: 0,
+      tarif: 0,
+      potongan: 0,
+      total: info.total,
+    };
+  }
 
   if (prefix === "PBG") {
     const [[lain]] = await db.query(
@@ -992,6 +1071,25 @@ const searchNota = async (type, supKode, search = "") => {
            ORDER BY x.Nomor DESC LIMIT 100`;
     params.push(supKode);
     if (search) params.push(like);
+  } else if (type === "RES") {
+    // Tanpa filter supplier. Hanya resi satu ekspedisi, biaya > 0, belum di voucher.
+    sql = `SELECT h.nomor_resi AS Nomor,
+                  IFNULL(DATE_FORMAT(MIN(h.tanggal_kirim), '%Y-%m-%d'), '') AS Tanggal,
+                  CONVERT(CONCAT(COUNT(*), ' SJ | ', FORMAT(SUM(IFNULL(h.biaya_kirim, 0)), 0)) USING utf8mb4) COLLATE utf8mb4_general_ci AS Keterangan,
+                  IFNULL(MAX(h.expedisi), '') AS Supplier
+           FROM tsj_hdr h
+           WHERE IFNULL(h.nomor_resi, '') <> ''
+             AND h.sj_status_otomatis <> 1
+             ${search ? "AND (h.nomor_resi LIKE ? OR h.expedisi LIKE ?)" : ""}
+             AND NOT EXISTS (
+               SELECT 1 FROM tvoucher_dtl v
+               WHERE v.voud_type = 'RES' AND v.voud_nota = h.nomor_resi
+             )
+           GROUP BY h.nomor_resi
+           HAVING SUM(IFNULL(h.biaya_kirim, 0)) > 0
+              AND COUNT(DISTINCT h.expedisi) <= 1
+           ORDER BY MIN(h.tanggal_kirim) DESC LIMIT 100`;
+    if (search) params.push(like, like);
   } else {
     throw new Error("Tipe tidak dikenali.");
   }
@@ -1052,7 +1150,7 @@ const getDetailForm = async (nomor) => {
   const [rows] = await db.query(
     `SELECT h.vou_nomor, DATE_FORMAT(h.vou_tanggal,'%Y-%m-%d') AS vou_tanggal,
             h.vou_sup_kode, h.vou_disc, h.vou_total, h.vou_keterangan,
-            h.vou_nomor_pajak, h.vou_sts_ppn, h.vou_ppn,
+            h.vou_nomor_pajak, h.vou_nomor_invoice, h.vou_sts_ppn, h.vou_ppn,
             d.voud_nota, DATE_FORMAT(d.voud_tgl_nota,'%Y-%m-%d') AS voud_tgl_nota,
             d.voud_type, d.voud_total AS voud_nilai,
             d.voud_bs, d.voud_tarifbs,
@@ -1138,6 +1236,32 @@ const getDetailForm = async (nomor) => {
     tambah: Number(r.tambah) === 1,
   }));
 
+  // Potongan (akun UM PAJAK / HUTANG PAJAK). Dua langkah, bukan JOIN lintas
+  // schema, supaya tidak kena collation mismatch.
+  const [dtl3] = await db.query(
+    `SELECT voud3_rek_kode AS rekKode, voud3_keterangan AS keterangan,
+            voud3_persen AS persen, voud3_nilai AS nilai
+     FROM tvoucher_dtl3
+     WHERE voud3_vou_nomor = ?
+     ORDER BY voud3_nourut`,
+    [nomor],
+  );
+  const namaRek = new Map();
+  if (dtl3.length) {
+    const [rek] = await db.query(
+      `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
+      [dtl3.map((r) => r.rekKode)],
+    );
+    for (const r of rek) namaRek.set(r.rek_kode, r.rek_nama);
+  }
+  const potongan = dtl3.map((r) => ({
+    rekKode: r.rekKode,
+    rekNama: namaRek.get(r.rekKode) || "",
+    keterangan: r.keterangan || "",
+    persen: Number(r.persen) || 0,
+    nilai: Number(r.nilai) || 0,
+  }));
+
   // cekClose / pin5 status — Delphi cekClose, sekarang pakai
   // tutupBukuService (bukan cekTutupPeriode)
   let pin5Status = "";
@@ -1178,12 +1302,14 @@ const getDetailForm = async (nomor) => {
     supCabang: hdr.sup_cabang,
     supAtasnama: hdr.sup_atasnama,
     nomorPajak: hdr.vou_nomor_pajak || "",
+    nomorInvoice: hdr.vou_nomor_invoice || "",
     statusPpn: Number(hdr.vou_sts_ppn) === 1,
     ppn: Number(hdr.vou_ppn) || 0,
     disc: Number(hdr.vou_disc) || 0,
     keterangan: hdr.vou_keterangan || "",
     detail,
     bahanTambahan,
+    potongan,
     pin5Status,
     pin5Urut,
   };
@@ -1258,12 +1384,14 @@ const save = async (payload, userKode) => {
     tanggal,
     supKode,
     nomorPajak,
+    nomorInvoice,
     statusPpn,
     ppn,
     disc,
     keterangan,
     detail,
     bahanTambahan,
+    potongan,
     pin5Status,
     pin5Urut,
   } = payload;
@@ -1602,6 +1730,38 @@ const save = async (payload, userKode) => {
     }
   }
 
+  // Resi Surat Jalan (RES): satu resi hanya satu voucher. Nilai ditentukan SERVER
+  // (jumlah biaya kirim semua SJ ber-resi itu), bukan angka kiriman klien.
+  const daftarRes = detail.filter((d) => d.tipe === "RES" && d.nomor);
+  const unikRes = new Set(
+    daftarRes.map((d) => String(d.nomor).trim().toUpperCase()),
+  );
+  if (unikRes.size !== daftarRes.length) {
+    throw new Error(
+      "Resi yang sama tidak boleh dipanggil dua kali dalam satu voucher.",
+    );
+  }
+  for (const d of daftarRes) {
+    const info = await getInfoResiSj(d.nomor, isEdit ? nomor : "");
+    if (!info) {
+      throw new Error(`Resi ${d.nomor} tidak ditemukan di Update Status SJ.`);
+    }
+    if (info.vouLain) {
+      throw new Error(
+        `Resi ${info.nomor} sudah ada di voucher ${info.vouLain}.`,
+      );
+    }
+    Object.assign(d, {
+      nomor: info.nomor,
+      tanggal: info.tanggal,
+      nilai: info.total,
+      bs: 0,
+      tarif: 0,
+      potongan: 0,
+      total: info.total,
+    });
+  }
+
   // Hitung total — Delphi hitung():
   // BPB/BPJ/POE → += total, RET/PJG → -= total
   // Total = xtotal - xpotongan (bahan tambahan)
@@ -1619,6 +1779,7 @@ const save = async (payload, userKode) => {
           "POL",
           "POB",
           "PON",
+          "RES",
         ].includes(d.tipe)
       ) {
         xtotal += Number(d.total);
@@ -1632,6 +1793,62 @@ const save = async (payload, userKode) => {
   // bukan saat simpan — supaya Total header konsisten dengan total detail.
   const vouTotal = xtotal;
 
+  // ── Potongan ──
+  // Akun hanya boleh dari kelompok UM PAJAK / HUTANG PAJAK (dicek di server,
+  // payload klien tidak dipercaya). Persen > 0: nilai dihitung server dari
+  // total nota (vou_total gross); persen 0: nominal manual. Tanpa jurnal.
+  const potonganIsi = (Array.isArray(potongan) ? potongan : []).filter(
+    (p) => p && (p.rekKode || Number(p.nilai) > 0 || Number(p.persen) > 0),
+  );
+  const potonganFinal = [];
+  if (potonganIsi.length) {
+    const kodeRek = [
+      ...new Set(potonganIsi.map((p) => String(p.rekKode || ""))),
+    ];
+    const [rekOk] = await db.query(
+      `SELECT r.rek_kode
+       FROM finance.trekening r
+       INNER JOIN finance.tkelompok k ON k.kol_id = r.rek_kol_id
+       WHERE r.rek_kode IN (?) AND r.rek_isaktif = 0
+         AND k.kol_nama IN ('UM PAJAK', 'HUTANG PAJAK')`,
+      [kodeRek],
+    );
+    const sah = new Set(rekOk.map((r) => r.rek_kode));
+    for (const p of potonganIsi) {
+      const kode = String(p.rekKode || "");
+      if (!kode) throw new Error("Potongan: account belum dipilih.");
+      if (!sah.has(kode))
+        throw new Error(
+          `Potongan: account ${kode} bukan akun UM PAJAK / HUTANG PAJAK.`,
+        );
+      const persen = Number(p.persen) || 0;
+      if (persen < 0 || persen > 100)
+        throw new Error("Potongan: persen harus antara 0 dan 100.");
+      const nilai =
+        persen > 0 ? round2((vouTotal * persen) / 100) : round2(p.nilai);
+      if (!(nilai > 0))
+        throw new Error(`Potongan ${kode}: nilai harus lebih dari 0.`);
+      potonganFinal.push({
+        rekKode: kode,
+        keterangan: String(p.keterangan || "").slice(0, 100),
+        persen,
+        nilai,
+      });
+    }
+    const bahanNet = bahanIsi.reduce(
+      (s, b) =>
+        s +
+        (b.tambah ? -1 : 1) * (Number(b.jumlah) || 0) * (Number(b.harga) || 0),
+      0,
+    );
+    const totalPotongan = potonganFinal.reduce((s, p) => s + p.nilai, 0);
+    if (vouTotal - bahanNet - (Number(disc) || 0) - totalPotongan < -0.005)
+      throw new Error("Total potongan melebihi nilai voucher.");
+  }
+
+  const invoice = String(nomorInvoice || "")
+    .trim()
+    .slice(0, 50);
   const tahun = tanggal.substring(0, 4);
   const conn = await db.getConnection();
   await conn.beginTransaction();
@@ -1643,6 +1860,7 @@ const save = async (payload, userKode) => {
       await conn.query(
         `UPDATE tvoucher_hdr SET
            vou_tanggal = ?, vou_sup_kode = ?, vou_nomor_pajak = ?,
+           vou_nomor_invoice = ?,
            vou_sts_ppn = ?, vou_ppn = ?, vou_disc = ?, vou_total = ?,
            vou_keterangan = ?, date_modified = NOW(), user_modified = ?
          WHERE vou_nomor = ?`,
@@ -1650,6 +1868,7 @@ const save = async (payload, userKode) => {
           tanggal,
           supKode,
           nomorPajak,
+          invoice,
           statusPpn ? 1 : 0,
           ppn || 0,
           disc || 0,
@@ -1664,15 +1883,17 @@ const save = async (payload, userKode) => {
       anomor = await getMaxNomor(tahun);
       await conn.query(
         `INSERT INTO tvoucher_hdr
-           (vou_nomor, vou_tanggal, vou_sup_kode, vou_nomor_pajak,
+          (vou_nomor, vou_tanggal, vou_sup_kode, vou_nomor_pajak,
+            vou_nomor_invoice,
             vou_sts_ppn, vou_ppn, vou_disc, vou_total, vou_keterangan,
             date_create, user_create)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
         [
           anomor,
           tanggal,
           supKode,
           nomorPajak || "",
+          invoice,
           statusPpn ? 1 : 0,
           ppn || 0,
           disc || 0,
@@ -1739,6 +1960,19 @@ const save = async (payload, userKode) => {
           ],
         );
       }
+    }
+
+    await conn.query(`DELETE FROM tvoucher_dtl3 WHERE voud3_vou_nomor = ?`, [
+      deleteNomor,
+    ]);
+    for (const [i, p] of potonganFinal.entries()) {
+      await conn.query(
+        `INSERT INTO tvoucher_dtl3
+           (voud3_vou_nomor, voud3_nourut, voud3_rek_kode,
+            voud3_keterangan, voud3_persen, voud3_nilai)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [anomor, i + 1, p.rekKode, p.keterangan, p.persen, p.nilai],
+      );
     }
 
     // ── Rujukan Rekap Pembayaran ──
@@ -1875,7 +2109,7 @@ const searchVoucherRealisasi = async (q = "", excludeNomor = "") => {
     `SELECT h.vou_nomor AS Nomor,
             DATE_FORMAT(h.vou_tanggal, '%Y-%m-%d') AS Tanggal,
             s.sup_nama AS Supplier,
-            (h.vou_total - h.vou_disc) AS Total
+            ${sqlNominalVoucher("h")} AS Total
      FROM tvoucher_hdr h
      INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
      WHERE h.vou_nomor NOT IN (
@@ -1894,7 +2128,7 @@ const loadVoucherRealisasiDetail = async (vouNomor, currentNomor = "") => {
   const [[row]] = await db.query(
     `SELECT h.vou_nomor AS vouNomor, s.sup_nama AS supplier,
             DATE_FORMAT(h.vou_tanggal, '%Y-%m-%d') AS tanggalVou,
-            (h.vou_total - h.vou_disc) AS nilai,
+            ${sqlNominalVoucher("h")} AS nilai,
             h.vou_status_realisasi AS statusReal
      FROM tvoucher_hdr h
      INNER JOIN tsupplier s ON s.sup_kode = h.vou_sup_kode
@@ -1931,7 +2165,7 @@ const getDetailFormRealisasi = async (nomor) => {
             a.account, IFNULL(d.perushd_bank, '') AS namaAccount,
             b.vou_nomor AS vouNomor, s.sup_nama AS supplier,
             DATE_FORMAT(h.vou_tanggal, '%Y-%m-%d') AS tanggalVou,
-            (h.vou_total - h.vou_disc) AS nilai
+            ${sqlNominalVoucher("h")} AS nilai
      FROM bayar_debet a
      INNER JOIN tkodebayar kb ON kb.kb_kode = a.kode
      INNER JOIN bayar_debet_detail b ON b.nomor = a.nomor
@@ -1966,6 +2200,17 @@ const getDetailFormRealisasi = async (nomor) => {
 const saveRealisasi = async (payload, userKode) => {
   const { isEdit, nomor, kodeBayar, account, tanggal, tanggalTempo, detail } =
     payload;
+  const [netRows] = await db.query(
+    `SELECT h.vou_nomor AS nomor, ${sqlNominalVoucher("h")} AS nilai
+     FROM tvoucher_hdr h WHERE h.vou_nomor IN (?)`,
+    [detail.map((d) => d.vouNomor).concat(["-"])],
+  );
+  const petaNet = new Map(netRows.map((r) => [r.nomor, Number(r.nilai)]));
+  for (const d of detail) {
+    if (!petaNet.has(d.vouNomor))
+      throw new Error(`Voucher ${d.vouNomor} tidak ditemukan.`);
+    d.nilai = petaNet.get(d.vouNomor);
+  }
   const total = detail.reduce((s, d) => s + Number(d.nilai), 0);
   const conn = await db.getConnection();
   try {

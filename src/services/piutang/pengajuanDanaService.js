@@ -1,5 +1,9 @@
 const db = require("../../config/database");
-const { getRefPgjBbk } = require("../pembelian/uangMukaService");
+const {
+  getRefPgjBbk,
+  getRefPgjPjt,
+  getRefPgjTerpakai,
+} = require("../pembelian/uangMukaService");
 
 // Cek status GA user berdasarkan tabel ga2.tuser (login system terpisah,
 // lihat uLogin.pas ga2 — frmMenu.USERGA := user_ga, keyed by user_kode).
@@ -13,18 +17,31 @@ const getGaUserStatus = async (userKode) => {
   return Number(rows[0].user_ga) === 1;
 };
 
-// Tandai pengajuan yang itemnya sudah dibayar lewat BBK.
-const tandaiBbk = async (rows) => {
-  const peta = await getRefPgjBbk();
-  const perNomor = new Map();
-  for (const [k, bbk] of peta) {
+const kelompokPerNomor = (peta) => {
+  const hasil = new Map();
+  for (const [k, ref] of peta) {
     const nomor = k.split("|")[0];
-    const p = perNomor.get(nomor) || { item: 0, bbk: new Set() };
+    const p = hasil.get(nomor) || { item: 0, ref: new Set() };
     p.item += 1;
-    bbk.split(", ").forEach((b) => p.bbk.add(b));
-    perNomor.set(nomor, p);
+    ref.split(", ").forEach((b) => p.ref.add(b));
+    hasil.set(nomor, p);
   }
-  const nomorAda = rows.map((r) => r.Nomor).filter((n) => perNomor.has(n));
+  return hasil;
+};
+
+// Tandai pengajuan yang itemnya sudah dibayar lewat BBK (termasuk realisasi
+// Pengajuan Transfer) atau sedang diajukan di Pengajuan Transfer.
+const tandaiBbk = async (rows) => {
+  const [peta, petaPjt] = await Promise.all([
+    getRefPgjBbk(),
+    getRefPgjPjt("", true),
+  ]);
+  const perNomor = kelompokPerNomor(peta);
+  const perNomorPjt = kelompokPerNomor(petaPjt);
+
+  const nomorAda = rows
+    .map((r) => r.Nomor)
+    .filter((n) => perNomor.has(n) || perNomorPjt.has(n));
   const aktif = new Map();
   if (nomorAda.length) {
     const [cnt] = await db.query(
@@ -38,16 +55,27 @@ const tandaiBbk = async (rows) => {
   }
   return rows.map((r) => {
     const p = perNomor.get(r.Nomor);
-    if (!p) return { ...r, BbkItem: 0, BbkNomor: "" };
-    const semua = p.item >= (aktif.get(r.Nomor) || Infinity);
+    const q = perNomorPjt.get(r.Nomor);
+    if (!p && !q)
+      return { ...r, BbkItem: 0, BbkNomor: "", PjtItem: 0, PjtNomor: "" };
+
+    const total = aktif.get(r.Nomor) || Infinity;
+    const nBbk = p ? p.item : 0;
+    const nPjt = q ? q.item : 0;
     let status = r.StatusFinance;
-    if (semua && !["CLOSE", "CANCEL"].includes(status)) status = "DIBAYAR_BBK";
-    else if (!semua && !status) status = "SEBAGIAN_BBK";
+    if (!["CLOSE", "CANCEL"].includes(status)) {
+      if (nBbk >= total) status = "DIBAYAR_BBK";
+      else if (nPjt > 0 && nBbk + nPjt >= total) status = "DIAJUKAN_TRANSFER";
+      else if (!status)
+        status = nBbk > 0 ? "SEBAGIAN_BBK" : "SEBAGIAN_TRANSFER";
+    }
     return {
       ...r,
       StatusFinance: status,
-      BbkItem: p.item,
-      BbkNomor: [...p.bbk].join(", "),
+      BbkItem: nBbk,
+      BbkNomor: p ? [...p.ref].join(", ") : "",
+      PjtItem: nPjt,
+      PjtNomor: q ? [...q.ref].join(", ") : "",
     };
   });
 };
@@ -207,9 +235,11 @@ const deleteData = async (nomor) => {
   if (Verified === "Sudah")
     throw new Error("Gak bisa dihapus. Sudah di buatkan permintaan oleh GA.");
 
-  const peta = await getRefPgjBbk();
+  const peta = await getRefPgjTerpakai();
   if ([...peta.keys()].some((k) => k.startsWith(`${nomor}|`)))
-    throw new Error("Gak bisa dihapus. Item sudah dibayar lewat BBK.");
+    throw new Error(
+      "Gak bisa dihapus. Item sudah dibayar lewat BBK atau diajukan di Pengajuan Transfer.",
+    );
 
   await db.query(`DELETE FROM ga2.tpengajuan2_hdr WHERE pjh_nomor = ?`, [
     nomor,

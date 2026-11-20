@@ -211,6 +211,7 @@ const uangMukaRealisasiRoutes = require("./routes/pembelian/uangMukaRealisasiRou
 const uangMukaPenyelesaianRoutes = require("./routes/pembelian/uangMukaPenyelesaianRoutes");
 const pengajuanTransferRoutes = require("./routes/pembelian/pengajuanTransferRoutes");
 const pengajuanTransferFormRoutes = require("./routes/pembelian/pengajuanTransferFormRoutes");
+const inputFakturVoucherRoutes = require("./routes/pembelian/inputFakturVoucherRoutes");
 const tindakLanjutQcRoutes = require("./routes/pembelian/tindakLanjutQcRoutes");
 
 // Penjualan Routes
@@ -662,6 +663,7 @@ app.use("/api/pembelian/uang-muka-realisasi", uangMukaRealisasiRoutes);
 app.use("/api/pembelian/uang-muka-penyelesaian", uangMukaPenyelesaianRoutes);
 app.use("/api/pembelian/pengajuan-transfer", pengajuanTransferRoutes);
 app.use("/api/pembelian/pengajuan-transfer-form", pengajuanTransferFormRoutes);
+app.use("/api/pembelian/input-faktur-pajak", inputFakturVoucherRoutes);
 app.use("/api/pembelian/tindak-lanjut-qc", tindakLanjutQcRoutes);
 
 app.use("/api/ppic/proof", proofRoutes);

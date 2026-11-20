@@ -109,6 +109,16 @@ const getKlaimKasKecilOptions = async (req, res) => {
   }
 };
 
+const getPengajuanDanaOptions = async (req, res) => {
+  try {
+    const { search } = req.query;
+    const data = await svc.getPengajuanDanaOptions(search);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 const getDetailForm = async (req, res) => {
   try {
     const data = await svc.getDetailForm(req.query.nomor);
@@ -190,6 +200,15 @@ const getRekapPanggilRows = async (req, res) => {
   }
 };
 
+const getSisaCarryOver = async (req, res) => {
+  try {
+    const data = await svc.getSisaCarryOver();
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getAccountAll,
@@ -204,7 +223,9 @@ module.exports = {
   getBkkOptions,
   getPoLainOptions,
   getKlaimKasKecilOptions,
+  getPengajuanDanaOptions,
   getDetailForm,
+  getSisaCarryOver,
   save,
   update,
   realisasi,

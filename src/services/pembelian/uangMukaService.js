@@ -77,6 +77,33 @@ const getRefPgjBbk = async (kecualiBbk = "") => {
   return new Map(rows.map((r) => [r.k, r.bbk]));
 };
 
+// Item Pengajuan Dana yang DITAHAN Pengajuan Transfer (baris tidak batal):
+// Map "nomor|nourut" -> "nomor PJT". hanyaBelumRealisasi = true untuk status
+// "diajukan transfer"; yang sudah direalisasi terbaca lewat getRefPgjBbk
+// (jurnal BBK otomatis membawa jurd_ref 'PGJ|...').
+const getRefPgjPjt = async (kecualiPjt = "", hanyaBelumRealisasi = false) => {
+  const [rows] = await db.query(
+    `SELECT ptd_pgj AS k,
+            GROUP_CONCAT(DISTINCT ptd_nomor ORDER BY ptd_nomor SEPARATOR ', ') AS pjt
+     FROM finance.tpengajuan_transfer_dtl
+     WHERE ptd_pgj <> '' AND ptd_batal = '' AND ptd_nomor <> ?
+       ${hanyaBelumRealisasi ? "AND ptd_jur_no = ''" : ""}
+     GROUP BY ptd_pgj`,
+    [String(kecualiPjt || "")],
+  );
+  return new Map(rows.map((r) => [r.k, r.pjt]));
+};
+
+// Semua item yang sudah tidak bebas: dibayar BBK (termasuk realisasi PJT) atau ditahan PJT.
+const getRefPgjTerpakai = async (kecualiBbk = "", kecualiPjt = "") => {
+  const [bbk, pjt] = await Promise.all([
+    getRefPgjBbk(kecualiBbk),
+    getRefPgjPjt(kecualiPjt),
+  ]);
+  for (const [k, v] of pjt) if (!bbk.has(k)) bbk.set(k, v);
+  return bbk;
+};
+
 // Kunci disaring regex sebelum di-inline, jadi aman dari injeksi.
 const sqlBukanBbk = (peta, nomorExpr, nourutExpr) => {
   const daftar = [...peta.keys()].filter((k) =>
@@ -101,7 +128,7 @@ const getOutstanding = async ({
 }) => {
   const searchParam = `%${search}%`;
 
-  const pgjBbk = await getRefPgjBbk();
+  const pgjBbk = await getRefPgjTerpakai();
   const kecualiBbk = sqlBukanBbk(pgjBbk, "a.pjh_nomor", "d.pjd_nourut");
 
   // P01 dan HO- setara Head Office: lihat yang ditujukan ke HO- maupun P01,
@@ -395,7 +422,7 @@ const getOutstanding = async ({
 // ── OUTSTANDING DETAIL (per sumber) ──
 const getOutstandingDetail = async (sumber, nomorHeader) => {
   if (sumber === "PENGAJUAN_DANA") {
-    const pgjBbk = await getRefPgjBbk();
+    const pgjBbk = await getRefPgjTerpakai();
     const [rows] = await db.query(
       `SELECT
          a.pjd_nourut AS ItemNourut,
@@ -755,7 +782,7 @@ const getItemPengajuanDanaBbk = async ({
 
   // Item yang sudah dibayar BBK lain disaring di JS (nomor BBK sendiri
   // dikecualikan, jadi saat edit item miliknya tetap tampil).
-  const terpakai = await getRefPgjBbk(bbkNomor);
+  const terpakai = await getRefPgjTerpakai(bbkNomor);
   const sisa = rows
     .filter((r) => !terpakai.has(`${r.pjhNomor}|${r.itemNourut}`))
     .slice(0, 200);
@@ -798,11 +825,12 @@ const getItemPengajuanDanaBbk = async ({
   });
 };
 
-// Dipanggil di dalam transaksi BBK (conn InnoDB).
+// Dipanggil di dalam transaksi BBK / Pengajuan Transfer (conn InnoDB).
+// pjtNomor: baris milik PJT ini sendiri tidak dianggap "ditahan PJT lain".
 const kunciItemPengajuanDanaBbk = async (
   conn,
   items,
-  { sebelum, bbkNomor = "" },
+  { sebelum, bbkNomor = "", pjtNomor = "" },
 ) => {
   const hasil = new Map();
   for (const it of items) {
@@ -852,6 +880,16 @@ const kunciItemPengajuanDanaBbk = async (
         `Item ${label} sudah dibayar lewat BBK ${lain[0].nomor}.`,
       );
 
+    const [pjtLain] = await conn.query(
+      `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl
+       WHERE ptd_pgj = ? AND ptd_batal = '' AND ptd_nomor <> ? LIMIT 1`,
+      [`${nomor}|${nourut}`, String(pjtNomor || "")],
+    );
+    if (pjtLain.length)
+      throw new Error(
+        `Item ${label} sudah diajukan di Pengajuan Transfer ${pjtLain[0].ptd_nomor}.`,
+      );
+
     hasil.set(`${nomor}|${nourut}`, { nama: String(ok[0].nama).trim() });
   }
   return hasil;
@@ -866,4 +904,6 @@ module.exports = {
   kunciItemPengajuanDanaBbk,
   SQL_SYARAT_ITEM_BBK,
   getRefPgjBbk,
+  getRefPgjPjt,
+  getRefPgjTerpakai,
 };

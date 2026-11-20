@@ -2,6 +2,19 @@ const db = require("../../config/database");
 
 const MENU_ID = "155";
 
+// Resi yang sudah dipanggil ke Voucher Pembayaran (tipe RES) tidak boleh berubah:
+// nomor resi atau biaya kirim yang berubah membuat nominal voucher tidak lagi sama.
+const cariVoucherResi = async (resi) => {
+  const r = String(resi || "").trim();
+  if (!r) return "";
+  const [[row]] = await db.query(
+    `SELECT voud_vou_nomor AS nomor FROM tvoucher_dtl
+     WHERE voud_type = 'RES' AND voud_nota = ? LIMIT 1`,
+    [r],
+  );
+  return row ? row.nomor : "";
+};
+
 // ═══════════════════════════════════════════════════════════
 // BROWSE
 // ═══════════════════════════════════════════════════════════
@@ -228,6 +241,7 @@ const getFormById = async (nomor, canLihatCus = false) => {
     [nomor],
   );
   if (!hdr) throw new Error("Nomor tersebut belum ada.");
+  hdr.resi_voucher = await cariVoucherResi(hdr.nomor_resi);
 
   // Detail — sesuai Delphi: hitung sudah/kurang per row (exclude diri sendiri)
   const [dtl] = await db.query(
@@ -292,6 +306,16 @@ const saveStatus = async (nomor, payload) => {
   const statusIndex = Number(payload.statusIndex);
 
   if (statusIndex === 0) {
+    const [[lama]] = await db.query(
+      `SELECT nomor_resi FROM tsj_hdr WHERE sj_nomor = ?`,
+      [nomor],
+    );
+    const vouLama = await cariVoucherResi(lama?.nomor_resi);
+    if (vouLama) {
+      throw new Error(
+        `Resi ${lama.nomor_resi} sudah dipanggil ke Voucher Pembayaran ${vouLama}. Status tidak bisa dikembalikan ke awal.`,
+      );
+    }
     // Status 0 — reset semua field ke NULL, sesuai Delphi (tidak berubah)
     await db.query(
       `UPDATE tsj_hdr SET
@@ -341,6 +365,29 @@ const saveStatus = async (nomor, payload) => {
     tanggal_kirim = payload.tanggalKirim ?? tanggal_kirim;
     nomor_resi = payload.nomorResi ?? nomor_resi;
     biaya_kirim = payload.biayaKirim ?? biaya_kirim;
+
+    // Resi yang sudah di Voucher Pembayaran: resi dan biaya terkunci
+    const resiLama = String(existing.nomor_resi || "").trim();
+    const resiBaru = String(nomor_resi || "").trim();
+    const vouLama = await cariVoucherResi(resiLama);
+    if (
+      vouLama &&
+      (resiBaru !== resiLama ||
+        Number(biaya_kirim || 0) !== Number(existing.biaya_kirim || 0))
+    ) {
+      throw new Error(
+        `Resi ${resiLama} sudah dipanggil ke Voucher Pembayaran ${vouLama}. Nomor resi dan biaya kirim tidak bisa diubah.`,
+      );
+    }
+    // SJ lain tidak boleh diarahkan ke resi yang nominalnya sudah dibayar
+    if (resiBaru && resiBaru !== resiLama) {
+      const vouBaru = await cariVoucherResi(resiBaru);
+      if (vouBaru) {
+        throw new Error(
+          `Resi ${resiBaru} sudah dipanggil ke Voucher Pembayaran ${vouBaru}. Tidak bisa ditambah SJ lagi.`,
+        );
+      }
+    }
   } else if (statusIndex === 2) {
     // Penyerahan Dokumen Kembali
     tanggal_kembali = payload.tanggalKembali ?? tanggal_kembali;

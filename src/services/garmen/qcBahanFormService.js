@@ -1249,4 +1249,5 @@ module.exports = {
   saveLampiran,
   deleteLampiran,
   saveData,
+  getParam,
 };

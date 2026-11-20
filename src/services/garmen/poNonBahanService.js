@@ -82,7 +82,8 @@ const getBrowse = async (startDate, endDate, jenis, cabang, user) => {
   const queryDetail = `
     SELECT 
       d.pod_nomor AS Nomor, d.pod_mb_nomor AS NoMinta, d.pod_brg_kode AS Kode,
-      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama, 
+      IF(b.brg_note="", b.brg_nama, CONCAT(b.brg_nama, " - ", b.brg_note)) AS Nama,
+      d.pod_namaext AS NamaExt,
       b.brg_satuan AS Satuan,
       ${selectSpesifikasi}
       d.pod_jumlah AS Jumlah,

@@ -1,6 +1,9 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 const { assertVoucherTidakDiRekap } = require("./rekapVoucherGuardService");
+const {
+  sqlNominalVoucher,
+} = require("../pembelian/pengajuanTransferFormService");
 
 // Baris tipe POB (PO Bahan/Greige/Celup dipanggil langsung ke voucher):
 // voud_nota = nomor PO, jenisnya dibaca dari tpo_hdr.po_jenis.
@@ -20,7 +23,23 @@ const SQL_JOIN_NONBAHAN = `LEFT JOIN tgarmenpo_hdr pon
 const SQL_LABEL_NONBAHAN = `CASE d.voud_type
          WHEN 'PON' THEN CONCAT('PO Non Bahan ', CONVERT(IFNULL(pon.po_jenis, '') USING utf8mb4) COLLATE utf8mb4_general_ci)
          WHEN 'BPG' THEN CONVERT(IFNULL(gb.bpb_ket, '') USING utf8mb4) COLLATE utf8mb4_general_ci
+         WHEN 'RES' THEN 'Resi Surat Jalan'
          ELSE '' END`;
+
+// Nama lengkap tipe nota (tvoucher_dtl.voud_type), sama dengan pilihan tipe di
+// VoucherPembayaranFormView. Alias yang dipakai: dj = tvoucher_dtl.
+// Tipe yang belum terdaftar tampil kodenya.
+const SQL_NAMA_TIPE = `CASE dj.voud_type
+         WHEN 'BPB' THEN 'BPB Bahan'
+         WHEN 'BPJ' THEN 'BPB Jasa'
+         WHEN 'MMT' THEN 'BPB MMT'
+         WHEN 'BPE' THEN 'BPB PO Ext MMT'
+         WHEN 'BPG' THEN 'BPB Non Bahan'
+         WHEN 'POL' THEN 'Rekap Belanja'
+         WHEN 'POB' THEN 'PO Bahan'
+         WHEN 'PON' THEN 'PO Non Bahan'
+         WHEN 'RES' THEN 'Resi Surat Jalan'
+         ELSE dj.voud_type END`;
 
 // ── Browse Master ─────────────────────────────────────────────────────
 // Delphi btnRefreshClick SQLMaster
@@ -43,12 +62,17 @@ const getBrowse = async (startDate, endDate) => {
          FROM tvoucher_dtl2 d2
          WHERE d2.voud2_vou_nomor = a.vou_nomor
        ), 0)                                              AS BahanTambahan,
-       a.vou_total - IFNULL((
-         SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
-         FROM tvoucher_dtl2 d2
-         WHERE d2.voud2_vou_nomor = a.vou_nomor
-       ), 0) - IFNULL(a.vou_disc, 0)                      AS Net,
+       ${sqlNominalVoucher("a")}                          AS Net,
+       IFNULL((
+         SELECT SUM(voud3_nilai) FROM tvoucher_dtl3
+         WHERE voud3_vou_nomor = a.vou_nomor
+       ), 0)                                              AS Potongan,
        IFNULL(a.vou_disc, 0)                             AS Disc,
+       IFNULL((
+         SELECT GROUP_CONCAT(DISTINCT ${SQL_NAMA_TIPE} ORDER BY ${SQL_NAMA_TIPE} SEPARATOR ', ')
+         FROM tvoucher_dtl dj
+         WHERE dj.voud_vou_nomor = a.vou_nomor AND dj.voud_type <> ''
+       ), '')                                             AS Jenis,
        IFNULL(a.vou_status_realisasi, '')                AS Status,
        IFNULL(pt.ptd_nomor, IFNULL((
          SELECT MAX(bd.vou_link) FROM bayar_debet_detail bd
@@ -223,6 +247,11 @@ const deleteData = async (nomor) => {
        WHERE voud2_vou_nomor = ?`,
       [nomor],
     );
+    await conn.query(
+      `DELETE FROM tvoucher_dtl3
+       WHERE voud3_vou_nomor = ?`,
+      [nomor],
+    );
     // Hapus header
     const [result] = await conn.query(
       `DELETE FROM tvoucher_hdr
@@ -353,7 +382,7 @@ const getPrintData = async (nomor) => {
   const [rows] = await db.query(
     `SELECT
        h.vou_nomor, DATE_FORMAT(h.vou_tanggal,'%d/%m/%Y') AS vou_tanggal,
-       h.vou_nomor_pajak, h.vou_total, h.vou_disc,
+       h.vou_nomor_pajak, h.vou_nomor_invoice, h.vou_total, h.vou_disc,
        h.vou_keterangan, h.user_create,
        DATE_FORMAT(h.date_create,'%d/%m/%Y %H:%i:%s') AS date_create,
        d.voud_nota, d.voud_type,
@@ -426,7 +455,35 @@ const getPrintData = async (nomor) => {
     jumlah: Number(x.jumlah),
     nilai: Number(x.nilai),
   }));
-  return rows.map((r) => ({ ...r, bahan: bahanList, rincian: rincianList }));
+  const [pot] = await db.query(
+    `SELECT voud3_rek_kode AS rekKode, voud3_keterangan AS keterangan,
+            voud3_persen AS persen, voud3_nilai AS nilai
+     FROM tvoucher_dtl3
+     WHERE voud3_vou_nomor = ?
+     ORDER BY voud3_nourut`,
+    [nomor],
+  );
+  const namaRek = new Map();
+  if (pot.length) {
+    const [rek] = await db.query(
+      `SELECT rek_kode, rek_nama FROM finance.trekening WHERE rek_kode IN (?)`,
+      [pot.map((r) => r.rekKode)],
+    );
+    for (const r of rek) namaRek.set(r.rek_kode, r.rek_nama);
+  }
+  const potonganList = pot.map((r) => ({
+    rekKode: r.rekKode,
+    rekNama: namaRek.get(r.rekKode) || "",
+    keterangan: r.keterangan || "",
+    persen: Number(r.persen) || 0,
+    nilai: Number(r.nilai) || 0,
+  }));
+  return rows.map((r) => ({
+    ...r,
+    bahan: bahanList,
+    rincian: rincianList,
+    potongan: potonganList,
+  }));
 };
 
 // Khusus filter pending dari dashboard — semua periode, belum ada PT
@@ -438,6 +495,7 @@ const getBrowsePendingAll = async () => {
        a.vou_sup_kode                                     AS KodeSupplier,
        IFNULL(b.sup_nama, '')                             AS Supplier,
        IFNULL(a.vou_nomor_pajak, '')                      AS NomorPajak,
+       IFNULL(a.vou_nomor_invoice, '')                    AS NomorInvoice,
        a.vou_total                                        AS Total,
        IFNULL((
          SELECT SUM(IF(d2.voud2_tambah = 1, -1, 1) * d2.voud2_harga * d2.voud2_jumlah)
@@ -494,7 +552,7 @@ const getBrowseDetailPendingAll = async () => {
        IFNULL(p.pojh_nomor, '')                          AS NomorPO,
        DATE_FORMAT(d.voud_tgl_nota, '%Y-%m-%d')          AS Tanggal,
        IFNULL(d.voud_type, '')                           AS Type,
-       IFNULL(NULLIF(p.pojh_keterangan, ''), ${SQL_LABEL_POB}) AS Keterangan,
+       COALESCE(NULLIF(p.pojh_keterangan, ''), NULLIF(${SQL_LABEL_POB}, ''), ${SQL_LABEL_NONBAHAN}) AS Keterangan,
        IFNULL(d.voud_total, 0)                           AS Total,
        IFNULL(s.spk_nomor, '')                           AS SpkNomor,
        IFNULL(s.spk_nama, '')                            AS SpkNama,
@@ -510,7 +568,8 @@ const getBrowseDetailPendingAll = async () => {
             ON p.pojh_nomor = bpj.bpj_po_nomor
      LEFT JOIN tspk s
             ON s.spk_nomor = p.pojh_spk_nomor
-     ${SQL_JOIN_POB}           
+     ${SQL_JOIN_POB}
+     ${SQL_JOIN_NONBAHAN}
      WHERE NOT EXISTS (
        SELECT 1 FROM finance.tpengajuan_transfer_dtl pt
        WHERE pt.ptd_trs = h.vou_nomor AND pt.ptd_batal = ''

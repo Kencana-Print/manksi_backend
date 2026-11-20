@@ -169,7 +169,11 @@ const checkKodeBahanExists = async (kode, excludeKode = "") => {
     return { exists: false, valid: false, message: "Kode bahan wajib diisi." };
   }
   if (k.length < 3) {
-    return { exists: false, valid: false, message: "Kode bahan minimal 3 karakter." };
+    return {
+      exists: false,
+      valid: false,
+      message: "Kode bahan minimal 3 karakter.",
+    };
   }
 
   // 1. Cek tbahan
@@ -207,8 +211,12 @@ const checkKodeBahanExists = async (kode, excludeKode = "") => {
 };
 
 const createMmt = async (data, user) => {
-  const kode = String(data.Bhn_kode || "").trim().toUpperCase();
-  const nama = String(data.Bhn_name || "").trim().toUpperCase();
+  const kode = String(data.Bhn_kode || "")
+    .trim()
+    .toUpperCase();
+  const nama = String(data.Bhn_name || "")
+    .trim()
+    .toUpperCase();
 
   if (!kode || kode.length < 3) {
     throw galat("Kode bahan MMT minimal 3 karakter.", 400);
@@ -223,23 +231,29 @@ const createMmt = async (data, user) => {
     throw galat(check.message, 409);
   }
 
-  const satuan = String(data.Bhn_satuan || "ROLL").trim().toUpperCase();
+  const satuan = String(data.Bhn_satuan || "ROLL")
+    .trim()
+    .toUpperCase();
   const jenis = String(data.Bhn_jb_kode || data.Jenis || "BB").trim();
   const ktgKode = data.bhn_ktg_kode || data.KtgKode || null;
   const gdgDefault = data.bhn_gdg_default || data.GdgDefault || "WH-16";
   const supKode = data.bhn_sup_kode || data.SupKode || null;
   const panjang = Number(data.Bhn_panjang) || 0;
   const lebar = Number(data.Bhn_lebar) || 0;
-  const status = ["F", "S", "N"].includes(String(data.bhn_status || data.Status || "").toUpperCase())
+  const status = ["F", "S", "N"].includes(
+    String(data.bhn_status || data.Status || "").toUpperCase(),
+  )
     ? String(data.bhn_status || data.Status).toUpperCase()
     : "S";
   const hrgBeli = Number(data.Bhn_hargabeli) || 0;
   const hrgJual = Number(data.bhn_hrgjual || data.HrgJual) || 0;
   const buffer = Number(data.Bhn_buffer) || 0;
   const ket = String(data.Bhn_ket || "").trim();
-  const isAktif = data.isAktif !== undefined ? (Number(data.isAktif) ? 0 : 1) : 0; // 0=aktif di tbahan
+  const isAktif =
+    data.isAktif !== undefined ? (Number(data.isAktif) ? 0 : 1) : 0; // 0=aktif di tbahan
   const isStok = data.isStok !== undefined ? (Number(data.isStok) ? 1 : 0) : 1;
-  const isExpired = data.isExpired !== undefined ? (Number(data.isExpired) ? 1 : 0) : 0;
+  const isExpired =
+    data.isExpired !== undefined ? (Number(data.isExpired) ? 1 : 0) : 0;
 
   await db.query(
     `INSERT INTO tbahan (
@@ -418,6 +432,16 @@ const createBahan = async (data, user, cabang) => {
     throw galat("Jenis SB khusus bahan spanduk.", 400);
   }
 
+  // Setting wajib: bagian dari kode bahan Garmen
+  const kdSetting = String(data.kdSetting || "").trim();
+  if (!kdSetting) throw galat("Setting wajib diisi.", 400);
+  const [cekSetting] = await db.query(
+    "SELECT bs_kode FROM tbahan_setting WHERE bs_kode = ? LIMIT 1",
+    [kdSetting],
+  );
+  if (cekSetting.length === 0)
+    throw galat(`Setting ${kdSetting} tidak ditemukan.`, 400);
+
   // Logic Penjahitan Kode (Delphi: edtkdJenis+edtkdwarna...)
   const ckdProject =
     data.project === "REGULER" ? "" : data.project.substring(0, 1);
@@ -489,26 +513,41 @@ const updateBahan = async (kode, data, user, cabang) => {
   }
 
   if (tipe === "MMT" || data.Tipe === "MMT" || data.bhn_divisi === "MMT") {
-    const nama = String(data.Bhn_name || "").trim().toUpperCase();
+    const nama = String(data.Bhn_name || "")
+      .trim()
+      .toUpperCase();
     if (!nama) throw galat("Nama bahan wajib diisi.", 400);
 
-    const satuan = String(data.Bhn_satuan || "ROLL").trim().toUpperCase();
+    const satuan = String(data.Bhn_satuan || "ROLL")
+      .trim()
+      .toUpperCase();
     const jenis = String(data.Bhn_jb_kode || data.Jenis || "BB").trim();
     const ktgKode = data.bhn_ktg_kode || data.KtgKode || null;
     const gdgDefault = data.bhn_gdg_default || data.GdgDefault || "WH-16";
     const supKode = data.bhn_sup_kode || data.SupKode || null;
     const panjang = Number(data.Bhn_panjang) || 0;
     const lebar = Number(data.Bhn_lebar) || 0;
-    const status = ["F", "S", "N"].includes(String(data.bhn_status || data.Status || "").toUpperCase())
+    const status = ["F", "S", "N"].includes(
+      String(data.bhn_status || data.Status || "").toUpperCase(),
+    )
       ? String(data.bhn_status || data.Status).toUpperCase()
       : "S";
     const hrgBeli = Number(data.Bhn_hargabeli) || 0;
     const hrgJual = Number(data.bhn_hrgjual || data.HrgJual) || 0;
     const buffer = Number(data.Bhn_buffer) || 0;
     const ket = String(data.Bhn_ket || "").trim();
-    const isAktif = data.isAktif !== undefined ? (Number(data.isAktif) ? 0 : 1) : (data.bhn_aktif !== undefined ? Number(data.bhn_aktif) : 0);
-    const isStok = data.isStok !== undefined ? (Number(data.isStok) ? 1 : 0) : 1;
-    const isExpired = data.isExpired !== undefined ? (Number(data.isExpired) ? 1 : 0) : 0;
+    const isAktif =
+      data.isAktif !== undefined
+        ? Number(data.isAktif)
+          ? 0
+          : 1
+        : data.bhn_aktif !== undefined
+          ? Number(data.bhn_aktif)
+          : 0;
+    const isStok =
+      data.isStok !== undefined ? (Number(data.isStok) ? 1 : 0) : 1;
+    const isExpired =
+      data.isExpired !== undefined ? (Number(data.isExpired) ? 1 : 0) : 0;
 
     await db.query(
       `UPDATE tbahan SET
@@ -595,7 +634,10 @@ const deleteBahan = async (kode, cabang) => {
   // Soft delete ala Delphi (bhn_aktif = 1)
   await db.query("UPDATE tbahan SET bhn_aktif = 1 WHERE bhn_kode = ?", [kode]);
   try {
-    await db.query("UPDATE tbarang_mmt SET brg_isaktif = 0 WHERE brg_kode = ?", [kode]);
+    await db.query(
+      "UPDATE tbarang_mmt SET brg_isaktif = 0 WHERE brg_kode = ?",
+      [kode],
+    );
   } catch (_e) {}
 };
 
@@ -635,8 +677,7 @@ const getLookups = async (category, cabang, tipe) => {
       break;
     case "satuan": {
       const akses = tipeAkses(cabang);
-      const efektif =
-        akses !== "SEMUA" ? akses : tipe;
+      const efektif = akses !== "SEMUA" ? akses : tipe;
       if (efektif === "SPANDUK") {
         return [
           { Kode: "YARD", Nama: "YARD" },

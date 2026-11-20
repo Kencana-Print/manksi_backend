@@ -1,4 +1,5 @@
 const db = require("../../config/database");
+const { getParam } = require("../garmen/qcBahanFormService");
 
 // Nilai pin_trs untuk pengajuan perubahan keputusan oleh Pembelian.
 // Sengaja dipisah dari "QC BAHAN" (pengajuan edit dokumen oleh Gudang)
@@ -7,6 +8,110 @@ const PIN_TRS = "QC KEPUTUSAN";
 
 const STATUS_VALID = ["MENUNGGU", "LANJUT", "REJECT", "SEBAGIAN", "TUNDA"];
 const KEPUTUSAN_VALID = ["LANJUT", "REJECT", "TUNDA"];
+
+const EPS = 1e-9;
+
+// Parameter roll yang menurunkan nilai, dibaca dari hasil yang tersimpan di tqc_bahan_roll.
+// Aturan sama dengan evalRoll di qcBahanFormService (nilai roll = terendah dari semua parameter).
+const masalahRoll = (x, p) => {
+  const up = (v) =>
+    String(v ?? "")
+      .trim()
+      .toUpperCase();
+  const m = [];
+
+  const g = up(x.qcr_h_gramasi);
+  if (g.includes("RENDAH") || g.includes("TINGGI")) {
+    m.push(`gramasi ${g.toLowerCase()}`);
+  }
+  const s = up(x.qcr_h_setting);
+  if (s.includes("RENDAH") || s.includes("TINGGI")) {
+    m.push(`setting ${s.toLowerCase()}`);
+  }
+
+  const warnaTxt = String(x.qcr_h_warna ?? "")
+    .trim()
+    .replace(",", ".");
+  const warna = Number(warnaTxt);
+  if (
+    warnaTxt !== "" &&
+    Number.isFinite(warna) &&
+    warna > p.warnaBatas3 + EPS
+  ) {
+    m.push("warna");
+  }
+
+  const cekNo = [
+    ["handfeel", x.qcr_h_handfeel],
+    ["bowing", x.qcr_h_bowing],
+    ["shrinkage", x.qcr_h_shrinkage],
+    ["kelunturan", x.qcr_h_kelunturan],
+    ["konstruksi", x.qcr_h_konstruksi],
+    ["kerataan", x.qcr_h_kerataan],
+    ["lebar", x.qcr_h_lebar],
+  ];
+  for (const [nama, v] of cekNo) {
+    if (up(v) === "NO") m.push(`${nama} NO`);
+  }
+  return m;
+};
+
+// Isi rows[].AlasanNilai. Satu query roll untuk semua dokumen yang bernilai < 3.
+const isiAlasanNilai = async (rows) => {
+  rows.forEach((r) => {
+    r.AlasanNilai =
+      Number(r.Penilaian) === 3 ? "Semua lot sesuai spesifikasi." : "";
+  });
+
+  const target = rows.filter(
+    (r) => Number(r.Penilaian) > 0 && Number(r.Penilaian) < 3,
+  );
+  if (target.length === 0) return;
+
+  const p = await getParam(db);
+  const [rolls] = await db.query(
+    `SELECT qcr_qc_nomor, qcr_lot, qcr_nilai, qcr_h_gramasi, qcr_h_setting,
+            qcr_h_warna, qcr_h_handfeel, qcr_h_bowing, qcr_h_shrinkage,
+            qcr_h_kelunturan, qcr_h_konstruksi, qcr_h_kerataan, qcr_h_lebar
+     FROM tqc_bahan_roll
+     WHERE qcr_qc_nomor IN (?)`,
+    [target.map((r) => r.Nomor)],
+  );
+
+  // nomor -> lot -> { total, bad, label }
+  const peta = new Map();
+  for (const x of rolls) {
+    const perLot = peta.get(x.qcr_qc_nomor) || new Map();
+    peta.set(x.qcr_qc_nomor, perLot);
+    const l = perLot.get(x.qcr_lot) || { total: 0, bad: 0, label: new Map() };
+    perLot.set(x.qcr_lot, l);
+
+    l.total += 1;
+    let m = masalahRoll(x, p);
+    const nilai = Number(x.qcr_nilai);
+    if (m.length === 0 && nilai > 0 && nilai < 3) m = ["tidak terlacak"];
+    if (m.length > 0) {
+      l.bad += 1;
+      m.forEach((k) => l.label.set(k, (l.label.get(k) || 0) + 1));
+    }
+  }
+
+  for (const r of target) {
+    const perLot = peta.get(r.Nomor);
+    const bagian = [];
+    if (perLot) {
+      for (const [lot, l] of perLot) {
+        if (l.bad === 0) continue;
+        const rinci = [...l.label]
+          .map(([k, n]) => `${k} (${n} roll)`)
+          .join(", ");
+        const awalan = perLot.size > 1 ? `Lot ${lot}: ` : "";
+        bagian.push(`${awalan}${l.bad} dari ${l.total} roll: ${rinci}`);
+      }
+    }
+    r.AlasanNilai = bagian.join("; ") || "Tidak terlacak dari data roll.";
+  }
+};
 
 // Status dokumen = ringkasan keputusan semua lot
 const hitungStatusDok = (keputusanList) => {
@@ -37,6 +142,7 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
       h.qc_vendor_greige AS VendorGreige,
       h.qc_vendor_celup AS VendorCelup,
       h.qc_jenis_kain AS JenisKain,
+      IFNULL(x.nilai_min, 0) AS Penilaian,
       h.qc_status AS Status,
       h.qc_keterangan AS Keterangan,
       IFNULL(x.jml_lot, 0) AS JumlahLot,
@@ -68,6 +174,7 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
         SUM(qcd_keputusan = 'REJECT') AS lot_reject,
         SUM(qcd_keputusan = 'TUNDA') AS lot_tunda,
         SUM(IFNULL(qcd_keputusan, '') = '') AS lot_belum,
+        MIN(NULLIF(qcd_nilai, 0)) AS nilai_min,
         SUM(qcd_qty_kg) AS tot_kg,
         SUM(qcd_qty_roll) AS tot_roll
       FROM tqc_bahan_dtl
@@ -91,6 +198,7 @@ const getBrowse = async (startDate, endDate, status = "ALL") => {
     params,
   );
 
+  await isiAlasanNilai(rows);
   return rows;
 };
 

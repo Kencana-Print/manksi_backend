@@ -2,11 +2,13 @@ const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
 // ── Browse master ─────────────────────────────────────────────────────
+// item = baris yang DIAJUKAN (ptd_diajukan = 1). Baris tunda menunggu
+// dipindah ke pengajuan berikutnya, jadi tidak menahan dokumen ini di PROSES.
 const getBrowse = async (startDate, endDate) => {
   const [rows] = await db.query(
     `
     SELECT x.Nomor, x.Tanggal, x.Account, x.NoRekAsal,
-           x.NamaRekening,
+           x.NamaRekening, x.Tunda,
            IF(x.sudah=0,'BELUM',
              IF(x.sudah>0 AND x.sudah<x.item,'PROSES','CLOSE')
            ) AS Status_
@@ -26,8 +28,13 @@ const getBrowse = async (startDate, endDate) => {
         IFNULL((
           SELECT COUNT(*)
           FROM finance.tpengajuan_transfer_dtl b
-          WHERE b.ptd_nomor = h.pth_nomor
-        ), 0) AS item
+          WHERE b.ptd_nomor = h.pth_nomor AND b.ptd_diajukan = 1
+        ), 0) AS item,
+        IFNULL((
+          SELECT COUNT(*)
+          FROM finance.tpengajuan_transfer_dtl b
+          WHERE b.ptd_nomor = h.pth_nomor AND b.ptd_diajukan = 0
+        ), 0) AS Tunda
       FROM finance.tpengajuan_transfer_hdr h
       LEFT JOIN finance.trekening r ON r.rek_kode = h.pth_rek_kode
       WHERE h.pth_tanggal BETWEEN ? AND ?
@@ -59,7 +66,9 @@ const getBrowseDetail = async (startDate, endDate) => {
       c.cc_nama      AS CcNama,
       d.ptd_dc_nama  AS DcNama,
       d.ptd_jur_no   AS Jurnal,
-      d.ptd_batal    AS KetBatal
+      d.ptd_batal    AS KetBatal,
+      d.ptd_diajukan AS Diajukan,
+      d.ptd_asal_nomor AS AsalNomor
     FROM finance.tpengajuan_transfer_hdr h
     INNER JOIN finance.tpengajuan_transfer_dtl d ON d.ptd_nomor = h.pth_nomor
     LEFT JOIN tsupplier s ON s.sup_kode = d.ptd_sup_kode
@@ -146,6 +155,7 @@ const deleteData = async (nomor) => {
 };
 
 // ── Get status untuk frontend (untuk warning hapus) ───────────────────
+// tunda = baris yang tidak diceklis; ikut terhapus bila dokumen dihapus.
 const getStatus = async (nomor) => {
   const [[row]] = await db.query(
     `
@@ -158,8 +168,12 @@ const getStatus = async (nomor) => {
       ),0) AS sudah,
       IFNULL((
         SELECT COUNT(*) FROM finance.tpengajuan_transfer_dtl b
-        WHERE b.ptd_nomor = h.pth_nomor
-      ),0) AS item
+        WHERE b.ptd_nomor = h.pth_nomor AND b.ptd_diajukan = 1
+      ),0) AS item,
+      IFNULL((
+        SELECT COUNT(*) FROM finance.tpengajuan_transfer_dtl b
+        WHERE b.ptd_nomor = h.pth_nomor AND b.ptd_diajukan = 0
+      ),0) AS tunda
     FROM finance.tpengajuan_transfer_hdr h
     WHERE h.pth_nomor = ?
   `,
@@ -170,7 +184,7 @@ const getStatus = async (nomor) => {
 
   const status =
     row.sudah === 0 ? "BELUM" : row.sudah < row.item ? "PROSES" : "CLOSE";
-  return { status, sudah: row.sudah, item: row.item };
+  return { status, sudah: row.sudah, item: row.item, tunda: row.tunda };
 };
 
 // Khusus filter pending dari dashboard — semua periode, status BELUM/PROSES
@@ -198,7 +212,7 @@ const getBrowsePendingAll = async () => {
         IFNULL((
           SELECT COUNT(*)
           FROM finance.tpengajuan_transfer_dtl b
-          WHERE b.ptd_nomor = h.pth_nomor
+          WHERE b.ptd_nomor = h.pth_nomor AND b.ptd_diajukan = 1
         ), 0) AS item
       FROM finance.tpengajuan_transfer_hdr h
       LEFT JOIN finance.trekening r ON r.rek_kode = h.pth_rek_kode
@@ -229,7 +243,9 @@ const getBrowseDetailPendingAll = async () => {
       c.cc_nama      AS CcNama,
       d.ptd_dc_nama  AS DcNama,
       d.ptd_jur_no   AS Jurnal,
-      d.ptd_batal    AS KetBatal
+      d.ptd_batal    AS KetBatal,
+      d.ptd_diajukan AS Diajukan,
+      d.ptd_asal_nomor AS AsalNomor
     FROM finance.tpengajuan_transfer_hdr h
     INNER JOIN finance.tpengajuan_transfer_dtl d ON d.ptd_nomor = h.pth_nomor
     LEFT JOIN tsupplier s ON s.sup_kode = d.ptd_sup_kode
@@ -248,7 +264,7 @@ const getBrowseDetailPendingAll = async () => {
           IFNULL((
             SELECT COUNT(*)
             FROM finance.tpengajuan_transfer_dtl b
-            WHERE b.ptd_nomor = hh.pth_nomor
+            WHERE b.ptd_nomor = hh.pth_nomor AND b.ptd_diajukan = 1
           ), 0) AS item
         FROM finance.tpengajuan_transfer_hdr hh
       ) x
