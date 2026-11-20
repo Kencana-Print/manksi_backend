@@ -131,9 +131,15 @@ const getBukuBesar = async (rekkode, startDate, endDate) => {
        a.jur_tipetransaksi                       AS Trs,
        IFNULL(a.jur_nota, '')                    AS Nota,
        IFNULL(a.jur_penerima, '')                AS Penerima,
-       -- Keterangan: pakai baris lawan (c) bila ada, jatuh ke uraian
-       -- baris sendiri (b) bila tidak ada lawan (selalu terjadi untuk JUR)
-       IFNULL(IFNULL(c.jurd_uraian, b.jurd_uraian), '') AS Keterangan,
+       -- Keterangan: transaksi otomatis (BKM/BBM otomatis) pakai uraian baris
+       -- item (b) dulu, jatuh ke baris lawan (c); transaksi lain pakai baris
+       -- lawan (c) dulu, jatuh ke uraian baris sendiri (b, selalu terjadi
+       -- untuk JUR). String kosong dianggap kosong (NULLIF), bukan nilai.
+       COALESCE(
+         NULLIF(IF(a.jur_otomatis = 1, b.jurd_uraian, c.jurd_uraian), ''),
+         NULLIF(IF(a.jur_otomatis = 1, c.jurd_uraian, b.jurd_uraian), ''),
+         ''
+       ) AS Keterangan,
        -- Debet/Kredit: transaksi otomatis DAN Jurnal Umum sama-sama
        -- pakai nilai baris itu sendiri (tidak menarik dari baris lawan)
        IF(a.jur_otomatis = 1 OR a.jur_tipetransaksi = 'JUR',

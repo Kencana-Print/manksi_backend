@@ -104,6 +104,12 @@ router.get(
   checkPermission(MENU_ID, "view"),
   ctrl.getDetailForm,
 );
+router.get(
+  "/print",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  ctrl.getPrintData,
+);
 
 router.post("/", verifyToken, checkPermission(MENU_ID, "insert"), ctrl.save);
 router.put("/", verifyToken, checkPermission(MENU_ID, "edit"), ctrl.update);
