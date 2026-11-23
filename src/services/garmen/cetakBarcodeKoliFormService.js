@@ -20,6 +20,8 @@ const { spkTanpaLhk } = require("../spanduk/lhk/lhkGerbangRantai"); // [SESUAIKA
 // GJ001/GJ002 = Garmen divisi 4; WH002 = gudang Spanduk P02.
 const FG_SCOPE = { GJ001: "P04", GJ002: "P01", WH002: "P02" };
 const GUDANG_SPANDUK = "WH002";
+// GJ001: penerimaan jasa lipat/finishing ke gudang ini dianggap setara LHK Finishing.
+const BPJ_GDG_FINISHING = "GP019";
 const MAKS_KOLI_PER_SPK = 500;
 // STBJ bertanggal sebelum ini tidak diatur QR koli (legacy)
 const QR_KOLI_MULAI = "2026-11-21";
@@ -255,6 +257,20 @@ const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
       lhkMap.set(k, Math.max(lhkMap.get(k) ?? 0, Number(r.qty) || 0));
     }
 
+    // GJ001: SPK yang sudah punya penerimaan jasa lipat/finishing ke GP019
+    // tidak perlu menunggu LHK Finishing internal. Cukup ada BPJ-nya.
+    const bpjSpk = new Set();
+    if (gdg === "GJ001") {
+      const [bpjRows] = await conn.query(
+        `SELECT DISTINCT po.pojh_spk_nomor AS spk
+         FROM tbpj_hdr h
+         INNER JOIN tpojasa_hdr po ON po.pojh_nomor = h.bpj_po_nomor
+         WHERE h.bpj_gdgp_kode = ? AND po.pojh_spk_nomor IN (?)`,
+        [BPJ_GDG_FINISHING, spkList],
+      );
+      bpjRows.forEach((r) => bpjSpk.add(String(r.spk).toUpperCase()));
+    }
+
     const [lainRows] = await conn.query(
       `SELECT stbjd_spk_nomor AS spk,
               IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE') AS size,
@@ -276,7 +292,8 @@ const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
       const sisa = (lhk ?? 0) - lain;
       const d = dasar.get(k);
       const dicek = !d || pcs > d.pcs + 0.001; // baris baru atau bertambah
-      const ok = lhk !== null && pcs <= sisa + 0.001;
+      const adaBpjFinishing = bpjSpk.has(String(r.spk).toUpperCase());
+      const ok = adaBpjFinishing || (lhk !== null && pcs <= sisa + 0.001);
       return {
         spk: r.spk,
         size: r.size,
