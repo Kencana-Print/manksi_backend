@@ -143,6 +143,7 @@ exports.getPermintaanBahanData = async (
                     t1.mb_nomor AS Nomor, t1.mb_gdg_kode AS Gudang, t3.gdg_nama AS Nama,
                     DATE_FORMAT(t1.mb_tanggal, '%Y-%m-%d') AS Tanggal,
                     t1.mb_keterangan AS Keterangan,
+                    t1.mb_jenis AS Jenis,
                     'MMT' AS Source,
                     ${trackingColumns},
                     CASE WHEN t1.mb_acc = 'Y' THEN 'Acc Manager' WHEN t1.mb_acc_req = 'Y' THEN 'Acc SPV' ELSE 'PENDING' END AS Status_Acc,
@@ -271,6 +272,8 @@ exports.getPermintaanBahanByNomor = async (nomor) => {
         mb_gdg_kode AS Gudang_Asal_Kode,
         tgudang.gdg_nama AS Gudang_Asal_Nama, 
         mb_keterangan AS Keterangan,
+        mb_priority AS Priority,
+        mb_jenis AS Jenis,
         mb_acc_req AS Req_ACC, 
         mb_acc_req_user AS Req_ACC_User, 
         mb_to_user AS Kepada, 
@@ -623,7 +626,7 @@ exports.savePermintaanBahan = async (data, nomorToEdit, userLogin) => {
                     UPDATE tmintabahan_mmt_hdr SET
                         mb_gdg_kode = ?, mb_tanggal = ?, mb_to_user = ?, mb_to_cab = ?,
                         mb_priority = ?, mb_keterangan = ?, mb_acc_req = ?, mb_acc_req_user = ?,
-                        mb_pp_nomor = ?, date_modified = ?, user_modified = ?
+                        mb_pp_nomor = ?, date_modified = ?, user_modified = ?, mb_jenis = ?
                     WHERE mb_nomor = ?
                 `,
           [
@@ -638,6 +641,7 @@ exports.savePermintaanBahan = async (data, nomorToEdit, userLogin) => {
             data.NoPengajuan || null,
             serverTime,
             userLogin,
+            data.Jenis || "Bahan Baku",
             currentNomor,
           ],
         );
@@ -651,8 +655,8 @@ exports.savePermintaanBahan = async (data, nomorToEdit, userLogin) => {
           `
                     INSERT INTO tmintabahan_mmt_hdr 
                     (mb_nomor, mb_tanggal, mb_gdg_kode, mb_to_user, mb_to_cab, mb_priority, 
-                     mb_keterangan, mb_pp_nomor, date_create, user_create, mb_acc_req, mb_acc_req_user) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mb_keterangan, mb_pp_nomor, date_create, user_create, mb_acc_req, mb_acc_req_user, mb_jenis) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `,
           [
             currentNomor,
@@ -667,6 +671,7 @@ exports.savePermintaanBahan = async (data, nomorToEdit, userLogin) => {
             userLogin,
             accStatus,
             accUser,
+            data.Jenis || "Bahan Baku",
           ],
         );
       }

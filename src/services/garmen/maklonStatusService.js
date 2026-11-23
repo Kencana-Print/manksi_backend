@@ -39,6 +39,24 @@ const recomputeStatus = async (conn, mklNomor) => {
   );
   const dtfDoneCount = Number(dtfRow.cnt);
 
+  // P05 Mesin Cetak MMT hasil
+  const [[mesinRow]] = await conn.query(
+    `SELECT COUNT(*) AS cnt
+     FROM tlhk_mesin_dtl
+     WHERE TRIM(ld_spk_nomor) = ? AND ld_total_qtycetak > 0`,
+    [mklNomor],
+  );
+  const mesinDoneCount = Number(mesinRow?.cnt || 0);
+
+  // P02 Cetak Spanduk hasil
+  const [[spandukRow]] = await conn.query(
+    `SELECT COUNT(*) AS cnt
+     FROM tlhk_cetak_dtl
+     WHERE TRIM(lcd_spk_nomor) = ? AND lcd_qty_cetak > 0`,
+    [mklNomor],
+  );
+  const spandukDoneCount = Number(spandukRow?.cnt || 0);
+
   const [[sjRow]] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM tsj_maklon_hdr WHERE sjm_mkl_nomor = ?`,
     [mklNomor],
@@ -49,7 +67,7 @@ const recomputeStatus = async (conn, mklNomor) => {
   if (receivedFullCount === totalRows) status = "SELESAI";
   else if (receivedAnyCount > 0) status = "DITERIMA SEBAGIAN";
   else if (sjExists) status = "OTW GUDANG";
-  else if (dtfDoneCount >= totalRows) status = "SELESAI DTF";
+  else if (dtfDoneCount >= totalRows || mesinDoneCount > 0 || spandukDoneCount > 0) status = "SELESAI DTF";
   else if (sentFullCount === totalRows) status = "DIKIRIM";
   else if (sentAnyCount > 0) status = "SEBAGIAN DIKIRIM";
   else status = "DRAFT";
@@ -58,7 +76,7 @@ const recomputeStatus = async (conn, mklNomor) => {
     `UPDATE tmaklon_hdr SET
        mkl_status = ?,
        mkl_tgl_kirim = IF(mkl_tgl_kirim IS NULL AND ? >= 1, NOW(), mkl_tgl_kirim),
-       mkl_tgl_selesai_dtf = IF(mkl_tgl_selesai_dtf IS NULL AND ? >= ?, NOW(), mkl_tgl_selesai_dtf),
+       mkl_tgl_selesai_dtf = IF(mkl_tgl_selesai_dtf IS NULL AND (? >= ? OR ? > 0 OR ? > 0), NOW(), mkl_tgl_selesai_dtf),
        mkl_tgl_otw_gudang = IF(mkl_tgl_otw_gudang IS NULL AND ?, NOW(), mkl_tgl_otw_gudang),
        mkl_tgl_selesai = IF(mkl_tgl_selesai IS NULL AND ? = ?, NOW(), mkl_tgl_selesai)
      WHERE mkl_nomor = ?`,
@@ -67,6 +85,8 @@ const recomputeStatus = async (conn, mklNomor) => {
       sentFullCount,
       dtfDoneCount,
       totalRows,
+      mesinDoneCount,
+      spandukDoneCount,
       sjExists ? 1 : 0,
       receivedFullCount,
       totalRows,

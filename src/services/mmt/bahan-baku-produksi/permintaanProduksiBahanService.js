@@ -344,36 +344,66 @@ exports.getPermintaanProduksiData = async (startDate, endDate, userDivisi) => {
         if (divisi === 4) {
             // DIVISI 4: Tetap tampilkan Gudang Obat/Tinta
             sql = `
-                SELECT h.min_nomor AS Nomor, h.min_gp AS Gudang, DATE_FORMAT(h.min_tanggal, '%d/%m/%Y') AS Tanggal, 
-                       h.min_ket AS Keterangan, h.min_cab AS Lokasi, 'OPEN' AS Status, 'OBAT' AS Tipe
-                FROM tobatminta_hdr h WHERE h.min_tanggal BETWEEN ? AND ? ORDER BY h.min_tanggal DESC;
+                SELECT h.min_nomor AS Nomor, DATE_FORMAT(h.min_tanggal, '%d/%m/%Y') AS Tanggal,
+                       DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam, h.min_cab AS Cab,
+                       h.min_gp AS Gudang, h.min_cab AS Lokasi, 'OBAT' AS Tipe,
+                       (SELECT GROUP_CONCAT(DISTINCT NULLIF(NULLIF(d.mind_spk, '0'), '') SEPARATOR ', ')
+                        FROM tobatminta_dtl d WHERE d.mind_nomor = h.min_nomor) AS SPK,
+                       h.min_ket AS Keterangan,
+                       IF(h.min_close = 0, 'OPEN', IF(h.min_close = 1, 'CLOSE', 'ONPROSES')) AS Status,
+                       h.user_create AS Usr, h.min_alasanclose AS AlasanClose
+                FROM tobatminta_hdr h
+                WHERE h.min_tanggal BETWEEN ? AND ?
+                ORDER BY h.min_tanggal DESC, h.min_nomor DESC;
             `;
             params = [startDate, endDate];
         } else if (divisi === 1) {
             // DIVISI 1: Tampilkan MMT asli
             sql = `
-                SELECT h.mnt_nomor AS Nomor, h.mnt_gdg_kode AS Gudang, DATE_FORMAT(h.mnt_tanggal, '%d/%m/%Y') AS Tanggal, 
-                       h.mnt_keterangan AS Keterangan, 'OPEN' AS Status, 'MMT' AS Tipe
-                FROM tpermintaan_prod_hdr h WHERE h.mnt_tanggal BETWEEN ? AND ? ORDER BY h.mnt_tanggal DESC;
+                SELECT h.mnt_nomor AS Nomor, DATE_FORMAT(h.mnt_tanggal, '%d/%m/%Y') AS Tanggal,
+                       DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam, 'P05' AS Cab,
+                       h.mnt_gdg_kode AS Gudang, h.mnt_lokasiproduksi AS Lokasi, 'MMT' AS Tipe,
+                       (SELECT GROUP_CONCAT(DISTINCT NULLIF(NULLIF(d.mntd_spk_nomor, '0'), '') SEPARATOR ', ')
+                        FROM tpermintaan_prod_dtl d WHERE d.mntd_mnt_nomor = h.mnt_nomor) AS SPK,
+                       h.mnt_keterangan AS Keterangan,
+                       IF(h.mnt_status = 0, 'OPEN', IF(h.mnt_status = 1, 'CLOSE', 'ONPROSES')) AS Status,
+                       h.user_create AS Usr, '' AS AlasanClose
+                FROM tpermintaan_prod_hdr h
+                WHERE h.mnt_tanggal BETWEEN ? AND ?
+                ORDER BY h.mnt_tanggal DESC, h.mnt_nomor DESC;
             `;
             params = [startDate, endDate];
         } else {
-            // ADMIN / ALL DIVISI: Melakukan UNION ALL 3 Tabel Sekaligus (MMT, OBAT, dan SUBLIM)
+            // ADMIN / ALL DIVISI: Melakukan UNION ALL MMT dan OBAT
             sql = `
-                SELECT mnt_nomor AS Nomor, mnt_gdg_kode AS Gudang, DATE_FORMAT(mnt_tanggal, '%d/%m/%Y') AS Tanggal, 
-                       mnt_keterangan AS Keterangan, mnt_lokasiproduksi AS Lokasi, 'OPEN' AS Status, 'MMT' AS Tipe
-                FROM tpermintaan_prod_hdr WHERE mnt_tanggal BETWEEN ? AND ?
-                UNION ALL
-                SELECT min_nomor AS Nomor, min_gp AS Gudang, DATE_FORMAT(min_tanggal, '%d/%m/%Y') AS Tanggal, 
-                       min_ket AS Keterangan, min_cab AS Lokasi, 'OPEN' AS Status, 'OBAT' AS Tipe
-                FROM tobatminta_hdr WHERE min_tanggal BETWEEN ? AND ?
-                UNION ALL
-                SELECT min_nomor AS Nomor, min_cab AS Gudang, DATE_FORMAT(min_tanggal, '%d/%m/%Y') AS Tanggal, 
-                       min_ket AS Keterangan, min_divisi AS Lokasi, 'OPEN' AS Status, 'SUBLIM' AS Tipe
-                FROM tmintabahan_hdr WHERE min_tanggal BETWEEN ? AND ?
-                ORDER BY Tanggal DESC;
+                SELECT * FROM (
+                    SELECT h.mnt_nomor AS Nomor, h.mnt_tanggal AS tgl_raw,
+                           DATE_FORMAT(h.mnt_tanggal, '%d/%m/%Y') AS Tanggal,
+                           DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam, 'P05' AS Cab,
+                           h.mnt_gdg_kode AS Gudang, h.mnt_lokasiproduksi AS Lokasi, 'MMT' AS Tipe,
+                           (SELECT GROUP_CONCAT(DISTINCT NULLIF(NULLIF(d.mntd_spk_nomor, '0'), '') SEPARATOR ', ')
+                            FROM tpermintaan_prod_dtl d WHERE d.mntd_mnt_nomor = h.mnt_nomor) AS SPK,
+                           h.mnt_keterangan AS Keterangan,
+                           IF(h.mnt_status = 0, 'OPEN', IF(h.mnt_status = 1, 'CLOSE', 'ONPROSES')) AS Status,
+                           h.user_create AS Usr, '' AS AlasanClose
+                    FROM tpermintaan_prod_hdr h
+                    WHERE h.mnt_tanggal BETWEEN ? AND ?
+                    UNION ALL
+                    SELECT h.min_nomor AS Nomor, h.min_tanggal AS tgl_raw,
+                           DATE_FORMAT(h.min_tanggal, '%d/%m/%Y') AS Tanggal,
+                           DATE_FORMAT(h.date_create, '%H:%i:%s') AS Jam, h.min_cab AS Cab,
+                           h.min_gp AS Gudang, h.min_cab AS Lokasi, 'OBAT' AS Tipe,
+                           (SELECT GROUP_CONCAT(DISTINCT NULLIF(NULLIF(d.mind_spk, '0'), '') SEPARATOR ', ')
+                            FROM tobatminta_dtl d WHERE d.mind_nomor = h.min_nomor) AS SPK,
+                           h.min_ket AS Keterangan,
+                           IF(h.min_close = 0, 'OPEN', IF(h.min_close = 1, 'CLOSE', 'ONPROSES')) AS Status,
+                           h.user_create AS Usr, h.min_alasanclose AS AlasanClose
+                    FROM tobatminta_hdr h
+                    WHERE h.min_tanggal BETWEEN ? AND ?
+                ) u
+                ORDER BY u.tgl_raw DESC, u.Nomor DESC;
             `;
-            params = [startDate, endDate, startDate, endDate, startDate, endDate];
+            params = [startDate, endDate, startDate, endDate];
         }
 
         const [results] = await pool.query(sql, params);

@@ -5,8 +5,11 @@ const service = require('../../../services/mmt/bahan-baku-produksi/permintaanPro
 // 1. GET BROWSE
 exports.getBrowse = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const userDivisi = req.user ? req.user.user_divisi || req.user.divisi : null;
+        const { startDate, endDate, divisi: queryDivisi } = req.query;
+        let userDivisi = queryDivisi !== undefined ? queryDivisi : (req.user ? req.user.user_divisi || req.user.divisi : null);
+        if (queryDivisi === "MMT" || queryDivisi === "ALL" || !queryDivisi) {
+            userDivisi = null; // Akses penuh MMT / UNION ALL
+        }
 
         const data = await service.getPermintaanProduksiData(startDate, endDate, userDivisi);
         res.json({ success: true, data });

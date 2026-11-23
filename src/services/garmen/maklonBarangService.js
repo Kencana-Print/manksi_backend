@@ -1,9 +1,16 @@
 const db = require("../../config/database");
 const tutupBukuService = require("../tutupBukuService");
 
-const getBrowse = async ({ startDate, endDate, cab, keyword }) => {
+const getBrowse = async ({ startDate, endDate, cab, keyword, semuaCabang }) => {
+  const isAll =
+    semuaCabang === true ||
+    semuaCabang === "true" ||
+    semuaCabang === "1" ||
+    cab === "ALL";
+
   let sql = `
     SELECT h.mkl_nomor, h.mkl_tanggal, h.mkl_deadline, h.mkl_cab_asal, h.mkl_cab_tujuan,
+           ga.pab_nama AS NamaCabAsal, gt.pab_nama AS NamaCabTujuan,
            h.mkl_status, h.mkl_keterangan,
            h.mkl_tgl_kirim, h.mkl_tgl_selesai_dtf, h.mkl_tgl_otw_gudang, h.mkl_tgl_selesai,
            h.mkl_user_create, h.mkl_date_create,
@@ -14,19 +21,25 @@ const getBrowse = async ({ startDate, endDate, cab, keyword }) => {
            (SELECT sjk.sjk_nomor FROM tmaklon_sj_keluar_hdr sjk
             WHERE sjk.sjk_mkl_nomor = h.mkl_nomor ORDER BY sjk.sjk_nomor LIMIT 1) AS SjkNomorPertama
     FROM tmaklon_hdr h
+    LEFT JOIN tpabrik ga ON ga.pab_kode = h.mkl_cab_asal
+    LEFT JOIN tpabrik gt ON gt.pab_kode = h.mkl_cab_tujuan
     LEFT JOIN tmaklon_dtl d ON d.mkld_mkl_nomor = h.mkl_nomor
     WHERE h.mkl_tanggal BETWEEN ? AND ?
   `;
   const params = [startDate, endDate];
 
-  if (cab) {
-    sql += ` AND (h.mkl_cab_asal = ? OR h.mkl_cab_tujuan = ?)`;
-    params.push(cab, cab);
+  if (!isAll && cab) {
+    const cleanCab = String(cab).replace(/-/g, "").trim().toUpperCase();
+    if (cleanCab && cleanCab !== "HO") {
+      sql += ` AND (REPLACE(h.mkl_cab_asal, '-', '') = ? OR REPLACE(h.mkl_cab_tujuan, '-', '') = ?)`;
+      params.push(cleanCab, cleanCab);
+    }
   }
 
   if (keyword && keyword.trim() !== "") {
-    sql += ` AND (h.mkl_nomor LIKE ? OR h.mkl_keterangan LIKE ?)`;
-    params.push(`%${keyword.trim()}%`, `%${keyword.trim()}%`);
+    sql += ` AND (h.mkl_nomor LIKE ? OR h.mkl_keterangan LIKE ? OR ga.pab_nama LIKE ? OR gt.pab_nama LIKE ?)`;
+    const kw = `%${keyword.trim()}%`;
+    params.push(kw, kw, kw, kw);
   }
 
   sql += ` GROUP BY h.mkl_nomor ORDER BY h.mkl_tanggal DESC, h.mkl_nomor DESC`;

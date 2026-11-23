@@ -13,13 +13,21 @@ const getBrowseList = async (
   let params = [`${startDate} 00:00:00`, `${endDate} 23:59:59`];
   let whereClause = `WHERE x.mspk_tanggal >= ? AND x.mspk_tanggal <= ?`;
 
+  const normCab = String(cabang || "")
+    .trim()
+    .toUpperCase();
+
+  if (normCab === "P05") {
+    whereClause += ` AND (UPPER(TRIM(x.mspk_cab)) = 'P05' OR UPPER(TRIM(x.mspk_sublim)) = 'Y')`;
+  }
+
   let restrictClause = "";
-  if (cabang === "P02") {
+  if (normCab === "P02") {
     restrictClause = ` AND x.mspk_divisi IN (1,5)`;
   }
   if (isKaosan && isKaosan !== "KDC") {
     restrictClause = ` AND x.mspk_divisi = 3`;
-  } else if (cabang === "P03" && isKaosan === "KDC") {
+  } else if (normCab === "P03" && isKaosan === "KDC") {
     restrictClause = ` AND x.mspk_divisi IN (3,6)`;
   }
 

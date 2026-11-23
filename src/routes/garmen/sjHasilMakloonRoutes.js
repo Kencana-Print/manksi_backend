@@ -15,6 +15,12 @@ router.get(
   controller.getOutstanding,
 );
 router.get(
+  "/available-maklon",
+  verifyToken,
+  checkPermission(MENU_ID, "view"),
+  controller.getAvailableMaklon,
+);
+router.get(
   "/history",
   verifyToken,
   checkPermission(MENU_ID, "view"),
