@@ -80,10 +80,10 @@ const tandaiBbk = async (rows) => {
   });
 };
 
-const getBrowse = async (startDate, endDate, userKode) => {
+const getBrowse = async (startDate, endDate, userKode, userBagian) => {
   const isAdmin = (userKode || "").toUpperCase() === "ADMIN";
-  const gaStatus = isAdmin ? null : await getGaUserStatus(userKode);
-  const showAll = isAdmin || gaStatus === true || gaStatus === null;
+  const bagianUpper = (userBagian || "").toUpperCase();
+  const showAll = isAdmin || bagianUpper === "FINANCE";
 
   let query = `
     SELECT
@@ -171,8 +171,8 @@ const getBrowse = async (startDate, endDate, userKode) => {
   const params = [startDate, endDate];
 
   if (!showAll) {
-    query += ` AND a.pjh_user_kode = ?`;
-    params.push(userKode);
+    query += ` AND UPPER(IFNULL(b.Bagian, '')) = ?`;
+    params.push(bagianUpper);
   }
 
   query += ` ORDER BY a.pjh_tanggal, a.pjh_nomor`;
