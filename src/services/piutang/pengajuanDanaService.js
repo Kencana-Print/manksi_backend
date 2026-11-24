@@ -81,9 +81,8 @@ const tandaiBbk = async (rows) => {
 };
 
 const getBrowse = async (startDate, endDate, userKode, userBagian) => {
-  const isAdmin = (userKode || "").toUpperCase() === "ADMIN";
   const bagianUpper = (userBagian || "").toUpperCase();
-  const showAll = isAdmin || bagianUpper === "FINANCE";
+  const showAll = bagianUpper === "FINANCE" || bagianUpper === "PEMBELIAN";
 
   let query = `
     SELECT
