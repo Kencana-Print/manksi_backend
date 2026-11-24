@@ -7,6 +7,7 @@ const getBrowse = async (req, res) => {
       startDate,
       endDate,
       req.user.kode,
+      req.user.bagian,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {
