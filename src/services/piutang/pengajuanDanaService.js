@@ -164,7 +164,7 @@ const getBrowse = async (startDate, endDate, userKode, userBagian) => {
         LIMIT 1
       )
     LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = a.pjh_cc_kode
-    LEFT JOIN tuser u ON u.user_kode = a.pjh_user_kode
+    LEFT JOIN tuser u ON UPPER(u.user_kode) = UPPER(a.pjh_user_kode)
     WHERE a.pjh_nonga = 0
       AND a.pjh_tanggal BETWEEN ? AND ?
   `;
