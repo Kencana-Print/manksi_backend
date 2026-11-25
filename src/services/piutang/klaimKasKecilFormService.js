@@ -377,6 +377,67 @@ const cariBkkEligible = async (
     .map((r) => ({ ...r, nominal: Number(r.nominal) }));
 };
 
+// ── Diagnostik: kenapa BKK kosong (KAS_KECIL) ───────────────────────
+const diagKasKecil = async (kas) => {
+  const d = {};
+  const [[r1]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon WHERE bon_cabang = ?`,
+    [kas.cabang],
+  );
+  d.totalKasbonCabang = r1.n;
+  const [[r2]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon
+     WHERE bon_cabang = ? AND bon_rek_kode = ?`,
+    [kas.cabang, kas.rek],
+  );
+  d.kasbonRekCocok = r2.n;
+  const [[r3]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon
+     WHERE bon_cabang = ? AND bon_rek_kode = ? AND bon_selesai = 1`,
+    [kas.cabang, kas.rek],
+  );
+  d.kasbonSelesai = r3.n;
+  const [[r4]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon b
+     INNER JOIN finance.tjurnal j ON j.jur_no = b.bon_jur_no
+       AND j.jur_tipetransaksi = 'BKK' AND j.jur_otomatis = 0
+     WHERE b.bon_cabang = ? AND b.bon_rek_kode = ? AND b.bon_selesai = 1
+       AND b.bon_jur_no <> ''`,
+    [kas.cabang, kas.rek],
+  );
+  d.adaJurnalBkk = r4.n;
+  const [[r5]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon b
+     INNER JOIN finance.tjurnal j ON j.jur_no = b.bon_jur_no
+       AND j.jur_tipetransaksi = 'BKK' AND j.jur_otomatis = 0
+     INNER JOIN (
+       SELECT jurd_jur_no FROM finance.tjurnalitem
+       WHERE jurd_nourut = 0 AND jurd_rek_kode = ?
+     ) k ON k.jurd_jur_no = j.jur_no
+     WHERE b.bon_cabang = ? AND b.bon_rek_kode = ? AND b.bon_selesai = 1
+       AND b.bon_jur_no <> '' AND j.jur_tanggal >= ?`,
+    [kas.rek, kas.cabang, kas.rek, TANGGAL_MULAI_KLAIM],
+  );
+  d.lolosSemua = r5.n;
+  // Cek: kasbon selesai tapi bon_rek_kode beda dari kas klaim
+  const [[r6]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon
+     WHERE bon_cabang = ? AND bon_selesai = 1 AND bon_rek_kode <> ?`,
+    [kas.cabang, kas.rek],
+  );
+  d.kasbonSelesaiRekLain = r6.n;
+  // Cek: tanggal jurnal sebelum batas
+  const [[r7]] = await db.query(
+    `SELECT COUNT(*) AS n FROM finance.tkasbon b
+     INNER JOIN finance.tjurnal j ON j.jur_no = b.bon_jur_no
+     WHERE b.bon_cabang = ? AND b.bon_rek_kode = ? AND b.bon_selesai = 1
+       AND b.bon_jur_no <> '' AND j.jur_tanggal < ?`,
+    [kas.cabang, kas.rek, TANGGAL_MULAI_KLAIM],
+  );
+  d.sebelumTanggalMulai = r7.n;
+  return d;
+};
+
 // ── Lookup modal "Pilih BKK" ──────────────────────────────────────────
 const getBkkOptions = async (
   cabang,
@@ -390,6 +451,14 @@ const getBkkOptions = async (
   const rows = (
     await cariBkkEligible({ kas, search, exceptNomor, laci })
   ).slice(0, 300);
+  if (rows.length === 0 && !search) {
+    const jenis = kas.jenis || "KAS_KECIL";
+    if (jenis === "KAS_KECIL" || jenis === "ATM") {
+      const d =
+        jenis === "KAS_KECIL" ? await diagKasKecil(kas) : { laci: laci || "" };
+      console.log("[Klaim BKK] Hasil kosong.", { cabang, rek: kas.rek, jenis, ...d });
+    }
+  }
   const info = await ambilInfoBiaya(rows.map((r) => r.bkk));
   return rows.map((r) => ({
     ...r,
