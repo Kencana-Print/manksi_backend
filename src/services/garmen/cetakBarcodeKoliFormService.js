@@ -93,8 +93,17 @@ const ambilIdBerikut = async (conn) => {
 //  - koli per SPK tidak bulat / 0 / > MAKS
 //  - koli STBJ lebih kecil dari koli aktif (VOID manual dulu)
 //  - gate LHK gagal setelah GATE_LHK_BLOKIR_MULAI
+//
+// dasarLama: Map "spk|size" -> pcs detail STBJ SEBELUM diedit. Dipakai
+// sebagai dasar gate bila belum ada snapshot CBK (STBJ yang dibuat sebelum
+// gate LHK aktif). Tanpa ini, edit STBJ lama selalu ditolak walau barisnya
+// tidak berubah.
 // ─────────────────────────────────────────────
-const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
+const generateKoliStbj = async (
+  conn,
+  stbjNomor,
+  { user, perangkat = "", dasarLama = null },
+) => {
   const [h] = await conn.query(
     `SELECT DATE_FORMAT(stbj_tanggal, '%Y-%m-%d') AS tanggal,
             stbj_gdg_kode AS gdg
@@ -199,6 +208,14 @@ const generateKoliStbj = async (conn, stbjNomor, { user, perangkat = "" }) => {
         ok: Number(r.ok) === 1,
       }),
     );
+  }
+  // STBJ lama (dibuat sebelum gate LHK aktif) belum punya snapshot CBK.
+  // Baris yang memang sudah ada di STBJ dianggap sudah diterima, supaya edit
+  // tidak memblokir baris yang jumlahnya tidak berubah/berkurang.
+  if (dasarLama) {
+    for (const [k, pcs] of dasarLama) {
+      if (!dasar.has(k)) dasar.set(k, { pcs: Number(pcs) || 0, ok: true });
+    }
   }
 
   // ── Gate LHK ──
