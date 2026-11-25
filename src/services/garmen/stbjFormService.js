@@ -629,6 +629,24 @@ const save = async (data, userKode, isNew, perangkat = "") => {
     }
 
     // Delete + Insert detail
+    // Simpan dulu detail lama (mode ubah): jadi dasar gate koli supaya baris
+    // yang sudah ada dan tidak berubah tidak dicek ulang terhadap LHK.
+    let dasarLama = null;
+    if (!isNew) {
+      const [oldDtl] = await conn.query(
+        `SELECT stbjd_spk_nomor AS spk,
+                IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE') AS size,
+                SUM(stbjd_jumlah) AS pcs
+         FROM tstbj_dtl
+         WHERE stbjd_stbj_nomor = ?
+         GROUP BY stbjd_spk_nomor, IFNULL(NULLIF(stbjd_size, ''), 'ALLSIZE')`,
+        [nomor],
+      );
+      dasarLama = new Map(
+        oldDtl.map((r) => [`${r.spk}|${r.size}`, Number(r.pcs) || 0]),
+      );
+    }
+
     await conn.query(`DELETE FROM tstbj_dtl WHERE stbjd_stbj_nomor = ?`, [
       nomor,
     ]);
@@ -691,6 +709,7 @@ const save = async (data, userKode, isNew, perangkat = "") => {
     const qr = await koliSvc.generateKoliStbj(conn, nomor, {
       user: { kode: userKode },
       perangkat,
+      dasarLama,
     });
 
     await conn.commit();
