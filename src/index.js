@@ -1493,6 +1493,7 @@ app.use("/api/mmt/laporan-ls-tinta", mmtLsTintaRoutes);
 
 app.use("/api/mmt/laporan/ls-bahan-utama", mmtLsBahanUtamaRoutes);
 app.use("/api/mmt/laporan-ls-bahan-utama", mmtLsBahanUtamaRoutes);
+app.use("/api/report/produksi-mmt/ls-bahan-utama", mmtLsBahanUtamaRoutes);
 
 app.use("/api/mmt/laporan/ls-bahan-penolong", mmtLsBahanPenolongRoutes);
 app.use("/api/mmt/laporan-ls-bahan-penolong", mmtLsBahanPenolongRoutes);
