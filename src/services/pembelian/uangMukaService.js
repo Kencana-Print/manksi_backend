@@ -63,14 +63,14 @@ const SQL_PUM_PEGANG_ITEM = `(ph.pum_status NOT IN ('DITOLAK','BATAL','REALISASI
       AND EXISTS (SELECT 1 FROM finance.tkasbon kb
                   WHERE kb.bon_nomor = ph.pum_bon_nomor AND kb.bon_selesai = 0)))`;
 
-// Item Pengajuan Dana yang sudah dibayar BBK: Map "nomor|nourut" -> "nomor BBK".
+// Item Pengajuan Dana yang sudah dibayar BBK atau BKK: Map "nomor|nourut" -> "nomor BBK/BKK".
 // Satu query, tanpa subquery berkorelasi (jurd_ref belum berindeks).
 const getRefPgjBbk = async (kecualiBbk = "") => {
   const [rows] = await db.query(
     `SELECT SUBSTRING(jurd_ref, 5) AS k,
             GROUP_CONCAT(DISTINCT jurd_jur_no ORDER BY jurd_jur_no SEPARATOR ', ') AS bbk
      FROM finance.tjurnalitem
-     WHERE jurd_trs = 'BBK' AND jurd_ref LIKE 'PGJ|%' AND jurd_jur_no <> ?
+     WHERE jurd_trs IN ('BBK', 'BKK') AND jurd_ref LIKE 'PGJ|%' AND jurd_jur_no <> ?
      GROUP BY jurd_ref`,
     [String(kecualiBbk || "")],
   );
@@ -745,7 +745,8 @@ const SQL_SYARAT_ITEM_BBK = `
       a.pjh_ke IN ('HO-', 'P01')
   AND d.pjd_nama <> '' AND d.pjd_closed_manual = 0
   AND IFNULL(d.pjd_status_finance, '') NOT IN ('CLOSE', 'CANCEL')
-  AND (d.pjd_qty - ${SQL_QTY_BUYED_ITEM}) > 0
+  AND ((d.pjd_qty - ${SQL_QTY_BUYED_ITEM}) > 0
+       OR (d.pjd_qty = 0 AND ${SQL_QTY_BUYED_ITEM} = 0))
   AND NOT EXISTS (
     SELECT 1 FROM tpengajuan_uang_muka_dtl pd
     JOIN tpengajuan_uang_muka_hdr ph ON ph.pum_nomor = pd.pumd_pum_nomor
@@ -872,13 +873,11 @@ const kunciItemPengajuanDanaBbk = async (
 
     const [lain] = await conn.query(
       `SELECT jurd_jur_no AS nomor FROM finance.tjurnalitem
-       WHERE jurd_trs = 'BBK' AND jurd_ref = ? AND jurd_jur_no <> ? LIMIT 1`,
+       WHERE jurd_trs IN ('BBK', 'BKK') AND jurd_ref = ? AND jurd_jur_no <> ? LIMIT 1`,
       [`PGJ|${nomor}|${nourut}`, String(bbkNomor || "")],
     );
     if (lain.length)
-      throw new Error(
-        `Item ${label} sudah dibayar lewat BBK ${lain[0].nomor}.`,
-      );
+      throw new Error(`Item ${label} sudah dibayar lewat ${lain[0].nomor}.`);
 
     const [pjtLain] = await conn.query(
       `SELECT ptd_nomor FROM finance.tpengajuan_transfer_dtl

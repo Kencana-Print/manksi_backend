@@ -12,6 +12,9 @@ const {
   validasiVoucherRekap,
   pasangTautanVoucher,
   periodeTertutup,
+  getVoucherBbkOptions,
+  getPengajuanDanaBbkOptions,
+  validasiPengajuanDanaBbk,
 } = require("./bbkFormService");
 
 // ── Lookup account header (KAS sesuai cabang) ─────────────────────────
@@ -127,6 +130,14 @@ const getPettyCashOptions = async (search = "") => {
   return rows;
 };
 
+// Voucher dan Pengajuan Dana yang boleh dipanggil ke BKK: aturan sama dengan BBK.
+// Parameter nomor = BKK yang sedang diedit (tautannya sendiri tetap muncul).
+const getVoucherBkkOptions = (search = "", bkkNomor = "") =>
+  getVoucherBbkOptions(search, bkkNomor);
+
+const getPengajuanDanaBkkOptions = (search = "", bkkNomor = "") =>
+  getPengajuanDanaBbkOptions(search, bkkNomor);
+
 // ── Generate nomor otomatis BKK ───────────────────────────────────────
 const getMaxNomor = async (cabang, conn) => {
   const prefix = `${cabang}-BKK.${new Date().getFullYear()}.`;
@@ -197,6 +208,9 @@ const getDetailForm = async (nomor) => {
       pckStore: r.pck_namaStore || "",
       kdbrg: r.jurd_brg_kode || "",
       vou: String(r.jurd_ref || "").startsWith("VOU|")
+        ? String(r.jurd_ref).slice(4)
+        : "",
+      pgj: String(r.jurd_ref || "").startsWith("PGJ|")
         ? String(r.jurd_ref).slice(4)
         : "",
       satuan: r.jurd_satuan || "",
@@ -301,6 +315,8 @@ const saveData = async (payload, user) => {
     // yang menentukan nominal).
     for (const d of detail) {
       if (d.vou && !d.uraian) d.uraian = `Pembayaran voucher ${d.vou}`;
+      if (d.pgj && !d.uraian)
+        d.uraian = `Pembayaran Pengajuan Dana ${String(d.pgj).split("|")[0]}`;
     }
     const barisAktif = detail.filter((d) => d.uraian);
     const barisVou = barisAktif.filter((d) => d.vou);
@@ -322,6 +338,16 @@ const saveData = async (payload, user) => {
         throw new Error(`Account baris "${d.uraian}" wajib diisi.`);
       if (!(Number(d.total) > 0))
         throw new Error(`Total baris "${d.uraian}" harus lebih dari 0.`);
+    }
+
+    // Baris Pengajuan Dana: kunci + validasi sebelum menulis tabel Finance
+    const barisPgj = barisAktif.filter((d) => d.pgj);
+    if (barisPgj.length) {
+      await validasiPengajuanDanaBbk(conn, barisPgj, {
+        cabang,
+        nomorSendiri: isEdit ? nomor : "",
+        label: "BKK",
+      });
     }
 
     // Pagar induk kas: tolak posting ke akun induk mulai tanggal cut-off.
@@ -447,7 +473,7 @@ const saveData = async (payload, user) => {
           d.mb || "",
           d.pck || "",
           d.kdbrg,
-          d.vou ? `VOU|${d.vou}` : "",
+          d.vou ? `VOU|${d.vou}` : d.pgj ? `PGJ|${d.pgj}` : "",
           Number(d.total),
           d.rekkode || "",
           d.cckode || 0,
@@ -742,4 +768,6 @@ module.exports = {
   getOutstandingMintaBeliDetail,
   getRekapPanggilOptions,
   getRekapPanggilRows,
+  getVoucherBkkOptions,
+  getPengajuanDanaBkkOptions,
 };

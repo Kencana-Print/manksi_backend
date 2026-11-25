@@ -214,12 +214,12 @@ const createPengajuan = async (
           );
         const [[bbkDana]] = await conn.query(
           `SELECT jurd_jur_no AS nomor FROM finance.tjurnalitem
-           WHERE jurd_trs = 'BBK' AND jurd_ref = ? LIMIT 1`,
+           WHERE jurd_trs IN ('BBK', 'BKK') AND jurd_ref = ? LIMIT 1`,
           [`PGJ|${nomorSumber}|${it.itemNourut}`],
         );
         if (bbkDana)
           throw new Error(
-            `Item ${it.itemNourut} pada ${nomorSumber} sudah dibayar lewat BBK ${bbkDana.nomor}.`,
+            `Item ${it.itemNourut} pada ${nomorSumber} sudah dibayar lewat ${bbkDana.nomor}.`,
           );
         // Item ditahan Pengajuan Transfer (belum atau sudah direalisasi).
         // Locking read supaya melihat PJT yang baru commit (snapshot transaksi ini

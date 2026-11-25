@@ -172,6 +172,30 @@ const getRekapRows = async (req, res) => {
   }
 };
 
+const getVoucherOptions = async (req, res) => {
+  try {
+    const data = await svc.getVoucherBkkOptions(
+      req.query.search,
+      req.query.nomor,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const getPengajuanDanaOptions = async (req, res) => {
+  try {
+    const data = await svc.getPengajuanDanaBkkOptions(
+      req.query.search,
+      req.query.nomor,
+    );
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   getAccountOptions,
   getAccountAll,
@@ -190,4 +214,6 @@ module.exports = {
   getOutstandingMintaBeliDetail,
   getRekapOptions,
   getRekapRows,
+  getVoucherOptions,
+  getPengajuanDanaOptions,
 };

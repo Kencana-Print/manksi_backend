@@ -188,7 +188,10 @@ const getFormData = async (nomor) => {
       k.bond_nominal_realisasi,
       IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mb.mb_jenis, NULL) AS mb_jenis_item,
       IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mb.mb_cab, NULL) AS mb_cab_item,
-      IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mbd.mbd_brg_kode, NULL) AS mb_kdbrg
+      IF(k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN', mbd.mbd_brg_kode, NULL) AS mb_kdbrg,
+      mbd.mbd_cc_kode AS mb_cc_kode,
+      mbd.mbd_dcnama AS mb_dcnama,
+      mcc.cc_nama AS mb_cc_nama
     FROM finance.tkasbonitem k
     LEFT JOIN finance.trekening r ON r.rek_kode = k.bond_rek_kode
     LEFT JOIN finance.tcostcenter c ON c.cc_kode = k.bond_cc_kode
@@ -197,6 +200,7 @@ const getFormData = async (nomor) => {
     LEFT JOIN tgarmenmintabeli_dtl mbd
       ON k.bond_ref_tipe = 'PERMINTAAN_PEMBELIAN' AND mbd.mbd_nomor = k.bond_ref_nomor
       AND mbd.mbd_nourut = k.bond_ref_nourut
+    LEFT JOIN finance.tcostcenter mcc ON mcc.cc_kode = mbd.mbd_cc_kode
     WHERE k.bond_nomor = ?
     ORDER BY k.bond_nourut
   `,
@@ -230,9 +234,11 @@ const getFormData = async (nomor) => {
       ga: 2,
       rekkode: r.rekkode || "",
       reknama: r.rek_nama || "",
-      cckode: r.cckode || 0,
-      ccnama: r.cc_nama || "",
-      dcnama: r.dcnama || "",
+      // CC milik kasbon yang berlaku; bila kosong, ambil dari permintaan barang.
+      // Detail CC mengikuti sumber yang sama dengan CC-nya.
+      cckode: r.cckode || r.mb_cc_kode || 0,
+      ccnama: r.cckode ? r.cc_nama || "" : r.mb_cc_nama || "",
+      dcnama: r.cckode ? r.dcnama || "" : r.mb_dcnama || "",
       kdsup: r.kdsup || "",
       supplier: r.supplier || "",
       bank: r.bank || "",
@@ -1502,13 +1508,15 @@ const getDetailPermintaanGarmen = async (mbNomor) => {
         CONCAT(IFNULL(b.brg_nama,''), ' ', IFNULL(d.mbd_ket,'')),
         CONCAT(IFNULL(b.brg_nama,''), ' - ', b.brg_note, ' ', IFNULL(d.mbd_ket,''))
       ) AS nama,
-      p.bpb_nomor, x.bpbd_jumlah
+      p.bpb_nomor, x.bpbd_jumlah,
+      d.mbd_cc_kode, d.mbd_dcnama, cc.cc_nama
     FROM tgarmenmintabeli_dtl d
     INNER JOIN tgarmenmintabeli_hdr h ON h.mb_nomor = d.mbd_nomor
     INNER JOIN tgarmenbpb_hdr p ON p.bpb_mb_nomor = d.mbd_nomor
     INNER JOIN tgarmenbpb_dtl x
       ON x.bpbd_nomor = p.bpb_nomor AND x.bpbd_brg_kode = d.mbd_brg_kode
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+    LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.mbd_cc_kode
     WHERE d.mbd_nomor = ?
       AND NOT EXISTS (
         SELECT 1 FROM tgarmenmintabeli_dtl2 c
@@ -1543,9 +1551,9 @@ const getDetailPermintaanGarmen = async (mbNomor) => {
     cab_item: r.mb_cab,
     rekkode: "",
     reknama: "",
-    cckode: 0,
-    ccnama: "",
-    dcnama: "",
+    cckode: r.mbd_cc_kode || 0,
+    ccnama: r.cc_nama || "",
+    dcnama: r.mbd_dcnama || "",
     kdsup: "",
     supplier: "",
     bank: "",

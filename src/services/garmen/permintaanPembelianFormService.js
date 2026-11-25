@@ -65,6 +65,9 @@ const getDetail = async (nomor) => {
       d.mbd_jumlah AS jumlah,
       d.mbd_harga AS harga,
       (d.mbd_jumlah * d.mbd_harga) AS total,
+      d.mbd_cc_kode AS cc_kode,
+      IFNULL(cc.cc_nama, '') AS ccnama,
+      d.mbd_dcnama AS dcnama,
       IFNULL((
         SELECT SUM(mbd2_jumlah) 
         FROM tgarmenmintabeli_dtl2 
@@ -72,6 +75,7 @@ const getDetail = async (nomor) => {
       ), 0) AS realisasi
     FROM tgarmenmintabeli_dtl d
     LEFT JOIN tgarmen_brg b ON b.brg_kode = d.mbd_brg_kode
+    LEFT JOIN finance.tcostcenter cc ON cc.cc_kode = d.mbd_cc_kode
     WHERE d.mbd_nomor = ?
     ORDER BY d.mbd_nourut`,
     [nomor],
@@ -101,6 +105,54 @@ const getDetail = async (nomor) => {
     items: itemsWithFoto,
     realisasi: dtl2,
   };
+};
+
+const validasiCostCenter = async (conn, items, wajibCc) => {
+  const kodeCc = [
+    ...new Set(items.map((i) => Number(i.cc_kode) || 0).filter(Boolean)),
+  ];
+  const detailPerCc = new Map();
+
+  if (kodeCc.length > 0) {
+    const [ccRows] = await conn.query(
+      `SELECT cc_kode FROM finance.tcostcenter WHERE cc_kode IN (?)`,
+      [kodeCc],
+    );
+    if (ccRows.length !== kodeCc.length) {
+      throw new Error("Ada Cost Center yang tidak dikenal.");
+    }
+    const [dcRows] = await conn.query(
+      `SELECT dc_kode, dc_nama FROM finance.tcostcenteritem WHERE dc_kode IN (?)`,
+      [kodeCc],
+    );
+    for (const r of dcRows) {
+      if (!detailPerCc.has(r.dc_kode)) detailPerCc.set(r.dc_kode, new Set());
+      detailPerCc.get(r.dc_kode).add(String(r.dc_nama).trim());
+    }
+  }
+
+  items.forEach((item, idx) => {
+    const baris = idx + 1;
+    const cc = Number(item.cc_kode) || 0;
+    if (!cc) {
+      if (wajibCc) {
+        throw new Error(`Cost Center wajib diisi. (Baris ke-${baris})`);
+      }
+      return;
+    }
+    const daftarDc = detailPerCc.get(cc);
+    if (daftarDc && daftarDc.size > 0) {
+      const dc = String(item.dcnama || "").trim();
+      if (!dc) {
+        throw new Error(`Detail Cost Center wajib diisi. (Baris ke-${baris})`);
+      }
+      if (!daftarDc.has(dc)) {
+        throw new Error(
+          `Detail Cost Center tidak sesuai dengan Cost Center. (Baris ke-${baris})`,
+        );
+      }
+    }
+  });
 };
 
 const saveData = async (data, userKode, bagian, cabang) => {
@@ -138,6 +190,19 @@ const saveData = async (data, userKode, bagian, cabang) => {
 
     let nomor = data.header.mb_nomor;
     const isEdit = !!data.isEdit;
+
+    // Dokumen baru: CC wajib. Edit: wajib hanya bila dokumen itu sudah punya CC
+    // (dokumen lama sebelum fitur ini boleh tetap kosong).
+    let wajibCc = !isEdit;
+    if (isEdit) {
+      const [[ada]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM tgarmenmintabeli_dtl
+         WHERE mbd_nomor = ? AND mbd_cc_kode <> 0`,
+        [nomor],
+      );
+      wajibCc = Number(ada.n) > 0;
+    }
+    await validasiCostCenter(conn, itemTerisi, wajibCc);
 
     // --- 1. VALIDASI TUTUP BUKU & PIN 5 ---
     const tglTrs = new Date(data.header.mb_tanggal);
@@ -241,10 +306,11 @@ const saveData = async (data, userKode, bagian, cabang) => {
     const detailQueries = data.items
       .filter((item) => item.kode && Number(item.jumlah) > 0)
       .map((item, index) => {
+        const ccKode = Number(item.cc_kode) || 0;
         return conn.query(
           `INSERT INTO tgarmenmintabeli_dtl 
-          (mbd_nomor, mbd_brg_kode, mbd_jumlah, mbd_harga, mbd_kegunaan, mbd_ket, mbd_nourut)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          (mbd_nomor, mbd_brg_kode, mbd_jumlah, mbd_harga, mbd_kegunaan, mbd_ket, mbd_nourut, mbd_cc_kode, mbd_dcnama)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             nomor,
             item.kode,
@@ -253,6 +319,8 @@ const saveData = async (data, userKode, bagian, cabang) => {
             item.kegunaan || "",
             item.ket || "",
             index + 1,
+            ccKode,
+            ccKode ? String(item.dcnama || "").trim() : "",
           ],
         );
       });

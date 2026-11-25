@@ -513,11 +513,13 @@ const CABANG_PGJ_BBK = ["P01"];
 const validasiPengajuanDanaBbk = async (
   conn,
   baris,
-  { cabang, nomorSendiri },
+  { cabang, nomorSendiri, label = "BBK" },
 ) => {
   if (!baris.length) return;
   if (!CABANG_PGJ_BBK.includes(cabang))
-    throw new Error("Pengajuan Dana hanya bisa dibayar dari BBK cabang P01.");
+    throw new Error(
+      `Pengajuan Dana hanya bisa dibayar dari ${label} cabang P01.`,
+    );
 
   const sudah = new Set();
   const daftar = [];
@@ -525,7 +527,7 @@ const validasiPengajuanDanaBbk = async (
     const [nomor, nourut, ...lebih] = String(d.pgj || "").split("|");
     if (!nomor || !/^\d+$/.test(nourut || "") || lebih.length)
       throw new Error("Referensi Pengajuan Dana pada baris tidak valid.");
-    if (d.vou || d.klaim || d.mb)
+    if (d.vou || d.klaim || d.mb || d.pck)
       throw new Error(
         `Baris Pengajuan Dana ${nomor} tidak boleh digabung dengan voucher/klaim/Minta Beli.`,
       );
@@ -1068,5 +1070,6 @@ module.exports = {
   getKlaimBbkOptions,
   getVoucherBbkOptions,
   getPengajuanDanaBbkOptions,
+  validasiPengajuanDanaBbk,
   lepasKlaimBbk,
 };
