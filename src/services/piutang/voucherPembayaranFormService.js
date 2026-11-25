@@ -715,6 +715,21 @@ const getNotaDetail = async (
              ), 0) AS SudahDibayar
       FROM tpoexternal_hdr h
       WHERE h.poe_nomor = ?`;
+  } else if (prefix === "POJ" || resolvedType === "POJ") {
+    sql = `
+      SELECT 'POJ' AS Tipe, h.poe_nomor AS Nomor,
+             DATE_FORMAT(h.poe_tanggal, '%Y-%m-%d') AS Tanggal,
+             'PO Jasa MMT' AS Keterangan,
+             (IFNULL(h.poe_total_bersih, h.poe_total) - IFNULL((
+               SELECT SUM(c.poed2_nominal) FROM tpojasa_mmt_dtl2 c
+               WHERE c.poed2_nomor = h.poe_nomor
+             ), 0)) AS Total,
+             IFNULL((
+               SELECT SUM(v.voud_total) FROM tvoucher_dtl v
+               WHERE v.voud_nota = h.poe_nomor
+             ), 0) AS SudahDibayar
+      FROM tpojasa_mmt_hdr h
+      WHERE h.poe_nomor = ?`;
   } else if (resolvedType === "MMT") {
     sql = `
     SELECT 'MMT' AS Tipe, h.rec_nomor AS Nomor,
@@ -897,6 +912,18 @@ const searchNota = async (type, supKode, search = "") => {
            INNER JOIN tsupplier ON sup_kode = poe_sup AND poe_sup = ?
            LEFT JOIN tspk ON spk_nomor = poe_spk_nomor
            WHERE poe_status = 'CLOSE'
+             ${search ? "AND (poe_nomor LIKE ? OR sup_nama LIKE ?)" : ""}
+           ORDER BY poe_tanggal DESC LIMIT 100`;
+    params.push(supKode);
+    if (search) params.push(like, like);
+  } else if (type === "POJ") {
+    sql = `SELECT poe_nomor AS Nomor, DATE_FORMAT(poe_tanggal,'%Y-%m-%d') AS Tanggal,
+            sup_nama AS Supplier, poe_spk_nomor AS Spk,
+            IFNULL(spk_nama,'') AS NamaSpk
+           FROM tpojasa_mmt_hdr
+           INNER JOIN tsupplier ON sup_kode = poe_sup AND poe_sup = ?
+           LEFT JOIN tspk ON spk_nomor = poe_spk_nomor
+           WHERE 1=1
              ${search ? "AND (poe_nomor LIKE ? OR sup_nama LIKE ?)" : ""}
            ORDER BY poe_tanggal DESC LIMIT 100`;
     params.push(supKode);
@@ -1773,6 +1800,7 @@ const save = async (payload, userKode) => {
           "BPB",
           "BPJ",
           "POE",
+          "POJ",
           "MMT",
           "BPE",
           "BPG",

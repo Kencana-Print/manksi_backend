@@ -450,6 +450,7 @@ const mmtMasterObatRoutes = require("./routes/mmt/daftar/masterObatRoutes");
 // 2. Finance (Khusus PO Bahan MMT, PO External MMT, Retur Beli, Invoice, Voucher)
 const mmtPoBahanRoutes = require("./routes/mmt/finance/poBahanMmtRoutes");
 const mmtPoExtRoutes = require("./routes/mmt/finance/poExtMmtRoutes");
+const mmtPoJasaRoutes = require("./routes/mmt/finance/poJasaMmtRoutes");
 const mmtReturBeliRoutes = require("./routes/mmt/finance/returBeliRoutes");
 const mmtInvoicePembelianRoutes = require("./routes/mmt/finance/invoicePembelianRoutes");
 const mmtVoucherPelunasanRoutes = require("./routes/mmt/finance/voucherPelunasanRoutes");
@@ -1272,6 +1273,8 @@ app.use("/api/mmt/finance/po-bahan-mmt", mmtPoBahanRoutes);
 app.use("/api/mmt/po-bahan-mmt", mmtPoBahanRoutes);
 app.use("/api/mmt/finance/po-external-mmt", mmtPoExtRoutes);
 app.use("/api/mmt/po-external-mmt", mmtPoExtRoutes);
+app.use("/api/mmt/finance/po-jasa-mmt", mmtPoJasaRoutes);
+app.use("/api/mmt/po-jasa-mmt", mmtPoJasaRoutes);
 app.use("/api/mmt/finance/retur-beli", mmtReturBeliRoutes);
 app.use("/api/mmt/retur-beli", mmtReturBeliRoutes);
 app.use("/api/mmt/finance/invoice-pembelian", mmtInvoicePembelianRoutes);
@@ -1493,6 +1496,7 @@ app.use("/api/mmt/laporan-ls-tinta", mmtLsTintaRoutes);
 
 app.use("/api/mmt/laporan/ls-bahan-utama", mmtLsBahanUtamaRoutes);
 app.use("/api/mmt/laporan-ls-bahan-utama", mmtLsBahanUtamaRoutes);
+app.use("/api/report/produksi-mmt/ls-bahan-utama", mmtLsBahanUtamaRoutes);
 
 app.use("/api/mmt/laporan/ls-bahan-penolong", mmtLsBahanPenolongRoutes);
 app.use("/api/mmt/laporan-ls-bahan-penolong", mmtLsBahanPenolongRoutes);
