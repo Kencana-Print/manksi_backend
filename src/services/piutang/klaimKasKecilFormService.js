@@ -613,7 +613,7 @@ const saveData = async (payload, user) => {
     kas = tentukanKas(cabang, payload.rekTujuan);
   }
   const rekTujuan = kas.rek;
-  if (kas.jenis === "PC" && !(await bolehKlaimPc(user)))
+  if (kas.jenis === "PC" && !(await bolehKlaimPc(user, rekTujuan)))
     throw httpError(
       "Klaim Petty Cash hanya dapat dibuat atau diubah oleh Finance pemilik laci.",
       403,
