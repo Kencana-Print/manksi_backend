@@ -549,7 +549,7 @@ const save = async (data, userKode, isNew, perangkat = "") => {
 
   const totalJumlah = validDetail.reduce((s, r) => s + Number(r.Jumlah), 0);
   const totalKoli = validDetail.reduce((s, r) => s + Number(r.Koli), 0);
-  if (totalKoli === 0) throw new Error("Qty Koli belum diisi.");
+  if (totalKoli <= 0) throw new Error("Total Qty Koli harus lebih dari 0.");
   if (totalJumlah === 0) throw new Error("Jumlah belum diisi.");
 
   // Validasi WH003: total Grid1 = total Grid2, hanya bila ada data DC
