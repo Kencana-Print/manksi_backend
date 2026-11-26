@@ -230,7 +230,7 @@ const getDefaults = async (cabang, penuh = false) => {
 //              harus sudah selesai. BBK hasil Pengajuan Transfer dikecualikan.
 // daftarBkk: batasi ke nomor tertentu (dipakai validasi saat simpan).
 // exceptNomor: kunci milik klaim ini dianggap bebas (saat ubah).
-const cariBkkEligible = async (
+const cariBkkEligibleSatu = async (
   { kas, search = "", daftarBkk = null, exceptNomor = "", laci = "" },
   conn = db,
 ) => {
@@ -315,8 +315,16 @@ const cariBkkEligible = async (
         WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
           AND (r.rek_kode = ? OR r.rek_parent = ?)
       )`;
-    params.push(laci, TANGGAL_MULAI_KLAIM, kas.cabang, KODE_INDUK_KAS, KODE_INDUK_KAS);
+    params.push(
+      laci,
+      TANGGAL_MULAI_KLAIM,
+      kas.cabang,
+      KODE_INDUK_KAS,
+      KODE_INDUK_KAS,
+    );
   } else {
+    // KAS_KECIL: kredit nourut 0 harus di salah satu akun sumber (laci / induk lama)
+    const sumber = kas.sumber?.length ? kas.sumber : [kas.rek];
     sql = `
     SELECT b.bon_nomor AS bon,
       b.bon_jur_no AS bkk,
@@ -331,7 +339,7 @@ const cariBkkEligible = async (
     INNER JOIN (
       SELECT jurd_jur_no, SUM(jurd_kredit) AS nominal
       FROM finance.tjurnalitem
-      WHERE jurd_nourut = 0
+      WHERE jurd_nourut = 0 AND jurd_rek_kode IN (?)
       GROUP BY jurd_jur_no
     ) k ON k.jurd_jur_no = j.jur_no
     WHERE b.bon_cabang = ?
@@ -343,7 +351,7 @@ const cariBkkEligible = async (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = b.bon_jur_no AND d.ptd_batal = ''
       )`;
-    params.push(kas.cabang, TANGGAL_MULAI_KLAIM, kas.cabang);
+    params.push(sumber, kas.cabang, TANGGAL_MULAI_KLAIM, kas.cabang);
   }
 
   if (daftarBkk) {
@@ -371,6 +379,26 @@ const cariBkkEligible = async (
   return rows
     .filter((r) => !dikunci.has(r.bkk))
     .map((r) => ({ ...r, nominal: Number(r.nominal) }));
+};
+
+// A-111123 (PC) mengklaim dua macam BKK: Penyelesaian PD dan BKK kasbon biasa.
+// Dua query dijalankan berurutan lalu digabung (dedup per BKK).
+const cariBkkEligible = async (args, conn = db) => {
+  const { kas } = args;
+  if (kas.jenis === "PC" && kas.jugaKasbon) {
+    const pd = await cariBkkEligibleSatu(args, conn);
+    const kk = await cariBkkEligibleSatu(
+      { ...args, kas: { ...kas, jenis: "KAS_KECIL" } },
+      conn,
+    );
+    const peta = new Map();
+    for (const r of [...pd, ...kk]) if (!peta.has(r.bkk)) peta.set(r.bkk, r);
+    return [...peta.values()].sort(
+      (a, b) =>
+        a.tanggal.localeCompare(b.tanggal) || a.bkk.localeCompare(b.bkk),
+    );
+  }
+  return cariBkkEligibleSatu(args, conn);
 };
 
 // ── Diagnostik: kenapa BKK kosong (KAS_KECIL) ───────────────────────
@@ -452,7 +480,12 @@ const getBkkOptions = async (
     if (jenis === "KAS_KECIL" || jenis === "ATM") {
       const d =
         jenis === "KAS_KECIL" ? await diagKasKecil(kas) : { laci: laci || "" };
-      console.log("[Klaim BKK] Hasil kosong.", { cabang, rek: kas.rek, jenis, ...d });
+      console.log("[Klaim BKK] Hasil kosong.", {
+        cabang,
+        rek: kas.rek,
+        jenis,
+        ...d,
+      });
     }
   }
   const info = await ambilInfoBiaya(rows.map((r) => r.bkk));

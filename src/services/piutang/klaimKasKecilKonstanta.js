@@ -19,7 +19,21 @@ const KAS_KLAIM = [
   // Laci Finance: tujuan klaim BKK Penyelesaian PD. Tanpa supplier (dibayar lewat BBK).
   { rek: "A-111118", cabang: "P01", sup: "", jenis: "PC" },
   // Laci Finance P04 (CACA): tujuan klaim BKK Penyelesaian PD cabang P04.
-  { rek: "A-111123", cabang: "P04", sup: "", jenis: "PC" },
+  {
+    rek: "A-111123",
+    cabang: "P04",
+    sup: "S0000145", // pakai nilai sup yang sudah ada di entri ini
+    jenis: "PC",
+    jugaKasbon: true,
+    sumber: ["A-111123", "A-111103"],
+  },
+  {
+    rek: "A-111124",
+    cabang: "P04",
+    sup: "S0000145",
+    jenis: "KAS_KECIL",
+    sumber: ["A-111124", "A-111103"],
+  },
 ];
 
 const JENIS_KLAIM = ["KAS_KECIL", "ATM", "PC"];

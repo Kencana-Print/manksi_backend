@@ -921,14 +921,15 @@ const pastikanNominalBkk = async (conn, klaim) => {
   // Klaim yang seluruhnya baris manual tidak punya BKK untuk dicocokkan
   if (!dtl.length) return;
 
-  // Klaim PC: kredit BKK ada di laci pemilik PD, bukan di kas tujuan klaim,
-  // jadi akun tidak ikut difilter (baris kredit nourut 0 hanya satu per BKK).
+  // PC dan ATM: kredit BKK ada di laci pemilik (PD / user), bukan di kas tujuan
+  // klaim, jadi akun tidak difilter (baris kredit nourut 0 hanya satu per BKK).
+  // KAS_KECIL: akun kredit harus salah satu sumber (laci / induk lama).
   const kas = kasByRek(klaim.kkh_rek_tujuan);
-  const filterAkun = kas?.jenis === "PC" ? "" : "AND jurd_rek_kode = ?";
-  const params =
-    kas?.jenis === "PC"
-      ? [dtl.map((d) => d.kkd_jur_no)]
-      : [klaim.kkh_rek_tujuan, dtl.map((d) => d.kkd_jur_no)];
+  const tanpaFilterAkun = kas?.jenis === "PC" || kas?.jenis === "ATM";
+  const sumber = kas?.sumber?.length ? kas.sumber : [klaim.kkh_rek_tujuan];
+  const idBkk = dtl.map((d) => d.kkd_jur_no);
+  const filterAkun = tanpaFilterAkun ? "" : "AND jurd_rek_kode IN (?)";
+  const params = tanpaFilterAkun ? [idBkk] : [sumber, idBkk];
 
   const [jur] = await conn.query(
     `SELECT jurd_jur_no AS bkk, SUM(jurd_kredit) AS nominal
