@@ -259,7 +259,6 @@ const cariBkkEligible = async (
     INNER JOIN finance.tjurnal j
       ON j.jur_no = b.bon_jur_no
      AND j.jur_tipetransaksi = 'BKK'
-     AND j.jur_otomatis = 0
     INNER JOIN (
       SELECT i.jurd_jur_no, SUM(i.jurd_kredit) AS nominal
       FROM finance.tjurnalitem i
@@ -270,16 +269,16 @@ const cariBkkEligible = async (
     ) k ON k.jurd_jur_no = j.jur_no
     WHERE b.bon_nomor IN (?)
       AND b.bon_cabang = ?
-      AND b.bon_selesai = 1
       AND b.bon_jur_no <> ''
       AND j.jur_tanggal >= ?
       AND k.nominal > 0
+      AND j.jur_cabang = ?
       AND NOT EXISTS (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
       )
     `;
-    params.push(bonPd, bonPd, kas.cabang, TANGGAL_MULAI_KLAIM);
+    params.push(bonPd, bonPd, kas.cabang, TANGGAL_MULAI_KLAIM, kas.cabang);
   } else if (kas.jenis === "ATM") {
     // Klaim ATM: BKK dicek ke laci kas user yang menginput klaim, bukan ke rekening ATM.
     if (!laci)
@@ -303,21 +302,20 @@ const cariBkkEligible = async (
     ) k ON k.jurd_jur_no = j.jur_no
     LEFT JOIN finance.tkasbon b ON b.bon_jur_no = j.jur_no
     WHERE j.jur_tipetransaksi IN ('BKK','BBK')
-      AND j.jur_otomatis = 0
       AND j.jur_tanggal >= ?
       AND k.nominal > 0
-      AND (b.bon_nomor IS NULL OR b.bon_selesai = 1)
       AND NOT EXISTS (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
       )
+      AND j.jur_cabang = ?
       AND NOT EXISTS (
         SELECT 1 FROM finance.tjurnalitem x
         JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
         WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
           AND (r.rek_kode = ? OR r.rek_parent = ?)
       )`;
-    params.push(laci, TANGGAL_MULAI_KLAIM, KODE_INDUK_KAS, KODE_INDUK_KAS);
+    params.push(laci, TANGGAL_MULAI_KLAIM, kas.cabang, KODE_INDUK_KAS, KODE_INDUK_KAS);
   } else {
     sql = `
     SELECT b.bon_nomor AS bon,
@@ -330,24 +328,22 @@ const cariBkkEligible = async (
     INNER JOIN finance.tjurnal j
       ON j.jur_no = b.bon_jur_no
      AND j.jur_tipetransaksi = 'BKK'
-     AND j.jur_otomatis = 0
     INNER JOIN (
       SELECT jurd_jur_no, SUM(jurd_kredit) AS nominal
       FROM finance.tjurnalitem
-      WHERE jurd_nourut = 0 AND jurd_rek_kode = ?
+      WHERE jurd_nourut = 0
       GROUP BY jurd_jur_no
     ) k ON k.jurd_jur_no = j.jur_no
     WHERE b.bon_cabang = ?
-      AND b.bon_rek_kode = ?
-      AND b.bon_selesai = 1
       AND b.bon_jur_no <> ''
       AND j.jur_tanggal >= ?
       AND k.nominal > 0
+      AND j.jur_cabang = ?
       AND NOT EXISTS (
         SELECT 1 FROM finance.tpengajuan_transfer_dtl d
         WHERE d.ptd_trs = b.bon_jur_no AND d.ptd_batal = ''
       )`;
-    params.push(kas.rek, kas.cabang, kas.rek, TANGGAL_MULAI_KLAIM);
+    params.push(kas.cabang, TANGGAL_MULAI_KLAIM, kas.cabang);
   }
 
   if (daftarBkk) {
@@ -366,11 +362,11 @@ const cariBkkEligible = async (
   if (rows.length === 0) return [];
 
   const [terkunci] = await conn.query(
-    `SELECT kkd_kunci FROM tklaim_kaskecil_dtl
-     WHERE kkd_kunci IN (?) AND kkd_kkh_nomor <> ?`,
-    [rows.map((r) => r.bkk), exceptNomor || ""],
+    `SELECT kkd_jur_no FROM tklaim_kaskecil_dtl
+     WHERE kkd_jur_no IN (?)`,
+    [rows.map((r) => r.bkk)],
   );
-  const dikunci = new Set(terkunci.map((r) => r.kkd_kunci));
+  const dikunci = new Set(terkunci.map((r) => r.kkd_jur_no));
 
   return rows
     .filter((r) => !dikunci.has(r.bkk))
