@@ -3,7 +3,7 @@ const db = require("../../config/database");
 // Replikasi frmLogin.pas: if user_lokasi in (P04,P05) then PJHKE='P04' else 'P01'
 const DEFAULT_PJH_KE = "P01";
 
-const DEFAULT_PRIORITY = "Segera"; // field Priority dihapus dari UI web
+const DEFAULT_PRIORITY = "Segera"; // = tidak urgent; "Urgent" dipilih pengaju di form
 const JENIS_PENGAJUAN = "Pengajuan Dana"; // modul ini scope-nya khusus Pengajuan Dana
 
 // --- GENERATE NOMOR: PGJ.YYYYMM.NNNN (replikasi getmaxnomor) ---
@@ -67,6 +67,7 @@ const getFormDetail = async (nomor) => {
             a.pjh_nik AS Nik, c.nama AS Nama, c.lokasi AS Lokasi, c.bagian AS Bagian,
             a.pjh_jenis_permintaan AS Jenis, a.pjh_user_kode AS UserKode,
             a.pjh_ke AS PjhKe,
+            a.pjh_priority AS Priority,
             IF(a.pjh_status = 0, 'Belum', 'Sudah') AS Verified,
             IF(IFNULL(h.pmt_close, 0) = 0, 'Belum', 'Sudah') AS Closed
      FROM ga2.tpengajuan2_hdr a
@@ -146,6 +147,15 @@ const saveData = async (payload, userKode, userCabang) => {
     throw new Error("Pengajuan Ke harus P01 atau P04.");
   }
 
+  // Status Permintaan: hanya "Urgent" yang disimpan sebagai urgent, selain itu
+  // dianggap tidak urgent. undefined = klien tidak mengirim, nilai lama jangan ditimpa.
+  const priorityBaru =
+    header.Priority === undefined
+      ? null
+      : String(header.Priority).trim().toLowerCase() === "urgent"
+        ? "Urgent"
+        : DEFAULT_PRIORITY;
+
   // ⬅ DIHAPUS: validasi "Cost Center harus diisi" di level header —
   // sekarang divalidasi per baris di dalam validateItems().
 
@@ -174,6 +184,7 @@ const saveData = async (payload, userKode, userCabang) => {
       await conn.query(
         `UPDATE ga2.tpengajuan2_hdr SET
             pjh_tanggal = ?, pjh_nik = ?, pjh_keterangan = ?, pjh_ke = ?,
+            pjh_priority = COALESCE(?, pjh_priority),
             pjh_cc_kode = ?, pjh_cc_dcnama = ?
           WHERE pjh_nomor = ?`,
         [
@@ -181,6 +192,7 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Nik,
           header.Keterangan || "",
           pjhKe,
+          priorityBaru,
           headerCcKode,
           headerCcDcNama,
           nomorFinal,
@@ -200,7 +212,7 @@ const saveData = async (payload, userKode, userCabang) => {
           header.Nik,
           header.Keterangan || "",
           JENIS_PENGAJUAN,
-          DEFAULT_PRIORITY,
+          priorityBaru ?? DEFAULT_PRIORITY,
           pjhKe,
           userKode,
           headerCcKode,
