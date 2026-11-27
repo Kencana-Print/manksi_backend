@@ -153,8 +153,8 @@ const getBrowseList = async (filters) => {
         y.spk_kain AS Kain, y.spk_finishing AS Finishing,
         ${hargaCol}
         y.date_create AS Created, y.spk_jumlah AS Pesan,
-        IF(y.spk_jumlah_kirim > 0, y.spk_jumlah_kirim, IFNULL(ppic.spk_jumlah_kirim, 0)) AS Kirim,
-        (y.spk_jumlah - IF(y.spk_jumlah_kirim > 0, y.spk_jumlah_kirim, IFNULL(ppic.spk_jumlah_kirim, 0))) AS Kurang,
+        IF(ppic.spk_nomor IS NOT NULL, IFNULL(ppic.spk_jumlah_kirim, 0), y.spk_jumlah_kirim) AS Kirim,
+        (y.spk_jumlah - IF(ppic.spk_nomor IS NOT NULL, IFNULL(ppic.spk_jumlah_kirim, 0), y.spk_jumlah_kirim)) AS Kurang,
         sl.sal_nama AS Sales, ${groupCusCol}
         y.spk_nomor_po AS PO, y.spk_ketpo AS KetPO,
         y.spk_tgl_po AS DatePO, y.spk_DatelinePO AS DatelinePO,
@@ -181,13 +181,7 @@ const getBrowseList = async (filters) => {
 
         IFNULL(ppic.spk_jumlah_jadi, 0) AS Jadi,
         IFNULL(ppic.spk_cetak_count, 0) AS CetakCount,
-        IFNULL(pinCetak.status, "") AS CetakApprovalStatus,
-        y.spk_jumlah_kirim AS DbgKirimSo,
-        ppic.spk_jumlah_kirim AS DbgKirimPpic,
-        IF(y.spk_nomor IN ('SO-JA-KO-000098', 'SO-JA-KK-000044'),
-          (SELECT IFNULL(SUM(a.sja_jumlah), 0) FROM tsj_approve a
-            WHERE a.sja_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)),
-          NULL) AS DbgApprove
+        IFNULL(pinCetak.status, "") AS CetakApprovalStatus
 
       FROM (
         SELECT
@@ -378,7 +372,7 @@ const deleteOrder = async (nomor, userDetails) => {
       "Transaksi tersebut sudah close (Tutup Buku). Tidak bisa dihapus.",
     );
   }
-  if (Number(data.jumlah_kirim) > 0) {
+  if (Number(data.jumlah_kirim) > 0 || Number(data.ppic_kirim) > 0) {
     throw new Error("Sudah ada pengiriman pada SO ini. Tidak bisa dihapus.");
   }
 
@@ -564,43 +558,23 @@ const requestPin = async (nomor, alasan, userKode) => {
 };
 
 // --- APPROVE CMO ---
-const approveCmo = async (nomor, userKode, keterangan) => {
+const approveCmo = async (nomor, userKode) => {
   const loc = await resolveSoLocation(nomor);
   if (!loc) throw new Error("Data SO tidak ditemukan.");
-
-  const hasKeterangan = keterangan !== undefined && keterangan !== null;
 
   if (loc === "new") {
     // Hanya SO baru (tsalesorder) yang mencatat tanggal approve —
     // tspk legacy tidak punya kolom ini dan tidak di-ALTER, sesuai
     // keputusan: data lama memang tidak akan pernah akurat historinya.
-    if (hasKeterangan) {
-      await db.query(
-        `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW(), so_keterangan = ? WHERE so_nomor = ?`,
-        [userKode, String(keterangan), nomor],
-      );
-      await db.query(
-        `UPDATE tspk SET spk_keterangan = ? WHERE spk_so_ref = ? AND spk_is_so = 0`,
-        [String(keterangan), nomor],
-      );
-    } else {
-      await db.query(
-        `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW() WHERE so_nomor = ?`,
-        [userKode, nomor],
-      );
-    }
+    await db.query(
+      `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW() WHERE so_nomor = ?`,
+      [userKode, nomor],
+    );
   } else {
-    if (hasKeterangan) {
-      await db.query(
-        `UPDATE tspk SET spk_cmo = ?, spk_keterangan = ? WHERE spk_nomor = ?`,
-        [userKode, String(keterangan), nomor],
-      );
-    } else {
-      await db.query(`UPDATE tspk SET spk_cmo = ? WHERE spk_nomor = ?`, [
-        userKode,
-        nomor,
-      ]);
-    }
+    await db.query(`UPDATE tspk SET spk_cmo = ? WHERE spk_nomor = ?`, [
+      userKode,
+      nomor,
+    ]);
   }
 };
 
