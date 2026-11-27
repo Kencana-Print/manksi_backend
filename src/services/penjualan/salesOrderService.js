@@ -181,7 +181,11 @@ const getBrowseList = async (filters) => {
 
         IFNULL(ppic.spk_jumlah_jadi, 0) AS Jadi,
         IFNULL(ppic.spk_cetak_count, 0) AS CetakCount,
-        IFNULL(pinCetak.status, "") AS CetakApprovalStatus
+        IFNULL(pinCetak.status, "") AS CetakApprovalStatus,
+        y.spk_jumlah_kirim AS DbgKirimSo,
+        ppic.spk_jumlah_kirim AS DbgKirimPpic,
+        (SELECT IFNULL(SUM(a.sja_jumlah), 0) FROM tsj_approve a
+          WHERE a.sja_spk_nomor = IFNULL(ppic.spk_nomor, y.spk_nomor)) AS DbgApprove
 
       FROM (
         SELECT
