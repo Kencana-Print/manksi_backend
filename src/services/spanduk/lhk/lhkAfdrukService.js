@@ -19,6 +19,7 @@ const SLOT_BAHAN = [
   { alias: "Kaporit", kode: "S0003" },
   { alias: "Caustik", kode: "S0001" },
   { alias: "Ulano", kode: "S0009" },
+  { alias: "FotoEmulsi", kode: "S0010" },
   { alias: "Screen", kode: "AK260278" },
   { alias: "Lem", kode: "S0006" },
   { alias: "Katalis", kode: "S0004" },

@@ -58,7 +58,7 @@ const pastikanLokasiUser = (pabrik, user) => {
 // Body: { Tanggal, Kode_Pabrik,
 //         Detail: [{ Nomor_SPK, Keterangan, Plangkan: [{ Ukuran, Qty }] }] }
 // J Plangkan tidak diterima dari client: dihitung = jumlah Qty semua ukuran.
-// HP hanya mencatat plangkan; pemakaian bahan dicatat di LHK Afdruk.
+// HP hanya mencatat plangkan; pemakaian bahan dicatat di LHK Afdruk. Sumber: SPK atau MAP
 const siapkanData = (body = {}) => {
   const tanggal = parseTanggal(body.Tanggal);
 
@@ -72,7 +72,7 @@ const siapkanData = (body = {}) => {
 
   const detail = Array.isArray(body.Detail) ? body.Detail : [];
   if (detail.length === 0) {
-    throw galat("Minimal satu baris MAP harus diisi");
+    throw galat("Minimal satu baris SPK/MAP harus diisi");
   }
 
   const sudah = new Set();
@@ -80,13 +80,13 @@ const siapkanData = (body = {}) => {
     const n = i + 1;
     const spk = teks(d?.Nomor_SPK);
     if (!spk) {
-      throw galat(`Baris ${n}: nomor MAP wajib diisi`);
+      throw galat(`Baris ${n}: nomor SPK/MAP wajib diisi`);
     }
     if (spk.length > 20) {
-      throw galat(`Baris ${n}: nomor MAP maksimal 20 karakter`);
+      throw galat(`Baris ${n}: nomor SPK/MAP maksimal 20 karakter`);
     }
     if (sudah.has(spk)) {
-      throw galat(`Baris ${n}: MAP ${spk} sudah ada di baris lain`);
+      throw galat(`Baris ${n}: SPK/MAP ${spk} sudah ada di baris lain`);
     }
     sudah.add(spk);
 
@@ -147,27 +147,14 @@ const validasiUkuran = async (q, baris) => {
   });
 };
 
-// HP hanya untuk MAP (tmemospk); nomor SPK biasa (tspk) ditolak.
-const pastikanHanyaMap = async (q, daftarNomor) => {
-  const [rows] = await q.query(
-    `SELECT mspk_nomor AS nomor FROM ${T.memoSpk} WHERE mspk_nomor IN (?)`,
-    [daftarNomor],
-  );
-  const ada = new Set(rows.map((r) => norm(r.nomor)));
-  for (const no of daftarNomor) {
-    if (!ada.has(norm(no))) {
-      throw galat(`${no} bukan MAP. LHK Hapus Plankan hanya untuk MAP`);
-    }
-  }
-};
-
 const validasiSumberBaris = async (q, baris, user) => {
-  const daftar = baris.map((b) => b.spk);
-  const peta = await ambilInfoSpk(q, daftar);
+  const peta = await ambilInfoSpk(
+    q,
+    baris.map((b) => b.spk),
+  );
   for (const b of baris) {
     periksaSumber(peta.get(b.spk), b.spk, user);
   }
-  await pastikanHanyaMap(q, daftar);
 };
 
 // J Meter = jumlah (ukuran x Qty) seluruh ukuran. Dipanggil setelah
@@ -178,7 +165,7 @@ const hitungJumlahMeter = (baris) =>
       b.plangkan.reduce((a, p) => a + p.nilai * p.qty, 0),
     );
     if (jumlahMeter > MAKS_ANGKA) {
-      throw galat(`MAP ${b.spk}: J Meter terlalu besar`);
+      throw galat(`SPK/MAP ${b.spk}: J Meter terlalu besar`);
     }
     return { ...b, jumlahMeter };
   });
@@ -321,7 +308,6 @@ const getInfoSpk = async (nomor, user) => {
   const peta = await ambilInfoSpk(db, [no]);
   const info = peta.get(no);
   periksaSumber(info, no, user);
-  await pastikanHanyaMap(db, [no]);
   await pastikanRantaiLhk(db, { kodeLini: "HAPUS_PLANKAN", daftarSpk: [no] });
   return {
     Nomor_SPK: info.nomor,

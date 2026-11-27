@@ -13,14 +13,16 @@ const proof = require("./lhkProofShared");
 // Lini pertama tiap rantai tanpa syarat. Lini baru (mis. Koli) cukup
 // ditambahkan di sini dan di DAFTAR_LINI.
 const RANTAI = {
-  MAP: ["DESIGN", "HAPUS_PLANKAN", "AFDRUK", "CETAK"],
+  MAP: ["DESIGN", "AFDRUK", "CETAK"],
   SPK: ["CETAK", "QUIRING", "JAHIT", "LIPAT", "KOLI"],
 };
 
 // Lini di luar rantai linear: predecessor ditentukan eksplisit.
 // Proof (MAP) langsung dari Afdruk, tidak lewat Cetak.
+// Hapus Plankan (MAP) opsional: setelah Design, tapi bukan syarat Afdruk
+// (MAP dengan plangkan baru langsung ke Afdruk tanpa Hapus Plankan).
 const CABANG = {
-  MAP: { PROOF: "AFDRUK" },
+  MAP: { PROOF: "AFDRUK", HAPUS_PLANKAN: "DESIGN" },
   SPK: {},
 };
 

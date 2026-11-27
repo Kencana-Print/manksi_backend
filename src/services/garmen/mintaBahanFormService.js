@@ -22,6 +22,24 @@ const perluApproval = (ket) =>
       .toUpperCase(),
   );
 
+// Garmen + Keterangan BARU: qty dikunci dari MKB (dihitung server, bukan dari form)
+const KET_QTY_TERKUNCI = ["BARU"];
+const qtyTerkunciMkb = (cabang, ket) =>
+  !adalahSpanduk(cabang) &&
+  KET_QTY_TERKUNCI.includes(
+    String(ket || "")
+      .trim()
+      .toUpperCase(),
+  );
+
+// Rumus Delphi: satuan KG dibagi babaran, selain itu dikali
+const hitungJumlahMinta = (pcs, babaran, satuan) => {
+  const b = Number(babaran) || 1;
+  const p = Number(pcs) || 0;
+  const hasil = String(satuan || "").toUpperCase() === "KG" ? p / b : p * b;
+  return Number(hasil.toFixed(2));
+};
+
 // --- HELPER: CEK STATUS PIN 5 ---
 const checkPinStatus = async (nomor, conn) => {
   const qPin = `SELECT pin_urut, pin_acc, pin_dipakai FROM tspk_pin5 WHERE pin_trs="MINTA BAHAN" AND pin_nomor=? ORDER BY pin_urut DESC LIMIT 1`;
@@ -233,16 +251,6 @@ const getSpkDetailsAndMkb = async (
         : null,
     mkbDetails: mkbRows.map((r) => {
       const pcs = Number(spk.Jumlah);
-      const babaran = Number(r.babaran) || 1;
-      let jumlahMinta = 0;
-
-      // RUMUS DELPHI: Satuan KG dibagi, selain itu dikali
-      if (r.sat.toUpperCase() === "KG") {
-        jumlahMinta = pcs / babaran;
-      } else {
-        jumlahMinta = pcs * babaran;
-      }
-
       return {
         kode: r.mkbd_bhn_kode,
         nama: r.nama,
@@ -254,7 +262,7 @@ const getSpkDetailsAndMkb = async (
         babaran: r.babaran,
         pcs: pcs,
         butuh: r.butuh,
-        jumlah: Number(jumlahMinta.toFixed(2)),
+        jumlah: hitungJumlahMinta(pcs, r.babaran, r.sat),
         komponen: spanduk ? "" : r.komponen,
         ket: "",
       };
@@ -324,6 +332,50 @@ const getMintaBahan = async (nomor) => {
 };
 
 /**
+ * Garmen + BARU: pcs, babaran, dan jumlah ditimpa dari MKB SPK di server,
+ * apa pun yang dikirim form. Bahan di luar MKB ditolak.
+ */
+const kunciQtyDariMkb = async (conn, payload) => {
+  const [spkRows] = await conn.query(
+    `SELECT Jumlah, SoRef FROM (
+       SELECT spk_nomor AS Nomor, spk_jumlah AS Jumlah, spk_so_ref AS SoRef
+       FROM tspk WHERE spk_aktif="Y"
+       UNION ALL
+       SELECT mspk_nomor AS Nomor, mspk_jumlah AS Jumlah, "" AS SoRef
+       FROM tmemospk
+     ) x WHERE Nomor = ? LIMIT 1`,
+    [payload.spk],
+  );
+  if (spkRows.length === 0) throw new Error("No.Spk belum terdaftar.");
+  const { Jumlah, SoRef } = spkRows[0];
+
+  const [mkb] = await conn.query(
+    `SELECT i.mkbd_bhn_kode AS kode, SUM(i.mkbd_babaran) AS babaran,
+            IFNULL(MAX(b.Bhn_satuan), "") AS sat
+     FROM tmkb_hdr j
+     INNER JOIN tmkb_dtl i ON i.mkbd_mkb_nomor = j.MKB_NOMOR
+     LEFT JOIN tbahan b ON b.Bhn_kode = i.mkbd_bhn_kode
+     WHERE j.MKB_SPK_NOMOR IN (?)
+     GROUP BY i.mkbd_bhn_kode`,
+    [SoRef ? [payload.spk, SoRef] : [payload.spk]],
+  );
+  const peta = new Map(mkb.map((m) => [m.kode, m]));
+
+  for (const d of payload.details || []) {
+    if (!d.kode || !d.nama) continue;
+    const m = peta.get(d.kode);
+    if (!m) {
+      throw new Error(
+        `Bahan ${d.kode} tidak ada di MKB SPK ini. Untuk Keterangan BARU hanya bahan dari MKB yang bisa diminta.`,
+      );
+    }
+    d.pcs = Number(Jumlah) || 0;
+    d.babaran = Number(m.babaran) || 0;
+    d.jumlah = hitungJumlahMinta(d.pcs, m.babaran, m.sat);
+  }
+};
+
+/**
  * Simpan Data Baru / Edit (Delphi: simpandata)
  */
 const saveMintaBahan = async (payload, user, isEdit = false) => {
@@ -376,6 +428,11 @@ const saveMintaBahan = async (payload, user, isEdit = false) => {
       if (bukanSpanduk) {
         throw new Error(`Bahan ${bukanSpanduk.kode} bukan bahan spanduk.`);
       }
+    }
+
+    // --- KUNCI QTY GARMEN: Keterangan BARU, qty ikut MKB ---
+    if (qtyTerkunciMkb(payload.cabang, payload.keterangan)) {
+      await kunciQtyDariMkb(conn, payload);
     }
 
     if (isEdit) {

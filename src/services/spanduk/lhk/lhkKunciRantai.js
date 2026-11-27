@@ -2,7 +2,7 @@ const { galat, adalahSuperadmin } = require("./lhkCommon");
 const {
   DAFTAR_LINI,
   namaLini,
-  liniBerikutnya,
+  liniBerikutnyaSemua,
   spkPunyaLhk,
   ringkasDaftar,
 } = require("./lhkLini");
@@ -17,6 +17,14 @@ const PEMAKAI_NON_LHK = {
     kolom: "mspk_nomor",
     nama: "BAST MAP",
   },
+};
+
+// Lini yang mengunci LHK-nya di luar urutan rantai. Hapus Plankan bukan syarat
+// Afdruk, tetapi plangkan-nya disalin ke Afdruk saat simpan, jadi LHK Hapus
+// Plankan tidak boleh diubah/dihapus setelah MAP-nya punya LHK Afdruk.
+const KUNCI_TAMBAHAN = {
+  MAP: { HAPUS_PLANKAN: ["AFDRUK"] },
+  SPK: { HAPUS_PLANKAN: ["AFDRUK"] },
 };
 
 // Kunci mundur: LHK suatu lini tidak boleh diubah/dihapus bila salah satu
@@ -59,17 +67,17 @@ const pastikanTidakTerkunciRantai = async (
 
   const perBerikut = new Map();
   for (const n of daftar) {
-    const berikut = liniBerikutnya(
-      lini.kode,
-      adaSpk.has(n.toUpperCase()) ? "SPK" : "MAP",
-    );
-    if (!berikut) {
-      continue;
+    const jenis = adaSpk.has(n.toUpperCase()) ? "SPK" : "MAP";
+    const berikutnya = [
+      ...liniBerikutnyaSemua(lini.kode, jenis),
+      ...(KUNCI_TAMBAHAN[jenis]?.[lini.kode] ?? []),
+    ];
+    for (const berikut of berikutnya) {
+      if (!perBerikut.has(berikut)) {
+        perBerikut.set(berikut, []);
+      }
+      perBerikut.get(berikut).push(n);
     }
-    if (!perBerikut.has(berikut)) {
-      perBerikut.set(berikut, []);
-    }
-    perBerikut.get(berikut).push(n);
   }
 
   for (const [kodeBerikut, daftarBerikut] of perBerikut) {

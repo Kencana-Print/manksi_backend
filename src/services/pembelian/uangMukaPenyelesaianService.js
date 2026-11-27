@@ -81,6 +81,10 @@ const catatStokFinanceLama = async (conn, d, v, nomor, bonDb, cabang) => {
   }
 };
 
+// Auto-lock 3 hari kerja dinonaktifkan sementara (27 Nov 2026).
+// Ubah ke true untuk mengaktifkan lagi.
+const BATAS_PENYELESAIAN_AKTIF = false;
+
 // ── Batas waktu Penyelesaian: maks 3 hari kerja sejak bon dibuat ──
 // Hanya berlaku untuk bon yang date_create-nya >= TANGGAL_MULAI_BATAS.
 const TANGGAL_MULAI_BATAS = "2026-10-22";
@@ -101,6 +105,7 @@ const hitungHariKerja = (dari, sampai) => {
 };
 
 const cekBatasPenyelesaian = async (nomorBon) => {
+  if (!BATAS_PENYELESAIAN_AKTIF) return;
   const [[row]] = await db.query(
     `SELECT k.bon_selesai,
             DATE_FORMAT(k.date_create, '%Y-%m-%d') AS tgl_buat,
