@@ -19,14 +19,6 @@ const getBrowse = async (startDate, endDate, cabang) => {
       IFNULL((
         SELECT SUM(d.jurd_debet) FROM finance.tjurnalitem d WHERE d.jurd_jur_no = h.jur_no
       ), 0) AS Nominal,
-      IFNULL((
-        SELECT GROUP_CONCAT(DISTINCT d.jurd_sup_nama ORDER BY d.jurd_sup_nama SEPARATOR ', ')
-        FROM finance.tjurnalitem d
-        WHERE d.jurd_jur_no = h.jur_no
-          AND d.jurd_trs = 'BKK'
-          AND d.jurd_debet <> 0
-          AND IFNULL(d.jurd_sup_nama, '') <> ''
-      ), '') AS Supplier,
       IFNULL(k.bon_nomor,'') AS Kasbon,
       IF(h.jur_close=0,'Belum','Sudah') AS Closed
     FROM finance.tjurnal h
@@ -55,7 +47,8 @@ const getBrowseDetail = async (startDate, endDate, cabang) => {
       d.jurd_jur_no   AS Nomor,
       d.jurd_nourut   AS No,
       d.jurd_uraian   AS Uraian,
-      IFNULL(d.jurd_sup_nama, '') AS Supplier,
+      IFNULL(d.jurd_sup_kode, '') AS SupKode,
+      IFNULL(d.jurd_sup_nama, '') AS SupNama,
       d.jurd_debet    AS Nominal,
       d.jurd_rek_kode AS Account,
       IFNULL(r.rek_nama,'') AS NamaAccount,
