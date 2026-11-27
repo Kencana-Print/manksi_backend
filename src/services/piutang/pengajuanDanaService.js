@@ -5,6 +5,10 @@ const {
   getRefPgjTerpakai,
 } = require("../pembelian/uangMukaService");
 
+// Bagian yang boleh melihat semua pengajuan di browse; bagian lain hanya
+// melihat pengajuan yang dibuat user dari bagiannya sendiri.
+const BAGIAN_LIHAT_SEMUA = ["FINANCE", "PEMBELIAN", "EDP", "DIREKSI", "AUDIT"];
+
 // Cek status GA user berdasarkan tabel ga2.tuser (login system terpisah,
 // lihat uLogin.pas ga2 — frmMenu.USERGA := user_ga, keyed by user_kode).
 // Asumsi: user_kode di ga2 sama dengan user_kode Manksi untuk user yang sama.
@@ -82,7 +86,7 @@ const tandaiBbk = async (rows) => {
 
 const getBrowse = async (startDate, endDate, userKode, userBagian) => {
   const bagianUpper = (userBagian || "").toUpperCase();
-  const showAll = bagianUpper === "FINANCE" || bagianUpper === "PEMBELIAN";
+  const showAll = BAGIAN_LIHAT_SEMUA.includes(bagianUpper);
 
   let query = `
     SELECT

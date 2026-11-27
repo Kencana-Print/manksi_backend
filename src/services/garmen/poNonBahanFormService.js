@@ -573,10 +573,11 @@ const saveData = async (payload, user) => {
       ) {
         throw new Error("Harga harus di isi (isi 0 untuk barang gratis).");
       }
-      const harga = Number(hargaRaw);
+      const harga = Math.round(Number(hargaRaw) * 10000) / 10000; // maks. 4 desimal
+      d.harga = harga;
       if (
         hargaPerKode.has(d.Kode) &&
-        Math.abs(hargaPerKode.get(d.Kode) - harga) > 0.0001
+        Math.abs(hargaPerKode.get(d.Kode) - harga) > 0.00001
       ) {
         throw new Error(
           `Barang ${d.Kode} punya harga berbeda di PO yang sama. Samakan harga untuk kode yang sama.`,
