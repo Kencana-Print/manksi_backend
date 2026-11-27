@@ -11,8 +11,6 @@ const PREFIX_JENIS = {
   SPAREPART: "MBS",
   ASET: "MBI",
 };
-const BAGIAN_ASET = ["GA", "EDP"]; // yang boleh membuat Permintaan Pembelian Aset
-
 const generateNomor = async (jenis, tanggal) => {
   const prefix = PREFIX_JENIS[jenis] || "MBK";
 
@@ -159,15 +157,6 @@ const saveData = async (data, userKode, bagian, cabang) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-
-    if (
-      data.header.mb_jenis === "ASET" &&
-      !BAGIAN_ASET.includes(String(bagian || "").toUpperCase())
-    ) {
-      throw new Error(
-        "Permintaan Pembelian Aset hanya untuk bagian GA atau EDP.",
-      );
-    }
 
     const itemTerisi = data.items.filter(
       (item) => item.kode && Number(item.jumlah) > 0,
