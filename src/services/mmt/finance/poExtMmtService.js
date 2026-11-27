@@ -5,7 +5,7 @@ const { getDataMode } = require("../../../config/database");
 /**
  * Mendapatkan daftar PO dengan logika warna/status seperti di Delphi
  */
-const getPoExternalBrowse = async (startDate, endDate, userCab) => {
+const getPoExternalBrowse = async (startDate, endDate, userCab, search) => {
   // Guard: tanggal kosong/invalid TIDAK boleh jadi klausa zero-date —
   // filter tanggal di-skip (tanpa filter) bila tidak valid.
   const isDateStr = (v) =>
@@ -22,6 +22,29 @@ const getPoExternalBrowse = async (startDate, endDate, userCab) => {
     dateConds.push("h.poe_tanggal <= ?");
     params.push(endDate);
   }
+
+  // ponytail: HO-/ADMIN/ALL lihat semua data cabang MMT; user cabang spesifik difilter cabangnya
+  const normCab = String(userCab || "ALL").trim().toUpperCase();
+  const isHQ =
+    !normCab ||
+    normCab === "ALL" ||
+    normCab === "ADMIN" ||
+    normCab.startsWith("HO");
+
+  let branchFilter = "";
+  if (!isHQ) {
+    branchFilter = "AND h.poe_cab = ?";
+    params.push(normCab);
+  }
+
+  let searchFilter = "";
+  if (search && String(search).trim()) {
+    searchFilter =
+      "AND (h.poe_nomor LIKE ? OR u.Sup_nama LIKE ? OR h.poe_spk_nomor LIKE ? OR s.spk_nama LIKE ?)";
+    const kw = `%${String(search).trim()}%`;
+    params.push(kw, kw, kw, kw);
+  }
+
   // Menyelaraskan query asli Delphi menggunakan klause IF() bertingkat pada tspk_pin5
   const sql = `
         SELECT x.*,
@@ -51,12 +74,11 @@ const getPoExternalBrowse = async (startDate, endDate, userCab) => {
             WHERE 1=1
             ${dateConds.length ? "AND " + dateConds.join(" AND ") : ""}
             AND h.poe_cab IN ('P02', 'P05', 'MT1')
-            ${userCab ? "AND h.poe_cab = ?" : ""}
+            ${branchFilter}
+            ${searchFilter}
         ) x
         ORDER BY x.Nomor DESC
     `;
-
-  if (userCab) params.push(userCab);
 
   const [rows] = await pool.query(sql, params);
   return rows;
@@ -82,8 +104,14 @@ const deletePoExternal = async (nomor, userCab) => {
     if (rows.length === 0) throw new Error("Data tidak ditemukan");
     const data = rows[0];
 
-    // 2. Validasi Hak Otoritas Cabang
-    if (userCab && data.poe_cab !== userCab)
+    // 2. Validasi Hak Otoritas Cabang (HQ bebas hapus cabang manapun)
+    const normCab = String(userCab || "ALL").trim().toUpperCase();
+    const isHQ =
+      !normCab ||
+      normCab === "ALL" ||
+      normCab === "ADMIN" ||
+      normCab.startsWith("HO");
+    if (!isHQ && data.poe_cab !== normCab)
       throw new Error("Bukan data cabang anda");
 
     // 3. Validasi Batas Penguncian Periode (Closing Aturan Bulanan Delphi)
@@ -475,16 +503,20 @@ const savePoExternal = async (payload, currentUser) => {
 
 const getPoExternalById = async (nomorPo) => {
   try {
-    // 1. Ambil Data Header PO beserta Join Master SPK (termasuk spk_memo) & Supplier
+    // 1. Ambil Data Header PO beserta Join Master SPK (termasuk spk_memo & tmemospk) & Supplier
     const sqlHeader = `
             SELECT h.*, 
                    s.spk_nama, s.spk_kain, s.spk_ukuran, s.spk_jumlah, s.spk_jo_kode, 
                    s.spk_divisi, s.spk_panjang, s.spk_lebar, s.spk_memo,
+                   s.spk_cab, s.spk_so_ref, s.spk_invdc, s.spk_image, s.spk_perush_kode,
+                   s.spk_nomormemo, s.spk_repeat,
+                   m.mspk_cab, m.mspk_referensi, m.mspk_mh_nomor,
                    v.divisi, 
                    j.jo_nama,
                    u.Sup_nama, u.Sup_alamat, u.Sup_kota
             FROM tpoexternal_hdr h
             LEFT JOIN tspk s ON s.spk_nomor = h.poe_spk_nomor
+            LEFT JOIN tmemospk m ON m.MSPK_Nomor = s.spk_memo
             LEFT JOIN tdivisi v ON v.kode = s.spk_divisi
             LEFT JOIN tjenisorder j ON j.jo_kode = s.spk_jo_kode
             LEFT JOIN tsupplier u ON u.Sup_kode = h.poe_sup

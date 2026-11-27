@@ -3,14 +3,15 @@ const poService = require("../../../services/mmt/finance/poExtMmtService");
 
 const browse = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, cab, search } = req.query;
 
     // PENTING: Response disesuaikan langsung mengembalikan Array data [ ]
     // karena di Vue: masterData.value = res.data || []; (Tanpa .data.data)
     const data = await poService.getPoExternalBrowse(
       startDate,
       endDate,
-      req.user?.cab,
+      cab || req.user?.cabang || req.user?.cab,
+      search,
     );
 
     res.json(data);
@@ -23,7 +24,10 @@ const browse = async (req, res) => {
 const remove = async (req, res) => {
   try {
     const { nomor } = req.params;
-    await poService.deletePoExternal(nomor, req.user?.cab);
+    await poService.deletePoExternal(
+      nomor,
+      req.user?.cabang || req.user?.cab,
+    );
     res.json({ success: true, message: "Berhasil dihapus" });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
