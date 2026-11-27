@@ -756,7 +756,7 @@ const SQL_SYARAT_ITEM_BBK = `
 
 const getItemPengajuanDanaBbk = async ({
   search = "",
-  sebelum,
+  mulai,
   bbkNomor = "",
 }) => {
   const kata = `%${String(search || "").trim()}%`;
@@ -773,11 +773,11 @@ const getItemPengajuanDanaBbk = async ({
      FROM ga2.tpengajuan2_hdr a
      JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
      LEFT JOIN ga2.peminta c ON c.nik = a.pjh_nik
-     WHERE a.pjh_tanggal < ? AND ${SQL_SYARAT_ITEM_BBK}
+     WHERE a.pjh_tanggal >= ? AND ${SQL_SYARAT_ITEM_BBK}
        AND (a.pjh_nomor LIKE ? OR d.pjd_nama LIKE ?)
      ORDER BY a.pjh_tanggal DESC, a.pjh_nomor DESC, d.pjd_nourut
      LIMIT 600`,
-    [sebelum, kata, kata],
+    [mulai, kata, kata],
   );
   if (!rows.length) return [];
 
@@ -831,7 +831,7 @@ const getItemPengajuanDanaBbk = async ({
 const kunciItemPengajuanDanaBbk = async (
   conn,
   items,
-  { sebelum, bbkNomor = "", pjtNomor = "" },
+  { mulai, bbkNomor = "", pjtNomor = "" },
 ) => {
   const hasil = new Map();
   for (const it of items) {
@@ -851,9 +851,9 @@ const kunciItemPengajuanDanaBbk = async (
       `SELECT d.pjd_nama AS nama
        FROM ga2.tpengajuan2_hdr a
        JOIN ga2.tpengajuan2_dtl d ON d.pjd_pjh_nomor = a.pjh_nomor
-       WHERE a.pjh_nomor = ? AND d.pjd_nourut = ? AND a.pjh_tanggal < ?
+       WHERE a.pjh_nomor = ? AND d.pjd_nourut = ? AND a.pjh_tanggal >= ?
          AND ${SQL_SYARAT_ITEM_BBK}`,
-      [nomor, nourut, sebelum],
+      [nomor, nourut, mulai],
     );
     if (!ok.length)
       throw new Error(

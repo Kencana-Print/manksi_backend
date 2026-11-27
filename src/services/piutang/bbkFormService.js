@@ -507,7 +507,7 @@ const validasiKlaimBbk = async (
   }
 };
 
-const BATAS_PGJ_BBK_SEBELUM = "2026-11-01";
+const PGJ_BBK_MULAI = "2026-11-01";
 const CABANG_PGJ_BBK = ["P01"];
 
 const validasiPengajuanDanaBbk = async (
@@ -543,7 +543,7 @@ const validasiPengajuanDanaBbk = async (
   await kunciItemPengajuanDanaBbk(
     conn,
     daftar.map((x) => ({ nomor: x.nomor, nourut: x.nourut })),
-    { sebelum: BATAS_PGJ_BBK_SEBELUM, bbkNomor: nomorSendiri },
+    { mulai: PGJ_BBK_MULAI, bbkNomor: nomorSendiri },
   );
 
   // Nominal boleh diubah (keputusan user). jurd_mb harus kosong (trigger stok).
@@ -563,7 +563,7 @@ const validasiPengajuanDanaBbk = async (
 const getPengajuanDanaBbkOptions = (search, nomor) =>
   getItemPengajuanDanaBbk({
     search,
-    sebelum: BATAS_PGJ_BBK_SEBELUM,
+    mulai: PGJ_BBK_MULAI,
     bbkNomor: nomor,
   });
 
