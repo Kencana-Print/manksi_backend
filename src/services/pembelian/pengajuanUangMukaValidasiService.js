@@ -1,8 +1,8 @@
 const db = require("../../config/database");
 const { getFormData } = require("./uangMukaPenyelesaianService");
+const { CABANG_VALIDASI } = require("./uangMukaRealisasiService");
 
-// Berlaku hanya untuk cabang HO-/P01 (P04 tetap kertas fisik)
-const CABANG_VALIDASI = ["HO-", "P01"];
+const PESAN_CABANG = `E-validasi hanya berlaku untuk cabang ${CABANG_VALIDASI.join("/")}.`;
 const BAGIAN_VALIDATOR = ["FINANCE", "EDP", "AUDIT", "DIREKSI"];
 const JENIS = { PENGAJUAN: "PENGAJUAN", PENYELESAIAN: "PENYELESAIAN" };
 
@@ -187,8 +187,7 @@ const validasi = async (nomor, user, jenis = JENIS.PENGAJUAN) => {
       throw new Error(
         "Dokumen ini tidak berasal dari Pengajuan Uang Muka, e-validasi tidak berlaku.",
       );
-    if (!s.berlaku)
-      throw new Error("E-validasi hanya berlaku untuk cabang HO-/P01.");
+    if (!s.berlaku) throw new Error(PESAN_CABANG);
     if (!isValidator(user))
       throw new Error("Bagian Anda tidak berwenang memvalidasi.");
     if (up(user.kode) === up(s.hdr.pum_user_create))
@@ -230,8 +229,7 @@ const batalValidasi = async (nomor, alasan, user, jenis = JENIS.PENGAJUAN) => {
     await conn.beginTransaction();
     const s = await loadState(conn, nomor, jenis, user, true);
 
-    if (!s.pumNomor || !s.berlaku)
-      throw new Error("E-validasi hanya berlaku untuk cabang HO-/P01.");
+    if (!s.pumNomor || !s.berlaku) throw new Error(PESAN_CABANG);
     if (jenis === JENIS.PENGAJUAN && s.hdr.pum_status !== "DIAJUKAN")
       throw new Error(
         `Validasi tidak bisa dibatalkan, pengajuan sudah berstatus ${s.hdr.pum_status}.`,

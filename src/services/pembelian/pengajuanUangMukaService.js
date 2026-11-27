@@ -715,7 +715,7 @@ const createPettyCash = async ({ tanggal, keterangan, nominal }, user) => {
     .trim()
     .toUpperCase();
   if (!CABANG_PETTY.includes(cabang))
-    throw new Error("Petty Cash hanya untuk cabang HO-/P01.");
+    throw new Error(`Petty Cash hanya untuk cabang ${CABANG_PETTY.join("/")}.`);
   if (!tanggal) throw new Error("Tanggal wajib diisi.");
   const total = Math.round((Number(nominal) || 0) * 100) / 100;
   if (total <= 0) throw new Error("Nominal pengajuan wajib diisi.");
@@ -723,6 +723,13 @@ const createPettyCash = async ({ tanggal, keterangan, nominal }, user) => {
   const conn = await db.getConnection();
   let locked = false;
   try {
+    const [[lk]] = await conn.query(`SELECT GET_LOCK(?, 10) AS ok`, [
+      LOCK_NOMOR_PC,
+    ]);
+    if (!Number(lk.ok))
+      throw new Error("Penomoran sedang dipakai, coba lagi sebentar.");
+    locked = true;
+
     await conn.beginTransaction();
 
     const laci = await cariLaciPemilik(conn, user.kode);
@@ -730,10 +737,6 @@ const createPettyCash = async ({ tanggal, keterangan, nominal }, user) => {
       throw new Error(
         `User ${user.kode} belum punya laci kas. Hubungi Finance.`,
       );
-
-    const [[lk]] = await conn.query(`SELECT GET_LOCK(?, 10) AS ok`, [
-      LOCK_NOMOR_PC,
-    ]);
     if (!Number(lk.ok))
       throw new Error("Penomoran sedang dipakai, coba lagi sebentar.");
     locked = true;
@@ -910,7 +913,9 @@ const createPenyerahan = async (
     .trim()
     .toUpperCase();
   if (!CABANG_PETTY.includes(cabang))
-    throw new Error("Penyerahan Dana Belanja hanya untuk cabang HO-/P01.");
+    throw new Error(
+      `Penyerahan Dana Belanja hanya untuk cabang ${CABANG_PETTY.join("/")}.`,
+    );
   if (!tanggal) throw new Error("Tanggal wajib diisi.");
   if (!items || !items.length) throw new Error("Minimal pilih 1 transaksi.");
   const tidakBoleh = items.find((it) => !SUMBER_PD.includes(it.sumber));

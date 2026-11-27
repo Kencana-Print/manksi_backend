@@ -7,6 +7,9 @@ const {
   TANGGAL_MULAI_BLOKIR_INDUK,
 } = require("../postingGuardService");
 
+// Cabang yang memakai e-validasi (dipakai juga oleh pengajuanUangMukaValidasiService)
+const CABANG_VALIDASI = ["HO-", "P01", "P04"];
+
 // ── Lookup account (KAS/BANK) — ported, prefix finance. ──
 const getAccountOptions = async (jenis, cabang) => {
   const effectiveCabang = cabang === "HO-" ? "P01" : cabang;
@@ -353,16 +356,17 @@ const saveRealisasi = async (pumNomor, payload, user, opsi = {}) => {
     if (
       !opsi.penyerahan &&
       !isFullTolak &&
-      ["HO-", "P01"].includes(String(hdr.pum_cabang).trim().toUpperCase())
+      CABANG_VALIDASI.includes(String(hdr.pum_cabang).trim().toUpperCase())
     ) {
       const [[v]] = await conn.query(
         `SELECT val_aksi FROM tpengajuan_uang_muka_validasi
-         WHERE val_pum_nomor = ? ORDER BY val_id DESC LIMIT 1`,
+         WHERE val_pum_nomor = ? AND val_jenis = 'PENGAJUAN'
+         ORDER BY val_id DESC LIMIT 1`,
         [pumNomor],
       );
       if (!v || v.val_aksi !== "VALIDASI")
         throw new Error(
-          "Pengajuan cabang HO-/P01 harus divalidasi dulu sebelum direalisasi.",
+          `Pengajuan cabang ${CABANG_VALIDASI.join("/")} harus divalidasi dulu sebelum direalisasi.`,
         );
     }
 
@@ -714,7 +718,7 @@ const getPrintData = async (pumNomor) => {
     kasir: hdr.pum_user_realisasi || "",
     gtotal,
     kasir_stempel:
-      ["HO-", "P01"].includes(String(hdr.pum_cabang).trim().toUpperCase()) &&
+      CABANG_VALIDASI.includes(String(hdr.pum_cabang).trim().toUpperCase()) &&
       hdr.pum_user_realisasi &&
       hdr.realisasi_fmt
         ? { nama: hdr.kasir_nama, tanggal_fmt: hdr.realisasi_fmt }
@@ -1029,4 +1033,5 @@ module.exports = {
   getDetailPettyCash,
   saveRealisasiPettyCash,
   konfirmasiTerimaPettyCash,
+  CABANG_VALIDASI,
 };

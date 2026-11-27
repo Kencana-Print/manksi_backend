@@ -59,10 +59,13 @@ const getOutstandingDetail = async (req, res) => {
 const getHistory = async (req, res) => {
   try {
     const { startDate, endDate, cabang } = req.query;
+    const semuaCabang = USER_AKSES_PENUH.includes(
+      String(req.user?.kode || "").toUpperCase(),
+    );
     const rows = await uangMukaService.getHistory({
       startDate,
       endDate,
-      cabang,
+      cabang: semuaCabang ? cabang : req.user?.cabang || "",
     });
     res.json(rows);
   } catch (err) {
