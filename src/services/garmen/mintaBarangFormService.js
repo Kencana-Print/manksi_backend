@@ -472,13 +472,26 @@ const getGudangByKode = async (kode, cabang) => {
   return rows[0];
 };
 
-const getBarangByKode = async (kode, jenis, cabang, bagian) => {
+const getBarangByKode = async (
+  kode,
+  jenis,
+  cabang,
+  bagian,
+  filterByCabang = false,
+) => {
+  const isHo = cabang === "HO" || cabang === "HO-";
+  const cabCond = (alias) =>
+    isHo
+      ? `(${alias}.mst_cab = "HO" OR ${alias}.mst_cab = "HO-")`
+      : `${alias}.mst_cab = ?`;
+  const cabParams = isHo ? [] : [cabang];
+
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ? AND b.brg_kode = ?`;
   let params = [jenis, kode];
 
   // ASET terlihat di semua cabang, di luar aturan SPANDUK (sama dengan master)
   if (jenis !== "ASET") {
-    whereClause += kondisiSpanduk(cabang);
+    whereClause += kondisiSpanduk(isHo ? "HO-" : cabang);
   }
 
   // Replikasi filter sparepart dari searchBarangGarmen
@@ -497,6 +510,12 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
   else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
   else if (jenis === "ASET") stockTable = "tmasterstok_aset";
 
+  const cabangJoin =
+    filterByCabang && jenis !== "ASET"
+      ? `INNER JOIN (SELECT DISTINCT s.mst_brg_kode FROM ${stockTable} s WHERE s.mst_aktif = "Y" AND ${cabCond("s")}) fc ON fc.mst_brg_kode = b.brg_kode`
+      : "";
+  const joinParams = filterByCabang && jenis !== "ASET" ? cabParams : [];
+
   const [rows] = await db.query(
     `SELECT 
        b.brg_kode AS Kode,
@@ -505,15 +524,22 @@ const getBarangByKode = async (kode, jenis, cabang, bagian) => {
        IFNULL((
          SELECT SUM(m.mst_stok_in - m.mst_stok_out)
          FROM ${stockTable} m
-         WHERE m.mst_aktif = "Y" AND m.mst_cab = ? AND m.mst_brg_kode = b.brg_kode
+         WHERE m.mst_aktif = "Y" AND ${cabCond("m")} AND m.mst_brg_kode = b.brg_kode
        ), 0) AS Stok
      FROM tgarmen_brg b
+     ${cabangJoin}
      ${whereClause}
      LIMIT 1`,
-    [cabang, ...params],
+    [...cabParams, ...joinParams, ...params],
   );
 
-  if (rows.length === 0) throw new Error("Kode barang tidak ditemukan.");
+  if (rows.length === 0) {
+    throw new Error(
+      filterByCabang
+        ? "Kode barang tidak ditemukan di pabrik tujuan."
+        : "Kode barang tidak ditemukan.",
+    );
+  }
   return rows[0];
 };
 

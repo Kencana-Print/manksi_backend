@@ -69,12 +69,15 @@ const getGudangByKode = async (req, res) => {
 const getBarangByKode = async (req, res) => {
   try {
     const { kode } = req.params;
-    const { jenis, cabang, bagian } = req.query;
+    const { jenis, cabang, bagian, filterByCabang } = req.query;
     const data = await formService.getBarangByKode(
       kode,
       jenis || "ACCESORIES",
       cabang || "HO-",
       bagian || "",
+      filterByCabang === "true" ||
+        filterByCabang === "1" ||
+        filterByCabang === true,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {

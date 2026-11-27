@@ -1558,6 +1558,7 @@ const searchBarangGarmen = async (
   bagian,
   page = 1,
   limit = 50,
+  filterByCabang = false,
 ) => {
   const limitNum = Number(limit);
   const offset = (Number(page) - 1) * limitNum;
@@ -1569,6 +1570,19 @@ const searchBarangGarmen = async (
   else if (jenis === "SPAREPART") stockTable = "tmasterstok_sparepart";
   else if (jenis === "ASET") stockTable = "tmasterstok_aset";
 
+  const isHo = cabang === "HO" || cabang === "HO-";
+  const cabCond = (alias) =>
+    isHo
+      ? `(${alias}.mst_cab = "HO" OR ${alias}.mst_cab = "HO-")`
+      : `${alias}.mst_cab = ?`;
+  const cabParams = isHo ? [] : [cabang];
+
+  const cabangJoin =
+    filterByCabang && jenis !== "ASET"
+      ? `INNER JOIN (SELECT DISTINCT s.mst_brg_kode FROM ${stockTable} s WHERE s.mst_aktif = "Y" AND ${cabCond("s")}) fc ON fc.mst_brg_kode = b.brg_kode`
+      : "";
+  const joinParams = filterByCabang && jenis !== "ASET" ? cabParams : [];
+
   // 2. Siapkan kondisi dasar
   let whereClause = `WHERE b.brg_aktif = "Y" AND b.brg_jenis = ?`;
   let whereParams = [jenis];
@@ -1576,7 +1590,7 @@ const searchBarangGarmen = async (
   const bypassSpanduk =
     jenis === "ASET" || String(bagian || "").toUpperCase() === "GUDANG";
   if (!bypassSpanduk) {
-    whereClause += kondisiSpanduk(cabang);
+    whereClause += kondisiSpanduk(isHo ? "HO-" : cabang);
   }
 
   // 3. Filter khusus Sparepart berdasarkan Bagian User
@@ -1593,8 +1607,8 @@ const searchBarangGarmen = async (
 
   // Hitung total data
   const [countRes] = await db.query(
-    `SELECT COUNT(*) AS total FROM tgarmen_brg b ${whereClause}`,
-    whereParams,
+    `SELECT COUNT(*) AS total FROM tgarmen_brg b ${cabangJoin} ${whereClause}`,
+    [...joinParams, ...whereParams],
   );
   const total = countRes[0].total;
 
@@ -1607,16 +1621,23 @@ const searchBarangGarmen = async (
       IFNULL((
         SELECT SUM(m.mst_stok_in - m.mst_stok_out) 
         FROM ${stockTable} m 
-        WHERE m.mst_aktif="Y" AND m.mst_cab=? AND m.mst_brg_kode=b.brg_kode
+        WHERE m.mst_aktif="Y" AND ${cabCond("m")} AND m.mst_brg_kode=b.brg_kode
       ), 0) AS Stok
     FROM tgarmen_brg b
+    ${cabangJoin}
     ${whereClause}
     ORDER BY b.brg_nama ASC
     LIMIT ? OFFSET ?
   `;
 
-  // Parameter: [cabang (utk stok), ...whereParams, limit, offset]
-  const dataParams = [cabang, ...whereParams, limitNum, offset];
+  // Parameter: [...cabParams (utk stok), ...joinParams, ...whereParams, limit, offset]
+  const dataParams = [
+    ...cabParams,
+    ...joinParams,
+    ...whereParams,
+    limitNum,
+    offset,
+  ];
   const [rows] = await db.query(dataQuery, dataParams);
 
   return { items: rows, total, page: Number(page), limit: limitNum };

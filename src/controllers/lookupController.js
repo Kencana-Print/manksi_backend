@@ -444,7 +444,7 @@ const searchGudangProduksi = async (req, res) => {
 
 const searchBarangGarmen = async (req, res) => {
   try {
-    const { q, jenis, cabang, page, limit } = req.query;
+    const { q, jenis, cabang, page, limit, filterByCabang } = req.query;
     // req.user.bagian didapat dari middleware verifyToken
     const bagian = req.user.bagian ? req.user.bagian.toUpperCase() : "";
 
@@ -462,6 +462,9 @@ const searchBarangGarmen = async (req, res) => {
       bagian,
       page,
       limit,
+      filterByCabang === "true" ||
+        filterByCabang === "1" ||
+        filterByCabang === true,
     );
     res.status(200).json({ success: true, data });
   } catch (error) {
