@@ -558,23 +558,43 @@ const requestPin = async (nomor, alasan, userKode) => {
 };
 
 // --- APPROVE CMO ---
-const approveCmo = async (nomor, userKode) => {
+const approveCmo = async (nomor, userKode, keterangan) => {
   const loc = await resolveSoLocation(nomor);
   if (!loc) throw new Error("Data SO tidak ditemukan.");
+
+  const hasKeterangan = keterangan !== undefined && keterangan !== null;
 
   if (loc === "new") {
     // Hanya SO baru (tsalesorder) yang mencatat tanggal approve —
     // tspk legacy tidak punya kolom ini dan tidak di-ALTER, sesuai
     // keputusan: data lama memang tidak akan pernah akurat historinya.
-    await db.query(
-      `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW() WHERE so_nomor = ?`,
-      [userKode, nomor],
-    );
+    if (hasKeterangan) {
+      await db.query(
+        `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW(), so_keterangan = ? WHERE so_nomor = ?`,
+        [userKode, String(keterangan), nomor],
+      );
+      await db.query(
+        `UPDATE tspk SET spk_keterangan = ? WHERE spk_so_ref = ? AND spk_is_so = 0`,
+        [String(keterangan), nomor],
+      );
+    } else {
+      await db.query(
+        `UPDATE tsalesorder SET so_cmo = ?, so_cmo_tanggal = NOW() WHERE so_nomor = ?`,
+        [userKode, nomor],
+      );
+    }
   } else {
-    await db.query(`UPDATE tspk SET spk_cmo = ? WHERE spk_nomor = ?`, [
-      userKode,
-      nomor,
-    ]);
+    if (hasKeterangan) {
+      await db.query(
+        `UPDATE tspk SET spk_cmo = ?, spk_keterangan = ? WHERE spk_nomor = ?`,
+        [userKode, String(keterangan), nomor],
+      );
+    } else {
+      await db.query(`UPDATE tspk SET spk_cmo = ? WHERE spk_nomor = ?`, [
+        userKode,
+        nomor,
+      ]);
+    }
   }
 };
 

@@ -118,7 +118,8 @@ const approveCmo = async (req, res) => {
       });
     }
 
-    await service.approveCmo(nomor, req.user.kode);
+    const { keterangan } = req.body || {};
+    await service.approveCmo(nomor, req.user.kode, keterangan);
     res.json({ success: true, message: "Berhasil di-approve." });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
