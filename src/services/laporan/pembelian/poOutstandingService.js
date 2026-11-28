@@ -46,10 +46,11 @@ const ambilBahan = async ({ startDate, endDate, supKode, like }) => {
   const [rows] = await db.query(
     `SELECT
        'BAHAN' AS Tipe,
-       CASE h.po_jenis WHEN 4 THEN 'Lain-lain' WHEN 5 THEN 'Spanduk' ELSE 'Bahan' END AS Jenis,
+       CASE h.po_jenis WHEN 4 THEN 'Rekap Belanja' WHEN 5 THEN 'Spanduk' ELSE 'Bahan' END AS Jenis,
        h.po_nomor AS Nomor,
        DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS Tanggal,
        DATEDIFF(CURDATE(), h.po_tanggal) AS Umur,
+       IFNULL(GROUP_CONCAT(DISTINCT s.sup_kode ORDER BY s.sup_kode SEPARATOR ', '), '') AS KodeSupplier,
        IFNULL(GROUP_CONCAT(DISTINCT s.sup_nama ORDER BY s.sup_nama SEPARATOR ', '), '') AS Supplier,
        d.pod_bhn_kode AS Kode,
        IFNULL(MAX(b.bhn_name), '') AS Nama,
@@ -127,6 +128,7 @@ const ambilNonBahan = async ({
        h.po_nomor AS Nomor,
        DATE_FORMAT(h.po_tanggal, '%Y-%m-%d') AS Tanggal,
        DATEDIFF(CURDATE(), h.po_tanggal) AS Umur,
+       IFNULL(MAX(h.po_sup_kode), '') AS KodeSupplier,
        IFNULL(MAX(s.sup_nama), '') AS Supplier,
        d.pod_brg_kode AS Kode,
        IFNULL(MAX(IF(IFNULL(b.brg_note, '') = '', b.brg_nama,
