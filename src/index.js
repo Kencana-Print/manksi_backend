@@ -420,6 +420,9 @@ const stokFinanceRoutes = require("./routes/laporan/finance/stokFinanceRoutes");
 const daftarHutangRoutes = require("./routes/laporan/finance/daftarHutangRoutes");
 const biayaPerDivisiRoutes = require("./routes/laporan/finance/biayaPerDivisiRoutes");
 
+// Laporan Pembelian
+const poOutstandingRoutes = require("./routes/laporan/pembelian/poOutstandingRoutes");
+
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
 const userFormRoutes = require("./routes/tools/userFormRoutes");
@@ -1208,6 +1211,8 @@ app.use(
 app.use("/api/laporan/finance/stok-finance", stokFinanceRoutes);
 app.use("/api/laporan/finance/daftar-hutang", daftarHutangRoutes);
 app.use("/api/laporan/finance/biaya-per-divisi", biayaPerDivisiRoutes);
+
+app.use("/api/laporan/pembelian/po-outstanding", poOutstandingRoutes);
 
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
