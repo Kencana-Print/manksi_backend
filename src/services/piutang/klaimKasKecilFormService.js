@@ -322,6 +322,43 @@ const cariBkkEligibleSatu = async (
       KODE_INDUK_KAS,
       KODE_INDUK_KAS,
     );
+  } else if (kas.jenis === "MANUAL") {
+    // BKK manual: dibuat langsung (bukan hasil kasbon / penyelesaian), kredit ke
+    // laci/akun kas klaim. Transfer antar laci (sisi debet ke kas) tidak ikut.
+    const sumber = kas.sumber?.length ? kas.sumber : [kas.rek];
+    const indukKas = [...new Set([KODE_INDUK_KAS, ...sumber])];
+    sql = `
+    SELECT '' AS bon,
+      j.jur_no AS bkk,
+      DATE_FORMAT(j.jur_tanggal,'%Y-%m-%d') AS tanggal,
+      j.jur_penerima AS penerima,
+      j.jur_keterangan AS keterangan,
+      k.nominal AS nominal
+    FROM finance.tjurnal j
+    INNER JOIN (
+      SELECT jurd_jur_no, SUM(jurd_kredit) AS nominal
+      FROM finance.tjurnalitem
+      WHERE jurd_nourut = 0 AND jurd_rek_kode IN (?)
+      GROUP BY jurd_jur_no
+    ) k ON k.jurd_jur_no = j.jur_no
+    LEFT JOIN finance.tkasbon b ON b.bon_jur_no = j.jur_no
+    WHERE j.jur_tipetransaksi = 'BKK'
+      AND j.jur_otomatis = 0
+      AND b.bon_nomor IS NULL
+      AND j.jur_cabang = ?
+      AND j.jur_tanggal >= ?
+      AND k.nominal > 0
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tpengajuan_transfer_dtl d
+        WHERE d.ptd_trs = j.jur_no AND d.ptd_batal = ''
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM finance.tjurnalitem x
+        JOIN finance.trekening r ON r.rek_kode = x.jurd_rek_kode
+        WHERE x.jurd_jur_no = j.jur_no AND x.jurd_nourut <> 0
+          AND (r.rek_kode IN (?) OR r.rek_parent IN (?))
+      )`;
+    params.push(sumber, kas.cabang, TANGGAL_MULAI_KLAIM, indukKas, indukKas);
   } else {
     // KAS_KECIL: kredit nourut 0 harus di salah satu akun sumber (laci / induk lama)
     const sumber = kas.sumber?.length ? kas.sumber : [kas.rek];
@@ -381,24 +418,36 @@ const cariBkkEligibleSatu = async (
     .map((r) => ({ ...r, nominal: Number(r.nominal) }));
 };
 
-// A-111123 (PC) mengklaim dua macam BKK: Penyelesaian PD dan BKK kasbon biasa.
-// Dua query dijalankan berurutan lalu digabung (dedup per BKK).
+// Kandidat klaim per jenis kas:
+//   PC (A-111118 / A-111123): Penyelesaian PD (+ BKK kasbon biasa bila jugaKasbon)
+//   KAS_KECIL                : BKK kasbon
+//   PC dan KAS_KECIL         : ditambah BKK manual (tanpa kasbon)
+//   ATM                      : sudah langsung dari jurnal, termasuk BKK tanpa kasbon
+// Hasil digabung dan di-dedup per BKK.
 const cariBkkEligible = async (args, conn = db) => {
   const { kas } = args;
+  const hasil = [await cariBkkEligibleSatu(args, conn)];
   if (kas.jenis === "PC" && kas.jugaKasbon) {
-    const pd = await cariBkkEligibleSatu(args, conn);
-    const kk = await cariBkkEligibleSatu(
-      { ...args, kas: { ...kas, jenis: "KAS_KECIL" } },
-      conn,
-    );
-    const peta = new Map();
-    for (const r of [...pd, ...kk]) if (!peta.has(r.bkk)) peta.set(r.bkk, r);
-    return [...peta.values()].sort(
-      (a, b) =>
-        a.tanggal.localeCompare(b.tanggal) || a.bkk.localeCompare(b.bkk),
+    hasil.push(
+      await cariBkkEligibleSatu(
+        { ...args, kas: { ...kas, jenis: "KAS_KECIL" } },
+        conn,
+      ),
     );
   }
-  return cariBkkEligibleSatu(args, conn);
+  if (kas.jenis !== "ATM") {
+    hasil.push(
+      await cariBkkEligibleSatu(
+        { ...args, kas: { ...kas, jenis: "MANUAL" } },
+        conn,
+      ),
+    );
+  }
+  const peta = new Map();
+  for (const r of hasil.flat()) if (!peta.has(r.bkk)) peta.set(r.bkk, r);
+  return [...peta.values()].sort(
+    (a, b) => a.tanggal.localeCompare(b.tanggal) || a.bkk.localeCompare(b.bkk),
+  );
 };
 
 // ── Diagnostik: kenapa BKK kosong (KAS_KECIL) ───────────────────────
