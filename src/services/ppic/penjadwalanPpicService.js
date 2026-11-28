@@ -24,6 +24,54 @@ const purgeMapJadiSo = async (pjwNomor = null) => {
   }
 };
 
+// Baris tab SO yang asalnya MAP dan MAP-nya sudah jadi SO: Rencana masih qty MAP.
+// Sekali saja, saat berubah jadi SO: nomor SO ditulis ke pjwd_so_nomor (sekaligus
+// penanda "sudah di-rebase" supaya tidak terulang) dan Rencana diganti Kurang SO.
+// Baris yang sudah punya pecahan Kesepakatan dilewati agar kerja PPIC tidak hilang.
+const rebaseRencanaMapJadiSo = async (pjwNomor) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT d.pjwd_id, s.so_nomor,
+              GREATEST(s.so_jumlah - IFNULL(s.so_jumlah_kirim, 0), 0) AS kurang
+       FROM tpenjadwalan_ppic_dtl d
+       INNER JOIN tpenjadwalan_ppic_hdr h ON h.pjw_nomor = d.pjwd_pjw_nomor
+       INNER JOIN tsalesorder s
+         ON s.so_memo = d.pjwd_map_nomor AND s.so_aktif = 'Y'
+         AND s.so_nomor = (
+           SELECT MIN(x.so_nomor) FROM tsalesorder x
+           WHERE x.so_memo = d.pjwd_map_nomor AND x.so_aktif = 'Y')
+       WHERE d.pjwd_pjw_nomor = ? AND h.pjw_close = 'N'
+         AND d.pjwd_tipe <> 'MAP'
+         AND d.pjwd_so_nomor IS NULL AND d.pjwd_map_nomor IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM tpenjadwalan_ppic_kesepakatan k
+           WHERE k.pjwk_pjwd_id = d.pjwd_id)`,
+      [pjwNomor],
+    );
+
+    for (const r of rows) {
+      // SO yang sama sudah punya baris di periode ini: lewati (UNIQUE uq_pjwd_so)
+      const [[ada]] = await db.query(
+        `SELECT COUNT(*) AS n FROM tpenjadwalan_ppic_dtl
+         WHERE pjwd_pjw_nomor = ? AND pjwd_so_nomor = ?`,
+        [pjwNomor, r.so_nomor],
+      );
+      if (Number(ada.n) > 0) continue;
+
+      await db.query(
+        `UPDATE tpenjadwalan_ppic_dtl
+         SET pjwd_so_nomor = ?, pjwd_rencana = ?,
+             pjwd_status_permintaan =
+               IF(pjwd_status_permintaan = 'NECESSARY', 'NECESSARY', 'CLOSE')
+         WHERE pjwd_id = ?`,
+        [r.so_nomor, Number(r.kurang) || 0, r.pjwd_id],
+      );
+    }
+  } catch (e) {
+    console.error("Gagal rebase Rencana baris MAP yang sudah jadi SO:", e);
+  }
+};
+
 // ── Browse header (list periode) ──
 const getBrowse = async (startDate, endDate, cabang = "") => {
   await purgeMapJadiSo();
@@ -64,6 +112,7 @@ const getDetail = async (nomor) => {
   if (!hdr) return [];
 
   await purgeMapJadiSo(nomor);
+  await rebaseRencanaMapJadiSo(nomor);
 
   const [rows] = await db.query(
     `SELECT
