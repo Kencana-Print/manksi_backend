@@ -422,6 +422,9 @@ const biayaPerDivisiRoutes = require("./routes/laporan/finance/biayaPerDivisiRou
 
 // Laporan Pembelian
 const poOutstandingRoutes = require("./routes/laporan/pembelian/poOutstandingRoutes");
+const rekapBelumRealisasiRoutes = require("./routes/laporan/pembelian/rekapBelumRealisasiRoutes");
+const kartuHutangRoutes = require("./routes/laporan/pembelian/kartuHutangRoutes");
+const rekapHutangRoutes = require("./routes/laporan/pembelian/rekapHutangRoutes");
 
 // Tools Routes
 const userRoutes = require("./routes/tools/userRoutes");
@@ -1213,6 +1216,12 @@ app.use("/api/laporan/finance/daftar-hutang", daftarHutangRoutes);
 app.use("/api/laporan/finance/biaya-per-divisi", biayaPerDivisiRoutes);
 
 app.use("/api/laporan/pembelian/po-outstanding", poOutstandingRoutes);
+app.use(
+  "/api/laporan/pembelian/rekap-belum-realisasi",
+  rekapBelumRealisasiRoutes,
+);
+app.use("/api/laporan/pembelian/kartu-hutang", kartuHutangRoutes);
+app.use("/api/laporan/pembelian/rekap-hutang", rekapHutangRoutes);
 
 app.use("/api/tools/users", userRoutes);
 app.use("/api/tools/user-form", userFormRoutes);
