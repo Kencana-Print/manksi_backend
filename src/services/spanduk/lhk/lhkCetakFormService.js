@@ -600,6 +600,12 @@ const getInfoSpk = async (nomor, user) => {
     daftarSpk: [no],
   });
   const plg = (await ambilPlangkanMap(db, [info.nomor])).get(info.nomor);
+  // SPK = ada di tspk (bahannya sudah divalidasi saat SO -> SPK).
+  // MAP: bahan berasal dari input marketing, tidak divalidasi.
+  const [adaSpk] = await db.query(
+    `SELECT 1 FROM ${T.spk} WHERE spk_nomor = ? LIMIT 1`,
+    [info.nomor],
+  );
   return {
     Nomor_SPK: info.nomor,
     Nama_SPK: info.nama,
@@ -607,6 +613,7 @@ const getInfoSpk = async (nomor, user) => {
     Panjang: info.panjang,
     Lebar: info.lebar,
     Kode_Bahan: info.bahan || "",
+    Is_Spk: adaSpk.length > 0,
     Plangkan_Otomatis: plg?.otomatis === true,
     Plangkan: plg?.sisa ?? 0,
     Plangkan_Total: plg?.total ?? 0,

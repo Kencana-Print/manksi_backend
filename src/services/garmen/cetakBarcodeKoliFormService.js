@@ -274,19 +274,19 @@ const generateKoliStbj = async (
       lhkMap.set(k, Math.max(lhkMap.get(k) ?? 0, Number(r.qty) || 0));
     }
 
-    // GJ001: SPK yang sudah punya penerimaan jasa lipat/finishing ke GP019
-    // tidak perlu menunggu LHK Finishing internal. Cukup ada BPJ-nya.
+    // SPK yang sudah punya penerimaan jasa lipat/finishing (BPB Jasa ke gudang
+    // Lipat cabang) tidak perlu menunggu LHK Finishing internal. Cukup ada BPB-nya.
+    // GJ001 tetap GP019; cabang lain memakai gudang asal mutasi lipat -> koli.
+    const gdgLipat = gdg === "GJ001" ? BPJ_GDG_FINISHING : pair.asal;
     const bpjSpk = new Set();
-    if (gdg === "GJ001") {
-      const [bpjRows] = await conn.query(
-        `SELECT DISTINCT po.pojh_spk_nomor AS spk
-         FROM tbpj_hdr h
-         INNER JOIN tpojasa_hdr po ON po.pojh_nomor = h.bpj_po_nomor
-         WHERE h.bpj_gdgp_kode = ? AND po.pojh_spk_nomor IN (?)`,
-        [BPJ_GDG_FINISHING, spkList],
-      );
-      bpjRows.forEach((r) => bpjSpk.add(String(r.spk).toUpperCase()));
-    }
+    const [bpjRows] = await conn.query(
+      `SELECT DISTINCT po.pojh_spk_nomor AS spk
+       FROM tbpj_hdr h
+       INNER JOIN tpojasa_hdr po ON po.pojh_nomor = h.bpj_po_nomor
+       WHERE h.bpj_gdgp_kode = ? AND po.pojh_spk_nomor IN (?)`,
+      [gdgLipat, spkList],
+    );
+    bpjRows.forEach((r) => bpjSpk.add(String(r.spk).toUpperCase()));
 
     const [lainRows] = await conn.query(
       `SELECT stbjd_spk_nomor AS spk,
@@ -327,7 +327,7 @@ const generateKoliStbj = async (
       .filter((g) => g.dicek && !g.ok)
       .map((g) =>
         g.lhk === null
-          ? `SPK ${g.spk} size ${g.size}: LHK Finishing (ter-approve) belum ada.`
+          ? `SPK ${g.spk} size ${g.size}: LHK Finishing (ter-approve) atau BPB Jasa Lipat belum ada.`
           : `SPK ${g.spk} size ${g.size}: STBJ ${g.pcs} > sisa LHK ${g.sisa} (LHK ${g.lhk}, dipakai STBJ lain ${g.lain}).`,
       );
   }
